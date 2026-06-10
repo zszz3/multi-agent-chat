@@ -1,0 +1,856 @@
+import { readFileSync } from "node:fs";
+import { renderToStaticMarkup } from "react-dom/server";
+import { describe, expect, test } from "vitest";
+import {
+  appShellClass,
+  chatConfigLocked,
+  ChatControls,
+  ConfigPage,
+  shouldSendComposerKey,
+  SlashCommandSuggestions,
+  slashCommandSuggestionsFor,
+  reorderTeamMembers,
+  taskDetailIdFor,
+  TaskPage,
+  TaskStatusFilter,
+  TeamPage,
+} from "./App";
+import { DEFAULT_MODEL_ID } from "../../shared/models";
+import type { AgentChannel, AgentRuntime, AgentTeam, CodexPluginCatalogItem, TaskRun, TeamRun } from "../../shared/types";
+
+const runtimes: AgentRuntime[] = [
+  {
+    id: "codex",
+    label: "Codex",
+    command: "codex",
+    version: "0.136.0",
+    available: true,
+  },
+  {
+    id: "claude",
+    label: "Claude Code",
+    command: "claude",
+    version: null,
+    available: false,
+    error: "missing",
+  },
+];
+
+const channels: AgentChannel[] = [
+  {
+    id: "codex-openai",
+    agentId: "codex",
+    label: "Codex OpenAI",
+    plugins: [
+      { id: "documents@openai-primary-runtime", enabled: true },
+      { id: "browser-use@openai-bundled", enabled: false },
+    ],
+    models: [
+      { id: DEFAULT_MODEL_ID, label: "Default" },
+      { id: "gpt-5.5", label: "GPT-5.5" },
+    ],
+  },
+  {
+    id: "claude-code",
+    agentId: "claude",
+    label: "Claude Code",
+    models: [
+      { id: DEFAULT_MODEL_ID, label: "Default" },
+      { id: "sonnet", label: "Sonnet" },
+    ],
+  },
+];
+
+const codexPluginCatalog: CodexPluginCatalogItem[] = [
+  {
+    id: "documents@openai-primary-runtime",
+    name: "documents",
+    marketplace: "openai-primary-runtime",
+    installed: true,
+    enabled: true,
+    version: "1.0.0",
+  },
+  {
+    id: "github@openai-curated",
+    name: "github",
+    marketplace: "openai-curated",
+    installed: false,
+    enabled: false,
+  },
+];
+
+const taskRuns: TaskRun[] = [
+  {
+    id: "task-1",
+    title: "Inspect repo",
+    prompt: "Inspect repo",
+    agentId: "codex",
+    channelId: "codex-openai",
+    modelId: "gpt-5.5",
+    workDir: "/tmp/workspace",
+    status: "completed",
+    progress: "in_review",
+    running: false,
+    sessionId: undefined,
+    messages: [],
+    pendingAssistantMessageId: undefined,
+    lastError: undefined,
+    createdAt: 1710000000000,
+    updatedAt: 1710000000000,
+  },
+];
+
+const teams: AgentTeam[] = [
+  {
+    id: "team-1",
+    name: "Review Team",
+    mode: "pipeline",
+    sharedContext: "Focus on repo risks and public dependencies.",
+    members: [
+      {
+        id: "member-1",
+        roleName: "Planner",
+        prompt: "Create a review plan first.",
+        agentId: "codex",
+        channelId: "codex-openai",
+        modelId: "gpt-5.5",
+        canvasPosition: { x: 120, y: 90 },
+      },
+      {
+        id: "member-2",
+        roleName: "Checker",
+        prompt: "Verify the previous artifact.",
+        agentId: "claude",
+        channelId: "claude-code",
+        modelId: DEFAULT_MODEL_ID,
+      },
+    ],
+    workflow: {
+      mode: "pipeline",
+      phases: [
+        { id: "phase:start", title: "Start", nodeIds: ["start"] },
+        { id: "phase:member-1", title: "Planner", nodeIds: ["member:member-1"] },
+        { id: "phase:member-2", title: "Checker", nodeIds: ["member:member-2"] },
+        { id: "phase:done", title: "Done", nodeIds: ["done"] },
+      ],
+      nodes: [
+        { id: "start", kind: "start", label: "Start", status: "idle" },
+        {
+          id: "member:member-1",
+          kind: "agent",
+          label: "Planner",
+          status: "idle",
+          teamMemberId: "member-1",
+          description: "Create a review plan first.",
+          canvasPosition: { x: 120, y: 90 },
+        },
+        {
+          id: "member:member-2",
+          kind: "agent",
+          label: "Checker",
+          status: "idle",
+          teamMemberId: "member-2",
+          description: "Verify the previous artifact.",
+        },
+        { id: "done", kind: "done", label: "Done", status: "idle" },
+      ],
+      edges: [
+        { id: "start->member:member-1", fromNodeId: "start", toNodeId: "member:member-1" },
+        { id: "member:member-1->member:member-2", fromNodeId: "member:member-1", toNodeId: "member:member-2" },
+        { id: "member:member-2->done", fromNodeId: "member:member-2", toNodeId: "done" },
+      ],
+    },
+    createdAt: 1710000000000,
+    updatedAt: 1710000000000,
+  },
+];
+
+const teamRuns: TeamRun[] = [
+  {
+    id: "team-run-1",
+    teamId: "team-1",
+    teamName: "Review Team",
+    title: "Review session-search",
+    prompt: "Review cd ../session-search",
+    target: { kind: "workspace", label: "Workspace", value: "/tmp/workspace" },
+    mode: "pipeline",
+    status: "running",
+    currentStepIndex: 1,
+    workDir: "/tmp/workspace",
+    sharedContextSnapshot: "Focus on repo risks and public dependencies.",
+    workflow: {
+      mode: "pipeline",
+      phases: [
+        { id: "phase:start", title: "Start", nodeIds: ["start"] },
+        { id: "phase:member-1", title: "Planner", nodeIds: ["member:member-1"] },
+        { id: "phase:member-2", title: "Checker", nodeIds: ["member:member-2"] },
+        { id: "phase:done", title: "Done", nodeIds: ["done"] },
+      ],
+      nodes: [
+        { id: "start", kind: "start", label: "Start", status: "completed" },
+        {
+          id: "member:member-1",
+          kind: "agent",
+          label: "Planner",
+          status: "completed",
+          teamMemberId: "member-1",
+          stepId: "step-1",
+          description: "Create a review plan first.",
+          canvasPosition: { x: 120, y: 90 },
+        },
+        {
+          id: "member:member-2",
+          kind: "agent",
+          label: "Checker",
+          status: "running",
+          teamMemberId: "member-2",
+          stepId: "step-2",
+          description: "Verify the previous artifact.",
+        },
+        { id: "done", kind: "done", label: "Done", status: "queued" },
+      ],
+      edges: [
+        { id: "start->member:member-1", fromNodeId: "start", toNodeId: "member:member-1" },
+        { id: "member:member-1->member:member-2", fromNodeId: "member:member-1", toNodeId: "member:member-2" },
+        { id: "member:member-2->done", fromNodeId: "member:member-2", toNodeId: "done" },
+      ],
+    },
+    steps: [
+      {
+        id: "step-1",
+        teamMemberId: "member-1",
+        roleName: "Planner",
+        prompt: "Create a review plan first.",
+        agentId: "codex",
+        channelId: "codex-openai",
+        modelId: "gpt-5.5",
+        status: "completed",
+        taskId: "task-1",
+        artifact: "artifact-1",
+        lastError: undefined,
+        startedAt: 1710000000000,
+        completedAt: 1710000001000,
+      },
+      {
+        id: "step-2",
+        teamMemberId: "member-2",
+        roleName: "Checker",
+        prompt: "Verify the previous artifact.",
+        agentId: "claude",
+        channelId: "claude-code",
+        modelId: DEFAULT_MODEL_ID,
+        status: "running",
+        taskId: "task-2",
+        artifact: undefined,
+        lastError: undefined,
+        startedAt: 1710000002000,
+        completedAt: undefined,
+      },
+    ],
+    lastError: undefined,
+    createdAt: 1710000000000,
+    updatedAt: 1710000002000,
+  },
+];
+
+const styles = readFileSync(new URL("./styles.css", import.meta.url), "utf8");
+
+describe("ChatControls", () => {
+  test("uses a full-width shell when tasks are shown", () => {
+    expect(appShellClass("tasks")).toBe("shell tasks-shell");
+    expect(appShellClass("chat")).toBe("shell");
+  });
+
+  test("does not use persisted task selection to open the detail panel", () => {
+    expect(taskDetailIdFor("tasks", undefined, "task-1")).toBeUndefined();
+    expect(taskDetailIdFor("tasks", "task-1", "task-2")).toBe("task-1");
+    expect(taskDetailIdFor("chat", "task-1", "task-1")).toBeUndefined();
+  });
+
+  test("uses fixed workflow topology layouts instead of a pannable canvas", () => {
+    expect(styles).toContain("grid-template-columns: minmax(172px, 214px) minmax(640px, 1fr) minmax(300px, 360px)");
+    expect(styles).toContain(".team-resource-pane {");
+    expect(styles).toContain(".workflow-studio-pane {");
+    expect(styles).toContain(".run-inspector-pane {");
+    expect(styles).toContain("@media (max-width: 1320px)");
+    expect(styles).toContain(".workflow-topology-board {\n  min-height: 340px");
+    expect(styles).toContain(".workflow-topology-stage {\n  min-width: 0");
+    expect(styles).toContain(".workflow-pipeline-row {\n  width: max-content");
+    expect(styles).toContain(".workflow-studio-toolbar {");
+    expect(styles).toContain(".workflow-task-composer {\n  position: sticky");
+    expect(styles).toContain(".workflow-builder-toolbar {\n  position: relative;\n  z-index: 2;\n  pointer-events: auto");
+    expect(styles).toContain(".workflow-node-card {\n  width: 176px;\n  min-height: 82px");
+    expect(styles).toContain(".workflow-node-card.is-drop-target");
+    expect(styles).toContain("grid-template-columns: repeat(auto-fit, minmax(176px, 1fr))");
+    expect(styles).toContain(".workflow-edge {\n  display: block;\n  width: 36px");
+    expect(styles).not.toContain(".workflow-builder-board.is-panning");
+    expect(styles).not.toContain(".workflow-free-canvas-stage");
+  });
+
+  test("uses compact segmented controls for workflow mode", () => {
+    expect(styles).toContain(".workflow-mode-row {\n  display: inline-flex");
+    expect(styles).toContain(".workflow-mode-toggle {\n  display: inline-flex");
+    expect(styles).toContain("min-height: 28px");
+    expect(styles).toContain(".workflow-mode-toggle span {\n  display: none");
+  });
+
+  test("sends composer text with Enter and keeps Shift Enter for new lines", () => {
+    expect(shouldSendComposerKey({ key: "Enter", shiftKey: false, metaKey: false, ctrlKey: false })).toBe(true);
+    expect(shouldSendComposerKey({ key: "Enter", shiftKey: true, metaKey: false, ctrlKey: false })).toBe(false);
+    expect(shouldSendComposerKey({ key: "Enter", shiftKey: false, metaKey: true, ctrlKey: false })).toBe(true);
+    expect(shouldSendComposerKey({ key: "Enter", shiftKey: false, metaKey: false, ctrlKey: true })).toBe(true);
+    expect(shouldSendComposerKey({ key: "a", shiftKey: false, metaKey: false, ctrlKey: false })).toBe(false);
+  });
+
+  test("filters slash command suggestions like the CLI prompt", () => {
+    expect(slashCommandSuggestionsFor("/", "codex").map((item) => item.command)).toEqual(["/status", "/models", "/plugins", "/help"]);
+    expect(slashCommandSuggestionsFor("/", "claude").map((item) => item.command)).toEqual(["/help"]);
+    expect(slashCommandSuggestionsFor("/pl", "codex").map((item) => item.command)).toEqual(["/plugins"]);
+    expect(slashCommandSuggestionsFor("/pl", "claude")).toEqual([]);
+    expect(slashCommandSuggestionsFor("/status ", "codex")).toEqual([]);
+    expect(slashCommandSuggestionsFor("hello", "codex")).toEqual([]);
+  });
+
+  test("renders slash command suggestions", () => {
+    const html = renderToStaticMarkup(
+      <SlashCommandSuggestions
+        suggestions={slashCommandSuggestionsFor("/", "codex")}
+        activeIndex={0}
+        onSelect={() => undefined}
+      />,
+    );
+
+    expect(html).toContain("slash-command-menu");
+    expect(html).toContain("/status");
+    expect(html).toContain("/plugins");
+    expect(html).toContain("Read Codex app-server config");
+  });
+
+  test("does not lock chat config for local slash command history", () => {
+    expect(
+      chatConfigLocked({
+        id: "chat-1",
+        title: "New Codex chat",
+        agentId: "codex",
+        channelId: "codex-openai",
+        modelId: DEFAULT_MODEL_ID,
+        sessionId: undefined,
+        running: false,
+        messages: [
+          { id: "message-1", role: "user", content: "/status", timestamp: 1710000000000, local: true } as any,
+          { id: "message-2", role: "assistant", content: "Status", timestamp: 1710000000001, local: true } as any,
+        ],
+        pendingAssistantMessageId: undefined,
+        lastError: undefined,
+        createdAt: 1710000000000,
+        updatedAt: 1710000000001,
+      }),
+    ).toBe(false);
+  });
+
+  test("renders agent and workdir as compact composer controls", () => {
+    const html = renderToStaticMarkup(
+      <ChatControls
+        agentId="codex"
+        channelId="codex-openai"
+        modelId={DEFAULT_MODEL_ID}
+        channels={channels}
+        locked={false}
+        running={false}
+        workDir="/tmp/workspace"
+        runtimes={runtimes}
+        onSelectAgent={async () => undefined}
+        onSelectChannel={async () => undefined}
+        onSelectModel={async () => undefined}
+        onChooseWorkDir={async () => undefined}
+        onRefresh={async () => undefined}
+      />,
+    );
+
+    expect(html).toContain("composer-controls");
+    expect(html).toContain("aria-label=\"Agent\"");
+    expect(html).toContain("aria-label=\"Channel\"");
+    expect(html).toContain("aria-label=\"Model\"");
+    expect(html).toContain("Codex");
+    expect(html).toContain("Claude Code");
+    expect(html).toContain("Codex OpenAI");
+    expect(html).toContain("GPT-5.5");
+    expect(html).toContain("aria-label=\"Choose work directory\"");
+    expect(html).toContain("/tmp/workspace");
+  });
+
+  test("locks agent and model selects after a chat starts", () => {
+    const html = renderToStaticMarkup(
+      <ChatControls
+        agentId="codex"
+        channelId="codex-openai"
+        modelId={DEFAULT_MODEL_ID}
+        channels={channels}
+        locked={true}
+        running={false}
+        workDir="/tmp/workspace"
+        runtimes={runtimes}
+        onSelectAgent={async () => undefined}
+        onSelectChannel={async () => undefined}
+        onSelectModel={async () => undefined}
+        onChooseWorkDir={async () => undefined}
+        onRefresh={async () => undefined}
+      />,
+    );
+
+    expect(html).toContain("<select class=\"composer-select\" aria-label=\"Agent\" disabled=\"\"");
+    expect(html).toContain("<select class=\"composer-select\" aria-label=\"Channel\" disabled=\"\"");
+    expect(html).toContain("<select class=\"composer-select\" aria-label=\"Model\" disabled=\"\"");
+  });
+});
+
+describe("ConfigPage", () => {
+  test("renders channel form controls and advanced json editor", () => {
+    const html = renderToStaticMarkup(
+      <ConfigPage
+        channels={channels}
+        selectedChannelId="codex-openai"
+        advancedMode={false}
+        draft="[]"
+        status=""
+        codexPluginCatalog={codexPluginCatalog}
+        pluginCatalogStatus="Loaded 2 plugins"
+        generatedConfigs={[]}
+        importedConfigs={[]}
+        onSelectChannel={() => undefined}
+        onAddChannel={() => undefined}
+        onRemoveChannel={() => undefined}
+        onUpdateChannel={() => undefined}
+        onAddModel={() => undefined}
+        onUpdateModel={() => undefined}
+        onRemoveModel={() => undefined}
+        onDraftChange={() => undefined}
+        onToggleAdvanced={() => undefined}
+        onSave={async () => undefined}
+        onGenerate={async () => undefined}
+        onImportCodex={async () => undefined}
+        onLoadCodexPluginCatalog={async () => undefined}
+      />,
+    );
+
+    expect(html).toContain("config-form");
+    expect(html).toContain("aria-label=\"Import Codex profiles\"");
+    expect(html).toContain("aria-label=\"Channel label\"");
+    expect(html).toContain("aria-label=\"Model id\"");
+    expect(html).toContain("Plugins");
+    expect(html).toContain("documents@openai-primary-runtime");
+    expect(html).toContain("browser-use@openai-bundled");
+    expect(html).toContain("aria-label=\"Codex plugin catalog\"");
+    expect(html).toContain("github@openai-curated");
+    expect(html).toContain("Loaded 2 plugins");
+    expect(html).toContain("Advanced JSON");
+  });
+});
+
+describe("TaskPage", () => {
+  test("keeps the task board full-width and opens detail as an overlay page", () => {
+    expect(styles).toContain("grid-template-columns: repeat(5, minmax(min(100%, 220px), 1fr))");
+    expect(styles).toContain(".task-detail-overlay");
+    expect(styles).toContain(".task-detail-page");
+    expect(styles).not.toContain(".task-board-shell.has-detail");
+    expect(styles).not.toContain("grid-template-columns: minmax(0, 1fr) minmax(28%, 38%)");
+    expect(styles).not.toContain("grid-template-columns: minmax(0, 1fr) minmax(320px, 360px)");
+    expect(styles).not.toContain("grid-template-columns: repeat(5, minmax(180px, 1fr))");
+  });
+
+  test("renders task status progress filter with counts", () => {
+    const baseTask = taskRuns[0]!;
+    const html = renderToStaticMarkup(
+      <TaskStatusFilter
+        tasks={[
+          baseTask,
+          { ...baseTask, id: "task-2", status: "running", progress: "in_review" },
+          { ...baseTask, id: "task-3", status: "completed", progress: "done" },
+        ]}
+        value="all"
+        onChange={() => undefined}
+      />,
+    );
+
+    expect(html).toContain("aria-label=\"Task progress\"");
+    expect(html).toContain("All");
+    expect(html).toContain("Review");
+    expect(html).toContain("Done");
+    expect(html).toContain(">2<");
+  });
+
+  test("renders a draggable kanban task board with an inline creation card", () => {
+    const html = renderToStaticMarkup(
+      <TaskPage
+        prompt="Review this project"
+        agentId="codex"
+        channelId="codex-openai"
+        modelId="gpt-5.5"
+        workDir="/tmp/workspace"
+        runtimes={runtimes}
+        channels={channels}
+        tasks={taskRuns}
+        activeTaskId="task-1"
+        onPromptChange={() => undefined}
+        onSelectAgent={() => undefined}
+        onSelectChannel={() => undefined}
+        onSelectModel={() => undefined}
+        onChooseWorkDir={async () => undefined}
+        onRefresh={async () => undefined}
+        onRunTask={async () => undefined}
+        onRerunTask={async () => undefined}
+        onSelectTask={async () => undefined}
+        onCloseTaskDetail={() => undefined}
+        onStopTask={async () => undefined}
+        onDeleteTask={async () => undefined}
+        onUpdateTaskProgress={() => undefined}
+      />,
+    );
+
+    expect(html).toContain("tasks-page");
+    expect(html).toContain("task-surface-card");
+    expect(html).toContain("New task");
+    expect(html).toContain("task-inline-create-card");
+    expect(html).toContain("task-create-chipbar");
+    expect(html).toContain("task-board-shell");
+    expect(html).toContain("task-kanban-board");
+    expect(html).toContain("aria-label=\"Task board\"");
+    expect(html).toContain("task-kanban-column");
+    expect(html).toContain("data-progress=\"in_review\"");
+    expect(html).toContain("task-kanban-card");
+    expect(html).toContain("draggable=\"true\"");
+    expect(html).toContain("data-task-id=\"task-1\"");
+    expect(html).toContain("task-detail-overlay");
+    expect(html).toContain("task-detail-page");
+    expect(html).toContain("role=\"dialog\"");
+    expect(html).toContain("title=\"Close task detail\"");
+    expect(html).toContain("Task detail");
+    expect(html).toContain("task-status-chip");
+    expect(html).toContain("task-detail-status-row");
+    expect(html).toContain("Execution timeline");
+    expect(html).toContain("task-log-stream");
+    expect(html).toContain("aria-label=\"Task progress\"");
+    expect(html).toContain("Review");
+    expect(html).toContain("aria-label=\"Task prompt\"");
+    expect(html).toContain("aria-label=\"Agent\"");
+    expect(html).toContain("aria-label=\"Channel\"");
+    expect(html).toContain("aria-label=\"Model\"");
+    expect(html).toContain("Run Agent");
+    expect(html).toContain("Inspect repo");
+    expect(html).toContain("/tmp/workspace");
+    expect(html).toContain("title=\"Delete task\"");
+    expect(html).toContain("task-run-timeline");
+    expect(html).not.toContain("task-detail-workspace");
+    expect(html).not.toContain("task-side-detail");
+    expect(html).not.toContain("has-detail");
+    expect(html).not.toContain("task-create-strip");
+  });
+
+  test("does not show task detail until a task card is selected", () => {
+    const html = renderToStaticMarkup(
+      <TaskPage
+        prompt="Review this project"
+        agentId="codex"
+        channelId="codex-openai"
+        modelId="gpt-5.5"
+        workDir="/tmp/workspace"
+        runtimes={runtimes}
+        channels={channels}
+        tasks={taskRuns}
+        activeTaskId={undefined}
+        onPromptChange={() => undefined}
+        onSelectAgent={() => undefined}
+        onSelectChannel={() => undefined}
+        onSelectModel={() => undefined}
+        onChooseWorkDir={async () => undefined}
+        onRefresh={async () => undefined}
+        onRunTask={async () => undefined}
+        onRerunTask={async () => undefined}
+        onSelectTask={async () => undefined}
+        onCloseTaskDetail={() => undefined}
+        onStopTask={async () => undefined}
+        onDeleteTask={async () => undefined}
+        onUpdateTaskProgress={() => undefined}
+      />,
+    );
+
+    expect(html).toContain("task-kanban-card");
+    expect(html).toContain("Inspect repo");
+    expect(html).not.toContain("task-detail-overlay");
+    expect(html).not.toContain("task-side-detail");
+    expect(html).not.toContain("Task detail");
+    expect(html).not.toContain("Full prompt");
+    expect(html).not.toContain("Execution timeline");
+  });
+});
+
+describe("TeamPage", () => {
+  test("swaps team members by dragging one member onto another", () => {
+    expect(reorderTeamMembers(teams[0]!.members, "member-1", "member-2").map((member) => member.id)).toEqual(["member-2", "member-1"]);
+    expect(reorderTeamMembers(teams[0]!.members, "member-2", "member-1").map((member) => member.id)).toEqual(["member-2", "member-1"]);
+    expect(reorderTeamMembers(teams[0]!.members, "member-1", undefined).map((member) => member.id)).toEqual(["member-2", "member-1"]);
+    expect(reorderTeamMembers(teams[0]!.members, "missing", "member-1")).toBe(teams[0]!.members);
+    expect(reorderTeamMembers(teams[0]!.members, "member-1", "member-1")).toBe(teams[0]!.members);
+  });
+
+  test("renders teams, shared context, ordered members, and run artifacts", () => {
+    const html = renderToStaticMarkup(
+      <TeamPage
+        teams={teams}
+        teamRuns={teamRuns}
+        activeTeamId="team-1"
+        activeTeamRunId="team-run-1"
+        prompt="Review another repo"
+        workDir="/tmp/workspace"
+        runtimes={runtimes}
+        channels={channels}
+        onPromptChange={() => undefined}
+        onCreateTeam={async () => undefined}
+        onUpdateTeam={async () => undefined}
+        onDeleteTeam={async () => undefined}
+        onSelectTeam={async () => undefined}
+        onSelectTeamRun={async () => undefined}
+        onRunTeam={async () => undefined}
+        onStopTeamRun={async () => undefined}
+        onChooseWorkDir={async () => undefined}
+        onRefresh={async () => undefined}
+      />,
+    );
+
+    expect(html).toContain("agent-teams-page");
+    expect(html).toContain("teams-workspace is-workflow-ide");
+    expect(html).toContain("team-resource-pane");
+    expect(html).toContain("workflow-studio-pane");
+    expect(html).toContain("run-inspector-pane");
+    expect(html).toContain("Run Inspector");
+    expect(html).toContain("Agent Workflow");
+    expect(html).toContain("Review Team");
+    expect(html).toContain("aria-label=\"Team name in sidebar\"");
+    expect(html).not.toContain("aria-label=\"Team name\"");
+    expect(html).not.toContain("workflow-target-section");
+    expect(html).not.toContain("Target type");
+    expect(html).not.toContain("aria-label=\"Workflow target kind\"");
+    expect(html).not.toContain("aria-label=\"Workflow target value\"");
+    expect(html).toContain("Pipeline");
+    expect(html).toContain("Parallel");
+    expect(html).toContain("Supervisor");
+    expect(html).toContain("workflow-builder-title");
+    expect(html).toContain("workflow-studio-toolbar");
+    expect(html).toContain("workflow-topology-board");
+    expect(html).toContain("aria-label=\"Workflow topology\"");
+    expect(html).toContain("workflow-topology-stage");
+    expect(html).not.toContain("data-pan-canvas=\"true\"");
+    expect(html).not.toContain("aria-label=\"Open workflow editor\"");
+    expect(html).not.toContain("workflow-editor-overlay");
+    expect(html).not.toContain("workflow-free-node");
+    expect(html).toContain("workflow-builder-toolbar");
+    expect(html).toContain("workflow-canvas-pipeline");
+    expect(html).toContain("workflow-terminal");
+    expect(html).toContain("Start");
+    expect(html).toContain("Done");
+    expect(html).toContain("workflow-edge");
+    expect(html).toContain("workflow-node-card");
+    expect(html).toContain("data-workflow-node-status=\"completed\"");
+    expect(html).toContain("data-workflow-node-status=\"running\"");
+    expect(html).toContain("workflow-node-card is-completed");
+    expect(html).toContain("workflow-node-card is-running");
+    expect(html).toContain("Draft workflow");
+    expect(html).toContain("aria-label=\"Draft workflow\"");
+    expect(html).toContain("type=\"button\"");
+    expect(html).toContain("Shared Context");
+    expect(html).toContain("Focus on repo risks and public dependencies.");
+    expect(html).toContain("Planner");
+    expect(html).toContain("Checker");
+    expect(html).toContain("Create a review plan first.");
+    expect(html).toContain("Verify the previous artifact.");
+    expect(html).toContain("title=\"Click to edit member\"");
+    expect(html).not.toContain("Double-click to edit member");
+    expect(html).toContain("draggable=\"true\"");
+    expect(html).toContain("data-member-id=\"member-1\"");
+    expect(html).toContain("data-member-id=\"member-2\"");
+    expect(html).not.toContain("aria-label=\"Member 1 prompt\"");
+    expect(html).not.toContain("aria-label=\"Member 1 reusable agent\"");
+    expect(html).not.toContain("Recent Codex chat");
+    expect(html).not.toContain("Recent Claude task");
+    expect(html).toContain("Run Workflow");
+    expect(html).toContain("Review cd ../session-search");
+    expect(html).toContain("Shared Context Snapshot");
+    expect(html).toContain("Workflow Trace");
+    expect(html).toContain("workflow-trace-list");
+    expect(html).toContain("Planner completed");
+    expect(html).toContain("Checker running");
+    expect(html).toContain("artifact-1");
+    expect(html).toContain("team-run-step");
+    expect(html).toContain("aria-label=\"Team prompt\"");
+    expect(html).toContain("aria-label=\"Choose work directory\"");
+    expect(html.indexOf("workflow-builder-shell")).toBeLessThan(html.indexOf("Shared Context"));
+    expect(html.indexOf("Shared Context")).toBeLessThan(html.indexOf("workflow-task-composer"));
+  });
+
+  test("does not render a separate free-canvas workflow editor", () => {
+    const html = renderToStaticMarkup(
+      <TeamPage
+        teams={teams}
+        teamRuns={teamRuns}
+        activeTeamId="team-1"
+        activeTeamRunId="team-run-1"
+        prompt="Review another repo"
+        workDir="/tmp/workspace"
+        runtimes={runtimes}
+        channels={channels}
+        onPromptChange={() => undefined}
+        onCreateTeam={async () => undefined}
+        onUpdateTeam={async () => undefined}
+        onDeleteTeam={async () => undefined}
+        onSelectTeam={async () => undefined}
+        onSelectTeamRun={async () => undefined}
+        onRunTeam={async () => undefined}
+        onStopTeamRun={async () => undefined}
+        onChooseWorkDir={async () => undefined}
+        onRefresh={async () => undefined}
+      />,
+    );
+
+    expect(html).toContain("workflow-topology-board");
+    expect(html).not.toContain("workflow-editor-overlay");
+    expect(html).not.toContain("aria-label=\"Workflow editor\"");
+    expect(html).not.toContain("workflow-builder-board-expanded");
+    expect(html).not.toContain("workflow-free-canvas-stage");
+    expect(html).not.toContain("workflow-free-node");
+  });
+
+  test("renders a parallel workflow canvas with worker lanes and a join node", () => {
+    const parallelTeams: AgentTeam[] = [{ ...teams[0]!, mode: "parallel" }];
+    const html = renderToStaticMarkup(
+      <TeamPage
+        teams={parallelTeams}
+        teamRuns={[]}
+        activeTeamId="team-1"
+        activeTeamRunId={undefined}
+        prompt="Review another repo"
+        workDir="/tmp/workspace"
+        runtimes={runtimes}
+        channels={channels}
+        onPromptChange={() => undefined}
+        onCreateTeam={async () => undefined}
+        onUpdateTeam={async () => undefined}
+        onDeleteTeam={async () => undefined}
+        onSelectTeam={async () => undefined}
+        onSelectTeamRun={async () => undefined}
+        onRunTeam={async () => undefined}
+        onStopTeamRun={async () => undefined}
+        onChooseWorkDir={async () => undefined}
+        onRefresh={async () => undefined}
+      />,
+    );
+
+    expect(html).toContain("workflow-canvas-parallel");
+    expect(html).toContain("workflow-parallel-workers");
+    expect(html).toContain("workflow-join-node");
+    expect(html).toContain("Join");
+    expect(html).toContain("Planner");
+    expect(html).toContain("Checker");
+  });
+
+  test("renders a supervisor workflow canvas with lead, worker, and synthesis regions", () => {
+    const supervisorTeams: AgentTeam[] = [{ ...teams[0]!, mode: "supervisor" }];
+    const html = renderToStaticMarkup(
+      <TeamPage
+        teams={supervisorTeams}
+        teamRuns={[]}
+        activeTeamId="team-1"
+        activeTeamRunId={undefined}
+        prompt="Review another repo"
+        workDir="/tmp/workspace"
+        runtimes={runtimes}
+        channels={channels}
+        onPromptChange={() => undefined}
+        onCreateTeam={async () => undefined}
+        onUpdateTeam={async () => undefined}
+        onDeleteTeam={async () => undefined}
+        onSelectTeam={async () => undefined}
+        onSelectTeamRun={async () => undefined}
+        onRunTeam={async () => undefined}
+        onStopTeamRun={async () => undefined}
+        onChooseWorkDir={async () => undefined}
+        onRefresh={async () => undefined}
+      />,
+    );
+
+    expect(html).toContain("workflow-canvas-supervisor");
+    expect(html).toContain("workflow-supervisor-lead");
+    expect(html).toContain("workflow-supervisor-workers");
+    expect(html).toContain("workflow-supervisor-synthesis");
+    expect(html).toContain("Lead");
+    expect(html).toContain("Workers");
+    expect(html).toContain("Synthesis");
+  });
+
+  test("renders member edit controls only for the member being edited", () => {
+    const html = renderToStaticMarkup(
+      <TeamPage
+        teams={teams}
+        teamRuns={teamRuns}
+        activeTeamId="team-1"
+        activeTeamRunId="team-run-1"
+        defaultEditingMemberId="member-1"
+        prompt="Review another repo"
+        workDir="/tmp/workspace"
+        runtimes={runtimes}
+        channels={channels}
+        onPromptChange={() => undefined}
+        onCreateTeam={async () => undefined}
+        onUpdateTeam={async () => undefined}
+        onDeleteTeam={async () => undefined}
+        onSelectTeam={async () => undefined}
+        onSelectTeamRun={async () => undefined}
+        onRunTeam={async () => undefined}
+        onStopTeamRun={async () => undefined}
+        onChooseWorkDir={async () => undefined}
+        onRefresh={async () => undefined}
+      />,
+    );
+
+    expect(html).toContain("team-member-edit-overlay");
+    expect(html).toContain("role=\"dialog\"");
+    expect(html).toContain("aria-label=\"Edit team member\"");
+    expect(html).toContain("Edit member");
+    expect(html).toContain("team-member-editor-identity");
+    expect(html).toContain("team-member-editor-prompt-panel");
+    expect(html).toContain("team-member-editor-routing");
+    expect(html).toContain("aria-label=\"Member 1 prompt\"");
+    expect(html).not.toContain("Reuse agent");
+    expect(html).not.toContain("aria-label=\"Member 1 reusable agent\"");
+    expect(html).not.toContain("aria-label=\"Member 2 prompt\"");
+    expect(html).not.toContain("team-member-card is-editing");
+    expect(html).toContain("Done");
+  });
+
+  test("renders an empty teams state with a create action", () => {
+    const html = renderToStaticMarkup(
+      <TeamPage
+        teams={[]}
+        teamRuns={[]}
+        activeTeamId={undefined}
+        activeTeamRunId={undefined}
+        prompt=""
+        workDir="/tmp/workspace"
+        runtimes={runtimes}
+        channels={channels}
+        onPromptChange={() => undefined}
+        onCreateTeam={async () => undefined}
+        onUpdateTeam={async () => undefined}
+        onDeleteTeam={async () => undefined}
+        onSelectTeam={async () => undefined}
+        onSelectTeamRun={async () => undefined}
+        onRunTeam={async () => undefined}
+        onStopTeamRun={async () => undefined}
+        onChooseWorkDir={async () => undefined}
+        onRefresh={async () => undefined}
+      />,
+    );
+
+    expect(html).toContain("No teams yet");
+    expect(html).toContain("New team");
+  });
+});

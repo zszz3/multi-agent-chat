@@ -1,0 +1,231 @@
+import { mkdtemp, readFile, writeFile } from "node:fs/promises";
+import os from "node:os";
+import path from "node:path";
+import { describe, expect, test } from "vitest";
+import type { AgentChannel } from "../shared/types";
+import { codexAppServerConfigArgs, generateCodexConfigs, importCodexConfigs, parseCodexModelCatalog, parseCodexProfileConfig } from "./model-config";
+
+describe("model channel config", () => {
+  test("parses visible Codex models from the debug catalog", () => {
+    const models = parseCodexModelCatalog(
+      JSON.stringify({
+        models: [
+          { slug: "codex-auto-review", display_name: "Auto Review", visibility: "hidden", priority: 1 },
+          { slug: "gpt-5.5", display_name: "GPT-5.5", visibility: "list", priority: 2 },
+          { slug: "gpt-5.4-mini", display_name: "GPT-5.4 Mini", visibility: "list", priority: 3 },
+        ],
+      }),
+    );
+
+    expect(models).toEqual([
+      { id: "gpt-5.5", label: "GPT-5.5" },
+      { id: "gpt-5.4-mini", label: "GPT-5.4 Mini" },
+    ]);
+  });
+
+  test("generates Codex profile configs for every model in a channel", async () => {
+    const dir = await mkdtemp(path.join(os.tmpdir(), "multi-agent-chat-config-"));
+    const channels: AgentChannel[] = [
+      {
+        id: "codex-openai",
+        agentId: "codex",
+        label: "Codex OpenAI",
+        modelProvider: "openai",
+        providerName: "OpenAI",
+        baseUrl: "https://api.openai.com/v1",
+        wireApi: "responses",
+        modelReasoningEffort: "high",
+        plugins: [
+          { id: "documents@openai-primary-runtime", enabled: true },
+          { id: "browser-use@openai-bundled", enabled: false },
+        ],
+        models: [
+          { id: "default", label: "Default" },
+          { id: "gpt-5.5", label: "GPT-5.5" },
+        ],
+      },
+      {
+        id: "claude-code",
+        agentId: "claude",
+        label: "Claude Code",
+        models: [{ id: "default", label: "Default" }],
+      },
+    ];
+
+    const generated = await generateCodexConfigs(channels, dir);
+
+    expect(generated.map((item) => item.profileName)).toEqual([
+      "multi-agent-codex-openai-default",
+      "multi-agent-codex-openai-gpt-5-5",
+    ]);
+
+    const gpt55Path = path.join(dir, "multi-agent-codex-openai-gpt-5-5.config.toml");
+    const content = await readFile(gpt55Path, "utf8");
+    expect(content).toContain('model_provider = "openai"');
+    expect(content).toContain('model = "gpt-5.5"');
+    expect(content).toContain('model_reasoning_effort = "high"');
+    expect(content).toContain('[plugins."documents@openai-primary-runtime"]');
+    expect(content).toContain("enabled = true");
+    expect(content).toContain('[plugins."browser-use@openai-bundled"]');
+    expect(content).toContain("enabled = false");
+    expect(content).not.toContain("[model_providers.openai]");
+    expect(content).not.toContain('base_url = "https://api.openai.com/v1"');
+  });
+
+  test("does not override Codex built-in providers for app-server", () => {
+    const channel: AgentChannel = {
+      id: "codex-openai",
+      agentId: "codex",
+      label: "Codex OpenAI",
+      modelProvider: "openai",
+      providerName: "OpenAI",
+      baseUrl: "https://api.openai.com/v1",
+      wireApi: "responses",
+      modelReasoningEffort: "high",
+      httpHeaders: { Authorization: "Bearer $TOKEN" },
+      plugins: [
+        { id: "documents@openai-primary-runtime", enabled: true },
+        { id: "browser-use@openai-bundled", enabled: false },
+      ],
+      models: [
+        { id: "default", label: "Default" },
+        { id: "gpt-5.5", label: "GPT-5.5" },
+      ],
+    };
+
+    expect(codexAppServerConfigArgs(channel, "gpt-5.5")).toEqual([
+      "-c",
+      'model_provider="openai"',
+      "-c",
+      'model="gpt-5.5"',
+      "-c",
+      'model_reasoning_effort="high"',
+      "-c",
+      'plugins."documents@openai-primary-runtime".enabled=true',
+      "-c",
+      'plugins."browser-use@openai-bundled".enabled=false',
+    ]);
+    expect(codexAppServerConfigArgs(channel, "gpt-5.5")).not.toContain("--profile");
+    expect(codexAppServerConfigArgs(channel, "gpt-5.5").join("\n")).not.toContain("model_providers.openai");
+  });
+
+  test("builds app-server provider overrides for custom providers", () => {
+    const channel: AgentChannel = {
+      id: "codex-bridge",
+      agentId: "codex",
+      label: "Codex Bridge",
+      modelProvider: "bridge",
+      providerName: "Bridge",
+      baseUrl: "https://bridge.example/v1",
+      wireApi: "responses",
+      modelReasoningEffort: "high",
+      httpHeaders: { Authorization: "Bearer $TOKEN" },
+      models: [
+        { id: "default", label: "Default" },
+        { id: "gpt-5.5", label: "GPT-5.5" },
+      ],
+    };
+
+    expect(codexAppServerConfigArgs(channel, "gpt-5.5")).toEqual([
+      "-c",
+      'model_provider="bridge"',
+      "-c",
+      'model="gpt-5.5"',
+      "-c",
+      'model_reasoning_effort="high"',
+      "-c",
+      'model_providers.bridge.name="Bridge"',
+      "-c",
+      'model_providers.bridge.base_url="https://bridge.example/v1"',
+      "-c",
+      'model_providers.bridge.wire_api="responses"',
+      "-c",
+      'model_providers.bridge.http_headers={ "Authorization" = "Bearer $TOKEN" }',
+    ]);
+  });
+
+  test("parses an existing Codex profile into an importable channel", () => {
+    const imported = parseCodexProfileConfig(
+      "/Users/example/.codex/config_bridge.config.toml",
+      `
+model = "gpt-5.5"
+model_provider = "bridge"
+model_reasoning_effort = "high"
+
+[model_providers.bridge]
+name = "Bridge"
+base_url = "https://bridge.example/v1"
+wire_api = "responses"
+http_headers = { "Authorization" = "Bearer $TOKEN", "X-Test" = "1" }
+
+[plugins."documents@openai-primary-runtime"]
+enabled = true
+
+[plugins."browser-use@openai-bundled"]
+enabled = false
+`,
+    );
+
+    expect(imported).toEqual({
+      sourcePath: "/Users/example/.codex/config_bridge.config.toml",
+      channel: expect.objectContaining({
+        id: "codex-config-bridge",
+        agentId: "codex",
+        label: "Codex config_bridge",
+        profileName: "config_bridge",
+        modelProvider: "bridge",
+        providerName: "Bridge",
+        baseUrl: "https://bridge.example/v1",
+        wireApi: "responses",
+        modelReasoningEffort: "high",
+        httpHeaders: {
+          Authorization: "Bearer $TOKEN",
+          "X-Test": "1",
+        },
+        plugins: [
+          { id: "documents@openai-primary-runtime", enabled: true },
+          { id: "browser-use@openai-bundled", enabled: false },
+        ],
+        models: [
+          { id: "default", label: "Default" },
+          { id: "gpt-5.5", label: "gpt-5.5" },
+        ],
+      }),
+    });
+  });
+
+  test("imports Codex profiles from a Codex home directory", async () => {
+    const dir = await mkdtemp(path.join(os.tmpdir(), "multi-agent-chat-import-"));
+    await writeFile(
+      path.join(dir, "config.toml"),
+      'model_provider = "openai"\n[plugins."documents@openai-primary-runtime"]\nenabled = true\n',
+      "utf8",
+    );
+    await writeFile(path.join(dir, "bridge.config.toml"), 'model_provider = "bridge"\nmodel = "gpt-5.4"\n', "utf8");
+    await writeFile(path.join(dir, "config_custom_openai.toml"), 'model_provider = "custom-openai"\n[plugins."browser-use@openai-bundled"]\nenabled = false\n', "utf8");
+    await writeFile(path.join(dir, "ignored.toml"), 'model = "gpt-5.5"\n', "utf8");
+
+    const imported = await importCodexConfigs(dir);
+
+    expect(imported.map((item) => item.channel.id)).toEqual([
+      "codex-bridge",
+      "codex-config",
+      "codex-config-custom-openai",
+    ]);
+    expect(imported.find((item) => item.channel.id === "codex-bridge")?.channel).toMatchObject({
+      id: "codex-bridge",
+      profileName: "bridge",
+      modelProvider: "bridge",
+      models: [
+        { id: "default", label: "Default" },
+        { id: "gpt-5.4", label: "gpt-5.4" },
+      ],
+    });
+    expect(imported.find((item) => item.channel.id === "codex-config")?.channel.plugins).toEqual([
+      { id: "documents@openai-primary-runtime", enabled: true },
+    ]);
+    expect(imported.find((item) => item.channel.id === "codex-config-custom-openai")?.channel.plugins).toEqual([
+      { id: "browser-use@openai-bundled", enabled: false },
+    ]);
+  });
+});
