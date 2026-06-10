@@ -25,11 +25,10 @@ export class ClaudeRunner {
       "--print",
       "--output-format",
       "stream-json",
+      "--verbose",
       "--include-partial-messages",
       "--permission-mode",
       "bypassPermissions",
-      "--cd",
-      this.options.cwd,
     ];
     if (this.options.modelId) {
       args.push("--model", this.options.modelId);
