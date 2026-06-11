@@ -963,7 +963,7 @@ export function App() {
           <button
             className={`feature-nav-item ${activeFeature === "chat" ? "is-active" : ""}`}
             onClick={() => setActiveFeature("chat")}
-            data-tip="Chat · G C"
+           
           >
             <MessageSquareText size={15} />
             <span>Chat</span>
@@ -971,7 +971,7 @@ export function App() {
           <button
             className={`feature-nav-item ${activeFeature === "tasks" ? "is-active" : ""}`}
             onClick={() => setActiveFeature("tasks")}
-            data-tip="Tasks · G T"
+           
           >
             <ClipboardList size={15} />
             <span>Tasks</span>
@@ -979,7 +979,7 @@ export function App() {
           <button
             className={`feature-nav-item ${activeFeature === "teams" ? "is-active" : ""}`}
             onClick={() => setActiveFeature("teams")}
-            data-tip="Teams · G W"
+           
           >
             <Users size={15} />
             <span>Teams</span>
@@ -987,7 +987,7 @@ export function App() {
           <button
             className={`feature-nav-item ${activeFeature === "configs" ? "is-active" : ""}`}
             onClick={() => setActiveFeature("configs")}
-            data-tip="Configs · G S"
+           
           >
             <Settings size={15} />
             <span>Configs</span>
