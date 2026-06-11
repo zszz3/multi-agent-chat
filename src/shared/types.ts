@@ -130,6 +130,26 @@ export interface RunTaskRequest {
   workDir?: string;
 }
 
+export interface WorkflowAgentRequest {
+  requestId?: string;
+  prompt: string;
+  agentId: AgentId;
+  channelId?: string;
+  modelId?: string;
+  workDir?: string;
+  sessionId?: string;
+}
+
+export interface WorkflowAgentResponse {
+  content: string;
+  sessionId: string | undefined;
+}
+
+export type WorkflowAgentEvent =
+  | { requestId: string; type: "delta"; content: string }
+  | { requestId: string; type: "completed"; content: string; sessionId: string | undefined }
+  | { requestId: string; type: "error"; error: string };
+
 export type AgentTeamMode = "pipeline" | "parallel" | "supervisor";
 export type AgentWorkflowTargetKind = "workspace" | "task" | "custom";
 
@@ -258,6 +278,71 @@ export interface RunAgentTeamRequest {
   workDir?: string;
 }
 
+export type WorkflowGraphNodeKind = "start" | "agent" | "end";
+
+export interface WorkflowGraphNode {
+  id: string;
+  kind: WorkflowGraphNodeKind;
+  title: string;
+  prompt: string;
+  agentId?: AgentId;
+  channelId?: string;
+  modelId?: string;
+}
+
+export interface WorkflowGraphEdge {
+  id: string;
+  fromNodeId: string;
+  toNodeId: string;
+}
+
+export interface WorkflowGraph {
+  title: string;
+  objective: string;
+  nodes: WorkflowGraphNode[];
+  edges: WorkflowGraphEdge[];
+}
+
+export interface WorkflowGraphValidation {
+  valid: boolean;
+  errors: string[];
+  startNodeIds: string[];
+  executableNodeIds: string[];
+  topologicalNodeIds: string[];
+}
+
+export interface WorkflowGrillMessage {
+  id: string;
+  role: "assistant" | "user";
+  content: string;
+}
+
+export type WorkflowRunNodeStatus = "queued" | "running" | "completed" | "failed";
+
+export interface WorkflowRunProgressItem {
+  nodeId: string;
+  title: string;
+  status: WorkflowRunNodeStatus;
+  detail?: string;
+  taskId?: string;
+}
+
+export interface WorkflowDraftState {
+  agentId: AgentId;
+  channelId: string;
+  modelId: string;
+  objective: string;
+  graph: WorkflowGraph;
+  graphReady: boolean;
+  messages: WorkflowGrillMessage[];
+  reply: string;
+  error: string | undefined;
+  runProgress: WorkflowRunProgressItem[];
+  runContextDocument: string;
+  agentSessionId: string | undefined;
+  updatedAt: number;
+}
+
 export interface AppSnapshot {
   detectedAt: number;
   activeChatId: string | undefined;
@@ -271,4 +356,5 @@ export interface AppSnapshot {
   tasks: TaskRun[];
   teams: AgentTeam[];
   teamRuns: TeamRun[];
+  workflowDraft: WorkflowDraftState | undefined;
 }

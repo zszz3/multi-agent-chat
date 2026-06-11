@@ -451,6 +451,42 @@ describe("AgentHub chat sessions", () => {
     expect(calls.map((call) => call.method)).toContain("model/list");
   });
 
+  test("asks a workflow agent through Codex without creating a visible chat or task", async () => {
+    const dir = await mkdtemp(path.join(os.tmpdir(), "multi-agent-chat-workflow-agent-"));
+    const fake = await writeSequentialCodexFake(dir);
+    const hub = new AgentHub({ codex: fake.executable, claude: "missing-claude-for-test" });
+    (hub as any).runtimes.set("codex", {
+      id: "codex",
+      label: "Codex",
+      command: fake.executable,
+      version: "test",
+      available: true,
+    });
+    const before = hub.snapshot();
+
+    const events: any[] = [];
+    const response = await (hub as any).askWorkflowAgent({
+      requestId: "workflow-test",
+      prompt: "You are a Loop Engineering Agent. Ask one question.",
+      agentId: "codex",
+      channelId: "codex-openai",
+      modelId: DEFAULT_MODEL_ID,
+      workDir: dir,
+    }, (event: any) => events.push(event));
+
+    expect(response).toEqual({ content: "artifact-1", sessionId: "thread-1" });
+    expect(events).toEqual([
+      { requestId: "workflow-test", type: "delta", content: "artifact-1" },
+      { requestId: "workflow-test", type: "completed", content: "artifact-1", sessionId: "thread-1" },
+    ]);
+    const after = hub.snapshot();
+    expect(after.chats).toHaveLength(before.chats.length);
+    expect(after.tasks).toHaveLength(0);
+
+    const calls = (await readFile(fake.callsPath, "utf8")).trim().split("\n").map((line) => JSON.parse(line) as any);
+    expect(calls.some((call) => call.method === "turn/start" && call.params.input[0].text.includes("Loop Engineering Agent"))).toBe(true);
+  });
+
   test("persists and restores app-owned chat history", async () => {
     const dir = await mkdtemp(path.join(os.tmpdir(), "multi-agent-chat-"));
     const storagePath = path.join(dir, "app-chats.json");
@@ -487,6 +523,69 @@ describe("AgentHub chat sessions", () => {
         events: [expect.objectContaining({ type: "meta", content: "→ shell_command\npwd" })],
       }),
     ]);
+  });
+
+  test("persists and restores the current workflow draft", async () => {
+    const dir = await mkdtemp(path.join(os.tmpdir(), "multi-agent-chat-"));
+    const storagePath = path.join(dir, "app-chats.json");
+    const hub = new AgentHub();
+
+    await hub.loadPersistedState(storagePath);
+    (hub as any).updateWorkflowDraft({
+      agentId: "codex",
+      channelId: "codex-openai",
+      modelId: DEFAULT_MODEL_ID,
+      objective: "Review sample repo",
+      graphReady: true,
+      graph: {
+        title: "sample repo review",
+        objective: "Review sample repo",
+        nodes: [
+          { id: "start", kind: "start", title: "Start", prompt: "" },
+          { id: "inventory", kind: "agent", title: "Inventory", prompt: "Map repo.", agentId: "codex", channelId: "codex-openai", modelId: DEFAULT_MODEL_ID },
+          { id: "end", kind: "end", title: "Done", prompt: "" },
+        ],
+        edges: [
+          { id: "start->inventory", fromNodeId: "start", toNodeId: "inventory" },
+          { id: "inventory->end", fromNodeId: "inventory", toNodeId: "end" },
+        ],
+      },
+      messages: [
+        { id: "m-1", role: "user", content: "Review sample repo" },
+        { id: "m-2", role: "assistant", content: "Workflow graph ready: sample repo review" },
+      ],
+      reply: "looks good",
+      error: undefined,
+      runProgress: [{ nodeId: "inventory", title: "Inventory", status: "completed", detail: "Output captured", taskId: "task-1" }],
+      runContextDocument: "# Workflow Context\n\n## Inventory (inventory)\nMapped repo.",
+      agentSessionId: "thread-1",
+      updatedAt: 1710000000000,
+    });
+    await hub.flushPersistence();
+
+    const persisted = JSON.parse(await readFile(storagePath, "utf8")) as any;
+    expect(persisted.workflowDraft).toMatchObject({
+      objective: "Review sample repo",
+      graphReady: true,
+      graph: { title: "sample repo review" },
+      messages: [{ id: "m-1" }, { id: "m-2" }],
+      runProgress: [{ nodeId: "inventory", status: "completed" }],
+      runContextDocument: "# Workflow Context\n\n## Inventory (inventory)\nMapped repo.",
+    });
+
+    const restored = new AgentHub();
+    await restored.loadPersistedState(storagePath);
+    const snapshot = restored.snapshot() as any;
+
+    expect(snapshot.workflowDraft).toMatchObject({
+      objective: "Review sample repo",
+      graphReady: true,
+      graph: { title: "sample repo review" },
+      messages: [{ id: "m-1", role: "user" }, { id: "m-2", role: "assistant" }],
+      runProgress: [{ nodeId: "inventory", status: "completed", detail: "Output captured" }],
+      runContextDocument: "# Workflow Context\n\n## Inventory (inventory)\nMapped repo.",
+      agentSessionId: "thread-1",
+    });
   });
 });
 
@@ -936,7 +1035,7 @@ describe("AgentHub agent teams", () => {
 
     const started = await (hub as any).runTeam({
       teamId,
-      prompt: "Review cd ../session-search",
+      prompt: "Review cd ../example-service",
       workDir: dir,
     });
 
@@ -975,7 +1074,7 @@ describe("AgentHub agent teams", () => {
 
     const firstTaskId = started.teamRuns[0].steps[0].taskId;
     const firstTask = started.tasks.find((task: any) => task.id === firstTaskId);
-    expect(firstTask?.prompt).toContain("Review cd ../session-search");
+    expect(firstTask?.prompt).toContain("Review cd ../example-service");
     expect(firstTask?.prompt).toContain("Shared repo context");
     expect(firstTask?.prompt).toContain("Create a short review plan before touching code.");
     expect(firstTask?.sessionId).toBeUndefined();

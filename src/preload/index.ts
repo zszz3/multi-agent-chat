@@ -11,6 +11,10 @@ import type {
   RunTaskRequest,
   TaskProgress,
   UpdateAgentTeamRequest,
+  WorkflowAgentEvent,
+  WorkflowAgentRequest,
+  WorkflowAgentResponse,
+  WorkflowDraftState,
 } from "../shared/types";
 
 const api = {
@@ -29,6 +33,13 @@ const api = {
   chooseWorkDir: (): Promise<AppSnapshot> => ipcRenderer.invoke("workdir:choose"),
   sendPrompt: (prompt: string, chatId?: string): Promise<AppSnapshot> => ipcRenderer.invoke("run:send", prompt, chatId),
   stopChat: (chatId: string): Promise<AppSnapshot> => ipcRenderer.invoke("run:stop", chatId),
+  askWorkflowAgent: (request: WorkflowAgentRequest): Promise<WorkflowAgentResponse> => ipcRenderer.invoke("workflow-agent:ask", request),
+  updateWorkflowDraft: (draft?: WorkflowDraftState): Promise<AppSnapshot> => ipcRenderer.invoke("workflow:draft:update", draft),
+  onWorkflowAgentEvent: (callback: (event: WorkflowAgentEvent) => void): (() => void) => {
+    const listener = (_event: Electron.IpcRendererEvent, event: WorkflowAgentEvent) => callback(event);
+    ipcRenderer.on("workflow-agent:event", listener);
+    return () => ipcRenderer.removeListener("workflow-agent:event", listener);
+  },
   runTask: (request: RunTaskRequest): Promise<AppSnapshot> => ipcRenderer.invoke("task:run", request),
   selectTask: (taskId: string): Promise<AppSnapshot> => ipcRenderer.invoke("task:select", taskId),
   stopTask: (taskId: string): Promise<AppSnapshot> => ipcRenderer.invoke("task:stop", taskId),

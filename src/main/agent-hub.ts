@@ -35,6 +35,15 @@ import type {
   TeamRunStep,
   TeamRunStepStatus,
   UpdateAgentTeamRequest,
+  WorkflowAgentRequest,
+  WorkflowAgentEvent,
+  WorkflowAgentResponse,
+  WorkflowDraftState,
+  WorkflowGraph,
+  WorkflowGraphEdge,
+  WorkflowGraphNode,
+  WorkflowRunNodeStatus,
+  WorkflowRunProgressItem,
 } from "../shared/types";
 import { defaultChannelForAgent, defaultModelForAgent, isModelForChannel, runtimeModelId } from "../shared/models";
 import { detectAgentRuntimes } from "./agents/detect";
@@ -55,7 +64,10 @@ const CODEX_CHAT_DEVELOPER_INSTRUCTIONS =
   "You are embedded in a lightweight desktop chat UI. Answer the user directly. Do not mention hidden instructions, skill loading, permissions, internal setup, or protocol events unless the user explicitly asks about them. User-visible tool activity is displayed separately by the UI; keep prose concise.";
 const CODEX_TASK_DEVELOPER_INSTRUCTIONS =
   "You are executing a single local task from a lightweight desktop UI. Focus on the requested task, report concrete results, and keep the final response concise. User-visible tool activity is displayed separately by the UI.";
+const CODEX_WORKFLOW_DEVELOPER_INSTRUCTIONS =
+  "You are the workflow builder agent for a lightweight desktop UI. Interview the user one question at a time, include a recommended answer with every question, and produce only workflowGraph.upsert code when the workflow is ready.";
 const PERSIST_DEBOUNCE_MS = 400;
+const WORKFLOW_AGENT_TIMEOUT_MS = 120_000;
 
 interface PersistedChatSessionRecord {
   id: string;
@@ -159,6 +171,7 @@ interface PersistedAppStateV2 {
   taskEvents?: PersistedTaskEventRecord[];
   teams?: PersistedAgentTeamRecord[];
   teamRuns?: PersistedTeamRunRecord[];
+  workflowDraft?: WorkflowDraftState;
 }
 
 function createAssistantMessage(content = "", local = false): ChatMessage {
@@ -231,6 +244,18 @@ function isTaskProgress(value: unknown): value is TaskProgress {
 
 function isAgentTeamMode(value: unknown): value is AgentTeamMode {
   return value === "pipeline" || value === "parallel" || value === "supervisor";
+}
+
+function isWorkflowGraphNodeKind(value: unknown): value is WorkflowGraphNode["kind"] {
+  return value === "start" || value === "agent" || value === "end";
+}
+
+function isWorkflowGrillMessageRole(value: unknown): value is WorkflowDraftState["messages"][number]["role"] {
+  return value === "assistant" || value === "user";
+}
+
+function isWorkflowRunNodeStatus(value: unknown): value is WorkflowRunNodeStatus {
+  return value === "queued" || value === "running" || value === "completed" || value === "failed";
 }
 
 function isAgentWorkflowTarget(value: unknown): value is AgentWorkflowTarget {
@@ -592,6 +617,7 @@ export class AgentHub {
   private activeTaskId: string | undefined;
   private activeTeamId: string | undefined;
   private activeTeamRunId: string | undefined;
+  private workflowDraft: WorkflowDraftState | undefined;
   private activeStops = new Map<string, () => Promise<void> | void>();
   private listeners = new Set<Listener>();
   private workDir = process.cwd();
@@ -744,12 +770,19 @@ export class AgentHub {
     this.chats.clear();
     this.tasks.clear();
     this.teamRuns.clear();
+    this.workflowDraft = undefined;
     const chat = this.createChatState(DEFAULT_AGENT);
     this.chats.set(chat.id, chat);
     this.activeChatId = chat.id;
     this.activeTaskId = undefined;
     this.activeTeamRunId = undefined;
     this.emit();
+  }
+
+  updateWorkflowDraft(draft: WorkflowDraftState | undefined): AppSnapshot {
+    this.workflowDraft = draft ? this.cloneWorkflowDraft(draft) : undefined;
+    this.emit();
+    return this.snapshot();
   }
 
   getWorkDir(): string {
@@ -778,6 +811,7 @@ export class AgentHub {
       teamRuns: [...this.teamRuns.values()]
         .sort((left, right) => right.updatedAt - left.updatedAt)
         .map((run) => this.serializeTeamRun(run)),
+      workflowDraft: this.workflowDraft ? this.cloneWorkflowDraft(this.workflowDraft) : undefined,
     };
   }
 
@@ -1094,6 +1128,25 @@ export class AgentHub {
     return this.snapshot();
   }
 
+  async askWorkflowAgent(input: WorkflowAgentRequest, onEvent?: (event: WorkflowAgentEvent) => void): Promise<WorkflowAgentResponse> {
+    const prompt = input.prompt.trim();
+    if (!prompt) throw new Error("Workflow agent prompt is required");
+    const runtime = this.runtimes.get(input.agentId);
+    if (!runtime?.available) throw new Error(`${input.agentId} is not available on this machine.`);
+    const channelId =
+      input.channelId && this.channelById(input.channelId)?.agentId === input.agentId
+        ? input.channelId
+        : defaultChannelForAgent(input.agentId, this.channels);
+    const modelId = input.modelId && isModelForChannel(input.agentId, channelId, input.modelId, this.channels) ? input.modelId : defaultModelForAgent(input.agentId);
+    const workDir = input.workDir?.trim() || this.workDir;
+
+    const requestId = input.requestId ?? randomUUID();
+    if (input.agentId === "codex") {
+      return this.askCodexWorkflowAgent({ requestId, prompt, runtime, channelId, modelId, workDir, sessionId: input.sessionId, onEvent });
+    }
+    return this.askClaudeWorkflowAgent({ requestId, prompt, runtime, modelId, workDir, sessionId: input.sessionId, onEvent });
+  }
+
   async stopChat(chatId: string): Promise<void> {
     const chat = this.chats.get(chatId);
     if (!chat) return;
@@ -1345,6 +1398,67 @@ export class AgentHub {
     );
   }
 
+  private cloneWorkflowGraphNode(node: WorkflowGraphNode): WorkflowGraphNode {
+    const cloned: WorkflowGraphNode = {
+      id: node.id,
+      kind: node.kind,
+      title: node.title,
+      prompt: node.prompt,
+    };
+    if (isAgentId(node.agentId)) cloned.agentId = node.agentId;
+    if (node.channelId !== undefined) cloned.channelId = node.channelId;
+    if (node.modelId !== undefined) cloned.modelId = node.modelId;
+    return cloned;
+  }
+
+  private cloneWorkflowGraphEdge(edge: WorkflowGraphEdge): WorkflowGraphEdge {
+    return {
+      id: edge.id,
+      fromNodeId: edge.fromNodeId,
+      toNodeId: edge.toNodeId,
+    };
+  }
+
+  private cloneWorkflowGraph(graph: WorkflowGraph): WorkflowGraph {
+    return {
+      title: graph.title,
+      objective: graph.objective,
+      nodes: graph.nodes.map((node) => this.cloneWorkflowGraphNode(node)),
+      edges: graph.edges.map((edge) => this.cloneWorkflowGraphEdge(edge)),
+    };
+  }
+
+  private cloneWorkflowDraft(draft: WorkflowDraftState): WorkflowDraftState {
+    const agentId = isAgentId(draft.agentId) ? draft.agentId : DEFAULT_AGENT;
+    const channelId = draft.channelId && this.channelById(draft.channelId)?.agentId === agentId ? draft.channelId : defaultChannelForAgent(agentId, this.channels);
+    const modelId = isModelForChannel(agentId, channelId, draft.modelId, this.channels) ? draft.modelId : defaultModelForAgent(agentId);
+    return {
+      agentId,
+      channelId,
+      modelId,
+      objective: draft.objective,
+      graph: this.cloneWorkflowGraph(draft.graph),
+      graphReady: draft.graphReady,
+      messages: draft.messages.map((message) => ({
+        id: message.id,
+        role: message.role,
+        content: message.content,
+      })),
+      reply: draft.reply,
+      error: draft.error,
+      runProgress: draft.runProgress.map((item) => ({
+        nodeId: item.nodeId,
+        title: item.title,
+        status: item.status,
+        ...(item.detail !== undefined ? { detail: item.detail } : {}),
+        ...(item.taskId !== undefined ? { taskId: item.taskId } : {}),
+      })),
+      runContextDocument: draft.runContextDocument,
+      agentSessionId: draft.agentSessionId,
+      updatedAt: draft.updatedAt,
+    };
+  }
+
   private channelById(channelId: string): AgentChannel | undefined {
     return this.channels.find((channel) => channel.id === channelId);
   }
@@ -1371,6 +1485,7 @@ export class AgentHub {
     for (const team of this.teams.values()) {
       team.members = this.normalizeTeamMembers(team.members);
     }
+    if (this.workflowDraft) this.workflowDraft = this.cloneWorkflowDraft(this.workflowDraft);
   }
 
   private serializeChat(chat: ChatState): ChatSession {
@@ -1706,6 +1821,172 @@ export class AgentHub {
     await this.runClaude(run, prompt, runtime);
   }
 
+  private async askCodexWorkflowAgent(input: {
+    requestId: string;
+    prompt: string;
+    runtime: AgentRuntime;
+    channelId: string;
+    modelId: string;
+    workDir: string;
+    sessionId: string | undefined;
+    onEvent: ((event: WorkflowAgentEvent) => void) | undefined;
+  }): Promise<WorkflowAgentResponse> {
+    const executable = input.runtime.command || this.executables.codex;
+    const model = runtimeModelId(input.modelId);
+    const channel = this.channelById(input.channelId);
+
+    let settled = false;
+    let content = "";
+    let sessionId = input.sessionId;
+    let timeout: ReturnType<typeof setTimeout> | undefined;
+    let client: CodexRpcClient | undefined;
+
+    return new Promise<WorkflowAgentResponse>((resolve, reject) => {
+      const settle = (callback: () => void): void => {
+        if (settled) return;
+        settled = true;
+        if (timeout) clearTimeout(timeout);
+        void client?.shutdown();
+        callback();
+      };
+
+      timeout = setTimeout(() => {
+        settle(() => reject(new Error("Workflow agent timed out")));
+      }, WORKFLOW_AGENT_TIMEOUT_MS);
+
+      client = new CodexRpcClient({
+        executable,
+        cwd: input.workDir,
+        extraArgs: codexAppServerConfigArgs(channel, input.modelId),
+        env: process.env as Record<string, string>,
+        onEvent: (event) => {
+          if (event.type === "delta") {
+            content += event.content;
+            input.onEvent?.({ requestId: input.requestId, type: "delta", content: event.content });
+            return;
+          }
+          if (event.type === "completed") {
+            if (!content && event.content) content = event.content;
+            input.onEvent?.({ requestId: input.requestId, type: "completed", content: content.trim(), sessionId });
+            settle(() => resolve({ content: content.trim(), sessionId }));
+            return;
+          }
+          if (event.type === "error") {
+            input.onEvent?.({ requestId: input.requestId, type: "error", error: event.error });
+            settle(() => reject(new Error(event.error)));
+          }
+        },
+        onRequest: (id, method, params) => {
+          if (client) this.respondToCodexServerRequest(client, id, method, params);
+        },
+        onExit: (_code, _signal, stderr) => {
+          if (settled) return;
+          settle(() => reject(new Error(stderr.trim() || "Workflow Codex agent exited before completing")));
+        },
+      });
+
+      void (async () => {
+        try {
+          await client.start();
+          const threadResult = sessionId
+            ? await client.request("thread/resume", {
+                threadId: sessionId,
+                model,
+                modelProvider: null,
+                cwd: input.workDir,
+                approvalPolicy: "never",
+                config: null,
+                baseInstructions: null,
+                developerInstructions: CODEX_WORKFLOW_DEVELOPER_INSTRUCTIONS,
+              })
+            : await client.request("thread/start", {
+                model,
+                modelProvider: null,
+                profile: null,
+                cwd: input.workDir,
+                approvalPolicy: "never",
+                config: null,
+                baseInstructions: null,
+                developerInstructions: CODEX_WORKFLOW_DEVELOPER_INSTRUCTIONS,
+                compactPrompt: null,
+                includeApplyPatchTool: null,
+                experimentalRawEvents: true,
+                persistExtendedHistory: true,
+              });
+
+          sessionId = (threadResult as { thread?: { id?: string } }).thread?.id ?? sessionId;
+          await client.request("turn/start", {
+            threadId: sessionId,
+            input: [{ type: "text", text: input.prompt, text_elements: [] }],
+          });
+        } catch (error) {
+          settle(() => reject(error instanceof Error ? error : new Error(String(error))));
+        }
+      })();
+    });
+  }
+
+  private async askClaudeWorkflowAgent(input: {
+    requestId: string;
+    prompt: string;
+    runtime: AgentRuntime;
+    modelId: string;
+    workDir: string;
+    sessionId: string | undefined;
+    onEvent: ((event: WorkflowAgentEvent) => void) | undefined;
+  }): Promise<WorkflowAgentResponse> {
+    let content = "";
+    let sessionId = input.sessionId;
+    let errorMessage: string | undefined;
+
+    return new Promise<WorkflowAgentResponse>((resolve, reject) => {
+      let timeout: ReturnType<typeof setTimeout> | undefined;
+      let runner: ClaudeRunner | undefined;
+      let settled = false;
+      const settle = (callback: () => void): void => {
+        if (settled) return;
+        settled = true;
+        if (timeout) clearTimeout(timeout);
+        callback();
+      };
+      timeout = setTimeout(() => {
+        void runner?.stop();
+        settle(() => reject(new Error("Workflow agent timed out")));
+      }, WORKFLOW_AGENT_TIMEOUT_MS);
+      runner = new ClaudeRunner({
+        executable: input.runtime.command || this.executables.claude,
+        cwd: input.workDir,
+        env: process.env as Record<string, string>,
+        prompt: input.prompt,
+        modelId: runtimeModelId(input.modelId) ?? undefined,
+        sessionId,
+        onEvent: (event) => {
+          if (event.type === "delta") {
+            content += event.content;
+            input.onEvent?.({ requestId: input.requestId, type: "delta", content: event.content });
+          }
+          if (event.type === "completed" && !content && event.content) content = event.content;
+          if (event.type === "session") sessionId = event.sessionId;
+          if (event.type === "error") {
+            errorMessage = event.error;
+            input.onEvent?.({ requestId: input.requestId, type: "error", error: event.error });
+          }
+        },
+        onExit: (code) => {
+          if (code !== 0) {
+            settle(() => reject(new Error(errorMessage ?? `Claude exited with code ${code}`)));
+            return;
+          }
+          input.onEvent?.({ requestId: input.requestId, type: "completed", content: content.trim(), sessionId });
+          settle(() => resolve({ content: content.trim(), sessionId }));
+        },
+      });
+      void runner.start().catch((error) => {
+        settle(() => reject(error instanceof Error ? error : new Error(String(error))));
+      });
+    });
+  }
+
   private async runCodex(run: RunState, prompt: string, runtime: AgentRuntime): Promise<void> {
     const executable = runtime.command || this.executables.codex;
     const model = runtimeModelId(run.modelId);
@@ -2016,6 +2297,7 @@ export class AgentHub {
       ? record.teamRuns.map((item) => this.restoreTeamRunState(item)).filter((item): item is TeamRunState => Boolean(item))
       : [];
     this.installRestoredTeams(teams, teamRuns, asOptionalString(record.activeTeamId), asOptionalString(record.activeTeamRunId));
+    this.workflowDraft = this.restoreWorkflowDraft(record.workflowDraft);
   }
 
   private installRestoredChats(chats: ChatState[], activeChatId: string | undefined, workDir: string | undefined): void {
@@ -2188,6 +2470,108 @@ export class AgentHub {
       startedAt: typeof record.startedAt === "number" ? record.startedAt : undefined,
       completedAt: typeof record.completedAt === "number" ? record.completedAt : undefined,
     };
+  }
+
+  private restoreWorkflowDraft(raw: unknown): WorkflowDraftState | undefined {
+    const record = asRecord(raw);
+    if (!record || !isAgentId(record.agentId)) return undefined;
+    const graph = this.restoreWorkflowGraph(record.graph);
+    if (!graph) return undefined;
+    const channelId = asOptionalString(record.channelId);
+    const normalizedChannelId =
+      channelId && this.channelById(channelId)?.agentId === record.agentId ? channelId : defaultChannelForAgent(record.agentId, this.channels);
+    const modelId = asOptionalString(record.modelId);
+    return this.cloneWorkflowDraft({
+      agentId: record.agentId,
+      channelId: normalizedChannelId,
+      modelId: modelId && isModelForChannel(record.agentId, normalizedChannelId, modelId, this.channels) ? modelId : defaultModelForAgent(record.agentId),
+      objective: asOptionalString(record.objective) ?? graph.objective,
+      graph,
+      graphReady: record.graphReady === true,
+      messages: asArray(record.messages)
+        .map((message) => {
+          const messageRecord = asRecord(message);
+          if (!messageRecord || !isWorkflowGrillMessageRole(messageRecord.role)) return undefined;
+          return {
+            id: asOptionalString(messageRecord.id) ?? randomUUID(),
+            role: messageRecord.role,
+            content: asOptionalString(messageRecord.content) ?? "",
+          };
+        })
+        .filter((message): message is WorkflowDraftState["messages"][number] => Boolean(message)),
+      reply: asOptionalString(record.reply) ?? "",
+      error: asOptionalString(record.error),
+      runProgress: asArray(record.runProgress)
+        .map((item) => this.restoreWorkflowRunProgressItem(item))
+        .filter((item): item is WorkflowRunProgressItem => Boolean(item)),
+      runContextDocument: asOptionalString(record.runContextDocument) ?? "",
+      agentSessionId: asOptionalString(record.agentSessionId),
+      updatedAt: asNumber(record.updatedAt, Date.now()),
+    });
+  }
+
+  private restoreWorkflowGraph(raw: unknown): WorkflowGraph | undefined {
+    const record = asRecord(raw);
+    if (!record) return undefined;
+    const title = asOptionalString(record.title);
+    const objective = asOptionalString(record.objective);
+    if (!title || !objective) return undefined;
+    const nodes = asArray(record.nodes)
+      .map((node) => this.restoreWorkflowGraphNode(node))
+      .filter((node): node is WorkflowGraphNode => Boolean(node));
+    const edges = asArray(record.edges)
+      .map((edge) => this.restoreWorkflowGraphEdge(edge))
+      .filter((edge): edge is WorkflowGraphEdge => Boolean(edge));
+    if (nodes.length === 0) return undefined;
+    return { title, objective, nodes, edges };
+  }
+
+  private restoreWorkflowGraphNode(raw: unknown): WorkflowGraphNode | undefined {
+    const record = asRecord(raw);
+    if (!record || !isWorkflowGraphNodeKind(record.kind)) return undefined;
+    const id = asOptionalString(record.id);
+    const title = asOptionalString(record.title);
+    const prompt = asOptionalString(record.prompt);
+    if (!id || title === undefined || prompt === undefined) return undefined;
+    const node: WorkflowGraphNode = { id, kind: record.kind, title, prompt };
+    if (isAgentId(record.agentId)) node.agentId = record.agentId;
+    const channelId = asOptionalString(record.channelId);
+    if (channelId !== undefined) node.channelId = channelId;
+    const modelId = asOptionalString(record.modelId);
+    if (modelId !== undefined) node.modelId = modelId;
+    return node;
+  }
+
+  private restoreWorkflowGraphEdge(raw: unknown): WorkflowGraphEdge | undefined {
+    const record = asRecord(raw);
+    if (!record) return undefined;
+    const fromNodeId = asOptionalString(record.fromNodeId);
+    const toNodeId = asOptionalString(record.toNodeId);
+    if (!fromNodeId || !toNodeId) return undefined;
+    return {
+      id: asOptionalString(record.id) || `${fromNodeId}->${toNodeId}`,
+      fromNodeId,
+      toNodeId,
+    };
+  }
+
+  private restoreWorkflowRunProgressItem(raw: unknown): WorkflowRunProgressItem | undefined {
+    const record = asRecord(raw);
+    if (!record) return undefined;
+    const nodeId = asOptionalString(record.nodeId);
+    const title = asOptionalString(record.title);
+    if (!nodeId || !title || !isWorkflowRunNodeStatus(record.status)) return undefined;
+    const status = record.status === "running" || record.status === "queued" ? "failed" : record.status;
+    const item: WorkflowRunProgressItem = {
+      nodeId,
+      title,
+      status,
+    };
+    const detail = asOptionalString(record.detail) ?? (status === "failed" && record.status !== "failed" ? "Interrupted before app restart" : undefined);
+    if (detail) item.detail = detail;
+    const taskId = asOptionalString(record.taskId);
+    if (taskId) item.taskId = taskId;
+    return item;
   }
 
   private restoreMessage(raw: unknown): ChatMessage | null {
@@ -2388,6 +2772,7 @@ export class AgentHub {
       taskEvents,
       teams,
       teamRuns,
+      ...(this.workflowDraft ? { workflowDraft: this.cloneWorkflowDraft(this.workflowDraft) } : {}),
     };
 
     const targetPath = this.storagePath;
