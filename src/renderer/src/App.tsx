@@ -1217,6 +1217,7 @@ export function App() {
                 <div className="cli-status-line">
                   <span className={`runtime-dot ${agentAccent(activeChat.agentId)}`} />
                   <span>{agentLabel(activeChat.agentId)} is thinking</span>
+                  <span className="stream-cursor" aria-hidden="true" />
                 </div>
               ) : null}
             </section>

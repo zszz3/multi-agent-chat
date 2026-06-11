@@ -4600,3 +4600,266 @@ textarea:focus-visible {
 .cli-message.meta {
   padding-left: 0;
 }
+
+/* ───────────────── Linear reskin v4 — rail fix + workflow board to template ───────────────── */
+
+/* center rail nav buttons */
+.feature-nav {
+  justify-items: center;
+}
+
+.rail-footer {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  gap: 6px;
+}
+
+/* workflow node cards — clean template look */
+.team-member-card {
+  position: relative;
+  grid-template-columns: 12px minmax(0, 1fr);
+  padding: 10px 12px;
+  border-radius: 10px;
+  box-shadow: none;
+}
+
+.workflow-node-card .team-member-card-index {
+  display: none;
+}
+
+.team-member-card-head strong {
+  font-size: 12.5px;
+  font-weight: 600;
+}
+
+.team-member-card-main p {
+  color: var(--muted);
+  font-size: 11px;
+  line-height: 1.45;
+}
+
+.team-member-card-meta {
+  color: var(--subtle);
+  font-size: 10.5px;
+}
+
+.workflow-node-drag {
+  height: 16px;
+  color: var(--line-strong);
+}
+
+.workflow-node-card:hover .workflow-node-drag {
+  color: var(--subtle);
+}
+
+/* floating status pill, like the template */
+.workflow-node-status-pill {
+  position: absolute;
+  top: -8px;
+  right: 10px;
+  z-index: 1;
+  max-width: none;
+  padding: 2px 8px;
+  border: 0;
+  font-size: 9.5px;
+  font-weight: 700;
+  letter-spacing: 0.05em;
+}
+
+.workflow-node-status-pill.is-running {
+  background: var(--accent);
+  color: var(--on-accent);
+  animation: status-pulse 1.6s ease-in-out infinite;
+}
+
+.workflow-node-status-pill.is-completed {
+  background: color-mix(in srgb, var(--ok) 16%, var(--panel));
+  color: var(--ok-strong);
+}
+
+.workflow-node-status-pill.is-failed {
+  background: color-mix(in srgb, var(--danger) 14%, var(--panel));
+  color: var(--danger);
+}
+
+/* node states stay calm — colored border only */
+.workflow-node-card.is-running {
+  background: var(--panel);
+  box-shadow: none;
+}
+
+.workflow-node-card.is-completed {
+  background: var(--panel);
+}
+
+.workflow-node-card.is-failed {
+  background: var(--panel);
+}
+
+/* dashed pill terminals */
+.workflow-terminal,
+.workflow-join-node {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: auto;
+  min-width: 0;
+  height: auto;
+  padding: 5px 14px;
+  border: 1px dashed var(--line-strong);
+  border-radius: 999px;
+  background: transparent;
+  color: var(--subtle);
+  font-size: 11px;
+}
+
+/* edges with arrowheads */
+.workflow-edge {
+  position: relative;
+  height: 1.5px;
+  background: var(--line-strong);
+}
+
+.workflow-edge::after {
+  content: "";
+  position: absolute;
+  top: -3.25px;
+  right: -1px;
+  border: 4px solid transparent;
+  border-left-color: var(--line-strong);
+}
+
+/* clean topology board */
+.workflow-topology-board {
+  border: 1px solid var(--line);
+  border-radius: 12px;
+  background: var(--panel);
+}
+
+.workflow-topology-stage {
+  padding: 28px 18px;
+}
+
+.workflow-builder-shell {
+  border: 0;
+  box-shadow: none;
+}
+
+.workflow-builder-head {
+  padding: 0 0 10px;
+  background: transparent;
+}
+
+/* segmented mode control */
+.workflow-mode-row {
+  gap: 2px;
+  padding: 2px;
+  border: 1px solid var(--line);
+  border-radius: 8px;
+  background: var(--panel-soft);
+}
+
+.workflow-mode-toggle {
+  border-radius: 6px;
+  color: var(--muted);
+  font-size: 12px;
+  font-weight: 500;
+}
+
+.workflow-mode-toggle.is-active {
+  background: var(--panel);
+  color: var(--text);
+  box-shadow: 0 1px 2px color-mix(in srgb, var(--ink) 8%, transparent);
+}
+
+/* panes and lists */
+.team-list-pane,
+.team-config-pane,
+.team-run-pane {
+  border-radius: 12px;
+}
+
+.team-resource-head {
+  color: var(--subtle);
+  font-size: 10.5px;
+  font-weight: 600;
+  letter-spacing: 0.08em;
+}
+
+.team-list-card,
+.team-run-card {
+  padding: 9px 10px;
+  border-color: transparent;
+  border-radius: 8px;
+  background: transparent;
+  box-shadow: none;
+}
+
+.team-list-card:hover,
+.team-run-card:hover {
+  background: var(--hover);
+}
+
+.team-list-card.is-active,
+.team-run-card.is-active {
+  border-color: transparent;
+  background: var(--accent-soft);
+}
+
+/* labels and dividers like template */
+.task-section-divider {
+  color: var(--subtle);
+  font-size: 10.5px;
+  font-weight: 600;
+  letter-spacing: 0.08em;
+  text-transform: uppercase;
+}
+
+.workflow-region-label {
+  padding: 0;
+  border: 0;
+  background: transparent;
+  color: var(--subtle);
+  font-size: 10.5px;
+  font-weight: 600;
+  letter-spacing: 0.08em;
+  text-transform: uppercase;
+}
+
+/* run trace as timeline rows */
+.workflow-trace-item {
+  display: flex;
+  align-items: baseline;
+  gap: 10px;
+  padding: 6px 4px;
+  border: 0;
+  background: transparent;
+}
+
+.workflow-trace-item span {
+  color: var(--subtle);
+  font-size: 11px;
+}
+
+.workflow-trace-item strong {
+  color: var(--muted);
+  font-size: 12px;
+  font-weight: 500;
+}
+
+.workflow-trace-item.is-completed strong {
+  color: var(--ok-strong);
+}
+
+.workflow-trace-item.is-running strong {
+  color: var(--accent-strong);
+}
+
+.workflow-trace-item.is-failed strong {
+  color: var(--danger);
+}
+
+.workflow-synthesis-card {
+  border-radius: 10px;
+}
