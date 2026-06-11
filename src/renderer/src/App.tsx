@@ -1040,10 +1040,11 @@ export function App() {
                   key={chat.id}
                   className={`chat-row ${chat.id === activeChat?.id ? "is-active" : ""}`}
                   onClick={() => void selectChat(chat.id)}
+                  title={chat.title}
                 >
-                  <span className={`agent-badge mini ${agentAccent(chat.agentId)}`}>{agentLabel(chat.agentId)}</span>
+                  <span className={`runtime-dot ${agentAccent(chat.agentId)} ${chat.running ? "is-pulsing" : ""}`} />
                   <strong>{chat.title}</strong>
-                  <span>{chat.running ? "Running" : formatTime(chat.updatedAt)}</span>
+                  <span>{chat.running ? "运行中" : formatTime(chat.updatedAt)}</span>
                 </button>
               ))}
             </div>
@@ -1229,6 +1230,7 @@ export function App() {
                 activeIndex={slashCommandIndex}
                 onSelect={(suggestion) => completeSlashCommand(suggestion.command)}
               />
+              <div className="composer-box">
               <textarea
                 value={prompt}
                 onChange={(event) => setPrompt(event.target.value)}
@@ -1284,6 +1286,7 @@ export function App() {
                   <Send size={14} />
                   <span>{activeChat.running ? "Running" : "Send"}</span>
                 </button>
+              </div>
               </div>
               <div className="composer-hint">
                 <kbd>↵</kbd> 发送 · <kbd>⇧↵</kbd> 换行 · <kbd>⌘K</kbd> 命令面板

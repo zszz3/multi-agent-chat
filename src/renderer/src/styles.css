@@ -5141,3 +5141,109 @@ textarea:focus-visible {
   width: 19px;
   height: 19px;
 }
+
+/* ───────────────── composer box + preview-B sidebar list ───────────────── */
+
+/* one frame only: outer .composer goes invisible, .composer-box owns the border */
+.composer {
+  padding: 0;
+  gap: 8px;
+  border: 0;
+  background: transparent;
+  box-shadow: none;
+}
+
+.composer:focus-within {
+  border: 0;
+  box-shadow: none;
+}
+
+.composer-box {
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+  padding: 12px;
+  border: 1px solid var(--line);
+  border-radius: 14px;
+  background: var(--panel);
+  transition: border-color 140ms var(--ease), box-shadow 140ms var(--ease);
+}
+
+.composer-box:focus-within {
+  border-color: var(--accent);
+  box-shadow: 0 0 0 3px var(--accent-soft);
+}
+
+.composer-box textarea {
+  border: 0;
+  background: transparent;
+}
+
+.composer-box textarea:focus,
+.composer-box textarea:focus-visible {
+  border: 0;
+  outline: none;
+  box-shadow: none;
+}
+
+/* the "bracket": refresh icon floating bare — give it a chip frame */
+.composer-refresh-btn {
+  width: 26px;
+  height: 26px;
+  border: 1px solid var(--line);
+  border-radius: 6px;
+  background: transparent;
+}
+
+.composer-refresh-btn:hover {
+  border-color: var(--line-strong);
+  background: var(--hover);
+}
+
+/* sidebar: flat panels, preview-B rows */
+.resource-panel {
+  border: 0;
+  border-radius: 0;
+  background: transparent;
+  box-shadow: none;
+  padding: 0;
+}
+
+.chat-row {
+  display: flex;
+  flex-direction: row;
+  align-items: center;
+  gap: 8px;
+}
+
+.chat-row .runtime-dot {
+  flex: none;
+}
+
+.chat-row strong {
+  display: block;
+  flex: 1;
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  font-size: 12.5px;
+  font-weight: 500;
+}
+
+.chat-row span:last-child {
+  flex: none;
+  font-size: 11px;
+  color: var(--subtle);
+}
+
+.runtime-dot.is-pulsing {
+  animation: dot-pulse 1.4s ease-in-out infinite;
+}
+
+@keyframes dot-pulse {
+  50% {
+    opacity: 0.35;
+    transform: scale(0.8);
+  }
+}
