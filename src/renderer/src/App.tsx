@@ -25,6 +25,7 @@ import {
   X,
 } from "lucide-react";
 import { CommandPalette, buildPaletteCommands, type Theme } from "./CommandPalette";
+import { Markdown } from "./Markdown";
 import { DEFAULT_MODEL_ID, defaultChannelForAgent, modelsForChannel } from "../../shared/models";
 import type {
   AgentChannel,
@@ -962,7 +963,7 @@ export function App() {
           <button
             className={`feature-nav-item ${activeFeature === "chat" ? "is-active" : ""}`}
             onClick={() => setActiveFeature("chat")}
-            title="Chat (G C)"
+            data-tip="Chat · G C"
           >
             <MessageSquareText size={15} />
             <span>Chat</span>
@@ -970,7 +971,7 @@ export function App() {
           <button
             className={`feature-nav-item ${activeFeature === "tasks" ? "is-active" : ""}`}
             onClick={() => setActiveFeature("tasks")}
-            title="Tasks (G T)"
+            data-tip="Tasks · G T"
           >
             <ClipboardList size={15} />
             <span>Tasks</span>
@@ -978,7 +979,7 @@ export function App() {
           <button
             className={`feature-nav-item ${activeFeature === "teams" ? "is-active" : ""}`}
             onClick={() => setActiveFeature("teams")}
-            title="Teams (G W)"
+            data-tip="Teams · G W"
           >
             <Users size={15} />
             <span>Teams</span>
@@ -986,7 +987,7 @@ export function App() {
           <button
             className={`feature-nav-item ${activeFeature === "configs" ? "is-active" : ""}`}
             onClick={() => setActiveFeature("configs")}
-            title="Configs (G S)"
+            data-tip="Configs · G S"
           >
             <Settings size={15} />
             <span>Configs</span>
@@ -996,12 +997,12 @@ export function App() {
           <button
             className="icon-btn"
             onClick={toggleTheme}
-            title={theme === "dark" ? "切换到浅色主题" : "切换到深色主题"}
+            data-tip={theme === "dark" ? "浅色主题" : "深色主题"}
             aria-label="Toggle theme"
           >
             {theme === "dark" ? <Sun size={14} /> : <Moon size={14} />}
           </button>
-          <button className="icon-btn danger" onClick={() => void clearHistory()} title="Clear all history">
+          <button className="icon-btn danger" onClick={() => void clearHistory()} data-tip="清除全部历史">
             <Trash2 size={14} />
           </button>
         </div>
@@ -2164,13 +2165,27 @@ function TeamRunDetail({
         <i />
       </div>
       <div className="workflow-trace-list">
-        {workflowTraceNodesForRun(run).map((node, index) => (
-          <article key={node.id} className={`workflow-trace-item ${workflowStatusClass(node.status)}`}>
-            <span>{index + 1}</span>
-            <strong>{`${node.label} ${node.status}`}</strong>
-            {node.description ? <p>{node.description}</p> : null}
-          </article>
-        ))}
+        {workflowTraceNodesForRun(run).map((node) => {
+          const step = run.steps.find((item) => item.id === node.stepId || item.teamMemberId === node.teamMemberId);
+          const time = step?.completedAt ?? step?.startedAt;
+          const glyph = node.status === "completed" ? "✓" : node.status === "running" ? "●" : node.status === "failed" ? "✕" : "○";
+          const detail =
+            node.status === "running"
+              ? "正在执行…"
+              : node.status === "completed"
+                ? (step?.artifact?.split("\n")[0]?.slice(0, 96) ?? node.description)
+                : node.status === "failed"
+                  ? step?.lastError ?? "执行失败"
+                  : "等待上游产物";
+          return (
+            <article key={node.id} className={`workflow-trace-item ${workflowStatusClass(node.status)}`}>
+              <span className="trace-time">{time ? formatTime(time) : "—"}</span>
+              <span className="trace-glyph">{glyph}</span>
+              <strong>{`${node.label} ${node.status}`}</strong>
+              {detail ? <p>{detail}</p> : null}
+            </article>
+          );
+        })}
       </div>
 
       <div className="task-section-divider">
@@ -3066,14 +3081,14 @@ function CliMessage({ message, agentId, streaming = false }: { message: ChatMess
           </div>
         ) : null}
         {message.content ? (
-          <pre>
-            {message.content}
+          <div className={`cli-markdown ${streaming ? "is-streaming" : ""}`}>
+            <Markdown text={message.content} />
             {streaming ? <span className="stream-cursor" aria-hidden="true" /> : null}
-          </pre>
+          </div>
         ) : streaming ? (
-          <pre>
+          <div className="cli-markdown is-streaming">
             <span className="stream-cursor" aria-hidden="true" />
-          </pre>
+          </div>
         ) : null}
       </div>
     );

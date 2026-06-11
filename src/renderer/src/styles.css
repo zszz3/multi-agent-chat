@@ -4863,3 +4863,172 @@ textarea:focus-visible {
 .workflow-synthesis-card {
   border-radius: 10px;
 }
+
+/* ───────────────── Linear reskin v5 — frameless, tooltips, markdown ───────────────── */
+
+/* frameless window: rail hosts mac traffic lights */
+.feature-rail {
+  padding-top: 46px;
+  -webkit-app-region: drag;
+}
+
+.feature-rail button {
+  -webkit-app-region: no-drag;
+}
+
+.resource-sidebar .brand {
+  -webkit-app-region: drag;
+}
+
+.chat-header,
+.teams-header,
+.config-header {
+  -webkit-app-region: drag;
+}
+
+.chat-header button,
+.teams-header button,
+.config-header button {
+  -webkit-app-region: no-drag;
+}
+
+/* instant rail tooltips */
+[data-tip] {
+  position: relative;
+}
+
+[data-tip]::after {
+  content: attr(data-tip);
+  position: absolute;
+  left: calc(100% + 10px);
+  top: 50%;
+  transform: translateY(-50%) translateX(-4px);
+  padding: 4px 9px;
+  border-radius: 6px;
+  background: var(--ink);
+  color: #fff;
+  font-size: 11px;
+  font-weight: 500;
+  white-space: nowrap;
+  opacity: 0;
+  pointer-events: none;
+  transition: opacity 120ms var(--ease), transform 120ms var(--ease);
+  z-index: 70;
+}
+
+[data-tip]:hover::after {
+  opacity: 1;
+  transform: translateY(-50%) translateX(0);
+}
+
+/* palette: no focus ring artifacts */
+.palette-input-row input:focus-visible,
+.palette-item:focus-visible {
+  outline: none;
+}
+
+/* markdown body */
+.cli-markdown {
+  font-size: 13px;
+  line-height: 1.7;
+  color: var(--text);
+}
+
+.md-body > *:first-child {
+  margin-top: 0;
+}
+
+.md-body > *:last-child {
+  margin-bottom: 0;
+}
+
+.md-body p {
+  margin: 0 0 8px;
+}
+
+.md-body h1,
+.md-body h2,
+.md-body h3,
+.md-body h4 {
+  margin: 14px 0 6px;
+  font-weight: 600;
+  letter-spacing: -0.01em;
+}
+
+.md-body h1 { font-size: 15px; }
+.md-body h2 { font-size: 14px; }
+.md-body h3 { font-size: 13.5px; }
+.md-body h4 { font-size: 13px; }
+
+.md-body ul {
+  margin: 0 0 8px;
+  padding-left: 18px;
+}
+
+.md-body li {
+  margin: 2px 0;
+}
+
+.md-body code {
+  padding: 1px 5px;
+  border: 1px solid var(--line);
+  border-radius: 4px;
+  background: var(--panel-soft);
+  font-family: "Geist Mono Variable", ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, monospace;
+  font-size: 11.5px;
+}
+
+.md-codeblock {
+  margin: 8px 0;
+  border: 1px solid var(--line);
+  border-radius: 8px;
+  background: var(--panel-soft);
+  overflow: hidden;
+}
+
+.md-codeblock-lang {
+  padding: 5px 12px;
+  border-bottom: 1px solid var(--line);
+  color: var(--subtle);
+  font-size: 11px;
+}
+
+.md-codeblock pre {
+  margin: 0;
+  padding: 11px 12px;
+  overflow-x: auto;
+  font-family: "Geist Mono Variable", ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, monospace;
+  font-size: 12px;
+  line-height: 1.6;
+}
+
+/* trace timeline columns */
+.workflow-trace-item .trace-time {
+  flex: none;
+  min-width: 52px;
+  font-family: "Geist Mono Variable", ui-monospace, monospace;
+  font-size: 10.5px;
+  color: var(--subtle);
+}
+
+.workflow-trace-item .trace-glyph {
+  flex: none;
+  font-size: 11px;
+}
+
+.workflow-trace-item.is-completed .trace-glyph {
+  color: var(--ok-strong);
+}
+
+.workflow-trace-item.is-running .trace-glyph {
+  color: var(--accent-strong);
+}
+
+.workflow-trace-item p {
+  margin: 0;
+  color: var(--muted);
+  font-size: 11.5px;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}

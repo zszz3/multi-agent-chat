@@ -21,8 +21,10 @@ function createWindow(): BrowserWindow {
     minWidth: 980,
     minHeight: 680,
     title: PRODUCT_NAME,
-    backgroundColor: "#f8fafc",
+    backgroundColor: "#ffffff",
     show: false,
+    titleBarStyle: "hiddenInset",
+    trafficLightPosition: { x: 12, y: 16 },
     webPreferences: {
       preload: preloadPath,
       contextIsolation: true,

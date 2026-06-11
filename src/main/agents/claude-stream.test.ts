@@ -44,6 +44,29 @@ describe("normalizeClaudeStreamEvent", () => {
     ).toEqual([{ type: "delta", content: "lo" }]);
   });
 
+  test("streams token deltas from partial message stream events", () => {
+    const state = createClaudeStreamState();
+
+    expect(
+      normalizeClaudeStreamEvent(
+        { type: "stream_event", event: { type: "content_block_delta", delta: { type: "text_delta", text: "Hel" } } },
+        state,
+      ),
+    ).toEqual([{ type: "delta", content: "Hel" }]);
+    expect(
+      normalizeClaudeStreamEvent(
+        { type: "stream_event", event: { type: "content_block_delta", delta: { type: "text_delta", text: "lo" } } },
+        state,
+      ),
+    ).toEqual([{ type: "delta", content: "lo" }]);
+    expect(
+      normalizeClaudeStreamEvent(
+        { type: "assistant", message: { content: [{ type: "text", text: "Hello" }] } },
+        state,
+      ),
+    ).toEqual([]);
+  });
+
   test("does not duplicate result text after assistant text already streamed", () => {
     const state = createClaudeStreamState();
 
