@@ -13,6 +13,7 @@ import {
   Plus,
   RefreshCw,
   Save,
+  Search,
   Send,
   Settings,
   SquarePen,
@@ -958,19 +959,35 @@ export function App() {
           <Bot size={18} />
         </div>
         <nav className="feature-nav" aria-label="Feature navigation">
-          <button className={`feature-nav-item ${activeFeature === "chat" ? "is-active" : ""}`} onClick={() => setActiveFeature("chat")}>
+          <button
+            className={`feature-nav-item ${activeFeature === "chat" ? "is-active" : ""}`}
+            onClick={() => setActiveFeature("chat")}
+            title="Chat (G C)"
+          >
             <MessageSquareText size={15} />
             <span>Chat</span>
           </button>
-          <button className={`feature-nav-item ${activeFeature === "tasks" ? "is-active" : ""}`} onClick={() => setActiveFeature("tasks")}>
+          <button
+            className={`feature-nav-item ${activeFeature === "tasks" ? "is-active" : ""}`}
+            onClick={() => setActiveFeature("tasks")}
+            title="Tasks (G T)"
+          >
             <ClipboardList size={15} />
             <span>Tasks</span>
           </button>
-          <button className={`feature-nav-item ${activeFeature === "teams" ? "is-active" : ""}`} onClick={() => setActiveFeature("teams")}>
+          <button
+            className={`feature-nav-item ${activeFeature === "teams" ? "is-active" : ""}`}
+            onClick={() => setActiveFeature("teams")}
+            title="Teams (G W)"
+          >
             <Users size={15} />
             <span>Teams</span>
           </button>
-          <button className={`feature-nav-item ${activeFeature === "configs" ? "is-active" : ""}`} onClick={() => setActiveFeature("configs")}>
+          <button
+            className={`feature-nav-item ${activeFeature === "configs" ? "is-active" : ""}`}
+            onClick={() => setActiveFeature("configs")}
+            title="Configs (G S)"
+          >
             <Settings size={15} />
             <span>Configs</span>
           </button>
@@ -997,6 +1014,12 @@ export function App() {
             <p>{activeFeature === "chat" ? "Chats" : activeFeature === "tasks" ? "Tasks" : activeFeature === "teams" ? "Teams" : "Configuration"}</p>
           </div>
         </div>
+
+        <button className="sidebar-search-btn" onClick={() => setPaletteOpen(true)} aria-label="Open command palette">
+          <Search size={13} />
+          <span>搜索或执行命令…</span>
+          <kbd>⌘K</kbd>
+        </button>
 
         {activeFeature === "chat" ? (
           <section className="resource-panel chat-list-panel">
@@ -1259,6 +1282,9 @@ export function App() {
                   <Send size={14} />
                   <span>{activeChat.running ? "Running" : "Send"}</span>
                 </button>
+              </div>
+              <div className="composer-hint">
+                <kbd>↵</kbd> 发送 · <kbd>⇧↵</kbd> 换行 · <kbd>⌘K</kbd> 命令面板
               </div>
             </section>
           </>
