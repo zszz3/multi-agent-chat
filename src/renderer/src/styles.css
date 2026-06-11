@@ -5083,3 +5083,37 @@ textarea:focus-visible {
 .feature-rail {
   padding-top: 48px;
 }
+
+/* bigger rail icons to fill the 76px column */
+.rail-brand {
+  width: 34px;
+  height: 34px;
+  border-radius: 9px;
+}
+
+.rail-brand svg {
+  width: 20px;
+  height: 20px;
+}
+
+.feature-nav-item {
+  width: 44px;
+  min-height: 44px;
+  border-radius: 10px;
+}
+
+.feature-nav-item svg {
+  width: 21px;
+  height: 21px;
+}
+
+.rail-footer .icon-btn {
+  width: 38px;
+  height: 38px;
+  border-radius: 9px;
+}
+
+.rail-footer .icon-btn svg {
+  width: 18px;
+  height: 18px;
+}
