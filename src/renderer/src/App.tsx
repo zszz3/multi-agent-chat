@@ -8,6 +8,7 @@ import {
   GitBranch,
   GripVertical,
   MessageSquareText,
+  Moon,
   Play,
   Plus,
   RefreshCw,
@@ -15,12 +16,14 @@ import {
   Send,
   Settings,
   SquarePen,
+  Sun,
   Trash2,
   UserPlus,
   Users,
   Wand2,
   X,
 } from "lucide-react";
+import { CommandPalette, buildPaletteCommands, type Theme } from "./CommandPalette";
 import { DEFAULT_MODEL_ID, defaultChannelForAgent, modelsForChannel } from "../../shared/models";
 import type {
   AgentChannel,
@@ -45,6 +48,12 @@ import type {
 } from "../../shared/types";
 
 const AGENTS: AgentId[] = ["codex", "claude"];
+const THEME_STORAGE_KEY = "multi-agent-chat-theme";
+
+export function loadStoredTheme(storage: Pick<Storage, "getItem">): Theme {
+  return storage.getItem(THEME_STORAGE_KEY) === "dark" ? "dark" : "light";
+}
+
 export type ActiveFeature = "chat" | "tasks" | "teams" | "configs";
 type MaybePromise = void | Promise<void>;
 export type TaskStatusFilterValue = "all" | TaskProgress;
@@ -458,6 +467,16 @@ export function App() {
   const [importedConfigs, setImportedConfigs] = useState<ImportedCodexConfig[]>([]);
   const [codexPluginCatalog, setCodexPluginCatalog] = useState<CodexPluginCatalogItem[]>([]);
   const [pluginCatalogStatus, setPluginCatalogStatus] = useState("");
+  const [theme, setTheme] = useState<Theme>(() => loadStoredTheme(window.localStorage));
+  const [paletteOpen, setPaletteOpen] = useState(false);
+  const transcriptRef = useRef<HTMLElement>(null);
+  const stickToBottomRef = useRef(true);
+  const gChordRef = useRef(0);
+
+  useEffect(() => {
+    document.documentElement.dataset.theme = theme;
+    window.localStorage.setItem(THEME_STORAGE_KEY, theme);
+  }, [theme]);
 
   useEffect(() => {
     void window.multiAgentChat.getSnapshot().then((value) => {
@@ -537,6 +556,74 @@ export function App() {
   useEffect(() => {
     setSlashCommandIndex((current) => Math.min(current, Math.max(0, slashCommandSuggestions.length - 1)));
   }, [slashCommandSuggestions.length]);
+
+  function toggleTheme(): void {
+    setTheme((current) => (current === "dark" ? "light" : "dark"));
+  }
+
+  useEffect(() => {
+    function isEditableTarget(target: EventTarget | null): boolean {
+      if (!(target instanceof HTMLElement)) return false;
+      return target.tagName === "INPUT" || target.tagName === "TEXTAREA" || target.tagName === "SELECT" || target.isContentEditable;
+    }
+
+    function onKeyDown(event: globalThis.KeyboardEvent): void {
+      if ((event.metaKey || event.ctrlKey) && event.key.toLowerCase() === "k") {
+        event.preventDefault();
+        setPaletteOpen((current) => !current);
+        return;
+      }
+      if ((event.metaKey || event.ctrlKey) && event.key.toLowerCase() === "n") {
+        event.preventDefault();
+        void createChat();
+        return;
+      }
+      if (paletteOpen || isEditableTarget(event.target) || event.metaKey || event.ctrlKey || event.altKey) return;
+      if (event.key.toLowerCase() === "g") {
+        gChordRef.current = Date.now();
+        return;
+      }
+      if (Date.now() - gChordRef.current < 900) {
+        const navMap: Record<string, ActiveFeature> = { c: "chat", t: "tasks", w: "teams", s: "configs" };
+        const feature = navMap[event.key.toLowerCase()];
+        if (feature) {
+          event.preventDefault();
+          setActiveFeature(feature);
+        }
+        gChordRef.current = 0;
+      }
+    }
+
+    window.addEventListener("keydown", onKeyDown);
+    return () => window.removeEventListener("keydown", onKeyDown);
+  });
+
+  useEffect(() => {
+    const transcript = transcriptRef.current;
+    if (!transcript || !stickToBottomRef.current) return;
+    transcript.scrollTop = transcript.scrollHeight;
+  }, [activeChat?.messages, activeChat?.running]);
+
+  function handleTranscriptScroll(): void {
+    const transcript = transcriptRef.current;
+    if (!transcript) return;
+    stickToBottomRef.current = transcript.scrollHeight - transcript.scrollTop - transcript.clientHeight < 48;
+  }
+
+  const paletteCommands = useMemo(
+    () =>
+      buildPaletteCommands({
+        chats: snapshot.chats.map((chat) => ({ id: chat.id, title: chat.title, agentId: chat.agentId })),
+        theme,
+        onNavigate: setActiveFeature,
+        onSelectChat: (chatId) => void selectChat(chatId),
+        onNewChat: () => void createChat(),
+        onToggleTheme: toggleTheme,
+        onChooseWorkDir: () => void chooseWorkDir(),
+        onRefreshAgents: () => void refresh(),
+      }),
+    [snapshot.chats, theme],
+  );
 
   async function refresh(): Promise<void> {
     const next = await window.multiAgentChat.refreshAgents();
@@ -889,6 +976,14 @@ export function App() {
           </button>
         </nav>
         <div className="rail-footer">
+          <button
+            className="icon-btn"
+            onClick={toggleTheme}
+            title={theme === "dark" ? "切换到浅色主题" : "切换到深色主题"}
+            aria-label="Toggle theme"
+          >
+            {theme === "dark" ? <Sun size={14} /> : <Moon size={14} />}
+          </button>
           <button className="icon-btn danger" onClick={() => void clearHistory()} title="Clear all history">
             <Trash2 size={14} />
           </button>
@@ -1079,7 +1174,7 @@ export function App() {
               </div>
             </header>
 
-            <section className="cli-transcript">
+            <section className="cli-transcript" ref={transcriptRef} onScroll={handleTranscriptScroll}>
               {activeChat.messages.length === 0 ? (
                 <div className="empty-state terminal-empty">
                   <Wand2 size={17} />
@@ -1087,7 +1182,12 @@ export function App() {
                 </div>
               ) : (
                 activeChat.messages.map((message) => (
-                  <CliMessage key={message.id} message={message} agentId={activeChat.agentId} />
+                  <CliMessage
+                    key={message.id}
+                    message={message}
+                    agentId={activeChat.agentId}
+                    streaming={activeChat.running && message.id === activeChat.pendingAssistantMessageId}
+                  />
                 ))
               )}
               {activeChat.running ? (
@@ -1169,6 +1269,8 @@ export function App() {
           </div>
         )}
       </main>
+
+      <CommandPalette open={paletteOpen} commands={paletteCommands} onClose={() => setPaletteOpen(false)} />
     </div>
   );
 }
@@ -2909,7 +3011,7 @@ export function ConfigPage({
   );
 }
 
-function CliMessage({ message, agentId }: { message: ChatMessage; agentId: AgentId }) {
+function CliMessage({ message, agentId, streaming = false }: { message: ChatMessage; agentId: AgentId; streaming?: boolean }) {
   if (message.role === "user") {
     return (
       <div className="cli-message user">
@@ -2933,7 +3035,16 @@ function CliMessage({ message, agentId }: { message: ChatMessage; agentId: Agent
             ))}
           </div>
         ) : null}
-        {message.content ? <pre>{message.content}</pre> : null}
+        {message.content ? (
+          <pre>
+            {message.content}
+            {streaming ? <span className="stream-cursor" aria-hidden="true" /> : null}
+          </pre>
+        ) : streaming ? (
+          <pre>
+            <span className="stream-cursor" aria-hidden="true" />
+          </pre>
+        ) : null}
       </div>
     );
   }
