@@ -5247,3 +5247,37 @@ textarea:focus-visible {
     transform: scale(0.8);
   }
 }
+
+/* compact composer, preview-B proportions */
+.composer-box {
+  gap: 0;
+  padding: 0;
+}
+
+.composer-box textarea {
+  min-height: 48px;
+  max-height: 220px;
+  padding: 11px 14px 2px;
+  font-size: 13px;
+  line-height: 1.5;
+  resize: none;
+}
+
+.composer-box .composer-footer {
+  min-height: 0;
+  padding: 6px 8px 8px;
+}
+
+.chat-content .composer {
+  margin-bottom: 14px;
+}
+
+.composer-hint {
+  margin-top: 0;
+}
+
+.send-btn {
+  min-height: 28px;
+  padding: 0 12px;
+  font-size: 12px;
+}

@@ -1264,7 +1264,7 @@ export function App() {
                   }
                 }}
                 placeholder={`Message ${agentLabel(activeChat.agentId)} or type /help...`}
-                rows={4}
+                rows={2}
               />
               <div className="composer-footer">
                 <ChatControls
