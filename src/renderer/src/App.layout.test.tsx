@@ -14,9 +14,18 @@ import {
   TaskPage,
   TaskStatusFilter,
   TeamPage,
+  WorkflowPage,
+  parseWorkflowJudgeResult,
+  workflowArtifactSummary,
+  workflowAssistantDisplayContent,
+  workflowContextDocumentFromArtifacts,
+  workflowJudgePrompt,
+  workflowNodeRunPrompt,
+  workflowRunProgressSummary,
 } from "./App";
 import { DEFAULT_MODEL_ID } from "../../shared/models";
-import type { AgentChannel, AgentRuntime, AgentTeam, CodexPluginCatalogItem, TaskRun, TeamRun } from "../../shared/types";
+import { firstWorkflowQuestionForObjective } from "../../shared/workflow-agent";
+import type { AgentChannel, AgentRuntime, AgentTeam, CodexPluginCatalogItem, TaskRun, TeamRun, WorkflowGraph } from "../../shared/types";
 
 const runtimes: AgentRuntime[] = [
   {
@@ -170,8 +179,8 @@ const teamRuns: TeamRun[] = [
     id: "team-run-1",
     teamId: "team-1",
     teamName: "Review Team",
-    title: "Review session-search",
-    prompt: "Review cd ../session-search",
+    title: "Review example-service",
+    prompt: "Review cd ../example-service",
     target: { kind: "workspace", label: "Workspace", value: "/tmp/workspace" },
     mode: "pipeline",
     status: "running",
@@ -285,6 +294,10 @@ describe("ChatControls", () => {
     expect(styles).toContain(".workflow-edge {\n  display: block;\n  width: 36px");
     expect(styles).not.toContain(".workflow-builder-board.is-panning");
     expect(styles).not.toContain(".workflow-free-canvas-stage");
+  });
+
+  test("uses a full-width shell when workflows are shown", () => {
+    expect(appShellClass("workflow")).toBe("shell workflow-shell");
   });
 
   test("uses compact segmented controls for workflow mode", () => {
@@ -673,7 +686,7 @@ describe("TeamPage", () => {
     expect(html).not.toContain("Recent Codex chat");
     expect(html).not.toContain("Recent Claude task");
     expect(html).toContain("Run Workflow");
-    expect(html).toContain("Review cd ../session-search");
+    expect(html).toContain("Review cd ../example-service");
     expect(html).toContain("Shared Context Snapshot");
     expect(html).toContain("Workflow Trace");
     expect(html).toContain("workflow-trace-list");
@@ -852,5 +865,388 @@ describe("TeamPage", () => {
 
     expect(html).toContain("No teams yet");
     expect(html).toContain("New team");
+  });
+});
+
+describe("WorkflowPage", () => {
+  const graph: WorkflowGraph = {
+    title: "Review payment release",
+    objective: "Review payment release",
+    nodes: [
+      { id: "start", kind: "start", title: "Start", prompt: "" },
+      {
+        id: "plan",
+        kind: "agent",
+        title: "Clarify & Plan",
+        prompt: "Interrogate the task and produce a plan.",
+        agentId: "codex",
+        channelId: "codex-openai",
+        modelId: "gpt-5.5",
+      },
+      {
+        id: "review",
+        kind: "agent",
+        title: "Review",
+        prompt: "Review the output.",
+        agentId: "claude",
+        channelId: "claude-code",
+        modelId: DEFAULT_MODEL_ID,
+      },
+      { id: "end", kind: "end", title: "Done", prompt: "" },
+    ],
+    edges: [
+      { id: "start->plan", fromNodeId: "start", toNodeId: "plan" },
+      { id: "plan->review", fromNodeId: "plan", toNodeId: "review" },
+      { id: "review->end", fromNodeId: "review", toNodeId: "end" },
+    ],
+  };
+
+  test("builds the first grill question from the submitted workflow task", () => {
+    const question = firstWorkflowQuestionForObjective("帮我 review cd../example-service 的代码");
+
+    expect(question).toContain("cd../example-service");
+    expect(question).toContain("代码");
+    expect(question).not.toContain("最终交付物是什么");
+  });
+
+  test("renders only a chat-style task composer before the workflow chat starts", () => {
+    const html = renderToStaticMarkup(
+      <WorkflowPage
+        graph={graph}
+        graphReady={false}
+        objective="Review payment release"
+        messages={[]}
+        reply=""
+        error={undefined}
+        agentId="codex"
+        channelId="codex-openai"
+        modelId="gpt-5.5"
+        runtimes={runtimes}
+        channels={channels}
+        workDir="/tmp/workspace"
+        running={false}
+        onObjectiveChange={() => undefined}
+        onSelectAgent={() => undefined}
+        onSelectChannel={() => undefined}
+        onSelectModel={() => undefined}
+        onDraftGraph={() => undefined}
+        onReplyChange={() => undefined}
+        onSendReply={() => undefined}
+        onUpdateNode={() => undefined}
+        onRunGraph={async () => undefined}
+      />,
+    );
+
+    expect(html).toContain("Workflow");
+    expect(html).toContain("Grill Session");
+    expect(html).toContain("aria-label=\"Workflow agent\"");
+    expect(html).toContain("aria-label=\"Workflow channel\"");
+    expect(html).toContain("aria-label=\"Workflow model\"");
+    expect(html).toContain("aria-label=\"Workflow task\"");
+    expect(html).toContain("Start Chat");
+    expect(html).not.toContain("第一个问题：最终交付物是什么？");
+    expect(html).not.toContain("Send Answer");
+    expect(html).not.toContain("Generate Graph");
+    expect(html).not.toContain("workflowGraph.upsert");
+    expect(html).not.toContain("aria-label=\"Workflow graph JSON\"");
+    expect(html).not.toContain("DAG valid");
+    expect(html).not.toContain("Workflow graph board");
+    expect(html).not.toContain("Node plan agent");
+    expect(html).not.toContain("Run Graph");
+  });
+
+  test("summarizes generated workflow graph code in the grill transcript", () => {
+    const content = workflowAssistantDisplayContent(`Agent is thinking...\`\`\`ts
+workflowGraph.upsert({
+  title: "Review DAG",
+  objective: "Review the repo",
+  nodes: [
+    { id: "start", kind: "start", title: "Start", prompt: "" },
+    { id: "review", kind: "agent", title: "Review Agent", prompt: "Review.", agentId: "codex", channelId: "", modelId: "default" },
+    { id: "end", kind: "end", title: "Done", prompt: "" }
+  ],
+  edges: [
+    { id: "start->review", fromNodeId: "start", toNodeId: "review" },
+    { id: "review->end", fromNodeId: "review", toNodeId: "end" }
+  ]
+});
+\`\`\``);
+
+    expect(content).toBe("Workflow graph ready: Review DAG");
+    expect(content).not.toContain("Agent is thinking");
+    expect(content).not.toContain("workflowGraph.upsert");
+  });
+
+  test("builds workflow node prompts with upstream artifacts", () => {
+    const graph: WorkflowGraph = {
+      title: "Review DAG",
+      objective: "Review the repo",
+      nodes: [
+        { id: "start", kind: "start", title: "Start", prompt: "" },
+        { id: "inventory", kind: "agent", title: "Inventory", prompt: "Map the repo." },
+        { id: "writer", kind: "agent", title: "Writer", prompt: "Write the doc." },
+        { id: "end", kind: "end", title: "Done", prompt: "" },
+      ],
+      edges: [
+        { id: "start->inventory", fromNodeId: "start", toNodeId: "inventory" },
+        { id: "inventory->writer", fromNodeId: "inventory", toNodeId: "writer" },
+        { id: "writer->end", fromNodeId: "writer", toNodeId: "end" },
+      ],
+    };
+
+    const prompt = workflowNodeRunPrompt(graph, graph.nodes[2]!, [{ node: graph.nodes[1]!, artifact: "Inventory artifact" }], "## Inventory\nKey context.");
+
+    expect(prompt).toContain("Workflow: Review DAG");
+    expect(prompt).toContain("Node: Writer (writer)");
+    expect(prompt).toContain("Write the doc.");
+    expect(prompt).toContain("Use this workflow context document first:");
+    expect(prompt).toContain("## Inventory");
+    expect(prompt).toContain("Key context.");
+    expect(prompt).toContain("## Upstream: Inventory (inventory)");
+    expect(prompt).toContain("Inventory artifact");
+    expect(prompt).toContain("Work Completion Report");
+    expect(prompt).toContain("This report will be appended to the shared Workflow Context document");
+    expect(prompt).toContain("When you finish, include a concise Handoff section.");
+  });
+
+  test("builds and parses workflow judge prompts for node completion decisions", () => {
+    const judgePrompt = workflowJudgePrompt(
+      graph,
+      graph.nodes.find((node) => node.id === "review")!,
+      "## Work Completion Report\nImplemented the requested page.\n\n## Handoff\nNeeds tests.",
+      "# Workflow Context\n\n## Clarify & Plan\nBuild the page.",
+      1,
+      2,
+    );
+
+    expect(judgePrompt).toContain("You are the workflow judge");
+    expect(judgePrompt).toContain("attempt 1 of 2");
+    expect(judgePrompt).toContain("workflowEvaluation.submit");
+    expect(judgePrompt).toContain("## Work Completion Report");
+    expect(judgePrompt).toContain("# Workflow Context");
+
+    expect(
+      parseWorkflowJudgeResult(`
+        workflowEvaluation.submit({
+          complete: false,
+          reason: "The report does not mention verification.",
+          retryPrompt: "Run or explain the relevant tests, then update the handoff."
+        });
+      `),
+    ).toEqual({
+      complete: false,
+      reason: "The report does not mention verification.",
+      retryPrompt: "Run or explain the relevant tests, then update the handoff.",
+    });
+  });
+
+  test("builds a workflow context document from node handoffs", () => {
+    const artifact = [
+      "Detailed analysis that can be long.",
+      "",
+      "## Handoff",
+      "- Key finding: service uses active turn guards.",
+      "- Next input: inspect persistence.",
+      "",
+      "## Extra Detail",
+      "This should not be part of the handoff summary.",
+    ].join("\n");
+
+    expect(workflowArtifactSummary(artifact)).toBe("- Key finding: service uses active turn guards.\n- Next input: inspect persistence.");
+    expect(
+      workflowContextDocumentFromArtifacts([
+        { nodeId: "inventory", title: "Inventory", summary: workflowArtifactSummary(artifact) },
+      ]),
+    ).toContain("## Inventory (inventory)\n- Key finding: service uses active turn guards.");
+  });
+
+  test("keeps workflow work completion reports in the shared context summary", () => {
+    const artifact = [
+      "Verbose logs.",
+      "",
+      "## Work Completion Report",
+      "- Did: mapped the repository.",
+      "- Evidence: src/main.ts.",
+      "",
+      "## Handoff",
+      "- Next: inspect renderer state.",
+    ].join("\n");
+
+    expect(workflowArtifactSummary(artifact)).toContain("### Work Completion Report\n- Did: mapped the repository.");
+    expect(workflowArtifactSummary(artifact)).toContain("### Handoff\n- Next: inspect renderer state.");
+  });
+
+  test("summarizes workflow run progress while the graph is executing", () => {
+    expect(
+      workflowRunProgressSummary([
+        { nodeId: "inventory", title: "Inventory", status: "completed" },
+        { nodeId: "analysis", title: "Analysis", status: "running", detail: "Task running" },
+        { nodeId: "writer", title: "Writer", status: "queued" },
+      ]),
+    ).toBe("Running 2/3 · 1 done · 1 queued");
+  });
+
+  test("renders the first grill question only after the user starts the workflow chat", () => {
+    const html = renderToStaticMarkup(
+      <WorkflowPage
+        graph={graph}
+        graphReady={false}
+        objective="Review payment release"
+        messages={[
+          { id: "m-1", role: "user", content: "Review payment release" },
+          { id: "m-2", role: "assistant", content: "第一个问题：最终交付物是什么？推荐答案：风险清单和验证步骤。" },
+        ]}
+        reply=""
+        error={undefined}
+        agentId="codex"
+        channelId="codex-openai"
+        modelId="gpt-5.5"
+        runtimes={runtimes}
+        channels={channels}
+        workDir="/tmp/workspace"
+        running={false}
+        onObjectiveChange={() => undefined}
+        onSelectAgent={() => undefined}
+        onSelectChannel={() => undefined}
+        onSelectModel={() => undefined}
+        onDraftGraph={() => undefined}
+        onReplyChange={() => undefined}
+        onSendReply={() => undefined}
+        onUpdateNode={() => undefined}
+        onRunGraph={async () => undefined}
+      />,
+    );
+
+    expect(html).toContain("Review payment release");
+    expect(html).toContain("第一个问题：最终交付物是什么？");
+    expect(html).toContain("aria-label=\"Reply to grill question\"");
+    expect(html).toContain("Send Answer");
+    expect(html).not.toContain("DAG valid");
+  });
+
+  test("renders the editable DAG only after the grill session is complete", () => {
+    const html = renderToStaticMarkup(
+      <WorkflowPage
+        graph={graph}
+        graphReady
+        objective="Review payment release"
+        messages={[
+          { id: "m-1", role: "assistant", content: "第一个问题：最终交付物是什么？推荐答案：风险清单和验证步骤。" },
+          { id: "m-2", role: "user", content: "我要风险清单。" },
+          { id: "m-3", role: "assistant", content: "信息足够了，已经生成 DAG。" },
+        ]}
+        reply=""
+        error={undefined}
+        agentId="codex"
+        channelId="codex-openai"
+        modelId="gpt-5.5"
+        runtimes={runtimes}
+        channels={channels}
+        workDir="/tmp/workspace"
+        running={false}
+        onObjectiveChange={() => undefined}
+        onSelectAgent={() => undefined}
+        onSelectChannel={() => undefined}
+        onSelectModel={() => undefined}
+        onDraftGraph={() => undefined}
+        onReplyChange={() => undefined}
+        onSendReply={() => undefined}
+        onUpdateNode={() => undefined}
+        onRunGraph={async () => undefined}
+      />,
+    );
+
+    expect(html).toContain("DAG valid");
+    expect(html).toContain("Start");
+    expect(html).toContain("Clarify &amp; Plan");
+    expect(html).toContain("Review");
+    expect(html).toContain("Done");
+    expect(html).toContain("aria-label=\"Node plan agent\"");
+    expect(html).toContain("aria-label=\"Node plan model\"");
+    expect(html).toContain("aria-label=\"Expand workflow graph board\"");
+    expect(html).toContain("Run Graph");
+  });
+
+  test("renders workflow run feedback while execution is in progress", () => {
+    const html = renderToStaticMarkup(
+      <WorkflowPage
+        graph={graph}
+        graphReady
+        objective="Review payment release"
+        messages={[{ id: "m-1", role: "assistant", content: "信息足够了，已经生成 DAG。" }]}
+        reply=""
+        error={undefined}
+        agentId="codex"
+        channelId="codex-openai"
+        modelId="gpt-5.5"
+        runtimes={runtimes}
+        channels={channels}
+        workDir="/tmp/workspace"
+        running
+        contextDocument={"# Workflow Context\n\n## Clarify & Plan\nUse active turn guards."}
+        runProgress={[
+          { nodeId: "plan", title: "Clarify & Plan", status: "completed", detail: "Output captured" },
+          { nodeId: "work", title: "Execute", status: "running", detail: "Task running" },
+          { nodeId: "review", title: "Review", status: "queued" },
+        ]}
+        onObjectiveChange={() => undefined}
+        onSelectAgent={() => undefined}
+        onSelectChannel={() => undefined}
+        onSelectModel={() => undefined}
+        onDraftGraph={() => undefined}
+        onReplyChange={() => undefined}
+        onSendReply={() => undefined}
+        onUpdateNode={() => undefined}
+        onRunGraph={async () => undefined}
+      />,
+    );
+
+    expect(html).toContain("Run progress");
+    expect(html).toContain("Running 2/3 · 1 done · 1 queued");
+    expect(html).toContain("Task running");
+    expect(html).toContain("Output captured");
+    expect(html).toContain("Workflow context");
+    expect(html).toContain("Use active turn guards.");
+    expect(html).toContain("Running...");
+  });
+
+  test("shows validation errors and disables execution for cyclic graphs", () => {
+    const cyclicGraph: WorkflowGraph = {
+      ...graph,
+      edges: [
+        ...graph.edges,
+        { id: "review->plan", fromNodeId: "review", toNodeId: "plan" },
+      ],
+    };
+    const html = renderToStaticMarkup(
+      <WorkflowPage
+        graph={cyclicGraph}
+        graphReady
+        objective="Review payment release"
+        messages={[{ id: "m-1", role: "assistant", content: "第一个问题：最终交付物是什么？推荐答案：风险清单。" }]}
+        reply=""
+        error={undefined}
+        agentId="codex"
+        channelId="codex-openai"
+        modelId="gpt-5.5"
+        runtimes={runtimes}
+        channels={channels}
+        workDir="/tmp/workspace"
+        running={false}
+        onObjectiveChange={() => undefined}
+        onSelectAgent={() => undefined}
+        onSelectChannel={() => undefined}
+        onSelectModel={() => undefined}
+        onDraftGraph={() => undefined}
+        onReplyChange={() => undefined}
+        onSendReply={() => undefined}
+        onUpdateNode={() => undefined}
+        onRunGraph={async () => undefined}
+      />,
+    );
+
+    expect(html).toContain("DAG invalid");
+    expect(html).toContain("Workflow graph must be acyclic.");
+    expect(html).toContain("disabled=\"\"");
   });
 });

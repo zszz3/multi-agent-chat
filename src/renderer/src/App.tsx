@@ -7,6 +7,7 @@ import {
   FolderOpen,
   GitBranch,
   GripVertical,
+  Maximize2,
   MessageSquareText,
   Moon,
   Play,
@@ -27,6 +28,14 @@ import {
 import { CommandPalette, buildPaletteCommands, type Theme } from "./CommandPalette";
 import { Markdown } from "./Markdown";
 import { DEFAULT_MODEL_ID, defaultChannelForAgent, modelsForChannel } from "../../shared/models";
+import { buildWorkflowAgentPrompt, WORKFLOW_TOTAL_QUESTION_COUNT } from "../../shared/workflow-agent";
+import {
+  createWorkflowGraphFromObjective,
+  parseWorkflowGraphUpsert,
+  validateWorkflowGraph,
+  workflowGraphDisplayLayers,
+  workflowGraphExecutionLevels,
+} from "../../shared/workflow-graph";
 import type {
   AgentChannel,
   AgentId,
@@ -47,6 +56,12 @@ import type {
   TeamRun,
   TaskProgress,
   TaskRun,
+  WorkflowGraph,
+  WorkflowGraphNode,
+  WorkflowDraftState,
+  WorkflowGrillMessage,
+  WorkflowRunNodeStatus,
+  WorkflowRunProgressItem,
 } from "../../shared/types";
 
 const AGENTS: AgentId[] = ["codex", "claude"];
@@ -56,9 +71,13 @@ export function loadStoredTheme(storage: Pick<Storage, "getItem">): Theme {
   return storage.getItem(THEME_STORAGE_KEY) === "dark" ? "dark" : "light";
 }
 
-export type ActiveFeature = "chat" | "tasks" | "teams" | "configs";
+export type ActiveFeature = "chat" | "tasks" | "teams" | "workflow" | "configs";
 type MaybePromise = void | Promise<void>;
 export type TaskStatusFilterValue = "all" | TaskProgress;
+const WORKFLOW_THINKING_MESSAGE = "Agent is thinking...";
+const WORKFLOW_TASK_POLL_MS = 1000;
+const WORKFLOW_TASK_TIMEOUT_MS = 30 * 60 * 1000;
+const WORKFLOW_NODE_MAX_ATTEMPTS = 2;
 
 const TASK_STATUS_FILTERS: Array<{ id: TaskStatusFilterValue; label: string }> = [
   { id: "all", label: "All" },
@@ -101,7 +120,7 @@ const SLASH_COMMANDS: SlashCommandSuggestion[] = [
 ];
 
 export function appShellClass(activeFeature: ActiveFeature): string {
-  return activeFeature === "tasks" || activeFeature === "teams" ? `shell ${activeFeature}-shell` : "shell";
+  return activeFeature === "tasks" || activeFeature === "teams" || activeFeature === "workflow" ? `shell ${activeFeature}-shell` : "shell";
 }
 
 export function taskDetailIdFor(
@@ -114,7 +133,7 @@ export function taskDetailIdFor(
 }
 
 const DEFAULT_SNAPSHOT: AppSnapshot = {
-  detectedAt: Date.now(),
+  detectedAt: 0,
   activeChatId: undefined,
   activeTaskId: undefined,
   activeTeamId: undefined,
@@ -126,6 +145,7 @@ const DEFAULT_SNAPSHOT: AppSnapshot = {
   tasks: [],
   teams: [],
   teamRuns: [],
+  workflowDraft: undefined,
 };
 
 function agentLabel(agentId: AgentId): string {
@@ -447,7 +467,215 @@ function mergeImportedChannels(channels: AgentChannel[], imported: ImportedCodex
   return [...merged.values()];
 }
 
+function initialWorkflowMessages(): WorkflowGrillMessage[] {
+  return [];
+}
+
+export function workflowAssistantDisplayContent(content: string): string {
+  const graph = parseWorkflowGraphUpsert(content);
+  return graph ? `Workflow graph ready: ${graph.title}` : content;
+}
+
+function delay(ms: number): Promise<void> {
+  return new Promise((resolve) => window.setTimeout(resolve, ms));
+}
+
+function taskArtifact(task: TaskRun): string {
+  const assistantMessage = [...task.messages].reverse().find((message) => message.role === "assistant" && message.content.trim());
+  if (assistantMessage) return assistantMessage.content.trim();
+  const errorMessage = [...task.messages].reverse().find((message) => message.role === "error" && message.content.trim());
+  if (errorMessage) return errorMessage.content.trim();
+  return `${task.title} completed without assistant output.`;
+}
+
+function extractWorkflowSection(content: string, headings: string[]): string | undefined {
+  const headingSet = new Set(headings.map((heading) => heading.toLowerCase()));
+  const lines = content.replace(/\r\n/g, "\n").split("\n");
+  let startIndex = -1;
+  for (let index = 0; index < lines.length; index += 1) {
+    const match = lines[index]?.match(/^#{1,6}\s+(.+?)\s*$/);
+    if (!match) continue;
+    const heading = match[1]!.trim().toLowerCase();
+    if (headingSet.has(heading)) {
+      startIndex = index + 1;
+      break;
+    }
+  }
+  if (startIndex < 0) return undefined;
+  const sectionLines: string[] = [];
+  for (let index = startIndex; index < lines.length; index += 1) {
+    const line = lines[index] ?? "";
+    if (/^#{1,6}\s+/.test(line)) break;
+    sectionLines.push(line);
+  }
+  const section = sectionLines.join("\n").trim();
+  return section || undefined;
+}
+
+function extractWorkflowHandoffSection(content: string): string | undefined {
+  return extractWorkflowSection(content, ["handoff", "summary", "key context", "context"]);
+}
+
+function truncateWorkflowContext(content: string, limit = 2400): string {
+  const normalized = content.replace(/\n{3,}/g, "\n\n").trim();
+  if (normalized.length <= limit) return normalized;
+  return `${normalized.slice(0, limit).trim()}\n\n[truncated]`;
+}
+
+function workflowStringField(content: string, field: string): string | undefined {
+  const match = new RegExp(`["']?${field}["']?\\s*:\\s*("([^"\\\\]|\\\\.)*"|'([^'\\\\]|\\\\.)*'|\`([^\`\\\\]|\\\\.)*\`)`, "s").exec(content);
+  if (!match) return undefined;
+  const raw = match[1]!;
+  const body = raw.slice(1, -1);
+  return body
+    .replace(/\\n/g, "\n")
+    .replace(/\\r/g, "\r")
+    .replace(/\\t/g, "\t")
+    .replace(/\\"/g, `"`)
+    .replace(/\\'/g, `'`)
+    .replace(/\\`/g, "`")
+    .replace(/\\\\/g, "\\")
+    .trim();
+}
+
+export interface WorkflowJudgeResult {
+  complete: boolean;
+  reason: string;
+  retryPrompt: string;
+}
+
+export function workflowArtifactSummary(artifact: string): string {
+  const report = extractWorkflowSection(artifact, ["work completion report", "completion report"]);
+  const handoff = extractWorkflowSection(artifact, ["handoff"]);
+  if (report && handoff) {
+    return truncateWorkflowContext(["### Work Completion Report", report, "", "### Handoff", handoff].join("\n"));
+  }
+  return truncateWorkflowContext(report ?? extractWorkflowHandoffSection(artifact) ?? artifact);
+}
+
+export function workflowContextDocumentFromArtifacts(artifacts: Array<{ nodeId: string; title: string; summary: string }>): string {
+  if (artifacts.length === 0) return "";
+  return [
+    "# Workflow Context",
+    "",
+    ...artifacts.flatMap((artifact) => [`## ${artifact.title} (${artifact.nodeId})`, artifact.summary.trim() || "No handoff summary produced.", ""]),
+  ]
+    .join("\n")
+    .trim();
+}
+
+export function workflowNodeRunPrompt(
+  graph: WorkflowGraph,
+  node: WorkflowGraphNode,
+  upstreamArtifacts: Array<{ node: WorkflowGraphNode; artifact: string }>,
+  contextDocument = "",
+): string {
+  const upstreamSection =
+    upstreamArtifacts.length > 0
+      ? upstreamArtifacts
+          .map((item) => [`## Upstream: ${item.node.title} (${item.node.id})`, item.artifact].join("\n"))
+          .join("\n\n")
+      : "No upstream agent artifacts.";
+  const contextSection = contextDocument.trim() || "No workflow context document yet.";
+
+  return [
+    `Workflow: ${graph.title}`,
+    `Objective: ${graph.objective}`,
+    `Node: ${node.title} (${node.id})`,
+    "",
+    "Follow this node instruction:",
+    node.prompt || "Execute this workflow node.",
+    "",
+    "Use this workflow context document first:",
+    contextSection,
+    "",
+    "Use these upstream artifacts as context:",
+    upstreamSection,
+    "",
+    "Before you finish, write a Work Completion Report.",
+    "The report must include what you did, concrete evidence or produced artifacts, remaining gaps or risks, and what downstream nodes need next.",
+    "This report will be appended to the shared Workflow Context document, so make it useful as one-way handoff context.",
+    "",
+    "When you finish, include a concise Handoff section.",
+    "The Handoff section should capture key findings, decisions, produced artifacts, risks, and what downstream nodes need next.",
+  ].join("\n");
+}
+
+export function workflowJudgePrompt(
+  graph: WorkflowGraph,
+  node: WorkflowGraphNode,
+  artifact: string,
+  contextDocument: string,
+  attempt: number,
+  maxAttempts: number,
+): string {
+  return [
+    "You are the workflow judge for one completed agent node.",
+    `Evaluate attempt ${attempt} of ${maxAttempts}.`,
+    "",
+    `Workflow: ${graph.title}`,
+    `Objective: ${graph.objective}`,
+    `Node: ${node.title} (${node.id})`,
+    "",
+    "Original node instruction:",
+    node.prompt || "Execute this workflow node.",
+    "",
+    "Shared Workflow Context document:",
+    contextDocument.trim() || "No workflow context document yet.",
+    "",
+    "Node output to judge:",
+    artifact,
+    "",
+    "Decide whether this node is complete enough for downstream workflow execution.",
+    "Do not perform the work yourself. Judge only the output against the objective, node instruction, evidence, and handoff quality.",
+    "",
+    "Return only this TypeScript-style call:",
+    "workflowEvaluation.submit({",
+    "  complete: true,",
+    '  reason: "short reason",',
+    '  retryPrompt: ""',
+    "});",
+    "",
+    "If complete is false, retryPrompt must be a concrete instruction for rerunning this same node.",
+  ].join("\n");
+}
+
+export function parseWorkflowJudgeResult(content: string): WorkflowJudgeResult | undefined {
+  const completeMatch = /["']?complete["']?\s*:\s*(true|false)/i.exec(content);
+  if (!completeMatch) return undefined;
+  const complete = completeMatch[1]!.toLowerCase() === "true";
+  return {
+    complete,
+    reason: workflowStringField(content, "reason") || (complete ? "Judge approved the node output." : "Judge requested a retry."),
+    retryPrompt: workflowStringField(content, "retryPrompt") || "",
+  };
+}
+
+export function workflowRunProgressSummary(progress: WorkflowRunProgressItem[]): string {
+  if (progress.length === 0) return "Not started";
+  const completed = progress.filter((item) => item.status === "completed").length;
+  const running = progress.filter((item) => item.status === "running").length;
+  const failed = progress.filter((item) => item.status === "failed").length;
+  const queued = progress.filter((item) => item.status === "queued").length;
+  const started = Math.min(progress.length, completed + running + failed);
+  const headline = failed > 0 ? `Failed ${started}/${progress.length}` : completed === progress.length ? `Completed ${progress.length}/${progress.length}` : `Running ${started}/${progress.length}`;
+  const details = [
+    completed > 0 ? `${completed} done` : "",
+    failed > 0 ? `${failed} failed` : "",
+    queued > 0 ? `${queued} queued` : "",
+  ].filter(Boolean);
+  return details.length > 0 ? `${headline} · ${details.join(" · ")}` : headline;
+}
+
+function workflowRunStatusLabel(status: WorkflowRunNodeStatus): string {
+  if (status === "completed") return "completed";
+  if (status === "running") return "running";
+  if (status === "failed") return "failed";
+  return "queued";
+}
+
 export function App() {
+  const initialWorkflowGraph = useMemo(() => createWorkflowGraphFromObjective(""), []);
   const [snapshot, setSnapshot] = useState<AppSnapshot>(DEFAULT_SNAPSHOT);
   const [prompt, setPrompt] = useState("");
   const [slashCommandIndex, setSlashCommandIndex] = useState(0);
@@ -456,6 +684,26 @@ export function App() {
   const [taskAgentId, setTaskAgentId] = useState<AgentId>("codex");
   const [taskChannelId, setTaskChannelId] = useState("");
   const [taskModelId, setTaskModelId] = useState(DEFAULT_MODEL_ID);
+  const [workflowAgentId, setWorkflowAgentId] = useState<AgentId>("codex");
+  const [workflowChannelId, setWorkflowChannelId] = useState("");
+  const [workflowModelId, setWorkflowModelId] = useState(DEFAULT_MODEL_ID);
+  const [workflowObjective, setWorkflowObjective] = useState("");
+  const [workflowGraph, setWorkflowGraph] = useState<WorkflowGraph>(initialWorkflowGraph);
+  const [workflowGraphReady, setWorkflowGraphReady] = useState(false);
+  const [workflowMessages, setWorkflowMessages] = useState<WorkflowGrillMessage[]>(() => initialWorkflowMessages());
+  const [workflowReply, setWorkflowReply] = useState("");
+  const [workflowError, setWorkflowError] = useState<string | undefined>();
+  const [workflowRunning, setWorkflowRunning] = useState(false);
+  const [workflowRunProgress, setWorkflowRunProgress] = useState<WorkflowRunProgressItem[]>([]);
+  const [workflowRunContextDocument, setWorkflowRunContextDocument] = useState("");
+  const [workflowAgentSessionId, setWorkflowAgentSessionId] = useState<string | undefined>();
+  const workflowRequestIdRef = useRef<string | undefined>(undefined);
+  const workflowAssistantMessageIdRef = useRef<string | undefined>(undefined);
+  const workflowStreamingStartedRef = useRef(false);
+  const workflowAssistantContentRef = useRef("");
+  const workflowDraftHydratedRef = useRef(false);
+  const workflowDraftHydratingRef = useRef(false);
+  const workflowDraftSaveTimerRef = useRef<number | undefined>(undefined);
   const [taskStatusFilter, setTaskStatusFilter] = useState<TaskStatusFilterValue>("all");
   const [selectedTaskDetailId, setSelectedTaskDetailId] = useState<string | undefined>();
   const [activeFeature, setActiveFeature] = useState<ActiveFeature>("chat");
@@ -480,6 +728,53 @@ export function App() {
     window.localStorage.setItem(THEME_STORAGE_KEY, theme);
   }, [theme]);
 
+  function applyPersistedWorkflowDraft(draft: WorkflowDraftState): void {
+    workflowDraftHydratingRef.current = true;
+    setWorkflowAgentId(draft.agentId);
+    setWorkflowChannelId(draft.channelId);
+    setWorkflowModelId(draft.modelId);
+    setWorkflowObjective(draft.objective);
+    setWorkflowGraph(draft.graph);
+    setWorkflowGraphReady(draft.graphReady);
+    setWorkflowMessages(draft.messages);
+    setWorkflowReply(draft.reply);
+    setWorkflowError(draft.error);
+    setWorkflowRunProgress(draft.runProgress);
+    setWorkflowRunContextDocument(draft.runContextDocument);
+    setWorkflowAgentSessionId(draft.agentSessionId);
+    window.setTimeout(() => {
+      workflowDraftHydratingRef.current = false;
+    }, 0);
+  }
+
+  function buildWorkflowDraft(): WorkflowDraftState | undefined {
+    const hasContent =
+      workflowObjective.trim() ||
+      workflowMessages.length > 0 ||
+      workflowGraphReady ||
+      workflowReply.trim() ||
+      workflowError ||
+      workflowRunProgress.length > 0 ||
+      workflowRunContextDocument.trim() ||
+      workflowAgentSessionId;
+    if (!hasContent) return undefined;
+    return {
+      agentId: workflowAgentId,
+      channelId: workflowChannelId || defaultChannelForAgent(workflowAgentId, snapshot.channels),
+      modelId: workflowModelId || DEFAULT_MODEL_ID,
+      objective: workflowObjective,
+      graph: workflowGraph,
+      graphReady: workflowGraphReady,
+      messages: workflowMessages,
+      reply: workflowReply,
+      error: workflowError,
+      runProgress: workflowRunProgress,
+      runContextDocument: workflowRunContextDocument,
+      agentSessionId: workflowAgentSessionId,
+      updatedAt: Date.now(),
+    };
+  }
+
   useEffect(() => {
     void window.multiAgentChat.getSnapshot().then((value) => {
       setSnapshot(value);
@@ -488,6 +783,37 @@ export function App() {
       setSnapshot(value);
     });
   }, []);
+
+  useEffect(() => {
+    if (workflowDraftHydratedRef.current || snapshot.detectedAt === 0) return;
+    workflowDraftHydratedRef.current = true;
+    if (snapshot.workflowDraft) applyPersistedWorkflowDraft(snapshot.workflowDraft);
+  }, [snapshot.detectedAt, snapshot.workflowDraft]);
+
+  useEffect(() => {
+    if (!workflowDraftHydratedRef.current || workflowDraftHydratingRef.current) return;
+    if (workflowDraftSaveTimerRef.current) window.clearTimeout(workflowDraftSaveTimerRef.current);
+    workflowDraftSaveTimerRef.current = window.setTimeout(() => {
+      workflowDraftSaveTimerRef.current = undefined;
+      void window.multiAgentChat.updateWorkflowDraft(buildWorkflowDraft()).then(setSnapshot);
+    }, 300);
+    return () => {
+      if (workflowDraftSaveTimerRef.current) window.clearTimeout(workflowDraftSaveTimerRef.current);
+    };
+  }, [
+    workflowAgentId,
+    workflowChannelId,
+    workflowModelId,
+    workflowObjective,
+    workflowGraph,
+    workflowGraphReady,
+    workflowMessages,
+    workflowReply,
+    workflowError,
+    workflowRunProgress,
+    workflowRunContextDocument,
+    workflowAgentSessionId,
+  ]);
 
   useEffect(() => {
     if (configDirty) return;
@@ -518,6 +844,24 @@ export function App() {
   }, [snapshot.channels, taskAgentId, taskChannelId]);
 
   useEffect(() => {
+    setWorkflowChannelId((current) => {
+      if (current && snapshot.channels.some((channel) => channel.id === current && channel.agentId === workflowAgentId)) return current;
+      return defaultChannelForAgent(workflowAgentId, snapshot.channels);
+    });
+  }, [snapshot.channels, workflowAgentId]);
+
+  useEffect(() => {
+    setWorkflowModelId((current) => {
+      const channelId =
+        workflowChannelId && snapshot.channels.some((channel) => channel.id === workflowChannelId && channel.agentId === workflowAgentId)
+          ? workflowChannelId
+          : defaultChannelForAgent(workflowAgentId, snapshot.channels);
+      const models = modelsForChannel(workflowAgentId, channelId, snapshot.channels);
+      return models.some((model) => model.id === current) ? current : DEFAULT_MODEL_ID;
+    });
+  }, [snapshot.channels, workflowAgentId, workflowChannelId]);
+
+  useEffect(() => {
     if (activeFeature !== "configs" || pluginCatalogStatus || codexPluginCatalog.length > 0) return;
     void loadCodexPluginCatalog();
   }, [activeFeature, codexPluginCatalog.length, pluginCatalogStatus]);
@@ -531,6 +875,39 @@ export function App() {
     if (snapshot.tasks.some((task) => task.id === selectedTaskDetailId)) return;
     setSelectedTaskDetailId(undefined);
   }, [selectedTaskDetailId, snapshot.tasks]);
+
+  useEffect(() => {
+    return window.multiAgentChat.onWorkflowAgentEvent((event) => {
+      if (event.requestId !== workflowRequestIdRef.current) return;
+      const assistantMessageId = workflowAssistantMessageIdRef.current;
+      if (!assistantMessageId) return;
+      if (event.type === "delta") {
+        workflowAssistantContentRef.current += event.content;
+        setWorkflowMessages((current) =>
+          current.map((message) => (message.id === assistantMessageId ? { ...message, content: workflowAssistantContentRef.current } : message)),
+        );
+        workflowStreamingStartedRef.current = workflowAssistantContentRef.current.length > 0;
+        return;
+      }
+      if (event.type === "completed") {
+        setWorkflowAgentSessionId(event.sessionId);
+        if (event.content) {
+          workflowAssistantContentRef.current = event.content;
+          setWorkflowMessages((current) =>
+            current.map((message) => (message.id === assistantMessageId ? { ...message, content: event.content } : message)),
+          );
+        }
+        applyWorkflowGraphFromAgentContent(workflowAssistantContentRef.current || event.content);
+        return;
+      }
+      if (event.type === "error") {
+        setWorkflowError(event.error);
+        setWorkflowMessages((current) =>
+          current.map((message) => (message.id === assistantMessageId ? { ...message, content: `Workflow agent error: ${event.error}` } : message)),
+        );
+      }
+    });
+  }, []);
 
   const runtimeMap = useMemo(() => new Map(snapshot.runtimes.map((runtime) => [runtime.id, runtime])), [snapshot.runtimes]);
   const activeChat = useMemo(() => activeChatFrom(snapshot), [snapshot]);
@@ -677,6 +1054,21 @@ export function App() {
     setTaskModelId(modelId);
   }
 
+  function setWorkflowAgent(agentId: AgentId): void {
+    setWorkflowAgentId(agentId);
+    setWorkflowChannelId(defaultChannelForAgent(agentId, snapshot.channels));
+    setWorkflowModelId(DEFAULT_MODEL_ID);
+  }
+
+  function setWorkflowChannel(channelId: string): void {
+    setWorkflowChannelId(channelId);
+    setWorkflowModelId(DEFAULT_MODEL_ID);
+  }
+
+  function setWorkflowModel(modelId: string): void {
+    setWorkflowModelId(modelId);
+  }
+
   function updateConfigDraft(value: string): void {
     setConfigDraft(value);
     setConfigDirty(true);
@@ -808,11 +1200,19 @@ export function App() {
   }
 
   async function clearHistory(): Promise<void> {
-    const next = await window.multiAgentChat.clearHistory();
+    await window.multiAgentChat.clearHistory();
+    const next = await window.multiAgentChat.updateWorkflowDraft(undefined);
     setSnapshot(next);
     setPrompt("");
     setTaskPrompt("");
     setTeamPrompt("");
+    setWorkflowObjective("");
+    setWorkflowReply("");
+    setWorkflowMessages(initialWorkflowMessages());
+    setWorkflowGraphReady(false);
+    setWorkflowRunProgress([]);
+    setWorkflowRunContextDocument("");
+    setWorkflowAgentSessionId(undefined);
   }
 
   async function send(): Promise<void> {
@@ -847,6 +1247,350 @@ export function App() {
     });
     setSnapshot(next);
     setTaskPrompt("");
+  }
+
+  function syncWorkflowGraph(nextGraph: WorkflowGraph): void {
+    setWorkflowGraph(nextGraph);
+    setWorkflowRunProgress([]);
+    setWorkflowRunContextDocument("");
+  }
+
+  function workflowGraphWithSelectedAgent(graph: WorkflowGraph): WorkflowGraph {
+    const channelId = workflowChannelId || defaultChannelForAgent(workflowAgentId, snapshot.channels);
+    return {
+      ...graph,
+      nodes: graph.nodes.map((node) =>
+        node.kind === "agent"
+          ? {
+              ...node,
+              agentId: workflowAgentId,
+              channelId,
+              modelId: workflowModelId || DEFAULT_MODEL_ID,
+            }
+          : node,
+      ),
+    };
+  }
+
+  function applyWorkflowGraphFromAgentContent(content: string): boolean {
+    const nextGraph = parseWorkflowGraphUpsert(content);
+    if (!nextGraph) return false;
+    syncWorkflowGraph(nextGraph);
+    setWorkflowGraphReady(true);
+    setWorkflowError(undefined);
+    return true;
+  }
+
+  function updateWorkflowRunProgress(nodeId: string, update: Partial<WorkflowRunProgressItem>): void {
+    setWorkflowRunProgress((current) => current.map((item) => (item.nodeId === nodeId ? { ...item, ...update } : item)));
+  }
+
+  function draftWorkflowGraph(): void {
+    const nextGraph = workflowGraphWithSelectedAgent(createWorkflowGraphFromObjective(workflowObjective, snapshot.channels));
+    syncWorkflowGraph(nextGraph);
+    setWorkflowGraphReady(true);
+    setWorkflowError(undefined);
+  }
+
+  async function askSelectedWorkflowAgent(promptText: string, sessionId: string | undefined, requestId: string): Promise<string> {
+    const channelId = workflowChannelId || defaultChannelForAgent(workflowAgentId, snapshot.channels);
+    const request = {
+      requestId,
+      prompt: promptText,
+      agentId: workflowAgentId,
+      channelId,
+      modelId: workflowModelId || DEFAULT_MODEL_ID,
+      workDir: snapshot.workDir,
+    };
+    const response = await window.multiAgentChat.askWorkflowAgent(sessionId ? { ...request, sessionId } : request);
+    setWorkflowAgentSessionId(response.sessionId);
+    return response.content.trim() || "Workflow agent returned an empty response.";
+  }
+
+  async function sendWorkflowReply(): Promise<void> {
+    if (workflowRunning) return;
+    const starting = workflowMessages.length === 0;
+    const text = (starting ? workflowObjective : workflowReply).trim();
+    if (!text) return;
+    setWorkflowReply("");
+    setWorkflowError(undefined);
+    if (starting) {
+      setWorkflowObjective(text);
+      setWorkflowGraphReady(false);
+      setWorkflowAgentSessionId(undefined);
+    }
+    const requestId = `workflow-${Date.now()}-${Math.random().toString(36).slice(2)}`;
+    const assistantMessageId = `grill-assistant-${Date.now()}`;
+    workflowRequestIdRef.current = requestId;
+    workflowAssistantMessageIdRef.current = assistantMessageId;
+    workflowStreamingStartedRef.current = false;
+    workflowAssistantContentRef.current = "";
+    const nextMessages: WorkflowGrillMessage[] = [
+      ...workflowMessages,
+      { id: `grill-user-${Date.now()}`, role: "user", content: text },
+      { id: assistantMessageId, role: "assistant", content: WORKFLOW_THINKING_MESSAGE },
+    ];
+    setWorkflowMessages(nextMessages);
+    setWorkflowRunning(true);
+    try {
+      const assistantContent = await askSelectedWorkflowAgent(
+        starting ? buildWorkflowAgentPrompt({ objective: text }) : text,
+        starting ? undefined : workflowAgentSessionId,
+        requestId,
+      );
+      if (!workflowStreamingStartedRef.current && assistantContent) {
+        setWorkflowMessages((current) =>
+          current.map((message) => (message.id === assistantMessageId ? { ...message, content: assistantContent } : message)),
+        );
+      }
+      applyWorkflowGraphFromAgentContent(assistantContent);
+    } catch (error) {
+      const message = error instanceof Error ? error.message : String(error);
+      setWorkflowError(message);
+      setWorkflowMessages((current) =>
+        current.map((item) => (item.id === assistantMessageId ? { ...item, content: `Workflow agent error: ${message}` } : item)),
+      );
+    } finally {
+      setWorkflowRunning(false);
+    }
+  }
+
+  function updateWorkflowNode(nodeId: string, update: Partial<WorkflowGraphNode>): void {
+    const nextGraph = {
+      ...workflowGraph,
+      nodes: workflowGraph.nodes.map((node) => (node.id === nodeId ? { ...node, ...update } : node)),
+    };
+    syncWorkflowGraph(nextGraph);
+  }
+
+  async function runWorkflowGraph(): Promise<void> {
+    const validation = validateWorkflowGraph(workflowGraph);
+    if (!validation.valid || workflowRunning) {
+      setWorkflowError(validation.errors.join(" "));
+      return;
+    }
+    const executionLevels = workflowGraphExecutionLevels(workflowGraph);
+    if (executionLevels.length === 0) {
+      setWorkflowError("Workflow graph has no executable agent nodes.");
+      return;
+    }
+    setWorkflowRunning(true);
+    setWorkflowError(undefined);
+    try {
+      let latestSnapshot = snapshot;
+      const nodeById = new Map(workflowGraph.nodes.map((node) => [node.id, node]));
+      setWorkflowRunProgress(
+        executionLevels.flat().map((nodeId) => {
+          const node = nodeById.get(nodeId);
+          return {
+            nodeId,
+            title: node?.title ?? nodeId,
+            status: "queued",
+          };
+        }),
+      );
+      setWorkflowRunContextDocument("");
+      const artifactsByNodeId = new Map<string, string>();
+      const contextArtifacts: Array<{ nodeId: string; title: string; summary: string }> = [];
+      let runContextDocument = "";
+      const upstreamAgentNodeIdsByNodeId = new Map<string, string[]>();
+      for (const nodeId of validation.executableNodeIds) upstreamAgentNodeIdsByNodeId.set(nodeId, []);
+      for (const edge of workflowGraph.edges) {
+        const fromNode = nodeById.get(edge.fromNodeId);
+        if (fromNode?.kind !== "agent" || !upstreamAgentNodeIdsByNodeId.has(edge.toNodeId)) continue;
+        upstreamAgentNodeIdsByNodeId.get(edge.toNodeId)?.push(edge.fromNodeId);
+      }
+
+      const startWorkflowTask = async (request: {
+        prompt: string;
+        agentId: AgentId;
+        channelId: string;
+        modelId: string;
+        workDir: string;
+      }): Promise<TaskRun> => {
+        const existingTaskIds = new Set(latestSnapshot.tasks.map((task) => task.id));
+        latestSnapshot = await window.multiAgentChat.runTask(request);
+        setSnapshot(latestSnapshot);
+        const task = latestSnapshot.tasks
+          .filter((item) => !existingTaskIds.has(item.id))
+          .sort((left, right) => right.createdAt - left.createdAt)
+          .find((item) => item.prompt === request.prompt && item.agentId === request.agentId);
+        if (task) return task;
+        const fallbackTask = latestSnapshot.tasks.filter((item) => !existingTaskIds.has(item.id)).sort((left, right) => right.createdAt - left.createdAt)[0];
+        if (!fallbackTask) throw new Error("Workflow task creation did not return a new task.");
+        return fallbackTask;
+      };
+
+      const waitForTask = async (taskId: string): Promise<TaskRun> => {
+        const startedAt = Date.now();
+        while (Date.now() - startedAt < WORKFLOW_TASK_TIMEOUT_MS) {
+          const polledSnapshot = await window.multiAgentChat.getSnapshot();
+          latestSnapshot = polledSnapshot;
+          setSnapshot(polledSnapshot);
+          const task = polledSnapshot.tasks.find((item) => item.id === taskId);
+          if (!task) throw new Error(`Workflow task ${taskId} was deleted before completion.`);
+          if (task.status === "completed") return task;
+          if (task.status === "failed" || task.status === "stopped") {
+            throw new Error(task.lastError || `Workflow task ${task.title} ${task.status}.`);
+          }
+          await delay(WORKFLOW_TASK_POLL_MS);
+        }
+        throw new Error(`Workflow task ${taskId} timed out.`);
+      };
+
+      const upstreamArtifactsForNode = (node: WorkflowGraphNode): Array<{ node: WorkflowGraphNode; artifact: string }> =>
+        (upstreamAgentNodeIdsByNodeId.get(node.id) ?? [])
+          .map((upstreamNodeId) => {
+            const upstreamNode = nodeById.get(upstreamNodeId);
+            const artifact = artifactsByNodeId.get(upstreamNodeId);
+            return upstreamNode && artifact ? { node: upstreamNode, artifact } : undefined;
+          })
+          .filter((item): item is { node: WorkflowGraphNode; artifact: string } => Boolean(item));
+
+      const nodeAttemptPrompt = (node: WorkflowGraphNode, attempt: number, retryPrompt: string, contextDocument: string): string => {
+        const basePrompt = workflowNodeRunPrompt(workflowGraph, node, upstreamArtifactsForNode(node), contextDocument);
+        if (!retryPrompt.trim()) return basePrompt;
+        return [
+          basePrompt,
+          "",
+          `This is retry attempt ${attempt} of ${WORKFLOW_NODE_MAX_ATTEMPTS}.`,
+          "The workflow judge rejected the previous attempt. Address this retry instruction exactly:",
+          retryPrompt.trim(),
+        ].join("\n");
+      };
+
+      const startNodeAttempt = async (
+        node: WorkflowGraphNode,
+        attempt: number,
+        retryPrompt: string,
+        contextDocument: string,
+      ): Promise<{ node: WorkflowGraphNode; taskId: string; attempt: number }> => {
+        const agentId = node.agentId ?? "codex";
+        const channelId = node.channelId || defaultChannelForAgent(agentId, latestSnapshot.channels);
+        const prompt = nodeAttemptPrompt(node, attempt, retryPrompt, contextDocument);
+        const task = await startWorkflowTask({
+          prompt,
+          agentId,
+          channelId,
+          modelId: node.modelId || DEFAULT_MODEL_ID,
+          workDir: latestSnapshot.workDir,
+        });
+        updateWorkflowRunProgress(node.id, {
+          status: "running",
+          detail: attempt === 1 ? "Task running" : `Retry ${attempt}/${WORKFLOW_NODE_MAX_ATTEMPTS} running`,
+          taskId: task.id,
+        });
+        return { node, taskId: task.id, attempt };
+      };
+
+      const waitForNodeAttempt = async (startedTask: {
+        node: WorkflowGraphNode;
+        taskId: string;
+        attempt: number;
+      }): Promise<{ node: WorkflowGraphNode; task: TaskRun; attempt: number }> => {
+        try {
+          return {
+            node: startedTask.node,
+            task: await waitForTask(startedTask.taskId),
+            attempt: startedTask.attempt,
+          };
+        } catch (error) {
+          updateWorkflowRunProgress(startedTask.node.id, {
+            status: "failed",
+            detail: error instanceof Error ? error.message : String(error),
+            taskId: startedTask.taskId,
+          });
+          throw error;
+        }
+      };
+
+      const evaluateNodeAttempt = async (
+        node: WorkflowGraphNode,
+        artifact: string,
+        attempt: number,
+        contextDocument: string,
+      ): Promise<WorkflowJudgeResult> => {
+        updateWorkflowRunProgress(node.id, {
+          status: "running",
+          detail: `Evaluating attempt ${attempt}/${WORKFLOW_NODE_MAX_ATTEMPTS}`,
+        });
+        const judgeAgentId = workflowAgentId;
+        const judgeChannelId = workflowChannelId || defaultChannelForAgent(judgeAgentId, latestSnapshot.channels);
+        const judgeTask = await startWorkflowTask({
+          prompt: workflowJudgePrompt(workflowGraph, node, artifact, contextDocument, attempt, WORKFLOW_NODE_MAX_ATTEMPTS),
+          agentId: judgeAgentId,
+          channelId: judgeChannelId,
+          modelId: workflowModelId || DEFAULT_MODEL_ID,
+          workDir: latestSnapshot.workDir,
+        });
+        const completedJudgeTask = await waitForTask(judgeTask.id);
+        const result = parseWorkflowJudgeResult(taskArtifact(completedJudgeTask));
+        if (!result) throw new Error(`Workflow judge for ${node.title} did not return workflowEvaluation.submit(...).`);
+        return result;
+      };
+
+      for (const level of executionLevels) {
+        const levelContextDocument = runContextDocument;
+        let pendingNodes = level.map((nodeId) => nodeById.get(nodeId)).filter((node): node is WorkflowGraphNode => Boolean(node && node.kind === "agent"));
+        const attemptsByNodeId = new Map<string, number>();
+        const retryPromptByNodeId = new Map<string, string>();
+
+        while (pendingNodes.length > 0) {
+          const startedTasks: Array<{ node: WorkflowGraphNode; taskId: string; attempt: number }> = [];
+          for (const node of pendingNodes) {
+            const attempt = (attemptsByNodeId.get(node.id) ?? 0) + 1;
+            attemptsByNodeId.set(node.id, attempt);
+            startedTasks.push(await startNodeAttempt(node, attempt, retryPromptByNodeId.get(node.id) ?? "", levelContextDocument));
+          }
+
+          const completedTasks = await Promise.all(startedTasks.map(waitForNodeAttempt));
+          const nextPendingNodes: WorkflowGraphNode[] = [];
+          for (const completedTask of completedTasks) {
+            const artifact = taskArtifact(completedTask.task);
+            const judge = await evaluateNodeAttempt(completedTask.node, artifact, completedTask.attempt, levelContextDocument);
+            if (judge.complete) {
+              artifactsByNodeId.set(completedTask.node.id, artifact);
+              contextArtifacts.push({
+                nodeId: completedTask.node.id,
+                title: completedTask.node.title,
+                summary: workflowArtifactSummary(artifact),
+              });
+              runContextDocument = workflowContextDocumentFromArtifacts(contextArtifacts);
+              setWorkflowRunContextDocument(runContextDocument);
+              updateWorkflowRunProgress(completedTask.node.id, {
+                status: "completed",
+                detail: `Approved: ${truncateWorkflowContext(judge.reason, 160)}`,
+                taskId: completedTask.task.id,
+              });
+              continue;
+            }
+
+            if (completedTask.attempt < WORKFLOW_NODE_MAX_ATTEMPTS) {
+              retryPromptByNodeId.set(completedTask.node.id, judge.retryPrompt || judge.reason);
+              updateWorkflowRunProgress(completedTask.node.id, {
+                status: "queued",
+                detail: `Retry requested: ${truncateWorkflowContext(judge.reason, 160)}`,
+                taskId: completedTask.task.id,
+              });
+              nextPendingNodes.push(completedTask.node);
+              continue;
+            }
+
+            updateWorkflowRunProgress(completedTask.node.id, {
+              status: "failed",
+              detail: `Judge rejected after ${WORKFLOW_NODE_MAX_ATTEMPTS} attempts: ${truncateWorkflowContext(judge.reason, 160)}`,
+              taskId: completedTask.task.id,
+            });
+            throw new Error(`Workflow node ${completedTask.node.title} did not pass evaluation after ${WORKFLOW_NODE_MAX_ATTEMPTS} attempts: ${judge.reason}`);
+          }
+          pendingNodes = nextPendingNodes;
+        }
+      }
+    } catch (error) {
+      setWorkflowError(error instanceof Error ? error.message : String(error));
+    } finally {
+      setWorkflowRunning(false);
+    }
   }
 
   async function rerunTask(task: TaskRun): Promise<void> {
@@ -985,9 +1729,15 @@ export function App() {
             <span>Teams</span>
           </button>
           <button
+            className={`feature-nav-item ${activeFeature === "workflow" ? "is-active" : ""}`}
+            onClick={() => setActiveFeature("workflow")}
+          >
+            <GitBranch size={15} />
+            <span>Workflow</span>
+          </button>
+          <button
             className={`feature-nav-item ${activeFeature === "configs" ? "is-active" : ""}`}
             onClick={() => setActiveFeature("configs")}
-           
           >
             <Settings size={15} />
             <span>Configs</span>
@@ -1012,7 +1762,17 @@ export function App() {
         <div className="brand resource-brand">
           <div>
             <h1>Multi Agent Chat</h1>
-            <p>{activeFeature === "chat" ? "Chats" : activeFeature === "tasks" ? "Tasks" : activeFeature === "teams" ? "Teams" : "Configuration"}</p>
+            <p>
+              {activeFeature === "chat"
+                ? "Chats"
+                : activeFeature === "tasks"
+                  ? "Tasks"
+                  : activeFeature === "teams"
+                    ? "Teams"
+                    : activeFeature === "workflow"
+                      ? "Workflow"
+                      : "Configuration"}
+            </p>
           </div>
         </div>
 
@@ -1077,6 +1837,17 @@ export function App() {
               )}
             </div>
           </section>
+        ) : activeFeature === "workflow" ? (
+          <section className="resource-panel workflow-contract-panel">
+            <div className="panel-header">
+              <span>Workflow</span>
+              <GitBranch size={14} />
+            </div>
+            <div className="workflow-resource-summary">
+              <strong>Grill first</strong>
+              <span>Answer one question at a time, generate a graph, then configure each agent node.</span>
+            </div>
+          </section>
         ) : (
           <section className="resource-panel config-nav-panel">
             <div className="panel-header">
@@ -1104,7 +1875,9 @@ export function App() {
               ? "tasks-content"
               : activeFeature === "teams"
                 ? "teams-content"
-                : "config-content"
+                : activeFeature === "workflow"
+                  ? "workflow-content"
+                  : "config-content"
         }`}
       >
         {activeFeature === "tasks" ? (
@@ -1152,6 +1925,33 @@ export function App() {
             onStopTeamRun={stopTeamRun}
             onChooseWorkDir={chooseWorkDir}
             onRefresh={refresh}
+          />
+        ) : activeFeature === "workflow" ? (
+          <WorkflowPage
+            graph={workflowGraph}
+            graphReady={workflowGraphReady}
+            objective={workflowObjective}
+            messages={workflowMessages}
+            reply={workflowReply}
+            error={workflowError}
+            agentId={workflowAgentId}
+            channelId={workflowChannelId || defaultChannelForAgent(workflowAgentId, snapshot.channels)}
+            modelId={workflowModelId}
+            runtimes={snapshot.runtimes}
+            channels={snapshot.channels}
+            workDir={snapshot.workDir}
+            running={workflowRunning}
+            runProgress={workflowRunProgress}
+            contextDocument={workflowRunContextDocument}
+            onObjectiveChange={setWorkflowObjective}
+            onSelectAgent={setWorkflowAgent}
+            onSelectChannel={setWorkflowChannel}
+            onSelectModel={setWorkflowModel}
+            onDraftGraph={draftWorkflowGraph}
+            onReplyChange={setWorkflowReply}
+            onSendReply={sendWorkflowReply}
+            onUpdateNode={updateWorkflowNode}
+            onRunGraph={runWorkflowGraph}
           />
         ) : activeFeature === "configs" ? (
           <ConfigPage
@@ -2652,6 +3452,394 @@ function TaskTimelineMessage({ message, agentId }: { message: ChatMessage; agent
         ) : null}
       </div>
     </article>
+  );
+}
+
+interface WorkflowPageProps {
+  graph: WorkflowGraph;
+  graphReady: boolean;
+  objective: string;
+  messages: WorkflowGrillMessage[];
+  reply: string;
+  error: string | undefined;
+  agentId: AgentId;
+  channelId: string;
+  modelId: string;
+  runtimes: AgentRuntime[];
+  channels: AgentChannel[];
+  workDir: string;
+  running: boolean;
+  runProgress?: WorkflowRunProgressItem[];
+  contextDocument?: string;
+  onObjectiveChange: (value: string) => void;
+  onSelectAgent: (agentId: AgentId) => void;
+  onSelectChannel: (channelId: string) => void;
+  onSelectModel: (modelId: string) => void;
+  onDraftGraph: () => void;
+  onReplyChange: (value: string) => void;
+  onSendReply: () => void;
+  onUpdateNode: (nodeId: string, update: Partial<WorkflowGraphNode>) => void;
+  onRunGraph: () => MaybePromise;
+}
+
+export function WorkflowPage({
+  graph,
+  graphReady,
+  objective,
+  messages,
+  reply,
+  error,
+  agentId,
+  channelId,
+  modelId,
+  runtimes,
+  channels,
+  workDir,
+  running,
+  runProgress = [],
+  contextDocument = "",
+  onObjectiveChange,
+  onSelectAgent,
+  onSelectChannel,
+  onSelectModel,
+  onDraftGraph,
+  onReplyChange,
+  onSendReply,
+  onUpdateNode,
+  onRunGraph,
+}: WorkflowPageProps) {
+  const validation = validateWorkflowGraph(graph);
+  const workflowStarted = messages.length > 0;
+  const grillComplete = Math.max(0, messages.filter((message) => message.role === "user").length - 1) >= WORKFLOW_TOTAL_QUESTION_COUNT;
+  const nodeById = new Map(graph.nodes.map((node) => [node.id, node]));
+  const displayLayers = workflowGraphDisplayLayers(graph)
+    .map((layer) => layer.map((nodeId) => nodeById.get(nodeId)).filter((node): node is WorkflowGraphNode => Boolean(node)))
+    .filter((layer) => layer.length > 0);
+  const runtimeMap = new Map(runtimes.map((runtime) => [runtime.id, runtime]));
+  const workflowChannelOptions = channels.filter((channel) => channel.agentId === agentId);
+  const workflowFallbackChannelId = defaultChannelForAgent(agentId, channels);
+  const workflowEffectiveChannels =
+    workflowChannelOptions.length > 0
+      ? workflowChannelOptions
+      : [
+          {
+            id: workflowFallbackChannelId,
+            agentId,
+            label: "Default",
+            models: modelsForChannel(agentId, workflowFallbackChannelId, channels),
+          },
+        ];
+  const workflowSelectedChannelId = workflowEffectiveChannels.some((channel) => channel.id === channelId)
+    ? channelId
+    : (workflowEffectiveChannels[0]?.id ?? workflowFallbackChannelId);
+  const workflowModelOptions = modelsForChannel(agentId, workflowSelectedChannelId, channels);
+  const workflowSelectedModelId = workflowModelOptions.some((model) => model.id === modelId) ? modelId : DEFAULT_MODEL_ID;
+  const runProgressByNodeId = new Map(runProgress.map((item) => [item.nodeId, item]));
+  const runProgressVisible = runProgress.length > 0;
+  const contextDocumentVisible = contextDocument.trim().length > 0;
+  const [graphExpanded, setGraphExpanded] = useState(false);
+
+  function expandGraphFromBoardClick(event: MouseEvent<HTMLElement>): void {
+    const target = event.target instanceof HTMLElement ? event.target : undefined;
+    if (target?.closest(".workflow-graph-card")) return;
+    setGraphExpanded(true);
+  }
+
+  return (
+    <section className="workflow-page">
+      <header className="workflow-page-header">
+        <div>
+          <h2>Workflow</h2>
+          <p>{workDir || "No work directory selected"}</p>
+        </div>
+        {graphReady ? (
+          <div className="workflow-page-actions">
+            <button className="control-btn compact" onClick={() => void onRunGraph()} disabled={!validation.valid || running}>
+              <Play size={14} />
+              <span>{running ? "Running..." : "Run Graph"}</span>
+            </button>
+          </div>
+        ) : null}
+      </header>
+
+      <div className={`workflow-page-grid ${graphReady ? "has-graph" : "is-chat-only"}`}>
+        <section className="workflow-grill-surface">
+          <div className="workflow-grill-head">
+            <strong>Grill Session</strong>
+            <span>One question at a time</span>
+          </div>
+
+          {!workflowStarted ? (
+            <div className="workflow-start-composer">
+              <div className="workflow-config-row">
+                <label className="workflow-config-field">
+                  <span>Agent</span>
+                  <select
+                    aria-label="Workflow agent"
+                    value={agentId}
+                    onChange={(event) => onSelectAgent(event.currentTarget.value as AgentId)}
+                  >
+                    {AGENTS.map((candidate) => (
+                      <option key={candidate} value={candidate}>
+                        {agentLabel(candidate)}
+                      </option>
+                    ))}
+                  </select>
+                </label>
+                <label className="workflow-config-field">
+                  <span>Channel</span>
+                  <select
+                    aria-label="Workflow channel"
+                    value={workflowSelectedChannelId}
+                    onChange={(event) => onSelectChannel(event.currentTarget.value)}
+                  >
+                    {workflowEffectiveChannels.map((channel) => (
+                      <option key={channel.id} value={channel.id}>
+                        {channel.label}
+                      </option>
+                    ))}
+                  </select>
+                </label>
+                <label className="workflow-config-field">
+                  <span>Model</span>
+                  <select
+                    aria-label="Workflow model"
+                    value={workflowSelectedModelId}
+                    onChange={(event) => onSelectModel(event.currentTarget.value)}
+                  >
+                    {workflowModelOptions.map((model) => (
+                      <option key={model.id} value={model.id}>
+                        {model.label}
+                      </option>
+                    ))}
+                  </select>
+                </label>
+              </div>
+              <textarea
+                className="workflow-task-input"
+                aria-label="Workflow task"
+                value={objective}
+                onChange={(event) => onObjectiveChange(event.currentTarget.value)}
+                rows={6}
+                placeholder="Describe the workflow task..."
+              />
+              {error ? <div className="workflow-error">{error}</div> : null}
+              <div className="workflow-grill-actions">
+                <button className="control-btn compact" onClick={onSendReply} disabled={!objective.trim() || running}>
+                  <Send size={14} />
+                  <span>{running ? "Asking..." : "Start Chat"}</span>
+                </button>
+              </div>
+            </div>
+          ) : (
+            <>
+              <div className="workflow-chat-transcript" aria-label="Workflow grill transcript">
+                {messages.map((message) => (
+                  <article key={message.id} className={`workflow-chat-bubble is-${message.role}`}>
+                    <span>{message.role === "assistant" ? "Grill" : "You"}</span>
+                    <p>{message.role === "assistant" ? workflowAssistantDisplayContent(message.content) : message.content}</p>
+                  </article>
+                ))}
+              </div>
+
+              {!graphReady ? (
+                <>
+                  <textarea
+                    className="workflow-reply-input"
+                    aria-label="Reply to grill question"
+                    value={reply}
+                    onChange={(event) => onReplyChange(event.currentTarget.value)}
+                    placeholder="Answer the current question..."
+                    rows={3}
+                  />
+                  {error ? <div className="workflow-error">{error}</div> : null}
+                  <div className="workflow-grill-actions">
+                    <button className="control-btn compact secondary" onClick={onSendReply} disabled={!reply.trim() || running}>
+                      <Send size={14} />
+                      <span>{running ? "Asking..." : "Send Answer"}</span>
+                    </button>
+                    {grillComplete ? (
+                      <button className="control-btn compact" onClick={onDraftGraph}>
+                        <Wand2 size={14} />
+                        <span>Generate Graph</span>
+                      </button>
+                    ) : null}
+                  </div>
+                </>
+              ) : error ? (
+                <div className="workflow-error">{error}</div>
+              ) : null}
+            </>
+          )}
+        </section>
+
+        {graphReady ? (
+          <section className="workflow-graph-surface">
+            <div className="workflow-validation-row">
+              <TaskStatusChip label={validation.valid ? "DAG valid" : "DAG invalid"} tone={validation.valid ? "done" : "failed"} />
+              <div className="workflow-validation-row-actions">
+                <span>{`${validation.executableNodeIds.length} executable nodes`}</span>
+                <button className="icon-btn flat" onClick={() => setGraphExpanded(true)} title="Expand graph board" aria-label="Expand workflow graph board">
+                  <Maximize2 size={14} />
+                </button>
+              </div>
+            </div>
+            {validation.errors.length > 0 ? (
+              <div className="workflow-validation-errors">
+                {validation.errors.map((error) => (
+                  <span key={error}>{error}</span>
+                ))}
+              </div>
+            ) : null}
+            {runProgressVisible ? (
+              <section className="workflow-run-progress" aria-label="Workflow run progress">
+                <div className="workflow-run-progress-head">
+                  <strong>Run progress</strong>
+                  <span>{workflowRunProgressSummary(runProgress)}</span>
+                </div>
+                <div className="workflow-run-progress-list">
+                  {runProgress.map((item) => (
+                    <div key={item.nodeId} className={`workflow-run-progress-item is-${item.status}`}>
+                      <span>{workflowRunStatusLabel(item.status)}</span>
+                      <strong>{item.title}</strong>
+                      {item.detail ? <small>{item.detail}</small> : null}
+                    </div>
+                  ))}
+                </div>
+              </section>
+            ) : null}
+            {contextDocumentVisible ? (
+              <section className="workflow-context-doc" aria-label="Workflow context document">
+                <div className="workflow-context-doc-head">
+                  <strong>Workflow context</strong>
+                  <span>Shared one-way handoff document</span>
+                </div>
+                <pre>{contextDocument}</pre>
+              </section>
+            ) : null}
+
+            {graphExpanded ? (
+              <>
+                <div className="workflow-graph-backdrop" onClick={() => setGraphExpanded(false)} />
+                <button className="workflow-graph-close icon-btn" onClick={() => setGraphExpanded(false)} title="Close graph board" aria-label="Close workflow graph board">
+                  <X size={15} />
+                </button>
+              </>
+            ) : null}
+            <div
+              className={`workflow-graph-board ${graphExpanded ? "is-expanded" : ""}`}
+              aria-label="Workflow graph board"
+              onClick={expandGraphFromBoardClick}
+            >
+              {displayLayers.map((layer, layerIndex) => (
+                <div className="workflow-graph-layer" key={layer.map((node) => node.id).join(":")}>
+                  {layerIndex > 0 ? <span className="workflow-graph-edge" /> : null}
+                  <div className="workflow-graph-layer-stack">
+                    {layer.map((node) => {
+                      const agentId = node.agentId ?? "codex";
+                      const nodeRunProgress = runProgressByNodeId.get(node.id);
+                      const channelOptions = channels.filter((channel) => channel.agentId === agentId);
+                      const channelId = channelOptions.some((channel) => channel.id === node.channelId)
+                        ? node.channelId!
+                        : defaultChannelForAgent(agentId, channels);
+                      const modelOptions = modelsForChannel(agentId, channelId, channels);
+                      const modelId = modelOptions.some((model) => model.id === node.modelId) ? node.modelId! : DEFAULT_MODEL_ID;
+                      const runtime = runtimeMap.get(agentId) ?? fallbackRuntime(agentId);
+                      return (
+                        <article className={`workflow-graph-card is-${node.kind} ${nodeRunProgress ? `run-${nodeRunProgress.status}` : ""}`} key={node.id}>
+                          <div className="workflow-graph-card-head">
+                            <span>{node.kind}</span>
+                            <strong>{node.title}</strong>
+                            {nodeRunProgress ? (
+                              <em className={`workflow-node-run-pill is-${nodeRunProgress.status}`}>{workflowRunStatusLabel(nodeRunProgress.status)}</em>
+                            ) : null}
+                          </div>
+                          <input
+                            aria-label={`Node ${node.id} title`}
+                            value={node.title}
+                            onChange={(event) => onUpdateNode(node.id, { title: event.currentTarget.value })}
+                          />
+                          {node.kind === "agent" ? (
+                            <>
+                              <textarea
+                                aria-label={`Node ${node.id} prompt`}
+                                value={node.prompt}
+                                onChange={(event) => onUpdateNode(node.id, { prompt: event.currentTarget.value })}
+                                rows={4}
+                              />
+                              <div className="workflow-node-config-grid">
+                                <label>
+                                  <span>Agent</span>
+                                  <select
+                                    aria-label={`Node ${node.id} agent`}
+                                    value={agentId}
+                                    onChange={(event) => {
+                                      const nextAgentId = event.currentTarget.value as AgentId;
+                                      onUpdateNode(node.id, {
+                                        agentId: nextAgentId,
+                                        channelId: defaultChannelForAgent(nextAgentId, channels),
+                                        modelId: DEFAULT_MODEL_ID,
+                                      });
+                                    }}
+                                  >
+                                    {AGENTS.map((item) => (
+                                      <option key={item} value={item}>
+                                        {agentLabel(item)}
+                                      </option>
+                                    ))}
+                                  </select>
+                                </label>
+                                <label>
+                                  <span>Channel</span>
+                                  <select
+                                    aria-label={`Node ${node.id} channel`}
+                                    value={channelId}
+                                    onChange={(event) => onUpdateNode(node.id, { channelId: event.currentTarget.value, modelId: DEFAULT_MODEL_ID })}
+                                  >
+                                    {channelOptions.map((channel) => (
+                                      <option key={channel.id} value={channel.id}>
+                                        {channel.label}
+                                      </option>
+                                    ))}
+                                  </select>
+                                </label>
+                                <label>
+                                  <span>Model</span>
+                                  <select
+                                    aria-label={`Node ${node.id} model`}
+                                    value={modelId}
+                                    onChange={(event) => onUpdateNode(node.id, { modelId: event.currentTarget.value })}
+                                  >
+                                    {modelOptions.map((model) => (
+                                      <option key={model.id} value={model.id}>
+                                        {model.label}
+                                      </option>
+                                    ))}
+                                  </select>
+                                </label>
+                              </div>
+                              <div className="workflow-node-runtime">
+                                <span className={`runtime-dot ${agentAccent(agentId)}`} />
+                                <span>{runtime.available ? runtimeStatus(runtime) : runtime.error ?? "Unavailable"}</span>
+                              </div>
+                              {nodeRunProgress?.detail ? (
+                                <div className={`workflow-node-run-detail is-${nodeRunProgress.status}`}>{nodeRunProgress.detail}</div>
+                              ) : null}
+                            </>
+                          ) : (
+                            <p>{node.kind === "start" ? "Entry node" : "Terminal node"}</p>
+                          )}
+                        </article>
+                      );
+                    })}
+                  </div>
+                </div>
+              ))}
+            </div>
+          </section>
+        ) : null}
+      </div>
+    </section>
   );
 }
 

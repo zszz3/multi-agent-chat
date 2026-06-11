@@ -11,3 +11,5 @@ coverage/
 .env.*
 !.env.example
 CLAUDE.md
+.gdpa
+docs/*learning-review.md

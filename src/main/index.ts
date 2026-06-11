@@ -2,7 +2,17 @@ import { app, BrowserWindow, dialog, ipcMain, type OpenDialogOptions } from "ele
 import path from "node:path";
 import { fileURLToPath } from "node:url";
 import { AgentHub } from "./agent-hub";
-import type { AgentChannel, AgentId, CreateAgentTeamRequest, RunAgentTeamRequest, RunTaskRequest, TaskProgress, UpdateAgentTeamRequest } from "../shared/types";
+import type {
+  AgentChannel,
+  AgentId,
+  CreateAgentTeamRequest,
+  RunAgentTeamRequest,
+  RunTaskRequest,
+  TaskProgress,
+  UpdateAgentTeamRequest,
+  WorkflowAgentRequest,
+  WorkflowDraftState,
+} from "../shared/types";
 
 const __dirname = path.dirname(fileURLToPath(import.meta.url));
 const PRODUCT_NAME = "Multi Agent Chat";
@@ -118,6 +128,10 @@ function registerIpcHandlers(): void {
     void hub.stopChat(chatId);
     return hub.snapshot();
   });
+  ipcMain.handle("workflow-agent:ask", async (event, request: WorkflowAgentRequest) =>
+    hub.askWorkflowAgent(request, (agentEvent) => event.sender.send("workflow-agent:event", agentEvent)),
+  );
+  ipcMain.handle("workflow:draft:update", (_event, draft?: WorkflowDraftState) => hub.updateWorkflowDraft(draft));
   ipcMain.handle("task:run", async (_event, request: RunTaskRequest) => hub.runTask(request));
   ipcMain.handle("task:select", (_event, taskId: string) => {
     hub.selectTask(taskId);
