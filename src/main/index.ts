@@ -24,7 +24,7 @@ function createWindow(): BrowserWindow {
     backgroundColor: "#ffffff",
     show: false,
     titleBarStyle: "hiddenInset",
-    trafficLightPosition: { x: 12, y: 16 },
+    trafficLightPosition: { x: 12, y: 14 },
     webPreferences: {
       preload: preloadPath,
       contextIsolation: true,
