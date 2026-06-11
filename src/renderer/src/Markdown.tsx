@@ -1,4 +1,4 @@
-import { Fragment, type ReactNode } from "react";
+import { Fragment, useMemo, type ReactNode } from "react";
 
 function renderInline(text: string, keyPrefix: string): ReactNode[] {
   // tokenize inline code first so markdown inside backticks stays literal
@@ -86,7 +86,7 @@ function parseBlocks(text: string): Block[] {
 }
 
 export function Markdown({ text }: { text: string }) {
-  const blocks = parseBlocks(text);
+  const blocks = useMemo(() => parseBlocks(text), [text]);
   return (
     <div className="md-body">
       {blocks.map((block, blockIndex) => {

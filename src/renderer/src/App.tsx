@@ -577,7 +577,7 @@ export function App() {
       }
       if ((event.metaKey || event.ctrlKey) && event.key.toLowerCase() === "n") {
         event.preventDefault();
-        void createChat();
+        if (!paletteOpen) void createChat();
         return;
       }
       if (paletteOpen || isEditableTarget(event.target) || event.metaKey || event.ctrlKey || event.altKey) return;
@@ -2638,7 +2638,15 @@ function TaskTimelineMessage({ message, agentId }: { message: ChatMessage; agent
             ))}
           </div>
         ) : null}
-        {message.content ? <pre>{message.content}</pre> : null}
+        {message.content ? (
+          message.role === "assistant" ? (
+            <div className="cli-markdown">
+              <Markdown text={message.content} />
+            </div>
+          ) : (
+            <pre>{message.content}</pre>
+          )
+        ) : null}
       </div>
     </article>
   );

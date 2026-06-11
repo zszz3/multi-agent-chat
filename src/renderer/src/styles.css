@@ -5032,3 +5032,31 @@ textarea:focus-visible {
   text-overflow: ellipsis;
   white-space: nowrap;
 }
+
+/* tooltips must escape the rail */
+.feature-rail {
+  position: relative;
+  z-index: 30;
+  overflow: visible;
+}
+
+/* ───────────────── review fixes ───────────────── */
+
+/* keep whitespace fidelity inside markdown paragraphs (agent output often aligns text) */
+.md-body p {
+  white-space: pre-wrap;
+}
+
+/* shared kbd treatment — single source for every shortcut badge */
+.palette kbd,
+.sidebar-search-btn kbd,
+.composer-hint kbd {
+  font-family: inherit;
+  font-size: 10.5px;
+  color: var(--muted);
+  background: var(--panel-soft);
+  border: 1px solid var(--line);
+  border-radius: 4px;
+  padding: 1px 5px;
+  line-height: 1.4;
+}
