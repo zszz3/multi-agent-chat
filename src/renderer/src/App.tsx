@@ -963,7 +963,7 @@ export function App() {
         return;
       }
       if (Date.now() - gChordRef.current < 900) {
-        const navMap: Record<string, ActiveFeature> = { c: "chat", t: "tasks", w: "teams", s: "configs" };
+        const navMap: Record<string, ActiveFeature> = { c: "chat", t: "tasks", w: "teams", f: "workflow", s: "configs" };
         const feature = navMap[event.key.toLowerCase()];
         if (feature) {
           event.preventDefault();

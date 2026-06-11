@@ -33,7 +33,7 @@ export type Theme = "light" | "dark";
 export interface PaletteContext {
   chats: Array<{ id: string; title: string; agentId: string }>;
   theme: Theme;
-  onNavigate: (feature: "chat" | "tasks" | "teams" | "configs") => void;
+  onNavigate: (feature: "chat" | "tasks" | "teams" | "workflow" | "configs") => void;
   onSelectChat: (chatId: string) => void;
   onNewChat: () => void;
   onToggleTheme: () => void;
@@ -45,7 +45,8 @@ export function buildPaletteCommands(context: PaletteContext): PaletteCommand[] 
   const navigation: PaletteCommand[] = [
     { id: "nav-chat", section: "跳转", label: "Chat 对话", hint: "G C", icon: <MessageSquareText size={14} />, run: () => context.onNavigate("chat") },
     { id: "nav-tasks", section: "跳转", label: "Tasks 看板", hint: "G T", icon: <ClipboardList size={14} />, run: () => context.onNavigate("tasks") },
-    { id: "nav-teams", section: "跳转", label: "Teams 工作流", hint: "G W", icon: <Users size={14} />, run: () => context.onNavigate("teams") },
+    { id: "nav-teams", section: "跳转", label: "Teams 团队", hint: "G W", icon: <Users size={14} />, run: () => context.onNavigate("teams") },
+    { id: "nav-workflow", section: "跳转", label: "Workflow 工作流", hint: "G F", icon: <Users size={14} />, run: () => context.onNavigate("workflow") },
     { id: "nav-configs", section: "跳转", label: "Configs 配置", hint: "G S", icon: <Settings size={14} />, run: () => context.onNavigate("configs") },
   ];
   const actions: PaletteCommand[] = [
