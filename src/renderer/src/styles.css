@@ -4440,3 +4440,163 @@ body {
 ::-webkit-scrollbar-track {
   background: transparent;
 }
+
+/* ───────────────── Linear reskin v3 — premium polish layer ───────────────── */
+
+/* kill heavy floating shadows globally; hairline elevation only */
+:root {
+  --shadow: 0 1px 3px color-mix(in srgb, var(--ink) 5%, transparent);
+}
+
+[data-theme="dark"] {
+  --shadow: 0 1px 3px color-mix(in srgb, var(--ink) 35%, transparent);
+}
+
+/* softer focus ring */
+button:focus-visible,
+input:focus-visible,
+select:focus-visible,
+textarea:focus-visible {
+  outline: 2px solid color-mix(in srgb, var(--accent) 45%, transparent);
+  outline-offset: 1px;
+}
+
+/* conversational typography — sans body, mono only for payloads */
+.cli-message pre {
+  font-family: inherit;
+  font-size: 13px;
+  line-height: 1.7;
+  color: var(--text);
+}
+
+.cli-meta-details pre,
+.task-log-entry pre,
+.team-run-prompt,
+.team-run-context,
+.team-run-step pre,
+.task-prompt-block pre {
+  font-family: "Geist Mono Variable", ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, monospace;
+  font-size: 12px;
+}
+
+.cli-message.user {
+  display: block;
+  font-weight: 400;
+}
+
+.cli-prompt-mark {
+  display: none;
+}
+
+.cli-message.user pre {
+  color: var(--text);
+}
+
+.cli-agent-line {
+  gap: 7px;
+  margin-bottom: 6px;
+  color: var(--muted);
+  font-size: 11.5px;
+  font-weight: 600;
+  text-transform: none;
+  letter-spacing: 0;
+}
+
+.cli-message.user .cli-agent-line {
+  color: var(--subtle);
+}
+
+.runtime-dot {
+  width: 7px;
+  height: 7px;
+}
+
+/* composer controls as quiet chips */
+.composer-select-wrap {
+  min-height: 26px;
+  padding: 0 7px;
+  border-radius: 6px;
+  background: transparent;
+  transition: background 110ms var(--ease), border-color 110ms var(--ease);
+}
+
+.composer-select-wrap:hover {
+  border-color: var(--line-strong);
+  background: var(--hover);
+}
+
+.composer-select {
+  height: 24px;
+  font-size: 11.5px;
+  font-weight: 500;
+}
+
+.workdir-picker.composer-workdir-picker {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  width: auto;
+  max-width: 260px;
+  min-height: 26px;
+  padding: 0 8px;
+  border: 1px solid var(--line);
+  border-radius: 6px;
+  font-size: 11.5px;
+  transition: background 110ms var(--ease), border-color 110ms var(--ease);
+}
+
+.workdir-picker.composer-workdir-picker:hover {
+  border-color: var(--line-strong);
+  background: var(--hover);
+}
+
+.workdir-picker.composer-workdir-picker span {
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+/* ghost icon buttons */
+.icon-btn {
+  border-color: transparent;
+  background: transparent;
+}
+
+.icon-btn:hover {
+  border-color: transparent;
+  background: var(--hover);
+  color: var(--text);
+}
+
+.icon-btn.danger:hover {
+  background: var(--danger-tint);
+  color: var(--danger);
+}
+
+/* compact pills */
+.status-pill {
+  min-height: 0;
+  padding: 4px 10px;
+  font-size: 11.5px;
+}
+
+/* tighter content frame */
+.content {
+  gap: 12px;
+  padding: 16px;
+}
+
+.chat-content {
+  padding: 0;
+  gap: 0;
+}
+
+/* empty states */
+.empty-state {
+  color: var(--subtle);
+}
+
+.cli-message.assistant,
+.cli-message.meta {
+  padding-left: 0;
+}

@@ -3042,6 +3042,9 @@ function CliMessage({ message, agentId, streaming = false }: { message: ChatMess
     return (
       <div className="cli-message user">
         <div className="cli-prompt-mark">›</div>
+        <div className="cli-agent-line">
+          <span>{`You · ${formatTime(message.timestamp)}`}</span>
+        </div>
         <pre>{message.content}</pre>
       </div>
     );
@@ -3052,7 +3055,7 @@ function CliMessage({ message, agentId, streaming = false }: { message: ChatMess
       <div className="cli-message assistant">
         <div className="cli-agent-line">
           <span className={`runtime-dot ${agentAccent(agentId)}`} />
-          <span>{agentLabel(agentId)}</span>
+          <span>{`${agentLabel(agentId)} · ${formatTime(message.timestamp)}`}</span>
         </div>
         {message.events && message.events.length > 0 ? (
           <div className="cli-message-events">
