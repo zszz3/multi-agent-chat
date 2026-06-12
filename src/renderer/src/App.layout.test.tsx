@@ -934,6 +934,7 @@ describe("WorkflowPage", () => {
         onSendReply={() => undefined}
         onUpdateNode={() => undefined}
         onRunGraph={async () => undefined}
+        onResetSession={() => undefined}
       />,
     );
 
@@ -1114,6 +1115,7 @@ workflowGraph.upsert({
         onSendReply={() => undefined}
         onUpdateNode={() => undefined}
         onRunGraph={async () => undefined}
+        onResetSession={() => undefined}
       />,
     );
 
@@ -1153,6 +1155,7 @@ workflowGraph.upsert({
         onSendReply={() => undefined}
         onUpdateNode={() => undefined}
         onRunGraph={async () => undefined}
+        onResetSession={() => undefined}
       />,
     );
 
@@ -1198,6 +1201,7 @@ workflowGraph.upsert({
         onSendReply={() => undefined}
         onUpdateNode={() => undefined}
         onRunGraph={async () => undefined}
+        onResetSession={() => undefined}
       />,
     );
 
@@ -1242,6 +1246,7 @@ workflowGraph.upsert({
         onSendReply={() => undefined}
         onUpdateNode={() => undefined}
         onRunGraph={async () => undefined}
+        onResetSession={() => undefined}
       />,
     );
 

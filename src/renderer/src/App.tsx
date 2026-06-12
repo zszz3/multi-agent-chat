@@ -9,19 +9,24 @@ import {
   GripVertical,
   Maximize2,
   MessageSquareText,
+  Moon,
   Play,
   Plus,
   RefreshCw,
   Save,
+  Search,
   Send,
   Settings,
   SquarePen,
+  Sun,
   Trash2,
   UserPlus,
   Users,
   Wand2,
   X,
 } from "lucide-react";
+import { CommandPalette, buildPaletteCommands, type Theme } from "./CommandPalette";
+import { Markdown } from "./Markdown";
 import { DEFAULT_MODEL_ID, defaultChannelForAgent, modelsForChannel } from "../../shared/models";
 import { buildWorkflowAgentPrompt, WORKFLOW_TOTAL_QUESTION_COUNT } from "../../shared/workflow-agent";
 import {
@@ -60,6 +65,12 @@ import type {
 } from "../../shared/types";
 
 const AGENTS: AgentId[] = ["codex", "claude"];
+const THEME_STORAGE_KEY = "multi-agent-chat-theme";
+
+export function loadStoredTheme(storage: Pick<Storage, "getItem">): Theme {
+  return storage.getItem(THEME_STORAGE_KEY) === "dark" ? "dark" : "light";
+}
+
 export type ActiveFeature = "chat" | "tasks" | "teams" | "workflow" | "configs";
 type MaybePromise = void | Promise<void>;
 export type TaskStatusFilterValue = "all" | TaskProgress;
@@ -706,6 +717,16 @@ export function App() {
   const [importedConfigs, setImportedConfigs] = useState<ImportedCodexConfig[]>([]);
   const [codexPluginCatalog, setCodexPluginCatalog] = useState<CodexPluginCatalogItem[]>([]);
   const [pluginCatalogStatus, setPluginCatalogStatus] = useState("");
+  const [theme, setTheme] = useState<Theme>(() => loadStoredTheme(window.localStorage));
+  const [paletteOpen, setPaletteOpen] = useState(false);
+  const transcriptRef = useRef<HTMLElement>(null);
+  const stickToBottomRef = useRef(true);
+  const gChordRef = useRef(0);
+
+  useEffect(() => {
+    document.documentElement.dataset.theme = theme;
+    window.localStorage.setItem(THEME_STORAGE_KEY, theme);
+  }, [theme]);
 
   function applyPersistedWorkflowDraft(draft: WorkflowDraftState): void {
     workflowDraftHydratingRef.current = true;
@@ -914,6 +935,74 @@ export function App() {
   useEffect(() => {
     setSlashCommandIndex((current) => Math.min(current, Math.max(0, slashCommandSuggestions.length - 1)));
   }, [slashCommandSuggestions.length]);
+
+  function toggleTheme(): void {
+    setTheme((current) => (current === "dark" ? "light" : "dark"));
+  }
+
+  useEffect(() => {
+    function isEditableTarget(target: EventTarget | null): boolean {
+      if (!(target instanceof HTMLElement)) return false;
+      return target.tagName === "INPUT" || target.tagName === "TEXTAREA" || target.tagName === "SELECT" || target.isContentEditable;
+    }
+
+    function onKeyDown(event: globalThis.KeyboardEvent): void {
+      if ((event.metaKey || event.ctrlKey) && event.key.toLowerCase() === "k") {
+        event.preventDefault();
+        setPaletteOpen((current) => !current);
+        return;
+      }
+      if ((event.metaKey || event.ctrlKey) && event.key.toLowerCase() === "n") {
+        event.preventDefault();
+        if (!paletteOpen) void createChat();
+        return;
+      }
+      if (paletteOpen || isEditableTarget(event.target) || event.metaKey || event.ctrlKey || event.altKey) return;
+      if (event.key.toLowerCase() === "g") {
+        gChordRef.current = Date.now();
+        return;
+      }
+      if (Date.now() - gChordRef.current < 900) {
+        const navMap: Record<string, ActiveFeature> = { c: "chat", t: "tasks", w: "teams", f: "workflow", s: "configs" };
+        const feature = navMap[event.key.toLowerCase()];
+        if (feature) {
+          event.preventDefault();
+          setActiveFeature(feature);
+        }
+        gChordRef.current = 0;
+      }
+    }
+
+    window.addEventListener("keydown", onKeyDown);
+    return () => window.removeEventListener("keydown", onKeyDown);
+  });
+
+  useEffect(() => {
+    const transcript = transcriptRef.current;
+    if (!transcript || !stickToBottomRef.current) return;
+    transcript.scrollTop = transcript.scrollHeight;
+  }, [activeChat?.messages, activeChat?.running]);
+
+  function handleTranscriptScroll(): void {
+    const transcript = transcriptRef.current;
+    if (!transcript) return;
+    stickToBottomRef.current = transcript.scrollHeight - transcript.scrollTop - transcript.clientHeight < 48;
+  }
+
+  const paletteCommands = useMemo(
+    () =>
+      buildPaletteCommands({
+        chats: snapshot.chats.map((chat) => ({ id: chat.id, title: chat.title, agentId: chat.agentId })),
+        theme,
+        onNavigate: setActiveFeature,
+        onSelectChat: (chatId) => void selectChat(chatId),
+        onNewChat: () => void createChat(),
+        onToggleTheme: toggleTheme,
+        onChooseWorkDir: () => void chooseWorkDir(),
+        onRefreshAgents: () => void refresh(),
+      }),
+    [snapshot.chats, theme],
+  );
 
   async function refresh(): Promise<void> {
     const next = await window.multiAgentChat.refreshAgents();
@@ -1124,6 +1213,25 @@ export function App() {
     setWorkflowRunProgress([]);
     setWorkflowRunContextDocument("");
     setWorkflowAgentSessionId(undefined);
+  }
+
+  async function resetWorkflowSession(): Promise<void> {
+    workflowRequestIdRef.current = undefined;
+    workflowAssistantMessageIdRef.current = undefined;
+    workflowStreamingStartedRef.current = false;
+    workflowAssistantContentRef.current = "";
+    setWorkflowObjective("");
+    setWorkflowReply("");
+    setWorkflowError(undefined);
+    setWorkflowRunning(false);
+    setWorkflowMessages(initialWorkflowMessages());
+    setWorkflowGraph(createWorkflowGraphFromObjective(""));
+    setWorkflowGraphReady(false);
+    setWorkflowRunProgress([]);
+    setWorkflowRunContextDocument("");
+    setWorkflowAgentSessionId(undefined);
+    const next = await window.multiAgentChat.updateWorkflowDraft(undefined);
+    setSnapshot(next);
   }
 
   async function send(): Promise<void> {
@@ -1615,29 +1723,55 @@ export function App() {
           <Bot size={18} />
         </div>
         <nav className="feature-nav" aria-label="Feature navigation">
-          <button className={`feature-nav-item ${activeFeature === "chat" ? "is-active" : ""}`} onClick={() => setActiveFeature("chat")}>
+          <button
+            className={`feature-nav-item ${activeFeature === "chat" ? "is-active" : ""}`}
+            onClick={() => setActiveFeature("chat")}
+           
+          >
             <MessageSquareText size={15} />
             <span>Chat</span>
           </button>
-          <button className={`feature-nav-item ${activeFeature === "tasks" ? "is-active" : ""}`} onClick={() => setActiveFeature("tasks")}>
+          <button
+            className={`feature-nav-item ${activeFeature === "tasks" ? "is-active" : ""}`}
+            onClick={() => setActiveFeature("tasks")}
+           
+          >
             <ClipboardList size={15} />
             <span>Tasks</span>
           </button>
-          <button className={`feature-nav-item ${activeFeature === "teams" ? "is-active" : ""}`} onClick={() => setActiveFeature("teams")}>
+          <button
+            className={`feature-nav-item ${activeFeature === "teams" ? "is-active" : ""}`}
+            onClick={() => setActiveFeature("teams")}
+           
+          >
             <Users size={15} />
             <span>Teams</span>
           </button>
-          <button className={`feature-nav-item ${activeFeature === "workflow" ? "is-active" : ""}`} onClick={() => setActiveFeature("workflow")}>
+          <button
+            className={`feature-nav-item ${activeFeature === "workflow" ? "is-active" : ""}`}
+            onClick={() => setActiveFeature("workflow")}
+          >
             <GitBranch size={15} />
             <span>Workflow</span>
           </button>
-          <button className={`feature-nav-item ${activeFeature === "configs" ? "is-active" : ""}`} onClick={() => setActiveFeature("configs")}>
+          <button
+            className={`feature-nav-item ${activeFeature === "configs" ? "is-active" : ""}`}
+            onClick={() => setActiveFeature("configs")}
+          >
             <Settings size={15} />
             <span>Configs</span>
           </button>
         </nav>
         <div className="rail-footer">
-          <button className="icon-btn danger" onClick={() => void clearHistory()} title="Clear all history">
+          <button
+            className="icon-btn"
+            onClick={toggleTheme}
+            data-tip={theme === "dark" ? "浅色主题" : "深色主题"}
+            aria-label="Toggle theme"
+          >
+            {theme === "dark" ? <Sun size={14} /> : <Moon size={14} />}
+          </button>
+          <button className="icon-btn danger" onClick={() => void clearHistory()} data-tip="清除全部历史">
             <Trash2 size={14} />
           </button>
         </div>
@@ -1661,6 +1795,12 @@ export function App() {
           </div>
         </div>
 
+        <button className="sidebar-search-btn" onClick={() => setPaletteOpen(true)} aria-label="Open command palette">
+          <Search size={13} />
+          <span>搜索或执行命令…</span>
+          <kbd>⌘K</kbd>
+        </button>
+
         {activeFeature === "chat" ? (
           <section className="resource-panel chat-list-panel">
             <div className="panel-header">
@@ -1679,10 +1819,11 @@ export function App() {
                   key={chat.id}
                   className={`chat-row ${chat.id === activeChat?.id ? "is-active" : ""}`}
                   onClick={() => void selectChat(chat.id)}
+                  title={chat.title}
                 >
-                  <span className={`agent-badge mini ${agentAccent(chat.agentId)}`}>{agentLabel(chat.agentId)}</span>
+                  <span className={`runtime-dot ${agentAccent(chat.agentId)} ${chat.running ? "is-pulsing" : ""}`} />
                   <strong>{chat.title}</strong>
-                  <span>{chat.running ? "Running" : formatTime(chat.updatedAt)}</span>
+                  <span>{chat.running ? "运行中" : formatTime(chat.updatedAt)}</span>
                 </button>
               ))}
             </div>
@@ -1830,6 +1971,7 @@ export function App() {
             onSendReply={sendWorkflowReply}
             onUpdateNode={updateWorkflowNode}
             onRunGraph={runWorkflowGraph}
+            onResetSession={resetWorkflowSession}
           />
         ) : activeFeature === "configs" ? (
           <ConfigPage
@@ -1877,7 +2019,7 @@ export function App() {
               </div>
             </header>
 
-            <section className="cli-transcript">
+            <section className="cli-transcript" ref={transcriptRef} onScroll={handleTranscriptScroll}>
               {activeChat.messages.length === 0 ? (
                 <div className="empty-state terminal-empty">
                   <Wand2 size={17} />
@@ -1885,13 +2027,19 @@ export function App() {
                 </div>
               ) : (
                 activeChat.messages.map((message) => (
-                  <CliMessage key={message.id} message={message} agentId={activeChat.agentId} />
+                  <CliMessage
+                    key={message.id}
+                    message={message}
+                    agentId={activeChat.agentId}
+                    streaming={activeChat.running && message.id === activeChat.pendingAssistantMessageId}
+                  />
                 ))
               )}
               {activeChat.running ? (
                 <div className="cli-status-line">
                   <span className={`runtime-dot ${agentAccent(activeChat.agentId)}`} />
                   <span>{agentLabel(activeChat.agentId)} is thinking</span>
+                  <span className="stream-cursor" aria-hidden="true" />
                 </div>
               ) : null}
             </section>
@@ -1902,6 +2050,7 @@ export function App() {
                 activeIndex={slashCommandIndex}
                 onSelect={(suggestion) => completeSlashCommand(suggestion.command)}
               />
+              <div className="composer-box">
               <textarea
                 value={prompt}
                 onChange={(event) => setPrompt(event.target.value)}
@@ -1935,7 +2084,7 @@ export function App() {
                   }
                 }}
                 placeholder={`Message ${agentLabel(activeChat.agentId)} or type /help...`}
-                rows={4}
+                rows={2}
               />
               <div className="composer-footer">
                 <ChatControls
@@ -1958,6 +2107,10 @@ export function App() {
                   <span>{activeChat.running ? "Running" : "Send"}</span>
                 </button>
               </div>
+              </div>
+              <div className="composer-hint">
+                <kbd>↵</kbd> 发送 · <kbd>⇧↵</kbd> 换行 · <kbd>⌘K</kbd> 命令面板
+              </div>
             </section>
           </>
         ) : (
@@ -1967,6 +2120,8 @@ export function App() {
           </div>
         )}
       </main>
+
+      <CommandPalette open={paletteOpen} commands={paletteCommands} onClose={() => setPaletteOpen(false)} />
     </div>
   );
 }
@@ -2833,13 +2988,27 @@ function TeamRunDetail({
         <i />
       </div>
       <div className="workflow-trace-list">
-        {workflowTraceNodesForRun(run).map((node, index) => (
-          <article key={node.id} className={`workflow-trace-item ${workflowStatusClass(node.status)}`}>
-            <span>{index + 1}</span>
-            <strong>{`${node.label} ${node.status}`}</strong>
-            {node.description ? <p>{node.description}</p> : null}
-          </article>
-        ))}
+        {workflowTraceNodesForRun(run).map((node) => {
+          const step = run.steps.find((item) => item.id === node.stepId || item.teamMemberId === node.teamMemberId);
+          const time = step?.completedAt ?? step?.startedAt;
+          const glyph = node.status === "completed" ? "✓" : node.status === "running" ? "●" : node.status === "failed" ? "✕" : "○";
+          const detail =
+            node.status === "running"
+              ? "正在执行…"
+              : node.status === "completed"
+                ? (step?.artifact?.split("\n")[0]?.slice(0, 96) ?? node.description)
+                : node.status === "failed"
+                  ? step?.lastError ?? "执行失败"
+                  : "等待上游产物";
+          return (
+            <article key={node.id} className={`workflow-trace-item ${workflowStatusClass(node.status)}`}>
+              <span className="trace-time">{time ? formatTime(time) : "—"}</span>
+              <span className="trace-glyph">{glyph}</span>
+              <strong>{`${node.label} ${node.status}`}</strong>
+              {detail ? <p>{detail}</p> : null}
+            </article>
+          );
+        })}
       </div>
 
       <div className="task-section-divider">
@@ -3292,7 +3461,15 @@ function TaskTimelineMessage({ message, agentId }: { message: ChatMessage; agent
             ))}
           </div>
         ) : null}
-        {message.content ? <pre>{message.content}</pre> : null}
+        {message.content ? (
+          message.role === "assistant" ? (
+            <div className="cli-markdown">
+              <Markdown text={message.content} />
+            </div>
+          ) : (
+            <pre>{message.content}</pre>
+          )
+        ) : null}
       </div>
     </article>
   );
@@ -3323,6 +3500,7 @@ interface WorkflowPageProps {
   onSendReply: () => void;
   onUpdateNode: (nodeId: string, update: Partial<WorkflowGraphNode>) => void;
   onRunGraph: () => MaybePromise;
+  onResetSession: () => MaybePromise;
 }
 
 export function WorkflowPage({
@@ -3350,6 +3528,7 @@ export function WorkflowPage({
   onSendReply,
   onUpdateNode,
   onRunGraph,
+  onResetSession,
 }: WorkflowPageProps) {
   const validation = validateWorkflowGraph(graph);
   const workflowStarted = messages.length > 0;
@@ -3381,6 +3560,20 @@ export function WorkflowPage({
   const runProgressVisible = runProgress.length > 0;
   const contextDocumentVisible = contextDocument.trim().length > 0;
   const [graphExpanded, setGraphExpanded] = useState(false);
+  const grillTranscriptRef = useRef<HTMLDivElement>(null);
+  const grillStickRef = useRef(true);
+
+  useEffect(() => {
+    const transcript = grillTranscriptRef.current;
+    if (!transcript || !grillStickRef.current) return;
+    transcript.scrollTop = transcript.scrollHeight;
+  }, [messages]);
+
+  function handleGrillTranscriptScroll(): void {
+    const transcript = grillTranscriptRef.current;
+    if (!transcript) return;
+    grillStickRef.current = transcript.scrollHeight - transcript.scrollTop - transcript.clientHeight < 48;
+  }
 
   function expandGraphFromBoardClick(event: MouseEvent<HTMLElement>): void {
     const target = event.target instanceof HTMLElement ? event.target : undefined;
@@ -3395,14 +3588,20 @@ export function WorkflowPage({
           <h2>Workflow</h2>
           <p>{workDir || "No work directory selected"}</p>
         </div>
-        {graphReady ? (
-          <div className="workflow-page-actions">
+        <div className="workflow-page-actions">
+          {workflowStarted || graphReady ? (
+            <button className="control-btn compact secondary" onClick={() => void onResetSession()}>
+              <Plus size={14} />
+              <span>New Session</span>
+            </button>
+          ) : null}
+          {graphReady ? (
             <button className="control-btn compact" onClick={() => void onRunGraph()} disabled={!validation.valid || running}>
               <Play size={14} />
               <span>{running ? "Running..." : "Run Graph"}</span>
             </button>
-          </div>
-        ) : null}
+          ) : null}
+        </div>
       </header>
 
       <div className={`workflow-page-grid ${graphReady ? "has-graph" : "is-chat-only"}`}>
@@ -3463,6 +3662,18 @@ export function WorkflowPage({
                 aria-label="Workflow task"
                 value={objective}
                 onChange={(event) => onObjectiveChange(event.currentTarget.value)}
+                onKeyDown={(event) => {
+                  if (shouldSendComposerKey({
+                    key: event.key,
+                    shiftKey: event.shiftKey,
+                    metaKey: event.metaKey,
+                    ctrlKey: event.ctrlKey,
+                    isComposing: event.nativeEvent.isComposing,
+                  })) {
+                    event.preventDefault();
+                    if (objective.trim() && !running) void onSendReply();
+                  }
+                }}
                 rows={6}
                 placeholder="Describe the workflow task..."
               />
@@ -3476,7 +3687,12 @@ export function WorkflowPage({
             </div>
           ) : (
             <>
-              <div className="workflow-chat-transcript" aria-label="Workflow grill transcript">
+              <div
+                className="workflow-chat-transcript"
+                aria-label="Workflow grill transcript"
+                ref={grillTranscriptRef}
+                onScroll={handleGrillTranscriptScroll}
+              >
                 {messages.map((message) => (
                   <article key={message.id} className={`workflow-chat-bubble is-${message.role}`}>
                     <span>{message.role === "assistant" ? "Grill" : "You"}</span>
@@ -3492,6 +3708,18 @@ export function WorkflowPage({
                     aria-label="Reply to grill question"
                     value={reply}
                     onChange={(event) => onReplyChange(event.currentTarget.value)}
+                    onKeyDown={(event) => {
+                      if (shouldSendComposerKey({
+                        key: event.key,
+                        shiftKey: event.shiftKey,
+                        metaKey: event.metaKey,
+                        ctrlKey: event.ctrlKey,
+                        isComposing: event.nativeEvent.isComposing,
+                      })) {
+                        event.preventDefault();
+                        if (reply.trim() && !running) void onSendReply();
+                      }
+                    }}
                     placeholder="Answer the current question..."
                     rows={3}
                   />
@@ -4095,11 +4323,14 @@ export function ConfigPage({
   );
 }
 
-function CliMessage({ message, agentId }: { message: ChatMessage; agentId: AgentId }) {
+function CliMessage({ message, agentId, streaming = false }: { message: ChatMessage; agentId: AgentId; streaming?: boolean }) {
   if (message.role === "user") {
     return (
       <div className="cli-message user">
         <div className="cli-prompt-mark">›</div>
+        <div className="cli-agent-line">
+          <span>{`You · ${formatTime(message.timestamp)}`}</span>
+        </div>
         <pre>{message.content}</pre>
       </div>
     );
@@ -4110,7 +4341,7 @@ function CliMessage({ message, agentId }: { message: ChatMessage; agentId: Agent
       <div className="cli-message assistant">
         <div className="cli-agent-line">
           <span className={`runtime-dot ${agentAccent(agentId)}`} />
-          <span>{agentLabel(agentId)}</span>
+          <span>{`${agentLabel(agentId)} · ${formatTime(message.timestamp)}`}</span>
         </div>
         {message.events && message.events.length > 0 ? (
           <div className="cli-message-events">
@@ -4119,7 +4350,16 @@ function CliMessage({ message, agentId }: { message: ChatMessage; agentId: Agent
             ))}
           </div>
         ) : null}
-        {message.content ? <pre>{message.content}</pre> : null}
+        {message.content ? (
+          <div className={`cli-markdown ${streaming ? "is-streaming" : ""}`}>
+            <Markdown text={message.content} />
+            {streaming ? <span className="stream-cursor" aria-hidden="true" /> : null}
+          </div>
+        ) : streaming ? (
+          <div className="cli-markdown is-streaming">
+            <span className="stream-cursor" aria-hidden="true" />
+          </div>
+        ) : null}
       </div>
     );
   }

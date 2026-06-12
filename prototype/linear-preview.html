@@ -1,0 +1,677 @@
+<!DOCTYPE html>
+<!-- PROTOTYPE — throwaway preview. Question: does the Linear-style dark redesign feel right
+     for Multi Agent Chat (Chat / Tasks / Teams / Configs + ⌘K palette + streaming + motion)?
+     Variants: A 标准 Linear(紫蓝/高密度) · B 舒适密度 · C 石墨单色. Switch with the bottom bar or ←/→. -->
+<html lang="zh-CN">
+<head>
+<meta charset="UTF-8" />
+<meta name="viewport" content="width=device-width, initial-scale=1.0" />
+<title>Multi Agent Chat — Linear 风格预览</title>
+<style>
+  :root {
+    --bg: #fafbfc;
+    --rail: #f4f5f8;
+    --panel: #ffffff;
+    --panel-soft: #f4f5f8;
+    --hover: #eceef2;
+    --line: #e4e6eb;
+    --line-strong: #d2d6de;
+    --text: #1c1d21;
+    --muted: #6b7280;
+    --subtle: #9ca3af;
+    --accent: #5e6ad2;
+    --accent-bright: #4f5ac7;
+    --accent-soft: rgba(94, 106, 210, 0.1);
+    --codex: #15966b;
+    --claude: #c47e1d;
+    --red: #e5484d;
+    --yellow: #d9a514;
+    --code-bg: #f6f8fa;
+    --radius: 8px;
+    --font-size: 13px;
+    --density: 1;
+    --shadow: 0 4px 14px rgba(28, 29, 33, 0.08);
+    --ease: cubic-bezier(0.25, 0.46, 0.45, 0.94);
+  }
+  html[data-variant="B"] {
+    --font-size: 13.5px;
+    --density: 1.25;
+    --radius: 10px;
+    --bg: #ffffff;
+    --rail: #fafbfc;
+  }
+  html[data-variant="C"] {
+    --accent: #3c3f44;
+    --accent-bright: #1c1d21;
+    --accent-soft: rgba(60, 63, 68, 0.08);
+    --codex: #4b5158;
+    --claude: #81878f;
+    --bg: #fcfcfc;
+    --rail: #f6f6f7;
+  }
+
+  * { box-sizing: border-box; }
+  html, body { height: 100%; margin: 0; }
+  body {
+    font-family: "Geist Variable", Inter, -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif;
+    font-size: var(--font-size);
+    background: var(--bg);
+    color: var(--text);
+    overflow: hidden;
+    -webkit-font-smoothing: antialiased;
+  }
+  button { font: inherit; color: inherit; background: none; border: 0; cursor: pointer; }
+  kbd {
+    font-family: inherit; font-size: 10.5px; color: var(--muted);
+    background: var(--panel-soft); border: 1px solid var(--line);
+    border-radius: 4px; padding: 1px 5px; line-height: 1.4;
+  }
+
+  .shell { display: grid; grid-template-columns: 52px 240px 1fr; height: 100vh; }
+
+  /* ─── icon rail ─── */
+  .rail {
+    background: var(--rail); border-right: 1px solid var(--line);
+    display: flex; flex-direction: column; align-items: center; padding: 14px 0; gap: 6px;
+  }
+  .rail-logo {
+    width: 26px; height: 26px; border-radius: 7px;
+    background: linear-gradient(135deg, var(--accent), var(--accent-bright));
+    display: grid; place-items: center; font-size: 13px; font-weight: 700; color: #fff;
+    margin-bottom: 12px;
+  }
+  .rail-btn {
+    width: 34px; height: 34px; border-radius: 8px; display: grid; place-items: center;
+    color: var(--muted); position: relative; transition: background 120ms var(--ease), color 120ms var(--ease);
+  }
+  .rail-btn:hover { background: var(--hover); color: var(--text); }
+  .rail-btn.active { background: var(--accent-soft); color: var(--accent-bright); }
+  .rail-btn svg { width: 17px; height: 17px; }
+  .rail-btn .tip {
+    position: absolute; left: 44px; top: 50%; transform: translateY(-50%) translateX(-4px);
+    background: var(--panel-soft); border: 1px solid var(--line); border-radius: 6px;
+    padding: 4px 8px; font-size: 11.5px; white-space: nowrap; pointer-events: none;
+    opacity: 0; transition: opacity 120ms var(--ease), transform 120ms var(--ease); z-index: 30;
+    display: flex; gap: 6px; align-items: center;
+  }
+  .rail-btn:hover .tip { opacity: 1; transform: translateY(-50%) translateX(0); }
+  .rail-spacer { flex: 1; }
+
+  /* ─── sidebar ─── */
+  .sidebar {
+    background: var(--rail); border-right: 1px solid var(--line);
+    display: flex; flex-direction: column; overflow: hidden;
+  }
+  .sidebar-head {
+    padding: calc(12px * var(--density)) 14px 8px;
+    display: flex; align-items: center; justify-content: space-between;
+  }
+  .sidebar-head h1 { font-size: 13px; font-weight: 600; margin: 0; letter-spacing: -0.01em; }
+  .search-trigger {
+    margin: 0 10px 10px; padding: 6px 9px;
+    background: var(--panel); border: 1px solid var(--line); border-radius: 7px;
+    display: flex; align-items: center; gap: 7px; color: var(--subtle); font-size: 12px;
+    transition: border-color 120ms var(--ease), background 120ms var(--ease);
+  }
+  .search-trigger:hover { border-color: var(--line-strong); background: var(--panel-soft); }
+  .search-trigger kbd { margin-left: auto; }
+  .side-section { padding: 4px 6px; overflow-y: auto; }
+  .side-label {
+    font-size: 10.5px; text-transform: uppercase; letter-spacing: 0.08em;
+    color: var(--subtle); padding: 8px 10px 4px; font-weight: 600;
+    display: flex; justify-content: space-between; align-items: center;
+  }
+  .side-row {
+    width: 100%; text-align: left; border-radius: 6px;
+    padding: calc(5px * var(--density)) 9px;
+    display: flex; align-items: center; gap: 8px; color: var(--muted);
+    transition: background 110ms var(--ease), color 110ms var(--ease);
+    animation: row-in 240ms var(--ease) backwards;
+  }
+  .side-row:nth-child(2) { animation-delay: 20ms; } .side-row:nth-child(3) { animation-delay: 40ms; }
+  .side-row:nth-child(4) { animation-delay: 60ms; } .side-row:nth-child(5) { animation-delay: 80ms; }
+  @keyframes row-in { from { opacity: 0; transform: translateY(3px); } }
+  .side-row:hover { background: var(--hover); color: var(--text); }
+  .side-row.active { background: var(--accent-soft); color: var(--text); }
+  .side-row .dot { width: 7px; height: 7px; border-radius: 50%; flex: none; }
+  .dot.codex { background: var(--codex); } .dot.claude { background: var(--claude); }
+  .dot.pulse { animation: pulse 1.4s ease-in-out infinite; }
+  @keyframes pulse { 50% { opacity: 0.35; transform: scale(0.8); } }
+  .side-row .t { flex: 1; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+  .side-row .m { font-size: 11px; color: var(--subtle); flex: none; }
+  .new-btn {
+    margin: auto 10px 12px; padding: 7px; border-radius: 7px;
+    border: 1px dashed var(--line-strong); color: var(--muted); font-size: 12px;
+    display: flex; align-items: center; justify-content: center; gap: 6px;
+    transition: all 120ms var(--ease);
+  }
+  .new-btn:hover { border-color: var(--accent); color: var(--accent-bright); background: var(--accent-soft); }
+
+  /* ─── main ─── */
+  .main { display: flex; flex-direction: column; overflow: hidden; position: relative; }
+  .page { display: none; flex-direction: column; flex: 1; overflow: hidden; animation: page-in 180ms var(--ease); }
+  .page.visible { display: flex; }
+  @keyframes page-in { from { opacity: 0; transform: translateY(4px); } }
+
+  .topbar {
+    height: calc(44px * var(--density)); flex: none; border-bottom: 1px solid var(--line);
+    display: flex; align-items: center; gap: 10px; padding: 0 16px;
+  }
+  .topbar h2 { font-size: 13.5px; font-weight: 600; margin: 0; letter-spacing: -0.01em; }
+  .badge {
+    font-size: 10.5px; font-weight: 600; padding: 2px 7px; border-radius: 99px;
+    border: 1px solid var(--line);
+  }
+  .badge.codex { color: var(--codex); border-color: color-mix(in srgb, var(--codex) 35%, transparent); background: color-mix(in srgb, var(--codex) 10%, transparent); }
+  .badge.claude { color: var(--claude); border-color: color-mix(in srgb, var(--claude) 35%, transparent); background: color-mix(in srgb, var(--claude) 10%, transparent); }
+  .topbar .meta { color: var(--subtle); font-size: 11.5px; }
+  .topbar .right { margin-left: auto; display: flex; gap: 8px; align-items: center; }
+
+  /* ─── chat transcript ─── */
+  .transcript { flex: 1; overflow-y: auto; padding: calc(20px * var(--density)) 0; }
+  .msg { max-width: 720px; margin: 0 auto calc(18px * var(--density)); padding: 0 24px; animation: msg-in 200ms var(--ease) backwards; }
+  @keyframes msg-in { from { opacity: 0; transform: translateY(6px); } }
+  .msg .who { display: flex; align-items: center; gap: 7px; font-size: 11.5px; color: var(--muted); margin-bottom: 6px; font-weight: 600; }
+  .msg.user .who { color: var(--subtle); }
+  .msg .body { line-height: 1.65; white-space: pre-wrap; color: var(--text); }
+  .msg.user .body {
+    background: var(--panel); border: 1px solid var(--line); border-radius: var(--radius);
+    padding: calc(10px * var(--density)) 14px; color: var(--muted);
+  }
+  .msg .codeblock {
+    background: var(--code-bg); border: 1px solid var(--line); border-radius: var(--radius);
+    margin: 10px 0; overflow: hidden; font-size: 12px;
+  }
+  .codeblock .cb-head {
+    display: flex; justify-content: space-between; padding: 6px 12px;
+    border-bottom: 1px solid var(--line); color: var(--subtle); font-size: 11px;
+  }
+  .codeblock .cb-copy { color: var(--subtle); transition: color 110ms; font-size: 11px; }
+  .codeblock .cb-copy:hover { color: var(--text); }
+  .codeblock pre { margin: 0; padding: 12px; overflow-x: auto; font-family: "Geist Mono", ui-monospace, SFMono-Regular, monospace; line-height: 1.6; }
+  .tok-k { color: #8250df; } .tok-f { color: #4f5ac7; } .tok-s { color: #116329; } .tok-c { color: #9ca3af; }
+  .cursor {
+    display: inline-block; width: 7px; height: 15px; background: var(--accent-bright);
+    vertical-align: -2px; border-radius: 1px; animation: blink 1s steps(1) infinite; margin-left: 1px;
+  }
+  @keyframes blink { 50% { opacity: 0; } }
+  .stream-meta {
+    display: inline-flex; align-items: center; gap: 6px; color: var(--subtle); font-size: 11.5px;
+    border: 1px solid var(--line); border-radius: 99px; padding: 3px 10px; margin-bottom: 8px;
+  }
+  .spinner {
+    width: 11px; height: 11px; border-radius: 50%;
+    border: 1.5px solid var(--line-strong); border-top-color: var(--accent-bright);
+    animation: spin 0.8s linear infinite;
+  }
+  @keyframes spin { to { transform: rotate(360deg); } }
+
+  /* ─── composer ─── */
+  .composer { flex: none; padding: 0 24px calc(18px * var(--density)); max-width: 768px; margin: 0 auto; width: 100%; }
+  .composer-box {
+    background: var(--panel); border: 1px solid var(--line); border-radius: 12px;
+    transition: border-color 140ms var(--ease), box-shadow 140ms var(--ease);
+  }
+  .composer-box:focus-within { border-color: var(--accent); box-shadow: 0 0 0 3px var(--accent-soft); }
+  .composer-box textarea {
+    width: 100%; background: none; border: 0; outline: 0; resize: none; color: var(--text);
+    font: inherit; padding: 12px 14px 4px; line-height: 1.5; min-height: 52px;
+  }
+  .composer-box textarea::placeholder { color: var(--subtle); }
+  .composer-foot { display: flex; align-items: center; gap: 6px; padding: 6px 8px 8px; }
+  .chip {
+    display: inline-flex; align-items: center; gap: 5px; font-size: 11.5px; color: var(--muted);
+    border: 1px solid var(--line); border-radius: 6px; padding: 3.5px 8px;
+    transition: all 110ms var(--ease);
+  }
+  .chip:hover { border-color: var(--line-strong); color: var(--text); background: var(--hover); }
+  .chip .dot { width: 6px; height: 6px; border-radius: 50%; }
+  .send {
+    margin-left: auto; display: inline-flex; align-items: center; gap: 6px;
+    background: var(--accent); color: #fff; font-weight: 600; font-size: 12px;
+    border-radius: 7px; padding: 5.5px 12px;
+    transition: background 120ms var(--ease), transform 80ms var(--ease);
+  }
+  .send:hover { background: var(--accent-bright); }
+  .send:active { transform: scale(0.96); }
+  .composer-hint { text-align: center; color: var(--subtle); font-size: 11px; margin-top: 8px; }
+
+  /* ─── kanban ─── */
+  .kanban { flex: 1; display: flex; gap: 12px; padding: 16px; overflow-x: auto; align-items: flex-start; }
+  .kcol {
+    flex: 1; min-width: 200px; background: var(--panel); border: 1px solid var(--line);
+    border-radius: 10px; padding: 8px; display: flex; flex-direction: column; gap: 8px;
+    max-height: 100%; transition: border-color 140ms var(--ease), background 140ms var(--ease);
+  }
+  .kcol.drag-over { border-color: var(--accent); background: var(--accent-soft); }
+  .kcol-head { display: flex; align-items: center; gap: 7px; padding: 4px 6px; font-size: 12px; font-weight: 600; color: var(--muted); }
+  .kcol-head .cnt { margin-left: auto; font-size: 11px; color: var(--subtle); background: var(--panel-soft); border-radius: 99px; padding: 1px 7px; }
+  .kcol-head .sq { width: 9px; height: 9px; border-radius: 3px; }
+  .kcard {
+    background: var(--panel-soft); border: 1px solid var(--line); border-radius: 8px;
+    padding: calc(10px * var(--density)); cursor: grab; user-select: none;
+    transition: border-color 120ms var(--ease), transform 120ms var(--ease), box-shadow 120ms var(--ease);
+    animation: row-in 240ms var(--ease) backwards;
+  }
+  .kcard:hover { border-color: var(--line-strong); transform: translateY(-1px); box-shadow: var(--shadow); }
+  .kcard.dragging { opacity: 0.4; cursor: grabbing; }
+  .kcard .kc-top { display: flex; justify-content: space-between; margin-bottom: 6px; align-items: center; }
+  .kcard .kc-id { font-size: 10.5px; color: var(--subtle); font-family: "Geist Mono", monospace; }
+  .kcard strong { display: block; font-size: 12.5px; font-weight: 600; line-height: 1.45; margin-bottom: 5px; }
+  .kcard p { margin: 0; font-size: 11.5px; color: var(--muted); line-height: 1.5; display: -webkit-box; -webkit-line-clamp: 2; -webkit-box-orient: vertical; overflow: hidden; }
+  .kcard .kc-foot { display: flex; gap: 6px; margin-top: 8px; align-items: center; font-size: 10.5px; color: var(--subtle); }
+
+  /* ─── teams ─── */
+  .teams-body { flex: 1; overflow-y: auto; padding: 20px 24px; }
+  .mode-row { display: flex; gap: 8px; margin-bottom: 20px; }
+  .mode-card {
+    flex: 1; max-width: 220px; text-align: left; background: var(--panel); border: 1px solid var(--line);
+    border-radius: 9px; padding: 10px 12px; transition: all 130ms var(--ease);
+  }
+  .mode-card:hover { border-color: var(--line-strong); }
+  .mode-card.active { border-color: var(--accent); background: var(--accent-soft); }
+  .mode-card strong { display: block; font-size: 12.5px; margin-bottom: 3px; }
+  .mode-card span { font-size: 11px; color: var(--muted); line-height: 1.4; display: block; }
+  .flow { display: flex; align-items: center; gap: 0; padding: 28px 8px; overflow-x: auto; }
+  .flow-node {
+    flex: none; width: 190px; background: var(--panel); border: 1px solid var(--line);
+    border-radius: 10px; padding: 11px 13px; position: relative;
+    transition: all 140ms var(--ease); cursor: pointer;
+  }
+  .flow-node:hover { border-color: var(--accent); transform: translateY(-2px); box-shadow: 0 8px 22px rgba(28, 29, 33, 0.1); }
+  .flow-node .fn-head { display: flex; align-items: center; gap: 6px; margin-bottom: 5px; }
+  .flow-node .fn-head strong { font-size: 12.5px; }
+  .flow-node p { margin: 0; font-size: 11px; color: var(--muted); line-height: 1.45; display: -webkit-box; -webkit-line-clamp: 2; -webkit-box-orient: vertical; overflow: hidden; }
+  .flow-node .fn-status {
+    position: absolute; top: -7px; right: 10px; font-size: 9.5px; font-weight: 700;
+    text-transform: uppercase; letter-spacing: 0.05em; padding: 1.5px 7px; border-radius: 99px;
+  }
+  .fn-status.running { background: var(--accent); color: #fff; animation: pulse 1.4s ease-in-out infinite; }
+  .fn-status.done { background: color-mix(in srgb, var(--codex) 22%, var(--panel)); color: var(--codex); }
+  .flow-edge { flex: none; width: 36px; height: 1.5px; background: var(--line-strong); position: relative; }
+  .flow-edge::after {
+    content: ""; position: absolute; right: -1px; top: -3px;
+    border: 4px solid transparent; border-left-color: var(--line-strong);
+  }
+  .flow-edge.live { background: linear-gradient(90deg, var(--accent), var(--accent-bright)); }
+  .flow-edge.live::after { border-left-color: var(--accent-bright); }
+  .flow-terminal {
+    flex: none; border: 1px dashed var(--line-strong); color: var(--subtle); font-size: 11px;
+    border-radius: 99px; padding: 5px 13px;
+  }
+  .trace { border-top: 1px solid var(--line); padding-top: 16px; margin-top: 8px; }
+  .trace-row { display: flex; gap: 10px; padding: 7px 4px; align-items: baseline; font-size: 12px; animation: row-in 240ms var(--ease) backwards; }
+  .trace-row .ti { color: var(--subtle); font-family: "Geist Mono", monospace; font-size: 11px; flex: none; }
+  .trace-row .ok { color: var(--codex); } .trace-row .run { color: var(--accent-bright); }
+
+  /* ─── configs ─── */
+  .config-body { flex: 1; display: grid; grid-template-columns: 220px 1fr; overflow: hidden; }
+  .cfg-list { border-right: 1px solid var(--line); padding: 12px 8px; overflow-y: auto; }
+  .cfg-form { padding: 20px 24px; overflow-y: auto; max-width: 620px; }
+  .cfg-field { margin-bottom: 14px; }
+  .cfg-field label { display: block; font-size: 11.5px; color: var(--muted); margin-bottom: 5px; font-weight: 500; }
+  .cfg-field input {
+    width: 100%; background: var(--panel); border: 1px solid var(--line); border-radius: 7px;
+    color: var(--text); font: inherit; padding: 7px 10px; outline: 0;
+    transition: border-color 130ms var(--ease), box-shadow 130ms var(--ease);
+  }
+  .cfg-field input:focus { border-color: var(--accent); box-shadow: 0 0 0 3px var(--accent-soft); }
+  .cfg-grid { display: grid; grid-template-columns: 1fr 1fr; gap: 0 16px; }
+
+  /* ─── command palette ─── */
+  .palette-overlay {
+    position: fixed; inset: 0; background: rgba(28, 29, 33, 0.32); z-index: 50;
+    display: none; align-items: flex-start; justify-content: center; padding-top: 14vh;
+    backdrop-filter: blur(2px); animation: fade 140ms var(--ease);
+  }
+  .palette-overlay.open { display: flex; }
+  @keyframes fade { from { opacity: 0; } }
+  .palette {
+    width: 580px; max-width: 90vw; background: var(--panel); border: 1px solid var(--line-strong);
+    border-radius: 12px; box-shadow: 0 24px 70px rgba(28, 29, 33, 0.22); overflow: hidden;
+    animation: pal-in 160ms var(--ease);
+  }
+  @keyframes pal-in { from { opacity: 0; transform: translateY(-8px) scale(0.98); } }
+  .palette input {
+    width: 100%; background: none; border: 0; outline: 0; color: var(--text);
+    font: inherit; font-size: 14px; padding: 15px 16px; border-bottom: 1px solid var(--line);
+  }
+  .palette input::placeholder { color: var(--subtle); }
+  .pal-list { max-height: 320px; overflow-y: auto; padding: 6px; }
+  .pal-section { font-size: 10.5px; text-transform: uppercase; letter-spacing: 0.08em; color: var(--subtle); padding: 8px 10px 4px; font-weight: 600; }
+  .pal-item {
+    width: 100%; display: flex; align-items: center; gap: 10px; text-align: left;
+    padding: 8px 10px; border-radius: 7px; color: var(--muted); font-size: 13px;
+  }
+  .pal-item.sel { background: var(--accent-soft); color: var(--text); }
+  .pal-item .pi-icon { width: 16px; text-align: center; color: var(--subtle); }
+  .pal-item.sel .pi-icon { color: var(--accent-bright); }
+  .pal-item kbd { margin-left: auto; }
+  .pal-foot {
+    display: flex; gap: 14px; padding: 8px 14px; border-top: 1px solid var(--line);
+    color: var(--subtle); font-size: 11px;
+  }
+
+  /* ─── variant switcher (not part of design) ─── */
+  .proto-bar {
+    position: fixed; bottom: 18px; left: 50%; transform: translateX(-50%); z-index: 99;
+    display: flex; align-items: center; gap: 12px;
+    background: #1c1d21; color: #f5f5f5; border-radius: 99px; padding: 7px 14px;
+    box-shadow: 0 8px 30px rgba(28,29,33,0.35); font-size: 12.5px; font-weight: 600;
+  }
+  .proto-bar button { font-size: 14px; padding: 0 4px; color: #9ca3af; }
+  .proto-bar button:hover { color: #fff; }
+</style>
+</head>
+<body>
+<div class="shell">
+  <!-- icon rail -->
+  <nav class="rail">
+    <div class="rail-logo">M</div>
+    <button class="rail-btn active" data-nav="chat"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8"><path d="M21 11.5a8.38 8.38 0 0 1-8.5 8.5 8.5 8.5 0 0 1-3.8-.9L3 21l1.9-5.7a8.38 8.38 0 0 1-.9-3.8 8.5 8.5 0 0 1 8.5-8.5 8.38 8.38 0 0 1 8.5 8.5z"/></svg><span class="tip">Chat <kbd>G C</kbd></span></button>
+    <button class="rail-btn" data-nav="tasks"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8"><rect x="3" y="3" width="7" height="9" rx="1.5"/><rect x="14" y="3" width="7" height="5" rx="1.5"/><rect x="14" y="12" width="7" height="9" rx="1.5"/><rect x="3" y="16" width="7" height="5" rx="1.5"/></svg><span class="tip">Tasks <kbd>G T</kbd></span></button>
+    <button class="rail-btn" data-nav="teams"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8"><circle cx="6" cy="6" r="2.6"/><circle cx="18" cy="6" r="2.6"/><circle cx="12" cy="18" r="2.6"/><path d="M7.8 7.8 10.4 16M16.2 7.8 13.6 16"/></svg><span class="tip">Teams <kbd>G W</kbd></span></button>
+    <div class="rail-spacer"></div>
+    <button class="rail-btn" data-nav="configs"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8"><circle cx="12" cy="12" r="3"/><path d="M19.4 15a1.65 1.65 0 0 0 .33 1.82l.06.06a2 2 0 1 1-2.83 2.83l-.06-.06a1.65 1.65 0 0 0-1.82-.33 1.65 1.65 0 0 0-1 1.51V21a2 2 0 1 1-4 0v-.09A1.65 1.65 0 0 0 9 19.4a1.65 1.65 0 0 0-1.82.33l-.06.06a2 2 0 1 1-2.83-2.83l.06-.06a1.65 1.65 0 0 0 .33-1.82 1.65 1.65 0 0 0-1.51-1H3a2 2 0 1 1 0-4h.09A1.65 1.65 0 0 0 4.6 9a1.65 1.65 0 0 0-.33-1.82l-.06-.06a2 2 0 1 1 2.83-2.83l.06.06a1.65 1.65 0 0 0 1.82.33H9a1.65 1.65 0 0 0 1-1.51V3a2 2 0 1 1 4 0v.09a1.65 1.65 0 0 0 1 1.51 1.65 1.65 0 0 0 1.82-.33l.06-.06a2 2 0 1 1 2.83 2.83l-.06.06a1.65 1.65 0 0 0-.33 1.82V9a1.65 1.65 0 0 0 1.51 1H21a2 2 0 1 1 0 4h-.09a1.65 1.65 0 0 0-1.51 1z"/></svg><span class="tip">Configs <kbd>G S</kbd></span></button>
+  </nav>
+
+  <!-- sidebar -->
+  <aside class="sidebar">
+    <div class="sidebar-head"><h1>Multi Agent Chat</h1></div>
+    <button class="search-trigger" id="open-palette">
+      <svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><circle cx="11" cy="11" r="7"/><path d="m21 21-4.3-4.3"/></svg>
+      搜索或执行命令… <kbd>⌘K</kbd>
+    </button>
+    <div class="side-section" id="side-content">
+      <div class="side-label">Chats <kbd>⌘N</kbd></div>
+      <button class="side-row active"><span class="dot codex pulse"></span><span class="t">Fix auth token refresh</span><span class="m">运行中</span></button>
+      <button class="side-row"><span class="dot claude"></span><span class="t">Refactor settings page</span><span class="m">14:02</span></button>
+      <button class="side-row"><span class="dot codex"></span><span class="t">API error handling review</span><span class="m">11:38</span></button>
+      <button class="side-row"><span class="dot claude"></span><span class="t">Write migration script</span><span class="m">昨天</span></button>
+      <div class="side-label" style="margin-top:10px">Tasks</div>
+      <button class="side-row"><span class="dot codex pulse"></span><span class="t">Bundle size audit</span><span class="m">运行中</span></button>
+      <button class="side-row"><span class="dot claude"></span><span class="t">Add e2e smoke tests</span><span class="m">Review</span></button>
+    </div>
+    <button class="new-btn">＋ 新建对话 <kbd>⌘N</kbd></button>
+  </aside>
+
+  <!-- main -->
+  <main class="main">
+
+    <!-- CHAT -->
+    <section class="page visible" id="page-chat">
+      <div class="topbar">
+        <h2>Fix auth token refresh</h2>
+        <span class="badge codex">Codex</span>
+        <span class="meta">gpt-5 · main-channel</span>
+        <div class="right"><span class="meta">session a3f8…91</span></div>
+      </div>
+      <div class="transcript" id="transcript">
+        <div class="msg user">
+          <div class="who">You · 15:21</div>
+          <div class="body">登录后 access token 过期不会自动刷新,用户被强制登出。帮我看一下 auth 模块,修掉这个问题。</div>
+        </div>
+        <div class="msg assistant">
+          <div class="who"><span class="dot codex" style="width:7px;height:7px;border-radius:50%;display:inline-block"></span>Codex · 15:21</div>
+          <div class="stream-meta"><span class="spinner"></span>正在读取 src/auth/refresh.ts…</div>
+          <div class="body" id="stream-target"></div>
+        </div>
+      </div>
+      <div class="composer">
+        <div class="composer-box">
+          <textarea placeholder="发送消息给 Codex,输入 / 查看命令…" rows="2"></textarea>
+          <div class="composer-foot">
+            <button class="chip"><span class="dot codex"></span>Codex</button>
+            <button class="chip">gpt-5</button>
+            <button class="chip">📁 ~/myProject</button>
+            <button class="send">发送 ↵</button>
+          </div>
+        </div>
+        <div class="composer-hint"><kbd>↵</kbd> 发送 · <kbd>⇧↵</kbd> 换行 · <kbd>⌘K</kbd> 命令面板</div>
+      </div>
+    </section>
+
+    <!-- TASKS -->
+    <section class="page" id="page-tasks">
+      <div class="topbar"><h2>Tasks</h2><span class="meta">拖拽卡片改变状态</span>
+        <div class="right"><button class="send">＋ 新任务</button></div>
+      </div>
+      <div class="kanban" id="kanban">
+        <div class="kcol" data-col="backlog">
+          <div class="kcol-head"><span class="sq" style="background:#5c606a"></span>Backlog<span class="cnt">2</span></div>
+          <div class="kcard" draggable="true"><div class="kc-top"><span class="badge codex">Codex</span><span class="kc-id">TSK-12</span></div><strong>Bundle size audit</strong><p>分析 renderer bundle,找出可以 lazy-load 的模块</p><div class="kc-foot">2 messages · 昨天</div></div>
+          <div class="kcard" draggable="true"><div class="kc-top"><span class="badge claude">Claude</span><span class="kc-id">TSK-15</span></div><strong>Upgrade electron 43</strong><p>检查 breaking changes 并升级</p><div class="kc-foot">0 messages</div></div>
+        </div>
+        <div class="kcol" data-col="todo">
+          <div class="kcol-head"><span class="sq" style="background:#7c89f2"></span>Todo<span class="cnt">1</span></div>
+          <div class="kcard" draggable="true"><div class="kc-top"><span class="badge codex">Codex</span><span class="kc-id">TSK-14</span></div><strong>Add retry to codex-rpc</strong><p>RPC 超时后指数退避重试 3 次</p><div class="kc-foot">1 message</div></div>
+        </div>
+        <div class="kcol" data-col="working">
+          <div class="kcol-head"><span class="sq" style="background:#f2c94c"></span>Working<span class="cnt">1</span></div>
+          <div class="kcard" draggable="true"><div class="kc-top"><span class="badge codex">Codex</span><span class="kc-id">TSK-16</span></div><strong>Fix auth token refresh</strong><p>access token 静默刷新 + 401 重放队列</p><div class="kc-foot">⏳ 运行中 · 8 messages</div></div>
+        </div>
+        <div class="kcol" data-col="review">
+          <div class="kcol-head"><span class="sq" style="background:#d9913d"></span>Review<span class="cnt">1</span></div>
+          <div class="kcard" draggable="true"><div class="kc-top"><span class="badge claude">Claude</span><span class="kc-id">TSK-11</span></div><strong>Add e2e smoke tests</strong><p>Playwright 启动 Electron 跑冒烟用例</p><div class="kc-foot">12 messages</div></div>
+        </div>
+        <div class="kcol" data-col="done">
+          <div class="kcol-head"><span class="sq" style="background:#4cb782"></span>Done<span class="cnt">1</span></div>
+          <div class="kcard" draggable="true"><div class="kc-top"><span class="badge codex">Codex</span><span class="kc-id">TSK-09</span></div><strong>Migrate to React 19</strong><p>升级完成,所有测试通过</p><div class="kc-foot">✓ 已完成</div></div>
+        </div>
+      </div>
+    </section>
+
+    <!-- TEAMS -->
+    <section class="page" id="page-teams">
+      <div class="topbar"><h2>Agent Workflow</h2><span class="badge codex">Review Crew</span>
+        <div class="right"><button class="send">▶ Run Workflow</button></div>
+      </div>
+      <div class="teams-body">
+        <div class="mode-row">
+          <button class="mode-card active"><strong>Pipeline</strong><span>节点串行执行,逐级传递产物</span></button>
+          <button class="mode-card"><strong>Parallel</strong><span>所有 worker 并行,Join 汇总</span></button>
+          <button class="mode-card"><strong>Supervisor</strong><span>Lead 规划,workers 执行,Lead 综合</span></button>
+        </div>
+        <div class="flow">
+          <div class="flow-terminal">Start</div>
+          <div class="flow-edge live"></div>
+          <div class="flow-node"><span class="fn-status done">done</span><div class="fn-head"><span class="dot codex" style="width:7px;height:7px;border-radius:50%"></span><strong>Planner</strong></div><p>拆解目标,产出精简执行计划</p></div>
+          <div class="flow-edge live"></div>
+          <div class="flow-node"><span class="fn-status running">running</span><div class="fn-head"><span class="dot codex pulse" style="width:7px;height:7px;border-radius:50%"></span><strong>Worker</strong></div><p>按计划执行,产出具体发现或代码修改</p></div>
+          <div class="flow-edge"></div>
+          <div class="flow-node"><div class="fn-head"><span class="dot claude" style="width:7px;height:7px;border-radius:50%"></span><strong>Reviewer</strong></div><p>评审上一产物,找出风险、缺口与后续步骤</p></div>
+          <div class="flow-edge"></div>
+          <div class="flow-terminal">Done</div>
+        </div>
+        <div class="trace">
+          <div class="side-label">Run Inspector — refactor auth module · running</div>
+          <div class="trace-row"><span class="ti">15:21:03</span><span class="ok">✓ Planner</span><span style="color:var(--muted)">完成计划:3 个改动点,预计影响 5 个文件</span></div>
+          <div class="trace-row" style="animation-delay:60ms"><span class="ti">15:21:48</span><span class="run">● Worker</span><span style="color:var(--muted)">正在修改 src/auth/refresh.ts…</span></div>
+          <div class="trace-row" style="animation-delay:120ms"><span class="ti">—</span><span style="color:var(--subtle)">○ Reviewer</span><span style="color:var(--subtle)">等待上游产物</span></div>
+        </div>
+      </div>
+    </section>
+
+    <!-- CONFIGS -->
+    <section class="page" id="page-configs">
+      <div class="topbar"><h2>Channels & Models</h2><span class="meta">model-channels.json</span>
+        <div class="right"><button class="chip">Import Codex</button><button class="send">保存</button></div>
+      </div>
+      <div class="config-body">
+        <div class="cfg-list">
+          <div class="side-label">Channels</div>
+          <button class="side-row active"><span class="dot codex"></span><span class="t">Main Codex</span><span class="m">3 models</span></button>
+          <button class="side-row"><span class="dot codex"></span><span class="t">Proxy Codex</span><span class="m">2 models</span></button>
+          <button class="side-row"><span class="dot claude"></span><span class="t">Claude Default</span><span class="m">2 models</span></button>
+        </div>
+        <div class="cfg-form">
+          <div class="cfg-grid">
+            <div class="cfg-field"><label>Label</label><input value="Main Codex" /></div>
+            <div class="cfg-field"><label>ID</label><input value="codex-main" /></div>
+            <div class="cfg-field"><label>Base URL</label><input value="https://api.example.com/v1" /></div>
+            <div class="cfg-field"><label>Wire API</label><input value="responses" /></div>
+          </div>
+          <div class="side-label" style="padding-left:0">Models</div>
+          <div class="cfg-grid">
+            <div class="cfg-field"><input value="gpt-5" /></div>
+            <div class="cfg-field"><input value="GPT-5" /></div>
+            <div class="cfg-field"><input value="gpt-5-mini" /></div>
+            <div class="cfg-field"><input value="GPT-5 Mini" /></div>
+          </div>
+        </div>
+      </div>
+    </section>
+  </main>
+</div>
+
+<!-- ⌘K palette -->
+<div class="palette-overlay" id="palette-overlay">
+  <div class="palette">
+    <input id="palette-input" placeholder="搜索对话、任务,或执行命令…" />
+    <div class="pal-list" id="pal-list"></div>
+    <div class="pal-foot"><span><kbd>↑↓</kbd> 选择</span><span><kbd>↵</kbd> 执行</span><span><kbd>esc</kbd> 关闭</span></div>
+  </div>
+</div>
+
+<!-- prototype switcher — not part of the design -->
+<div class="proto-bar">
+  <button id="pv-prev">←</button>
+  <span id="pv-label">A — 标准 Linear</span>
+  <button id="pv-next">→</button>
+</div>
+
+<script>
+/* ───── variant switcher ───── */
+const VARIANTS = [["A","A — 标准 Linear(紫蓝 · 高密度)"],["B","B — 舒适密度"],["C","C — 石墨单色"]];
+let vi = Math.max(0, VARIANTS.findIndex(v => v[0] === new URLSearchParams(location.search).get("variant")));
+function applyVariant() {
+  document.documentElement.dataset.variant = VARIANTS[vi][0];
+  document.getElementById("pv-label").textContent = VARIANTS[vi][1];
+  history.replaceState(null, "", "?variant=" + VARIANTS[vi][0]);
+}
+document.getElementById("pv-prev").onclick = () => { vi = (vi + VARIANTS.length - 1) % VARIANTS.length; applyVariant(); };
+document.getElementById("pv-next").onclick = () => { vi = (vi + 1) % VARIANTS.length; applyVariant(); };
+applyVariant();
+
+/* ───── nav ───── */
+const pages = { chat: "page-chat", tasks: "page-tasks", teams: "page-teams", configs: "page-configs" };
+function nav(key) {
+  document.querySelectorAll(".rail-btn").forEach(b => b.classList.toggle("active", b.dataset.nav === key));
+  Object.entries(pages).forEach(([k, id]) => document.getElementById(id).classList.toggle("visible", k === key));
+}
+document.querySelectorAll(".rail-btn").forEach(b => b.onclick = () => nav(b.dataset.nav));
+
+/* ───── streaming simulation ───── */
+const CODE = `<span class="tok-k">async function</span> <span class="tok-f">refreshToken</span>() {
+  <span class="tok-k">if</span> (refreshing) <span class="tok-k">return</span> refreshing; <span class="tok-c">// 去重并发刷新</span>
+  refreshing = client.<span class="tok-f">post</span>(<span class="tok-s">"/auth/refresh"</span>, { token: store.refreshToken });
+  <span class="tok-k">try</span> { store.<span class="tok-f">set</span>(<span class="tok-k">await</span> refreshing); }
+  <span class="tok-k">finally</span> { refreshing = <span class="tok-k">null</span>; }
+}`;
+const CHUNKS = [
+  "我读完了 auth 模块。问题在 ", "src/auth/refresh.ts", ":token 过期后直接抛 401,没有刷新逻辑。\n\n",
+  "修复方案是加一个带并发去重的静默刷新:\n", "%%CODE%%",
+  "\n同时在请求拦截器里捕获 401 → 刷新 → 重放原请求。", "我现在开始改,预计影响 3 个文件。"
+];
+const target = document.getElementById("stream-target");
+let ci = 0;
+function streamNext() {
+  if (ci >= CHUNKS.length) {
+    document.querySelector(".stream-meta").innerHTML = "✓ 完成 · 读取 4 个文件 · 2.1k tokens";
+    const cur = target.querySelector(".cursor"); if (cur) cur.remove();
+    setTimeout(() => { target.innerHTML = ""; ci = 0; document.querySelector(".stream-meta").innerHTML = '<span class="spinner"></span>正在读取 src/auth/refresh.ts…'; streamNext(); }, 6000);
+    return;
+  }
+  const chunk = CHUNKS[ci++];
+  const cur = target.querySelector(".cursor"); if (cur) cur.remove();
+  if (chunk === "%%CODE%%") {
+    target.insertAdjacentHTML("beforeend",
+      '<div class="codeblock"><div class="cb-head"><span>src/auth/refresh.ts</span><button class="cb-copy" onclick="this.textContent=\'已复制 ✓\'">复制</button></div><pre>' + CODE + "</pre></div>");
+    setTimeout(streamNext, 700);
+  } else {
+    let i = 0;
+    const timer = setInterval(() => {
+      const c = target.querySelector(".cursor"); if (c) c.remove();
+      target.insertAdjacentHTML("beforeend", chunk[i].replace("<","&lt;") + '<span class="cursor"></span>');
+      if (++i >= chunk.length) { clearInterval(timer); setTimeout(streamNext, 250); }
+    }, 18);
+  }
+}
+streamNext();
+
+/* ───── kanban drag & drop ───── */
+let dragCard = null;
+document.querySelectorAll(".kcard").forEach(card => {
+  card.addEventListener("dragstart", () => { dragCard = card; card.classList.add("dragging"); });
+  card.addEventListener("dragend", () => { card.classList.remove("dragging"); dragCard = null; });
+});
+document.querySelectorAll(".kcol").forEach(col => {
+  col.addEventListener("dragover", e => { e.preventDefault(); col.classList.add("drag-over"); });
+  col.addEventListener("dragleave", () => col.classList.remove("drag-over"));
+  col.addEventListener("drop", e => {
+    e.preventDefault(); col.classList.remove("drag-over");
+    if (dragCard) { col.appendChild(dragCard); updateCounts(); }
+  });
+});
+function updateCounts() {
+  document.querySelectorAll(".kcol").forEach(col => col.querySelector(".cnt").textContent = col.querySelectorAll(".kcard").length);
+}
+
+/* ───── ⌘K palette ───── */
+const COMMANDS = [
+  { s: "跳转", icon: "💬", label: "Chat — Fix auth token refresh", kbd: "", act: () => nav("chat") },
+  { s: "跳转", icon: "▦", label: "Tasks 看板", kbd: "G T", act: () => nav("tasks") },
+  { s: "跳转", icon: "⑂", label: "Teams 工作流", kbd: "G W", act: () => nav("teams") },
+  { s: "跳转", icon: "⚙", label: "Configs", kbd: "G S", act: () => nav("configs") },
+  { s: "操作", icon: "＋", label: "新建对话", kbd: "⌘N", act: () => nav("chat") },
+  { s: "操作", icon: "▶", label: "运行当前 Team Workflow", kbd: "", act: () => nav("teams") },
+  { s: "操作", icon: "◼", label: "停止当前运行", kbd: "", act: () => {} },
+  { s: "操作", icon: "🗂", label: "切换工作目录…", kbd: "", act: () => {} },
+];
+const overlay = document.getElementById("palette-overlay");
+const palInput = document.getElementById("palette-input");
+const palList = document.getElementById("pal-list");
+let palSel = 0, palItems = [];
+function renderPal(query) {
+  palItems = COMMANDS.filter(c => c.label.toLowerCase().includes(query.toLowerCase()));
+  palSel = Math.min(palSel, Math.max(0, palItems.length - 1));
+  let html = "", lastSection = "";
+  palItems.forEach((c, i) => {
+    if (c.s !== lastSection) { html += `<div class="pal-section">${c.s}</div>`; lastSection = c.s; }
+    html += `<button class="pal-item ${i === palSel ? "sel" : ""}" data-i="${i}"><span class="pi-icon">${c.icon}</span>${c.label}${c.kbd ? `<kbd>${c.kbd}</kbd>` : ""}</button>`;
+  });
+  palList.innerHTML = html || '<div class="pal-section">无匹配结果</div>';
+  palList.querySelectorAll(".pal-item").forEach(el => el.onclick = () => runPal(+el.dataset.i));
+}
+function openPal() { overlay.classList.add("open"); palInput.value = ""; palSel = 0; renderPal(""); palInput.focus(); }
+function closePal() { overlay.classList.remove("open"); }
+function runPal(i) { if (palItems[i]) { palItems[i].act(); closePal(); } }
+document.getElementById("open-palette").onclick = openPal;
+overlay.addEventListener("mousedown", e => { if (e.target === overlay) closePal(); });
+palInput.addEventListener("input", () => { palSel = 0; renderPal(palInput.value); });
+
+document.addEventListener("keydown", e => {
+  const inField = /INPUT|TEXTAREA/.test(document.activeElement?.tagName || "");
+  if ((e.metaKey || e.ctrlKey) && e.key.toLowerCase() === "k") { e.preventDefault(); overlay.classList.contains("open") ? closePal() : openPal(); return; }
+  if (overlay.classList.contains("open")) {
+    if (e.key === "Escape") closePal();
+    if (e.key === "ArrowDown") { e.preventDefault(); palSel = (palSel + 1) % palItems.length; renderPal(palInput.value); }
+    if (e.key === "ArrowUp") { e.preventDefault(); palSel = (palSel + palItems.length - 1) % palItems.length; renderPal(palInput.value); }
+    if (e.key === "Enter") runPal(palSel);
+    return;
+  }
+  if (inField) return;
+  if (e.key === "ArrowLeft") document.getElementById("pv-prev").click();
+  if (e.key === "ArrowRight") document.getElementById("pv-next").click();
+  /* G-then-X chords */
+  if (e.key.toLowerCase() === "g") { chord = true; setTimeout(() => chord = false, 800); return; }
+  if (chord) {
+    const map = { c: "chat", t: "tasks", w: "teams", s: "configs" };
+    if (map[e.key.toLowerCase()]) nav(map[e.key.toLowerCase()]);
+    chord = false;
+  }
+});
+let chord = false;
+</script>
+</body>
+</html>

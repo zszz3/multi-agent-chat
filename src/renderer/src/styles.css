@@ -1,22 +1,74 @@
 :root {
   color-scheme: light;
-  --bg: #f7f8fb;
-  --sidebar: #ffffff;
+  --bg: #fafbfc;
+  --sidebar: #f6f7f9;
   --panel: #ffffff;
-  --panel-soft: #f4f6fa;
-  --line: #dbe2ea;
-  --line-strong: #cad4e2;
-  --text: #111827;
-  --muted: #667085;
-  --subtle: #8a94a6;
-  --accent: #1d4ed8;
-  --accent-soft: rgba(29, 78, 216, 0.1);
-  --codex: #0f9d6a;
-  --claude: #d97706;
-  --shadow: 0 18px 48px rgba(15, 23, 42, 0.08);
+  --panel-soft: #f4f5f8;
+  --panel-raised: #fcfcfd;
+  --hover: #eceef2;
+  --line: #e4e6eb;
+  --line-strong: #d2d6de;
+  --line-faint: #eef0f3;
+  --text: #1c1d21;
+  --muted: #6b7280;
+  --subtle: #9ca3af;
+  --ink: #0f1115;
+  --accent: #5e6ad2;
+  --accent-strong: #4f5ac7;
+  --accent-soft: color-mix(in srgb, var(--accent) 10%, transparent);
+  --accent-tint: #eef0fb;
+  --on-accent: #ffffff;
+  --codex: #15966b;
+  --claude: #c47e1d;
+  --ok: #15966b;
+  --ok-strong: #0b7f59;
+  --ok-tint: #f0faf6;
+  --warn: #c47e1d;
+  --warn-strong: #9a5b05;
+  --danger: #c5302c;
+  --danger-tint: #fdf3f2;
+  --neutral-tint: #f1f3f5;
+  --scrollbar: #c3c8d1;
+  --overlay: color-mix(in srgb, var(--ink) 32%, transparent);
+  --shadow: 0 18px 48px color-mix(in srgb, var(--ink) 8%, transparent);
+  --ease: cubic-bezier(0.25, 0.46, 0.45, 0.94);
   font-family: "Geist Variable", system-ui, -apple-system, BlinkMacSystemFont, sans-serif;
   background: var(--bg);
   color: var(--text);
+}
+
+[data-theme="dark"] {
+  color-scheme: dark;
+  --bg: #0e0f12;
+  --sidebar: #101116;
+  --panel: #16171d;
+  --panel-soft: #1b1d24;
+  --panel-raised: #191b22;
+  --hover: #20222b;
+  --line: #26282f;
+  --line-strong: #34363f;
+  --line-faint: #1d1f26;
+  --text: #e2e3e8;
+  --muted: #8a8f98;
+  --subtle: #5c606a;
+  --ink: #000000;
+  --accent: #5e6ad2;
+  --accent-strong: #7c89f2;
+  --accent-tint: #1d2030;
+  --on-accent: #ffffff;
+  --codex: #4cb782;
+  --claude: #d9913d;
+  --ok: #4cb782;
+  --ok-strong: #5fcf96;
+  --ok-tint: #14211b;
+  --warn: #d9913d;
+  --warn-strong: #e3a44c;
+  --danger: #eb5757;
+  --danger-tint: #271517;
+  --neutral-tint: #1d1f26;
+  --scrollbar: #3a3d46;
+  --overlay: color-mix(in srgb, var(--ink) 55%, transparent);
+  --shadow: 0 18px 48px color-mix(in srgb, var(--ink) 45%, transparent);
 }
 
 * {
@@ -90,7 +142,7 @@ textarea:focus-visible {
   gap: 12px;
   padding: 14px 8px;
   overflow: hidden;
-  background: #fbfcfe;
+  background: var(--panel-raised);
   border-right: 1px solid var(--line);
 }
 
@@ -307,7 +359,7 @@ textarea:focus-visible {
   width: 100%;
   border: 1px solid var(--line);
   border-radius: 10px;
-  background: #fff;
+  background: var(--panel);
   color: var(--text);
 }
 
@@ -343,7 +395,7 @@ textarea:focus-visible {
 }
 
 .control-btn.secondary {
-  background: #fff;
+  background: var(--panel);
 }
 
 .control-btn.is-active {
@@ -353,7 +405,7 @@ textarea:focus-visible {
 }
 
 .control-btn.danger {
-  color: #b42318;
+  color: var(--danger);
 }
 
 .new-chat-btn {
@@ -365,7 +417,7 @@ textarea:focus-visible {
   width: 100%;
   border-radius: 10px;
   background: var(--accent);
-  color: #fff;
+  color: var(--on-accent);
   font-weight: 700;
 }
 
@@ -393,7 +445,7 @@ textarea:focus-visible {
 
 .new-chat-compact-btn:hover {
   border-color: var(--line-strong);
-  background: #fff;
+  background: var(--panel);
 }
 
 .agent-popover {
@@ -407,8 +459,8 @@ textarea:focus-visible {
   padding: 6px;
   border: 1px solid var(--line);
   border-radius: 10px;
-  background: #fff;
-  box-shadow: 0 12px 30px rgba(15, 23, 42, 0.14);
+  background: var(--panel);
+  box-shadow: 0 12px 30px color-mix(in srgb, var(--ink) 14%, transparent);
 }
 
 .agent-popover-item {
@@ -498,7 +550,7 @@ textarea:focus-visible {
   padding: 8px 11px;
   border: 1px solid var(--line);
   border-radius: 999px;
-  background: #fff;
+  background: var(--panel);
   color: var(--muted);
   font-size: 12px;
   font-weight: 600;
@@ -509,7 +561,7 @@ textarea:focus-visible {
   flex-direction: column;
   gap: 10px;
   padding: 12px;
-  background: #fff;
+  background: var(--panel);
   border: 1px solid var(--line);
   border-radius: 12px;
   box-shadow: var(--shadow);
@@ -538,7 +590,7 @@ textarea:focus-visible {
 
 .slash-command-option.is-active,
 .slash-command-option:hover {
-  background: #fff;
+  background: var(--panel);
   color: var(--text);
 }
 
@@ -577,7 +629,7 @@ textarea:focus-visible {
 }
 
 .send-btn {
-  color: #fff;
+  color: var(--on-accent);
   background: var(--accent);
 }
 
@@ -598,7 +650,7 @@ textarea:focus-visible {
   gap: 12px;
   min-height: 280px;
   padding: 14px;
-  background: #fff;
+  background: var(--panel);
   border: 1px solid var(--line);
   border-radius: 12px;
   box-shadow: var(--shadow);
@@ -610,7 +662,7 @@ textarea:focus-visible {
   min-height: 22px;
   padding: 0 8px;
   border-radius: 999px;
-  color: #fff;
+  color: var(--on-accent);
   font-size: 11px;
   font-weight: 700;
 }
@@ -710,11 +762,11 @@ textarea:focus-visible {
 .task-progress-option:hover {
   border-color: var(--line-strong);
   color: var(--text);
-  background: #fff;
+  background: var(--panel);
 }
 
 .task-progress-option.is-active {
-  border-color: rgba(29, 78, 216, 0.34);
+  border-color: color-mix(in srgb, var(--accent) 34%, transparent);
   background: var(--accent-soft);
   color: var(--accent);
 }
@@ -833,7 +885,7 @@ textarea:focus-visible {
   min-height: 0;
   border: 1px solid var(--line);
   border-radius: 8px;
-  background: #fff;
+  background: var(--panel);
 }
 
 .team-list-pane {
@@ -853,7 +905,7 @@ textarea:focus-visible {
   padding: 10px;
   border: 1px solid var(--line);
   border-radius: 8px;
-  background: #fff;
+  background: var(--panel);
   text-align: left;
 }
 
@@ -868,7 +920,7 @@ textarea:focus-visible {
 
 .team-list-card.is-active,
 .team-run-card.is-active {
-  border-color: rgba(29, 78, 216, 0.36);
+  border-color: color-mix(in srgb, var(--accent) 36%, transparent);
   background: var(--accent-soft);
 }
 
@@ -895,7 +947,7 @@ textarea:focus-visible {
 .team-list-name-input:hover,
 .team-list-name-input:focus {
   border-color: var(--line);
-  background: #fff;
+  background: var(--panel);
   outline: none;
 }
 
@@ -956,7 +1008,7 @@ textarea:focus-visible {
   min-width: 0;
   border: 1px solid var(--line);
   border-radius: 8px;
-  background: #fbfcfe;
+  background: var(--panel-raised);
   color: var(--text);
 }
 
@@ -1001,14 +1053,14 @@ textarea:focus-visible {
 }
 
 .workflow-mode-toggle:hover {
-  background: #fff;
+  background: var(--panel);
 }
 
 .workflow-mode-toggle.is-active {
-  border-color: rgba(29, 78, 216, 0.42);
-  background: #fff;
+  border-color: color-mix(in srgb, var(--accent) 42%, transparent);
+  background: var(--panel);
   color: var(--accent);
-  box-shadow: 0 1px 2px rgba(15, 23, 42, 0.08);
+  box-shadow: 0 1px 2px color-mix(in srgb, var(--ink) 8%, transparent);
 }
 
 .workflow-mode-toggle strong {
@@ -1030,7 +1082,7 @@ textarea:focus-visible {
   overflow: hidden;
   border: 1px solid var(--line);
   border-radius: 8px;
-  background: #fff;
+  background: var(--panel);
 }
 
 .workflow-builder-head {
@@ -1041,7 +1093,7 @@ textarea:focus-visible {
   min-width: 0;
   padding: 10px 12px;
   border-bottom: 1px solid var(--line);
-  background: #fff;
+  background: var(--panel);
 }
 
 .workflow-builder-head > div:first-child {
@@ -1095,14 +1147,14 @@ textarea:focus-visible {
   overflow: auto;
   user-select: none;
   background:
-    linear-gradient(#eef2f7 1px, transparent 1px),
-    linear-gradient(90deg, #eef2f7 1px, transparent 1px),
-    #f8fafc;
+    linear-gradient(var(--line-faint) 1px, transparent 1px),
+    linear-gradient(90deg, var(--line-faint) 1px, transparent 1px),
+    var(--neutral-tint);
   background-size: 28px 28px;
 }
 
 .workflow-topology-board.is-dragging {
-  outline: 1px solid rgba(29, 78, 216, 0.34);
+  outline: 1px solid color-mix(in srgb, var(--accent) 34%, transparent);
   outline-offset: -1px;
 }
 
@@ -1123,18 +1175,18 @@ textarea:focus-visible {
   padding: 7px;
   border: 1px solid var(--line);
   border-radius: 8px;
-  background: #fff;
+  background: var(--panel);
   text-align: left;
-  box-shadow: 0 8px 20px rgba(15, 23, 42, 0.06);
+  box-shadow: 0 8px 20px color-mix(in srgb, var(--ink) 6%, transparent);
 }
 
 .team-member-card:hover {
   border-color: var(--line-strong);
-  background: #fbfcfe;
+  background: var(--panel-raised);
 }
 
 .team-member-card.is-selected {
-  border-color: rgba(29, 78, 216, 0.34);
+  border-color: color-mix(in srgb, var(--accent) 34%, transparent);
   background: var(--accent-soft);
 }
 
@@ -1151,33 +1203,33 @@ textarea:focus-visible {
 }
 
 .workflow-node-card.is-drop-target {
-  border-color: rgba(29, 78, 216, 0.58);
-  background: #eff6ff;
+  border-color: color-mix(in srgb, var(--accent) 58%, transparent);
+  background: var(--accent-tint);
   box-shadow:
-    0 0 0 2px rgba(29, 78, 216, 0.16),
-    0 10px 24px rgba(29, 78, 216, 0.14);
+    0 0 0 2px color-mix(in srgb, var(--accent) 16%, transparent),
+    0 10px 24px color-mix(in srgb, var(--accent) 14%, transparent);
   transform: translateY(-2px);
 }
 
 .workflow-node-card.is-running {
-  border-color: rgba(37, 99, 235, 0.55);
-  background: #eff6ff;
-  box-shadow: 0 0 0 2px rgba(37, 99, 235, 0.12);
+  border-color: color-mix(in srgb, var(--accent) 55%, transparent);
+  background: var(--accent-tint);
+  box-shadow: 0 0 0 2px color-mix(in srgb, var(--accent) 12%, transparent);
 }
 
 .workflow-node-card.is-completed {
-  border-color: rgba(22, 163, 74, 0.44);
-  background: #f0fdf4;
+  border-color: color-mix(in srgb, var(--ok) 44%, transparent);
+  background: var(--ok-tint);
 }
 
 .workflow-node-card.is-failed {
-  border-color: rgba(220, 38, 38, 0.46);
-  background: #fef2f2;
+  border-color: color-mix(in srgb, var(--danger) 46%, transparent);
+  background: var(--danger-tint);
 }
 
 .workflow-node-card.is-stopped {
-  border-color: rgba(100, 116, 139, 0.46);
-  background: #f8fafc;
+  border-color: color-mix(in srgb, var(--muted) 46%, transparent);
+  background: var(--neutral-tint);
 }
 
 .workflow-node-status-pill {
@@ -1197,27 +1249,27 @@ textarea:focus-visible {
 }
 
 .workflow-node-status-pill.is-running {
-  border-color: rgba(37, 99, 235, 0.22);
-  background: #dbeafe;
-  color: #1d4ed8;
+  border-color: color-mix(in srgb, var(--accent) 22%, transparent);
+  background: var(--accent-tint);
+  color: var(--accent);
 }
 
 .workflow-node-status-pill.is-completed {
-  border-color: rgba(22, 163, 74, 0.2);
-  background: #dcfce7;
-  color: #15803d;
+  border-color: color-mix(in srgb, var(--ok) 20%, transparent);
+  background: var(--ok-tint);
+  color: var(--ok-strong);
 }
 
 .workflow-node-status-pill.is-failed {
-  border-color: rgba(220, 38, 38, 0.2);
-  background: #fee2e2;
-  color: #b91c1c;
+  border-color: color-mix(in srgb, var(--danger) 20%, transparent);
+  background: var(--danger-tint);
+  color: var(--danger);
 }
 
 .workflow-node-status-pill.is-stopped {
-  border-color: rgba(100, 116, 139, 0.2);
-  background: #e2e8f0;
-  color: #475569;
+  border-color: color-mix(in srgb, var(--muted) 20%, transparent);
+  background: var(--neutral-tint);
+  color: var(--muted);
 }
 
 .workflow-canvas {
@@ -1273,24 +1325,24 @@ textarea:focus-visible {
   place-items: center;
   border: 1px solid var(--line);
   border-radius: 999px;
-  background: #fff;
+  background: var(--panel);
   color: var(--text);
   font-size: 10.5px;
   font-weight: 800;
-  box-shadow: 0 8px 20px rgba(15, 23, 42, 0.05);
+  box-shadow: 0 8px 20px color-mix(in srgb, var(--ink) 5%, transparent);
 }
 
 .workflow-terminal-start {
-  border-color: rgba(22, 163, 74, 0.28);
-  background: #f0fdf4;
-  color: #166534;
+  border-color: color-mix(in srgb, var(--ok) 28%, transparent);
+  background: var(--ok-tint);
+  color: var(--ok-strong);
 }
 
 .workflow-terminal-end,
 .workflow-join-node {
-  border-color: rgba(29, 78, 216, 0.3);
-  background: #eff6ff;
-  color: #1d4ed8;
+  border-color: color-mix(in srgb, var(--accent) 30%, transparent);
+  background: var(--accent-tint);
+  color: var(--accent);
 }
 
 .workflow-parallel-layout {
@@ -1306,7 +1358,7 @@ textarea:focus-visible {
   padding: 10px;
   border: 1px solid var(--line);
   border-radius: 8px;
-  background: rgba(255, 255, 255, 0.82);
+  background: color-mix(in srgb, var(--panel) 82%, transparent);
 }
 
 .workflow-parallel-workers .workflow-node-card {
@@ -1330,7 +1382,7 @@ textarea:focus-visible {
   padding: 3px 7px;
   border: 1px solid var(--line);
   border-radius: 999px;
-  background: #fff;
+  background: var(--panel);
   color: var(--muted);
   font-size: 10px;
   font-weight: 800;
@@ -1342,8 +1394,8 @@ textarea:focus-visible {
 }
 
 .workflow-supervisor-lead .workflow-node-card {
-  border-color: rgba(29, 78, 216, 0.34);
-  background: #eff6ff;
+  border-color: color-mix(in srgb, var(--accent) 34%, transparent);
+  background: var(--accent-tint);
 }
 
 .workflow-worker-grid {
@@ -1353,7 +1405,7 @@ textarea:focus-visible {
   padding: 10px;
   border: 1px solid var(--line);
   border-radius: 8px;
-  background: rgba(255, 255, 255, 0.82);
+  background: color-mix(in srgb, var(--panel) 82%, transparent);
 }
 
 .workflow-worker-grid .workflow-node-card {
@@ -1373,11 +1425,11 @@ textarea:focus-visible {
   padding: 9px 11px;
   border: 1px solid var(--line);
   border-radius: 8px;
-  background: #fff;
+  background: var(--panel);
   color: var(--text);
   font-size: 12px;
   font-weight: 700;
-  box-shadow: 0 8px 20px rgba(15, 23, 42, 0.05);
+  box-shadow: 0 8px 20px color-mix(in srgb, var(--ink) 5%, transparent);
 }
 
 .workflow-empty-canvas {
@@ -1386,7 +1438,7 @@ textarea:focus-visible {
   place-items: center;
   border: 1px dashed var(--line-strong);
   border-radius: 8px;
-  background: rgba(255, 255, 255, 0.72);
+  background: color-mix(in srgb, var(--panel) 72%, transparent);
   color: var(--muted);
   font-size: 12px;
 }
@@ -1399,7 +1451,7 @@ textarea:focus-visible {
   place-items: center;
   border: 1px solid var(--line);
   border-radius: 999px;
-  background: #fff;
+  background: var(--panel);
   color: var(--muted);
   font-size: 10px;
   font-weight: 800;
@@ -1464,7 +1516,7 @@ textarea:focus-visible {
 .team-member-editor-prompt-panel .team-member-prompt {
   grid-column: auto;
   min-height: 150px;
-  background: #fff;
+  background: var(--panel);
 }
 
 .team-member-edit-overlay {
@@ -1474,7 +1526,7 @@ textarea:focus-visible {
   display: grid;
   place-items: center;
   padding: 20px;
-  background: rgba(15, 23, 42, 0.28);
+  background: color-mix(in srgb, var(--ink) 28%, transparent);
 }
 
 .team-member-edit-modal {
@@ -1487,8 +1539,8 @@ textarea:focus-visible {
   padding: 0;
   border: 1px solid var(--line);
   border-radius: 8px;
-  background: #fff;
-  box-shadow: 0 22px 60px rgba(15, 23, 42, 0.22);
+  background: var(--panel);
+  box-shadow: 0 22px 60px color-mix(in srgb, var(--ink) 22%, transparent);
 }
 
 .team-member-edit-head,
@@ -1525,7 +1577,7 @@ textarea:focus-visible {
   padding: 12px;
   border: 1px solid var(--line);
   border-radius: 8px;
-  background: #fbfcfe;
+  background: var(--panel-raised);
 }
 
 .team-member-editor-identity {
@@ -1620,7 +1672,7 @@ textarea:focus-visible {
   padding: 7px 9px;
   border: 1px solid var(--line);
   border-radius: 8px;
-  background: #fff;
+  background: var(--panel);
 }
 
 .team-run-pane {
@@ -1643,7 +1695,7 @@ textarea:focus-visible {
   gap: 10px;
   overflow: auto;
   padding: 12px;
-  background: #fbfcfe;
+  background: var(--panel-raised);
 }
 
 .team-run-prompt,
@@ -1655,7 +1707,7 @@ textarea:focus-visible {
   padding: 10px;
   border: 1px solid var(--line);
   border-radius: 8px;
-  background: #fff;
+  background: var(--panel);
   color: var(--text);
   font-family: "Geist Mono Variable", ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, monospace;
   font-size: 11.5px;
@@ -1682,7 +1734,7 @@ textarea:focus-visible {
   padding: 8px;
   border: 1px solid var(--line);
   border-radius: 8px;
-  background: #fff;
+  background: var(--panel);
 }
 
 .workflow-trace-item > span {
@@ -1691,7 +1743,7 @@ textarea:focus-visible {
   height: 20px;
   place-items: center;
   border-radius: 999px;
-  background: #f1f5f9;
+  background: var(--neutral-tint);
   color: var(--muted);
   font-size: 10px;
   font-weight: 850;
@@ -1717,18 +1769,18 @@ textarea:focus-visible {
 }
 
 .workflow-trace-item.is-running {
-  border-color: rgba(37, 99, 235, 0.28);
-  background: #eff6ff;
+  border-color: color-mix(in srgb, var(--accent) 28%, transparent);
+  background: var(--accent-tint);
 }
 
 .workflow-trace-item.is-completed {
-  border-color: rgba(22, 163, 74, 0.24);
-  background: #f0fdf4;
+  border-color: color-mix(in srgb, var(--ok) 24%, transparent);
+  background: var(--ok-tint);
 }
 
 .workflow-trace-item.is-failed {
-  border-color: rgba(220, 38, 38, 0.28);
-  background: #fef2f2;
+  border-color: color-mix(in srgb, var(--danger) 28%, transparent);
+  background: var(--danger-tint);
 }
 
 .team-run-step {
@@ -1738,7 +1790,7 @@ textarea:focus-visible {
   padding: 10px;
   border: 1px solid var(--line);
   border-radius: 8px;
-  background: #fff;
+  background: var(--panel);
 }
 
 .team-run-step-head > div {
@@ -1782,7 +1834,7 @@ textarea:focus-visible {
   padding: 10px;
   border: 1px solid var(--line);
   border-radius: 8px;
-  background: #fff;
+  background: var(--panel);
 }
 
 .workflow-resource-summary strong {
@@ -1862,7 +1914,7 @@ textarea:focus-visible {
   padding: 12px;
   border: 1px solid var(--line);
   border-radius: 8px;
-  background: #fff;
+  background: var(--panel);
 }
 
 .workflow-grill-head {
@@ -1906,7 +1958,7 @@ textarea:focus-visible {
   min-width: 0;
   border: 1px solid var(--line);
   border-radius: 8px;
-  background: #fbfcfe;
+  background: var(--panel-raised);
   color: var(--text);
 }
 
@@ -1948,7 +2000,7 @@ textarea:focus-visible {
 .workflow-config-field select {
   min-height: 34px;
   padding: 0 9px;
-  background: #fbfcfe;
+  background: var(--panel-raised);
   color: var(--text);
   font-size: 12px;
 }
@@ -1966,7 +2018,7 @@ textarea:focus-visible {
   padding: 10px;
   border: 1px solid var(--line);
   border-radius: 8px;
-  background: #f8fafc;
+  background: var(--neutral-tint);
 }
 
 .workflow-chat-bubble {
@@ -1976,13 +2028,13 @@ textarea:focus-visible {
   padding: 9px 10px;
   border: 1px solid var(--line);
   border-radius: 8px;
-  background: #fff;
+  background: var(--panel);
 }
 
 .workflow-chat-bubble.is-user {
   align-self: flex-end;
-  border-color: rgba(29, 78, 216, 0.24);
-  background: #eff6ff;
+  border-color: color-mix(in srgb, var(--accent) 24%, transparent);
+  background: var(--accent-tint);
 }
 
 .workflow-chat-bubble > span {
@@ -2015,10 +2067,10 @@ textarea:focus-visible {
   display: grid;
   gap: 5px;
   padding: 8px 9px;
-  border: 1px solid rgba(180, 35, 24, 0.22);
+  border: 1px solid color-mix(in srgb, var(--danger) 22%, transparent);
   border-radius: 8px;
-  background: rgba(180, 35, 24, 0.08);
-  color: #b42318;
+  background: color-mix(in srgb, var(--danger) 8%, transparent);
+  color: var(--danger);
   font-size: 12px;
 }
 
@@ -2040,7 +2092,7 @@ textarea:focus-visible {
   padding: 10px;
   border: 1px solid var(--line);
   border-radius: 8px;
-  background: #fff;
+  background: var(--panel);
 }
 
 .workflow-run-progress-head {
@@ -2072,7 +2124,7 @@ textarea:focus-visible {
   padding: 8px;
   border: 1px solid var(--line);
   border-radius: 8px;
-  background: #f8fafc;
+  background: var(--neutral-tint);
 }
 
 .workflow-run-progress-item > span,
@@ -2105,26 +2157,26 @@ textarea:focus-visible {
 
 .workflow-run-progress-item.is-queued > span,
 .workflow-node-run-pill.is-queued {
-  background: #eef2f7;
-  color: #475569;
+  background: var(--line-faint);
+  color: var(--muted);
 }
 
 .workflow-run-progress-item.is-running > span,
 .workflow-node-run-pill.is-running {
-  background: rgba(37, 99, 235, 0.12);
-  color: #1d4ed8;
+  background: color-mix(in srgb, var(--accent) 12%, transparent);
+  color: var(--accent);
 }
 
 .workflow-run-progress-item.is-completed > span,
 .workflow-node-run-pill.is-completed {
-  background: rgba(22, 163, 74, 0.12);
-  color: #15803d;
+  background: color-mix(in srgb, var(--ok) 12%, transparent);
+  color: var(--ok-strong);
 }
 
 .workflow-run-progress-item.is-failed > span,
 .workflow-node-run-pill.is-failed {
-  background: rgba(180, 35, 24, 0.12);
-  color: #b42318;
+  background: color-mix(in srgb, var(--danger) 12%, transparent);
+  color: var(--danger);
 }
 
 .workflow-context-doc {
@@ -2133,7 +2185,7 @@ textarea:focus-visible {
   padding: 10px;
   border: 1px solid var(--line);
   border-radius: 8px;
-  background: #fff;
+  background: var(--panel);
 }
 
 .workflow-context-doc-head {
@@ -2156,8 +2208,8 @@ textarea:focus-visible {
   margin: 0;
   padding: 9px;
   border-radius: 8px;
-  background: #f8fafc;
-  color: #334155;
+  background: var(--neutral-tint);
+  color: var(--muted);
   font-family: var(--font-mono);
   font-size: 11px;
   line-height: 1.5;
@@ -2173,9 +2225,9 @@ textarea:focus-visible {
   border: 1px solid var(--line);
   border-radius: 8px;
   background:
-    linear-gradient(#eef2f7 1px, transparent 1px),
-    linear-gradient(90deg, #eef2f7 1px, transparent 1px),
-    #f8fafc;
+    linear-gradient(var(--line-faint) 1px, transparent 1px),
+    linear-gradient(90deg, var(--line-faint) 1px, transparent 1px),
+    var(--neutral-tint);
   background-size: 28px 28px;
   cursor: zoom-in;
 }
@@ -2187,8 +2239,8 @@ textarea:focus-visible {
   align-items: center;
   min-width: auto;
   padding: 18px;
-  border-color: rgba(15, 23, 42, 0.18);
-  box-shadow: 0 24px 80px rgba(15, 23, 42, 0.28);
+  border-color: color-mix(in srgb, var(--ink) 18%, transparent);
+  box-shadow: 0 24px 80px color-mix(in srgb, var(--ink) 28%, transparent);
 }
 
 .workflow-graph-board.is-expanded .workflow-graph-card {
@@ -2204,7 +2256,7 @@ textarea:focus-visible {
   position: fixed;
   inset: 0;
   z-index: 80;
-  background: rgba(15, 23, 42, 0.34);
+  background: color-mix(in srgb, var(--ink) 34%, transparent);
 }
 
 .workflow-graph-close {
@@ -2212,8 +2264,8 @@ textarea:focus-visible {
   top: 48px;
   right: 48px;
   z-index: 100;
-  background: #fff;
-  box-shadow: 0 12px 30px rgba(15, 23, 42, 0.2);
+  background: var(--panel);
+  box-shadow: 0 12px 30px color-mix(in srgb, var(--ink) 20%, transparent);
 }
 
 .workflow-graph-layer {
@@ -2243,21 +2295,21 @@ textarea:focus-visible {
   padding: 10px;
   border: 1px solid var(--line);
   border-radius: 8px;
-  background: #fff;
-  box-shadow: 0 10px 24px rgba(15, 23, 42, 0.06);
+  background: var(--panel);
+  box-shadow: 0 10px 24px color-mix(in srgb, var(--ink) 6%, transparent);
 }
 
 .workflow-graph-card.run-running {
-  border-color: rgba(37, 99, 235, 0.35);
-  box-shadow: 0 12px 28px rgba(37, 99, 235, 0.12);
+  border-color: color-mix(in srgb, var(--accent) 35%, transparent);
+  box-shadow: 0 12px 28px color-mix(in srgb, var(--accent) 12%, transparent);
 }
 
 .workflow-graph-card.run-completed {
-  border-color: rgba(22, 163, 74, 0.35);
+  border-color: color-mix(in srgb, var(--ok) 35%, transparent);
 }
 
 .workflow-graph-card.run-failed {
-  border-color: rgba(180, 35, 24, 0.35);
+  border-color: color-mix(in srgb, var(--danger) 35%, transparent);
 }
 
 .workflow-graph-card.is-start,
@@ -2267,13 +2319,13 @@ textarea:focus-visible {
 }
 
 .workflow-graph-card.is-start {
-  border-color: rgba(22, 163, 74, 0.3);
-  background: #f0fdf4;
+  border-color: color-mix(in srgb, var(--ok) 30%, transparent);
+  background: var(--ok-tint);
 }
 
 .workflow-graph-card.is-end {
-  border-color: rgba(29, 78, 216, 0.3);
-  background: #eff6ff;
+  border-color: color-mix(in srgb, var(--accent) 30%, transparent);
+  background: var(--accent-tint);
 }
 
 .workflow-graph-card-head {
@@ -2325,7 +2377,7 @@ textarea:focus-visible {
   overflow: hidden;
   padding: 6px 8px;
   border-radius: 8px;
-  background: #f8fafc;
+  background: var(--neutral-tint);
   color: var(--muted);
   font-size: 11px;
   text-overflow: ellipsis;
@@ -2333,18 +2385,18 @@ textarea:focus-visible {
 }
 
 .workflow-node-run-detail.is-running {
-  background: rgba(37, 99, 235, 0.08);
-  color: #1d4ed8;
+  background: color-mix(in srgb, var(--accent) 8%, transparent);
+  color: var(--accent);
 }
 
 .workflow-node-run-detail.is-completed {
-  background: rgba(22, 163, 74, 0.08);
-  color: #15803d;
+  background: color-mix(in srgb, var(--ok) 8%, transparent);
+  color: var(--ok-strong);
 }
 
 .workflow-node-run-detail.is-failed {
-  background: rgba(180, 35, 24, 0.08);
-  color: #b42318;
+  background: color-mix(in srgb, var(--danger) 8%, transparent);
+  color: var(--danger);
 }
 
 .teams-empty-state {
@@ -2355,7 +2407,7 @@ textarea:focus-visible {
   gap: 12px;
   border: 1px dashed var(--line-strong);
   border-radius: 8px;
-  background: #fff;
+  background: var(--panel);
   color: var(--muted);
 }
 
@@ -2399,7 +2451,7 @@ textarea:focus-visible {
 
 .task-nav-card.is-active {
   border-color: var(--line-strong);
-  background: #fff;
+  background: var(--panel);
 }
 
 .task-nav-card-head {
@@ -2435,8 +2487,8 @@ textarea:focus-visible {
   padding: 12px;
   border: 1px solid var(--line);
   border-radius: 8px;
-  background: #fff;
-  box-shadow: 0 10px 28px rgba(15, 23, 42, 0.055);
+  background: var(--panel);
+  box-shadow: 0 10px 28px color-mix(in srgb, var(--ink) 6%, transparent);
 }
 
 .task-inline-create-card {
@@ -2535,30 +2587,30 @@ textarea:focus-visible {
 .task-status-running,
 .task-status-in_progress,
 .task-status-queued {
-  border-color: rgba(29, 78, 216, 0.22);
-  background: rgba(29, 78, 216, 0.09);
-  color: #1d4ed8;
+  border-color: color-mix(in srgb, var(--accent) 22%, transparent);
+  background: color-mix(in srgb, var(--accent) 9%, transparent);
+  color: var(--accent);
 }
 
 .task-status-done,
 .task-status-completed {
-  border-color: rgba(15, 157, 106, 0.24);
-  background: rgba(15, 157, 106, 0.09);
-  color: #087e56;
+  border-color: color-mix(in srgb, var(--ok) 24%, transparent);
+  background: color-mix(in srgb, var(--ok) 9%, transparent);
+  color: var(--ok-strong);
 }
 
 .task-status-in_review,
 .task-status-todo {
-  border-color: rgba(217, 119, 6, 0.24);
-  background: rgba(217, 119, 6, 0.1);
-  color: #9a5b05;
+  border-color: color-mix(in srgb, var(--warn) 24%, transparent);
+  background: color-mix(in srgb, var(--warn) 10%, transparent);
+  color: var(--warn-strong);
 }
 
 .task-status-failed,
 .task-status-stopped {
-  border-color: rgba(180, 35, 24, 0.24);
-  background: rgba(180, 35, 24, 0.09);
-  color: #b42318;
+  border-color: color-mix(in srgb, var(--danger) 24%, transparent);
+  background: color-mix(in srgb, var(--danger) 9%, transparent);
+  color: var(--danger);
 }
 
 .task-run-btn {
@@ -2577,14 +2629,14 @@ textarea:focus-visible {
   border: 1px solid var(--line);
   border-radius: 8px;
   resize: vertical;
-  background: #fbfcfe;
+  background: var(--panel-raised);
   color: var(--text);
   font-size: 13px;
   line-height: 1.5;
 }
 
 .task-create-input:focus {
-  border-color: rgba(29, 78, 216, 0.38);
+  border-color: color-mix(in srgb, var(--accent) 38%, transparent);
   outline: none;
 }
 
@@ -2675,7 +2727,7 @@ textarea:focus-visible {
   place-items: center;
   border: 1px solid var(--line);
   border-radius: 999px;
-  background: #fff;
+  background: var(--panel);
   color: var(--text);
   font-size: 11px;
 }
@@ -2706,10 +2758,10 @@ textarea:focus-visible {
   padding: 10px;
   border: 1px solid var(--line);
   border-radius: 8px;
-  background: #fff;
+  background: var(--panel);
   color: var(--text);
   cursor: grab;
-  box-shadow: 0 8px 22px rgba(15, 23, 42, 0.055);
+  box-shadow: 0 8px 22px color-mix(in srgb, var(--ink) 6%, transparent);
 }
 
 .task-kanban-card:active {
@@ -2722,7 +2774,7 @@ textarea:focus-visible {
 }
 
 .task-kanban-card.is-active {
-  box-shadow: inset 3px 0 0 var(--accent), 0 8px 22px rgba(15, 23, 42, 0.055);
+  box-shadow: inset 3px 0 0 var(--accent), 0 8px 22px color-mix(in srgb, var(--ink) 6%, transparent);
 }
 
 .task-kanban-card-head,
@@ -2771,7 +2823,7 @@ textarea:focus-visible {
   display: grid;
   place-items: center;
   padding: 24px;
-  background: rgba(15, 23, 42, 0.32);
+  background: color-mix(in srgb, var(--ink) 32%, transparent);
 }
 
 .task-detail-page {
@@ -2872,7 +2924,7 @@ textarea:focus-visible {
   padding: 10px;
   border: 1px solid var(--line);
   border-radius: 8px;
-  background: #fbfcfe;
+  background: var(--panel-raised);
   color: var(--text);
   white-space: pre-wrap;
   word-break: break-word;
@@ -2930,7 +2982,7 @@ textarea:focus-visible {
   width: 11px;
   height: 11px;
   margin-top: 5px;
-  border: 2px solid #fff;
+  border: 2px solid var(--panel);
   border-radius: 3px;
   background: var(--muted);
   box-shadow: 0 0 0 1px var(--line-strong);
@@ -2945,7 +2997,7 @@ textarea:focus-visible {
 }
 
 .task-log-entry.error .task-log-marker {
-  background: #b42318;
+  background: var(--danger);
 }
 
 .task-log-body {
@@ -2953,7 +3005,7 @@ textarea:focus-visible {
   padding: 9px 10px;
   border: 1px solid var(--line);
   border-radius: 8px;
-  background: #fbfcfe;
+  background: var(--panel-raised);
 }
 
 .task-log-meta {
@@ -3022,7 +3074,7 @@ textarea:focus-visible {
   padding: 12px;
   border: 1px solid var(--line);
   border-radius: 12px;
-  background: #fff;
+  background: var(--panel);
   box-shadow: var(--shadow);
 }
 
@@ -3082,7 +3134,7 @@ textarea:focus-visible {
   padding: 13px 14px;
   border: 1px solid var(--line);
   border-radius: 12px;
-  background: #fff;
+  background: var(--panel);
   box-shadow: var(--shadow);
 }
 
@@ -3227,13 +3279,13 @@ textarea:focus-visible {
   padding: 8px 18px 18px;
   border: 1px solid var(--line);
   border-radius: 12px;
-  background: #fff;
+  background: var(--panel);
   box-shadow: var(--shadow);
 }
 
 .cli-message {
   padding: 12px 0;
-  border-bottom: 1px solid rgba(219, 226, 234, 0.72);
+  border-bottom: 1px solid color-mix(in srgb, var(--line) 72%, transparent);
 }
 
 .cli-message:last-child {
@@ -3293,7 +3345,7 @@ textarea:focus-visible {
 
 .cli-message.error {
   padding-left: 30px;
-  color: #b42318;
+  color: var(--danger);
 }
 
 .cli-agent-line {
@@ -3358,17 +3410,17 @@ textarea:focus-visible {
 }
 
 .state-chip.running {
-  background: rgba(15, 157, 106, 0.12);
+  background: color-mix(in srgb, var(--ok) 12%, transparent);
   color: var(--codex);
 }
 
 .state-chip.idle {
-  background: rgba(29, 78, 216, 0.08);
+  background: color-mix(in srgb, var(--accent) 8%, transparent);
   color: var(--accent);
 }
 
 .state-chip.offline {
-  background: rgba(107, 114, 128, 0.1);
+  background: color-mix(in srgb, var(--muted) 10%, transparent);
   color: var(--muted);
 }
 
@@ -3379,7 +3431,7 @@ textarea:focus-visible {
   height: 28px;
   border: 1px solid var(--line);
   border-radius: 8px;
-  background: #fff;
+  background: var(--panel);
   color: var(--muted);
 }
 
@@ -3391,12 +3443,12 @@ textarea:focus-visible {
 }
 
 .icon-btn.danger {
-  color: #b42318;
+  color: var(--danger);
 }
 
 .icon-btn.danger:hover {
-  border-color: rgba(180, 35, 24, 0.28);
-  background: rgba(180, 35, 24, 0.06);
+  border-color: color-mix(in srgb, var(--danger) 28%, transparent);
+  background: color-mix(in srgb, var(--danger) 6%, transparent);
 }
 
 .agent-meta {
@@ -3421,27 +3473,27 @@ textarea:focus-visible {
   padding: 10px 11px;
   border: 1px solid var(--line);
   border-radius: 10px;
-  background: #fff;
+  background: var(--panel);
 }
 
 .message.user {
-  border-color: rgba(29, 78, 216, 0.2);
-  background: #f8fbff;
+  border-color: color-mix(in srgb, var(--accent) 20%, transparent);
+  background: var(--accent-tint);
 }
 
 .message.assistant {
-  border-color: rgba(15, 157, 106, 0.18);
-  background: #f8fffc;
+  border-color: color-mix(in srgb, var(--ok) 18%, transparent);
+  background: var(--ok-tint);
 }
 
 .message.error {
-  border-color: rgba(220, 38, 38, 0.18);
-  background: #fff7f7;
+  border-color: color-mix(in srgb, var(--danger) 18%, transparent);
+  background: var(--danger-tint);
 }
 
 .message.meta {
   border-style: dashed;
-  background: #fafafa;
+  background: var(--neutral-tint);
 }
 
 .message-role {
@@ -3490,7 +3542,7 @@ textarea:focus-visible {
   padding: 13px 14px;
   border: 1px solid var(--line);
   border-radius: 12px;
-  background: #fff;
+  background: var(--panel);
   box-shadow: var(--shadow);
 }
 
@@ -3530,7 +3582,7 @@ textarea:focus-visible {
   padding: 12px;
   border: 1px solid var(--line);
   border-radius: 12px;
-  background: #fff;
+  background: var(--panel);
   box-shadow: var(--shadow);
 }
 
@@ -3553,7 +3605,7 @@ textarea:focus-visible {
   padding: 12px;
   border: 1px solid var(--line);
   border-radius: 12px;
-  background: #fff;
+  background: var(--panel);
   box-shadow: var(--shadow);
 }
 
@@ -3595,7 +3647,7 @@ textarea:focus-visible {
 
 .config-channel-pick:hover {
   border-color: var(--line-strong);
-  background: #fff;
+  background: var(--panel);
 }
 
 .config-channel-pick.is-active {
@@ -3680,7 +3732,7 @@ textarea:focus-visible {
   min-width: 0;
   border: 1px solid var(--line);
   border-radius: 8px;
-  background: #fbfcfe;
+  background: var(--panel-raised);
   color: var(--text);
   font-size: 12px;
 }
@@ -3724,7 +3776,7 @@ textarea:focus-visible {
   padding: 6px 8px;
   border: 1px solid var(--line);
   border-radius: 8px;
-  background: #fbfcfe;
+  background: var(--panel-raised);
   color: var(--muted);
   font-size: 11px;
   line-height: 1.35;
@@ -3751,7 +3803,7 @@ textarea:focus-visible {
   padding: 0 9px;
   border: 1px solid var(--line);
   border-radius: 8px;
-  background: #fbfcfe;
+  background: var(--panel-raised);
   color: var(--muted);
   font-size: 12px;
   font-weight: 700;
@@ -3772,7 +3824,7 @@ textarea:focus-visible {
   border-radius: 8px;
   resize: none;
   color: var(--text);
-  background: #fbfcfe;
+  background: var(--panel-raised);
   font-family: "Geist Mono Variable", ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, monospace;
   font-size: 12px;
   line-height: 1.55;
@@ -3875,7 +3927,7 @@ textarea:focus-visible {
   overflow: hidden;
   border: 1px solid var(--line);
   border-radius: 12px;
-  background: #fff;
+  background: var(--panel);
   box-shadow: var(--shadow);
 }
 
@@ -3883,7 +3935,7 @@ textarea:focus-visible {
   border: 0;
   border-right: 1px solid var(--line);
   border-radius: 0;
-  background: #fbfcfe;
+  background: var(--panel-raised);
   padding: 10px 8px;
 }
 
@@ -3911,7 +3963,7 @@ textarea:focus-visible {
   place-items: center;
   border: 1px solid var(--line);
   border-radius: 999px;
-  background: #fff;
+  background: var(--panel);
   color: var(--text);
   font-size: 10px;
 }
@@ -3926,12 +3978,12 @@ textarea:focus-visible {
 }
 
 .team-resource-pane .team-list-card:hover {
-  background: #f1f5f9;
+  background: var(--neutral-tint);
 }
 
 .team-resource-pane .team-list-card.is-active {
   border-color: transparent;
-  background: #eef4ff;
+  background: var(--accent-tint);
 }
 
 .team-resource-pane .team-list-card.is-active::before {
@@ -3958,7 +4010,7 @@ textarea:focus-visible {
   overflow: hidden;
   border: 0;
   border-radius: 0;
-  background: #fff;
+  background: var(--panel);
   padding: 12px;
 }
 
@@ -3968,13 +4020,13 @@ textarea:focus-visible {
   flex-direction: column;
   border-color: var(--line);
   border-radius: 10px;
-  box-shadow: 0 10px 26px rgba(15, 23, 42, 0.06);
+  box-shadow: 0 10px 26px color-mix(in srgb, var(--ink) 6%, transparent);
 }
 
 .workflow-builder-head {
   align-items: center;
   padding: 10px 12px;
-  background: #fff;
+  background: var(--panel);
 }
 
 .workflow-builder-title {
@@ -4017,8 +4069,8 @@ textarea:focus-visible {
   flex: 1;
   border: 0;
   background:
-    radial-gradient(circle at 1px 1px, rgba(148, 163, 184, 0.38) 1px, transparent 0),
-    #f8fafc;
+    radial-gradient(circle at 1px 1px, color-mix(in srgb, var(--muted) 38%, transparent) 1px, transparent 0),
+    var(--neutral-tint);
   background-size: 22px 22px;
 }
 
@@ -4032,41 +4084,41 @@ textarea:focus-visible {
   display: block;
   width: 36px;
   height: 2px;
-  background: #b8c3d3;
+  background: var(--scrollbar);
 }
 
 .workflow-node-card {
   width: 176px;
   min-height: 82px;
-  border-color: #cfd8e6;
-  box-shadow: 0 10px 24px rgba(15, 23, 42, 0.08);
+  border-color: var(--line-strong);
+  box-shadow: 0 10px 24px color-mix(in srgb, var(--ink) 8%, transparent);
 }
 
 .workflow-parallel-workers,
 .workflow-worker-grid {
   grid-template-columns: repeat(auto-fit, minmax(176px, 1fr));
-  border-color: #d7dee8;
-  background: rgba(255, 255, 255, 0.76);
+  border-color: var(--line-strong);
+  background: color-mix(in srgb, var(--panel) 76%, transparent);
   backdrop-filter: blur(4px);
 }
 
 .workflow-terminal,
 .workflow-join-node {
-  box-shadow: 0 8px 18px rgba(15, 23, 42, 0.07);
+  box-shadow: 0 8px 18px color-mix(in srgb, var(--ink) 7%, transparent);
 }
 
 .workflow-context-section {
   padding: 10px;
   border: 1px solid var(--line);
   border-radius: 10px;
-  background: #fbfcfe;
+  background: var(--panel-raised);
 }
 
 .team-shared-context {
   min-height: 78px;
   max-height: 128px;
   resize: vertical;
-  background: #fff;
+  background: var(--panel);
 }
 
 .workflow-task-composer {
@@ -4075,15 +4127,15 @@ textarea:focus-visible {
   z-index: 3;
   margin-top: 0;
   border-radius: 10px;
-  background: rgba(255, 255, 255, 0.94);
-  box-shadow: 0 -10px 26px rgba(15, 23, 42, 0.08);
+  background: color-mix(in srgb, var(--panel) 94%, transparent);
+  box-shadow: 0 -10px 26px color-mix(in srgb, var(--ink) 8%, transparent);
   backdrop-filter: blur(8px);
 }
 
 .workflow-task-composer textarea {
   min-height: 82px;
   max-height: 160px;
-  background: #fff;
+  background: var(--panel);
 }
 
 .run-inspector-pane {
@@ -4094,7 +4146,7 @@ textarea:focus-visible {
   border: 0;
   border-left: 1px solid var(--line);
   border-radius: 0;
-  background: #fbfcfe;
+  background: var(--panel-raised);
   padding: 10px;
 }
 
@@ -4138,18 +4190,18 @@ textarea:focus-visible {
 }
 
 .run-inspector-pane .team-run-card:hover {
-  background: #f1f5f9;
+  background: var(--neutral-tint);
 }
 
 .run-inspector-pane .team-run-card.is-active {
-  border-color: rgba(29, 78, 216, 0.22);
-  background: #eef4ff;
+  border-color: color-mix(in srgb, var(--accent) 22%, transparent);
+  background: var(--accent-tint);
 }
 
 .run-inspector-pane .team-run-detail {
   border: 1px solid var(--line);
   border-radius: 10px;
-  background: #fff;
+  background: var(--panel);
   box-shadow: none;
 }
 
@@ -4349,4 +4401,1578 @@ textarea:focus-visible {
   .composer-select {
     max-width: 42vw;
   }
+}
+
+/* ───────────────── Linear redesign additions ───────────────── */
+
+body,
+.shell,
+.content,
+.resource-sidebar,
+.feature-rail {
+  transition: background-color 200ms var(--ease), color 200ms var(--ease), border-color 200ms var(--ease);
+}
+
+/* command palette */
+.palette-overlay {
+  position: fixed;
+  inset: 0;
+  z-index: 80;
+  background: var(--overlay);
+  backdrop-filter: blur(2px);
+  display: flex;
+  align-items: flex-start;
+  justify-content: center;
+  padding-top: 14vh;
+  animation: palette-fade 140ms var(--ease);
+}
+
+@keyframes palette-fade {
+  from {
+    opacity: 0;
+  }
+}
+
+.palette {
+  width: 560px;
+  max-width: 92vw;
+  background: var(--panel);
+  border: 1px solid var(--line-strong);
+  border-radius: 12px;
+  box-shadow: 0 24px 70px color-mix(in srgb, var(--ink) 22%, transparent);
+  overflow: hidden;
+  animation: palette-pop 160ms var(--ease);
+}
+
+@keyframes palette-pop {
+  from {
+    opacity: 0;
+    transform: translateY(-8px) scale(0.98);
+  }
+}
+
+.palette-input-row {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  padding: 0 14px;
+  border-bottom: 1px solid var(--line);
+  color: var(--subtle);
+}
+
+.palette-input-row input {
+  flex: 1;
+  background: none;
+  border: 0;
+  outline: 0;
+  color: var(--text);
+  font: inherit;
+  font-size: 14px;
+  padding: 14px 0;
+}
+
+.palette-input-row input::placeholder {
+  color: var(--subtle);
+}
+
+.palette kbd {
+  font-family: inherit;
+  font-size: 10.5px;
+  color: var(--muted);
+  background: var(--panel-soft);
+  border: 1px solid var(--line);
+  border-radius: 4px;
+  padding: 1px 5px;
+  line-height: 1.4;
+}
+
+.palette-list {
+  max-height: 320px;
+  overflow-y: auto;
+  padding: 6px;
+}
+
+.palette-section {
+  font-size: 10.5px;
+  text-transform: uppercase;
+  letter-spacing: 0.08em;
+  color: var(--subtle);
+  padding: 8px 10px 4px;
+  font-weight: 600;
+}
+
+.palette-item {
+  width: 100%;
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  text-align: left;
+  padding: 8px 10px;
+  border-radius: 7px;
+  color: var(--muted);
+  font-size: 13px;
+}
+
+.palette-item.is-active {
+  background: var(--accent-soft);
+  color: var(--text);
+}
+
+.palette-item-icon {
+  width: 16px;
+  display: inline-flex;
+  justify-content: center;
+  color: var(--subtle);
+}
+
+.palette-item.is-active .palette-item-icon {
+  color: var(--accent-strong);
+}
+
+.palette-item-label {
+  flex: 1;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.palette-empty {
+  padding: 18px;
+  text-align: center;
+  color: var(--subtle);
+  font-size: 12.5px;
+}
+
+.palette-foot {
+  display: flex;
+  gap: 14px;
+  padding: 8px 14px;
+  border-top: 1px solid var(--line);
+  color: var(--subtle);
+  font-size: 11px;
+}
+
+/* streaming cursor */
+.stream-cursor {
+  display: inline-block;
+  width: 7px;
+  height: 14px;
+  background: var(--accent-strong);
+  border-radius: 1px;
+  margin-left: 2px;
+  vertical-align: -2px;
+  animation: stream-blink 1s steps(1) infinite;
+}
+
+@keyframes stream-blink {
+  50% {
+    opacity: 0;
+  }
+}
+
+/* micro-interactions */
+.chat-row,
+.task-nav-card,
+.config-nav-row,
+.team-list-card,
+.task-kanban-card,
+.team-run-card {
+  animation: list-item-in 220ms var(--ease) backwards;
+}
+
+.chat-row:nth-child(1) { animation-delay: 0ms; }
+.chat-row:nth-child(2) { animation-delay: 25ms; }
+.chat-row:nth-child(3) { animation-delay: 50ms; }
+.chat-row:nth-child(4) { animation-delay: 75ms; }
+.chat-row:nth-child(5) { animation-delay: 100ms; }
+
+@keyframes list-item-in {
+  from {
+    opacity: 0;
+    transform: translateY(4px);
+  }
+}
+
+.content > * {
+  animation: page-in 180ms var(--ease);
+}
+
+@keyframes page-in {
+  from {
+    opacity: 0;
+    transform: translateY(4px);
+  }
+}
+
+.send-btn,
+.control-btn,
+.icon-btn,
+.feature-nav-item {
+  transition: background-color 130ms var(--ease), color 130ms var(--ease), border-color 130ms var(--ease),
+    transform 90ms var(--ease), box-shadow 130ms var(--ease);
+}
+
+.send-btn:active:not(:disabled),
+.control-btn:active:not(:disabled) {
+  transform: scale(0.96);
+}
+
+.task-kanban-card {
+  transition: border-color 130ms var(--ease), transform 130ms var(--ease), box-shadow 130ms var(--ease);
+}
+
+.task-kanban-card:hover {
+  transform: translateY(-1px);
+  box-shadow: 0 4px 14px color-mix(in srgb, var(--ink) 8%, transparent);
+}
+
+.workflow-node-card {
+  transition: border-color 140ms var(--ease), transform 140ms var(--ease), box-shadow 140ms var(--ease);
+}
+
+.workflow-node-card:hover {
+  transform: translateY(-2px);
+  box-shadow: 0 8px 22px color-mix(in srgb, var(--ink) 10%, transparent);
+}
+
+.workflow-node-card.is-running,
+.task-status-running {
+  animation: status-pulse 1.6s ease-in-out infinite;
+}
+
+@keyframes status-pulse {
+  50% {
+    opacity: 0.72;
+  }
+}
+
+.composer textarea,
+.team-run-composer textarea,
+.task-create-input {
+  transition: border-color 140ms var(--ease), box-shadow 140ms var(--ease);
+}
+
+@media (prefers-reduced-motion: reduce) {
+  *,
+  *::before,
+  *::after {
+    animation-duration: 0.01ms !important;
+    animation-iteration-count: 1 !important;
+    transition-duration: 0.01ms !important;
+  }
+}
+
+/* ───────────────── Linear reskin v2 — full overhaul layer (变体 B:舒适密度) ───────────────── */
+
+:root {
+  font-size: 15px;
+  --bg: var(--panel)fff;
+  --sidebar: #fafbfc;
+}
+
+[data-theme="dark"] {
+  --bg: #101117;
+  --sidebar: #14151b;
+}
+
+body {
+  font-size: 13.5px;
+}
+
+/* shell density */
+.shell {
+  grid-template-columns: 76px 252px minmax(0, 1fr);
+}
+
+.shell.tasks-shell,
+.shell.teams-shell {
+  grid-template-columns: 76px minmax(0, 1fr);
+}
+
+/* icon rail */
+.feature-rail {
+  gap: 6px;
+  padding: 14px 0;
+  background: var(--sidebar);
+}
+
+.rail-brand {
+  width: 28px;
+  height: 28px;
+  border: 0;
+  border-radius: 8px;
+  background: linear-gradient(135deg, var(--accent), var(--accent-strong));
+  color: var(--on-accent);
+  margin-bottom: 10px;
+}
+
+.feature-nav-item {
+  display: grid;
+  place-items: center;
+  width: 36px;
+  min-height: 36px;
+  padding: 0;
+  border: 0;
+  border-radius: 8px;
+  gap: 0;
+}
+
+.feature-nav-item span {
+  display: none;
+}
+
+.feature-nav-item svg {
+  width: 17px;
+  height: 17px;
+}
+
+.feature-nav-item:hover {
+  background: var(--hover);
+  color: var(--text);
+}
+
+.feature-nav-item.is-active {
+  border: 0;
+  background: var(--accent-soft);
+  color: var(--accent-strong);
+}
+
+/* sidebar */
+.resource-sidebar {
+  gap: 12px;
+  padding: 14px 12px;
+}
+
+.brand h1 {
+  font-size: 13px;
+  font-weight: 600;
+  letter-spacing: -0.01em;
+}
+
+.brand p {
+  font-size: 11.5px;
+  color: var(--subtle);
+}
+
+.sidebar-search-btn {
+  display: flex;
+  align-items: center;
+  gap: 7px;
+  width: 100%;
+  padding: 6px 9px;
+  border: 1px solid var(--line);
+  border-radius: 7px;
+  background: var(--panel);
+  color: var(--subtle);
+  font-size: 12px;
+  transition: border-color 120ms var(--ease), background 120ms var(--ease);
+}
+
+.sidebar-search-btn:hover {
+  border-color: var(--line-strong);
+  background: var(--panel-raised);
+  color: var(--muted);
+}
+
+.sidebar-search-btn kbd {
+  margin-left: auto;
+  font-family: inherit;
+  font-size: 10.5px;
+  color: var(--muted);
+  background: var(--panel-soft);
+  border: 1px solid var(--line);
+  border-radius: 4px;
+  padding: 1px 5px;
+  line-height: 1.4;
+}
+
+.panel-header {
+  margin-bottom: 6px;
+  font-size: 10.5px;
+  letter-spacing: 0.08em;
+  color: var(--subtle);
+}
+
+.new-chat-compact-btn {
+  min-height: 30px;
+  border: 1px dashed var(--line-strong);
+  border-radius: 7px;
+  background: transparent;
+  color: var(--muted);
+  font-size: 12px;
+}
+
+.new-chat-compact-btn:hover {
+  border-color: var(--accent);
+  background: var(--accent-soft);
+  color: var(--accent-strong);
+}
+
+.chat-list {
+  gap: 2px;
+}
+
+.chat-row {
+  gap: 4px;
+  padding: 9px 10px;
+  border: 0;
+  border-radius: 8px;
+}
+
+.chat-row:hover {
+  background: var(--hover);
+}
+
+.chat-row.is-active {
+  border: 0;
+  background: var(--accent-soft);
+}
+
+.chat-row strong {
+  font-size: 12.5px;
+  font-weight: 500;
+  -webkit-line-clamp: 1;
+}
+
+.chat-row span:last-child {
+  font-size: 11px;
+  color: var(--subtle);
+}
+
+/* agent badges as tinted chips */
+.agent-badge.mini {
+  min-height: 18px;
+  padding: 0 7px;
+  font-size: 10.5px;
+  font-weight: 600;
+  border: 1px solid transparent;
+}
+
+.agent-badge.mini.agent-codex {
+  background: color-mix(in srgb, var(--codex) 10%, transparent);
+  border-color: color-mix(in srgb, var(--codex) 30%, transparent);
+  color: var(--codex);
+}
+
+.agent-badge.mini.agent-claude {
+  background: color-mix(in srgb, var(--claude) 10%, transparent);
+  border-color: color-mix(in srgb, var(--claude) 30%, transparent);
+  color: var(--claude);
+}
+
+/* chat page — flat surfaces, centered column */
+.chat-content {
+  gap: 0;
+  padding: 0;
+}
+
+.chat-header {
+  padding: 13px 24px;
+  border: 0;
+  border-bottom: 1px solid var(--line);
+  border-radius: 0;
+  background: transparent;
+  box-shadow: none;
+}
+
+.chat-title-block h2 {
+  font-size: 13.5px;
+  font-weight: 600;
+  letter-spacing: -0.01em;
+}
+
+.chat-subtitle {
+  font-size: 11.5px;
+}
+
+.cli-transcript {
+  padding: 24px 28px;
+  border: 0;
+  border-radius: 0;
+  background: transparent;
+  box-shadow: none;
+}
+
+.cli-message {
+  max-width: 720px;
+  margin: 0 auto;
+  padding: 12px 0;
+  border-bottom: 0;
+}
+
+.cli-message.user pre {
+  padding: 9px 13px;
+  border: 1px solid var(--line);
+  border-radius: 10px;
+  background: var(--panel);
+  color: var(--muted);
+}
+
+.cli-status-line {
+  max-width: 720px;
+  margin: 0 auto;
+  padding: 6px 0;
+  color: var(--subtle);
+  font-size: 12px;
+  gap: 7px;
+}
+
+.composer {
+  width: 100%;
+  max-width: 760px;
+  margin: 0 auto;
+  padding: 12px;
+  gap: 8px;
+  border-radius: 14px;
+  box-shadow: none;
+  transition: border-color 140ms var(--ease), box-shadow 140ms var(--ease);
+}
+
+.chat-content .composer {
+  margin-bottom: 20px;
+}
+
+.composer-hint {
+  text-align: center;
+  color: var(--subtle);
+  font-size: 11px;
+}
+
+.composer-hint kbd {
+  font-family: inherit;
+  font-size: 10.5px;
+  color: var(--muted);
+  background: var(--panel-soft);
+  border: 1px solid var(--line);
+  border-radius: 4px;
+  padding: 1px 5px;
+  line-height: 1.4;
+}
+
+.composer:focus-within {
+  border-color: var(--accent);
+  box-shadow: 0 0 0 3px var(--accent-soft);
+}
+
+.composer textarea {
+  min-height: 64px;
+}
+
+/* buttons */
+.send-btn,
+.control-btn {
+  min-height: 30px;
+  border-radius: 7px;
+  font-size: 12.5px;
+}
+
+.send-btn:hover:not(:disabled) {
+  background: var(--accent-strong);
+}
+
+/* page headers */
+.topbar h2,
+.teams-header h2,
+.config-header h2,
+.task-section-heading h2 {
+  font-size: 14px;
+  font-weight: 600;
+  letter-spacing: -0.01em;
+}
+
+.teams-header p,
+.config-header p {
+  font-size: 12px;
+  color: var(--subtle);
+}
+
+/* kanban */
+.task-kanban-column {
+  padding: 8px;
+  border-radius: 10px;
+  background: var(--panel);
+}
+
+.task-kanban-column .task-kanban-column-head,
+.task-kanban-column-head {
+  font-size: 12px;
+  color: var(--muted);
+}
+
+.task-kanban-card {
+  padding: 12px;
+  border-radius: 10px;
+  background: var(--panel-soft);
+  box-shadow: none;
+}
+
+.task-kanban-card strong {
+  font-size: 12.5px;
+}
+
+/* scrollbars */
+::-webkit-scrollbar {
+  width: 8px;
+  height: 8px;
+}
+
+::-webkit-scrollbar-thumb {
+  background: var(--scrollbar);
+  border-radius: 99px;
+  border: 2px solid transparent;
+  background-clip: content-box;
+}
+
+::-webkit-scrollbar-track {
+  background: transparent;
+}
+
+/* ───────────────── Linear reskin v3 — premium polish layer ───────────────── */
+
+/* kill heavy floating shadows globally; hairline elevation only */
+:root {
+  --shadow: 0 1px 3px color-mix(in srgb, var(--ink) 5%, transparent);
+}
+
+[data-theme="dark"] {
+  --shadow: 0 1px 3px color-mix(in srgb, var(--ink) 35%, transparent);
+}
+
+/* softer focus ring */
+button:focus-visible,
+input:focus-visible,
+select:focus-visible,
+textarea:focus-visible {
+  outline: 2px solid color-mix(in srgb, var(--accent) 45%, transparent);
+  outline-offset: 1px;
+}
+
+/* conversational typography — sans body, mono only for payloads */
+.cli-message pre {
+  font-family: inherit;
+  font-size: 13px;
+  line-height: 1.7;
+  color: var(--text);
+}
+
+.cli-meta-details pre,
+.task-log-entry pre,
+.team-run-prompt,
+.team-run-context,
+.team-run-step pre,
+.task-prompt-block pre {
+  font-family: "Geist Mono Variable", ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, monospace;
+  font-size: 12px;
+}
+
+.cli-message.user {
+  display: block;
+  font-weight: 400;
+}
+
+.cli-prompt-mark {
+  display: none;
+}
+
+.cli-message.user pre {
+  color: var(--text);
+}
+
+.cli-agent-line {
+  gap: 7px;
+  margin-bottom: 6px;
+  color: var(--muted);
+  font-size: 11.5px;
+  font-weight: 600;
+  text-transform: none;
+  letter-spacing: 0;
+}
+
+.cli-message.user .cli-agent-line {
+  color: var(--subtle);
+}
+
+.runtime-dot {
+  width: 7px;
+  height: 7px;
+}
+
+/* composer controls as quiet chips */
+.composer-select-wrap {
+  min-height: 26px;
+  padding: 0 7px;
+  border-radius: 6px;
+  background: transparent;
+  transition: background 110ms var(--ease), border-color 110ms var(--ease);
+}
+
+.composer-select-wrap:hover {
+  border-color: var(--line-strong);
+  background: var(--hover);
+}
+
+.composer-select {
+  height: 24px;
+  font-size: 11.5px;
+  font-weight: 500;
+}
+
+.workdir-picker.composer-workdir-picker {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  width: auto;
+  max-width: 260px;
+  min-height: 26px;
+  padding: 0 8px;
+  border: 1px solid var(--line);
+  border-radius: 6px;
+  font-size: 11.5px;
+  transition: background 110ms var(--ease), border-color 110ms var(--ease);
+}
+
+.workdir-picker.composer-workdir-picker:hover {
+  border-color: var(--line-strong);
+  background: var(--hover);
+}
+
+.workdir-picker.composer-workdir-picker span {
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+/* ghost icon buttons */
+.icon-btn {
+  border-color: transparent;
+  background: transparent;
+}
+
+.icon-btn:hover {
+  border-color: transparent;
+  background: var(--hover);
+  color: var(--text);
+}
+
+.icon-btn.danger:hover {
+  background: var(--danger-tint);
+  color: var(--danger);
+}
+
+/* compact pills */
+.status-pill {
+  min-height: 0;
+  padding: 4px 10px;
+  font-size: 11.5px;
+}
+
+/* tighter content frame */
+.content {
+  gap: 12px;
+  padding: 16px;
+}
+
+.chat-content {
+  padding: 0;
+  gap: 0;
+}
+
+/* empty states */
+.empty-state {
+  color: var(--subtle);
+}
+
+.cli-message.assistant,
+.cli-message.meta {
+  padding-left: 0;
+}
+
+/* ───────────────── Linear reskin v4 — rail fix + workflow board to template ───────────────── */
+
+/* center rail nav buttons */
+.feature-nav {
+  justify-items: center;
+}
+
+.rail-footer {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  gap: 6px;
+}
+
+/* workflow node cards — clean template look */
+.team-member-card {
+  position: relative;
+  grid-template-columns: 12px minmax(0, 1fr);
+  padding: 10px 12px;
+  border-radius: 10px;
+  box-shadow: none;
+}
+
+.workflow-node-card .team-member-card-index {
+  display: none;
+}
+
+.team-member-card-head strong {
+  font-size: 12.5px;
+  font-weight: 600;
+}
+
+.team-member-card-main p {
+  color: var(--muted);
+  font-size: 11px;
+  line-height: 1.45;
+}
+
+.team-member-card-meta {
+  color: var(--subtle);
+  font-size: 10.5px;
+}
+
+.workflow-node-drag {
+  height: 16px;
+  color: var(--line-strong);
+}
+
+.workflow-node-card:hover .workflow-node-drag {
+  color: var(--subtle);
+}
+
+/* floating status pill, like the template */
+.workflow-node-status-pill {
+  position: absolute;
+  top: -8px;
+  right: 10px;
+  z-index: 1;
+  max-width: none;
+  padding: 2px 8px;
+  border: 0;
+  font-size: 9.5px;
+  font-weight: 700;
+  letter-spacing: 0.05em;
+}
+
+.workflow-node-status-pill.is-running {
+  background: var(--accent);
+  color: var(--on-accent);
+  animation: status-pulse 1.6s ease-in-out infinite;
+}
+
+.workflow-node-status-pill.is-completed {
+  background: color-mix(in srgb, var(--ok) 16%, var(--panel));
+  color: var(--ok-strong);
+}
+
+.workflow-node-status-pill.is-failed {
+  background: color-mix(in srgb, var(--danger) 14%, var(--panel));
+  color: var(--danger);
+}
+
+/* node states stay calm — colored border only */
+.workflow-node-card.is-running {
+  background: var(--panel);
+  box-shadow: none;
+}
+
+.workflow-node-card.is-completed {
+  background: var(--panel);
+}
+
+.workflow-node-card.is-failed {
+  background: var(--panel);
+}
+
+/* dashed pill terminals */
+.workflow-terminal,
+.workflow-join-node {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: auto;
+  min-width: 0;
+  height: auto;
+  padding: 5px 14px;
+  border: 1px dashed var(--line-strong);
+  border-radius: 999px;
+  background: transparent;
+  color: var(--subtle);
+  font-size: 11px;
+}
+
+/* edges with arrowheads */
+.workflow-edge {
+  position: relative;
+  height: 1.5px;
+  background: var(--line-strong);
+}
+
+.workflow-edge::after {
+  content: "";
+  position: absolute;
+  top: -3.25px;
+  right: -1px;
+  border: 4px solid transparent;
+  border-left-color: var(--line-strong);
+}
+
+/* clean topology board */
+.workflow-topology-board {
+  border: 1px solid var(--line);
+  border-radius: 12px;
+  background: var(--panel);
+}
+
+.workflow-topology-stage {
+  padding: 28px 18px;
+}
+
+.workflow-builder-shell {
+  border: 0;
+  box-shadow: none;
+}
+
+.workflow-builder-head {
+  padding: 0 0 10px;
+  background: transparent;
+}
+
+/* segmented mode control */
+.workflow-mode-row {
+  gap: 2px;
+  padding: 2px;
+  border: 1px solid var(--line);
+  border-radius: 8px;
+  background: var(--panel-soft);
+}
+
+.workflow-mode-toggle {
+  border-radius: 6px;
+  color: var(--muted);
+  font-size: 12px;
+  font-weight: 500;
+}
+
+.workflow-mode-toggle.is-active {
+  background: var(--panel);
+  color: var(--text);
+  box-shadow: 0 1px 2px color-mix(in srgb, var(--ink) 8%, transparent);
+}
+
+/* panes and lists */
+.team-list-pane,
+.team-config-pane,
+.team-run-pane {
+  border-radius: 12px;
+}
+
+.team-resource-head {
+  color: var(--subtle);
+  font-size: 10.5px;
+  font-weight: 600;
+  letter-spacing: 0.08em;
+}
+
+.team-list-card,
+.team-run-card {
+  padding: 9px 10px;
+  border-color: transparent;
+  border-radius: 8px;
+  background: transparent;
+  box-shadow: none;
+}
+
+.team-list-card:hover,
+.team-run-card:hover {
+  background: var(--hover);
+}
+
+.team-list-card.is-active,
+.team-run-card.is-active {
+  border-color: transparent;
+  background: var(--accent-soft);
+}
+
+/* labels and dividers like template */
+.task-section-divider {
+  color: var(--subtle);
+  font-size: 10.5px;
+  font-weight: 600;
+  letter-spacing: 0.08em;
+  text-transform: uppercase;
+}
+
+.workflow-region-label {
+  padding: 0;
+  border: 0;
+  background: transparent;
+  color: var(--subtle);
+  font-size: 10.5px;
+  font-weight: 600;
+  letter-spacing: 0.08em;
+  text-transform: uppercase;
+}
+
+/* run trace as timeline rows */
+.workflow-trace-item {
+  display: flex;
+  align-items: baseline;
+  gap: 10px;
+  padding: 6px 4px;
+  border: 0;
+  background: transparent;
+}
+
+.workflow-trace-item span {
+  color: var(--subtle);
+  font-size: 11px;
+}
+
+.workflow-trace-item strong {
+  color: var(--muted);
+  font-size: 12px;
+  font-weight: 500;
+}
+
+.workflow-trace-item.is-completed strong {
+  color: var(--ok-strong);
+}
+
+.workflow-trace-item.is-running strong {
+  color: var(--accent-strong);
+}
+
+.workflow-trace-item.is-failed strong {
+  color: var(--danger);
+}
+
+.workflow-synthesis-card {
+  border-radius: 10px;
+}
+
+/* ───────────────── Linear reskin v5 — frameless, tooltips, markdown ───────────────── */
+
+/* frameless window: rail hosts mac traffic lights */
+.feature-rail {
+  padding-top: 46px;
+  -webkit-app-region: drag;
+}
+
+.feature-rail button {
+  -webkit-app-region: no-drag;
+}
+
+.resource-sidebar .brand {
+  -webkit-app-region: drag;
+}
+
+.chat-header,
+.teams-header,
+.config-header {
+  -webkit-app-region: drag;
+}
+
+.chat-header button,
+.teams-header button,
+.config-header button {
+  -webkit-app-region: no-drag;
+}
+
+/* instant rail tooltips */
+[data-tip] {
+  position: relative;
+}
+
+[data-tip]::after {
+  content: attr(data-tip);
+  position: absolute;
+  left: calc(100% + 10px);
+  top: 50%;
+  transform: translateY(-50%) translateX(-4px);
+  padding: 4px 9px;
+  border-radius: 6px;
+  background: var(--ink);
+  color: var(--panel);
+  font-size: 11px;
+  font-weight: 500;
+  white-space: nowrap;
+  opacity: 0;
+  pointer-events: none;
+  transition: opacity 120ms var(--ease), transform 120ms var(--ease);
+  z-index: 70;
+}
+
+[data-tip]:hover::after {
+  opacity: 1;
+  transform: translateY(-50%) translateX(0);
+}
+
+/* palette: no focus ring artifacts */
+.palette-input-row input:focus-visible,
+.palette-item:focus-visible {
+  outline: none;
+}
+
+/* markdown body */
+.cli-markdown {
+  font-size: 13px;
+  line-height: 1.7;
+  color: var(--text);
+}
+
+.md-body > *:first-child {
+  margin-top: 0;
+}
+
+.md-body > *:last-child {
+  margin-bottom: 0;
+}
+
+.md-body p {
+  margin: 0 0 8px;
+}
+
+.md-body h1,
+.md-body h2,
+.md-body h3,
+.md-body h4 {
+  margin: 14px 0 6px;
+  font-weight: 600;
+  letter-spacing: -0.01em;
+}
+
+.md-body h1 { font-size: 15px; }
+.md-body h2 { font-size: 14px; }
+.md-body h3 { font-size: 13.5px; }
+.md-body h4 { font-size: 13px; }
+
+.md-body ul {
+  margin: 0 0 8px;
+  padding-left: 18px;
+}
+
+.md-body li {
+  margin: 2px 0;
+}
+
+.md-body code {
+  padding: 1px 5px;
+  border: 1px solid var(--line);
+  border-radius: 4px;
+  background: var(--panel-soft);
+  font-family: "Geist Mono Variable", ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, monospace;
+  font-size: 11.5px;
+}
+
+.md-codeblock {
+  margin: 8px 0;
+  border: 1px solid var(--line);
+  border-radius: 8px;
+  background: var(--panel-soft);
+  overflow: hidden;
+}
+
+.md-codeblock-lang {
+  padding: 5px 12px;
+  border-bottom: 1px solid var(--line);
+  color: var(--subtle);
+  font-size: 11px;
+}
+
+.md-codeblock pre {
+  margin: 0;
+  padding: 11px 12px;
+  overflow-x: auto;
+  font-family: "Geist Mono Variable", ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, monospace;
+  font-size: 12px;
+  line-height: 1.6;
+}
+
+/* trace timeline columns */
+.workflow-trace-item .trace-time {
+  flex: none;
+  min-width: 52px;
+  font-family: "Geist Mono Variable", ui-monospace, monospace;
+  font-size: 10.5px;
+  color: var(--subtle);
+}
+
+.workflow-trace-item .trace-glyph {
+  flex: none;
+  font-size: 11px;
+}
+
+.workflow-trace-item.is-completed .trace-glyph {
+  color: var(--ok-strong);
+}
+
+.workflow-trace-item.is-running .trace-glyph {
+  color: var(--accent-strong);
+}
+
+.workflow-trace-item p {
+  margin: 0;
+  color: var(--muted);
+  font-size: 11.5px;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+/* tooltips must escape the rail */
+.feature-rail {
+  position: relative;
+  z-index: 30;
+  overflow: visible;
+}
+
+/* ───────────────── review fixes ───────────────── */
+
+/* keep whitespace fidelity inside markdown paragraphs (agent output often aligns text) */
+.md-body p {
+  white-space: pre-wrap;
+}
+
+/* shared kbd treatment — single source for every shortcut badge */
+.palette kbd,
+.sidebar-search-btn kbd,
+.composer-hint kbd {
+  font-family: inherit;
+  font-size: 10.5px;
+  color: var(--muted);
+  background: var(--panel-soft);
+  border: 1px solid var(--line);
+  border-radius: 4px;
+  padding: 1px 5px;
+  line-height: 1.4;
+}
+
+/* ───────────────── kanban hover lift + traffic-light spacing ───────────────── */
+
+/* room for the lifted card so the stack's overflow doesn't clip it */
+.task-kanban-stack {
+  padding-top: 5px;
+  padding-left: 3px;
+  padding-right: 3px;
+  margin-left: -3px;
+  margin-right: -3px;
+}
+
+.task-kanban-card:hover {
+  transform: translateY(-3px);
+  border-color: var(--line-strong);
+  box-shadow: 0 8px 24px color-mix(in srgb, var(--ink) 12%, transparent);
+}
+
+/* rail is now 76px wide: traffic lights (x12-64) stay inside it,
+   logo sits below them */
+.feature-rail {
+  padding-top: 48px;
+}
+
+/* bigger rail icons to fill the 76px column */
+.rail-brand {
+  width: 34px;
+  height: 34px;
+  border-radius: 9px;
+}
+
+.rail-brand svg {
+  width: 20px;
+  height: 20px;
+}
+
+.feature-nav-item {
+  width: 44px;
+  min-height: 44px;
+  border-radius: 10px;
+}
+
+.feature-nav-item svg {
+  width: 21px;
+  height: 21px;
+}
+
+.rail-footer .icon-btn {
+  width: 38px;
+  height: 38px;
+  border-radius: 9px;
+}
+
+.rail-footer .icon-btn svg {
+  width: 18px;
+  height: 18px;
+}
+
+/* icon + english caption, like the original rail but Linear-tight */
+.feature-nav-item {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  justify-content: center;
+  gap: 3px;
+  width: 60px;
+  min-height: 52px;
+  padding: 6px 0;
+}
+
+.feature-nav-item span {
+  display: block;
+  font-size: 10px;
+  font-weight: 600;
+  letter-spacing: 0.02em;
+}
+
+.feature-nav-item svg {
+  width: 19px;
+  height: 19px;
+}
+
+/* ───────────────── composer box + preview-B sidebar list ───────────────── */
+
+/* one frame only: outer .composer goes invisible, .composer-box owns the border */
+.composer {
+  padding: 0;
+  gap: 8px;
+  border: 0;
+  background: transparent;
+  box-shadow: none;
+}
+
+.composer:focus-within {
+  border: 0;
+  box-shadow: none;
+}
+
+.composer-box {
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+  padding: 12px;
+  border: 1px solid var(--line);
+  border-radius: 14px;
+  background: var(--panel);
+  transition: border-color 140ms var(--ease), box-shadow 140ms var(--ease);
+}
+
+.composer-box:focus-within {
+  border-color: var(--accent);
+  box-shadow: 0 0 0 3px var(--accent-soft);
+}
+
+.composer-box textarea {
+  border: 0;
+  background: transparent;
+}
+
+.composer-box textarea:focus,
+.composer-box textarea:focus-visible {
+  border: 0;
+  outline: none;
+  box-shadow: none;
+}
+
+/* the "bracket": refresh icon floating bare — give it a chip frame */
+.composer-refresh-btn {
+  width: 26px;
+  height: 26px;
+  border: 1px solid var(--line);
+  border-radius: 6px;
+  background: transparent;
+}
+
+.composer-refresh-btn:hover {
+  border-color: var(--line-strong);
+  background: var(--hover);
+}
+
+/* sidebar: flat panels, preview-B rows */
+.resource-panel {
+  border: 0;
+  border-radius: 0;
+  background: transparent;
+  box-shadow: none;
+  padding: 0;
+}
+
+.chat-row {
+  display: flex;
+  flex-direction: row;
+  align-items: center;
+  gap: 8px;
+}
+
+.chat-row .runtime-dot {
+  flex: none;
+}
+
+.chat-row strong {
+  display: block;
+  flex: 1;
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  font-size: 12.5px;
+  font-weight: 500;
+}
+
+.chat-row span:last-child {
+  flex: none;
+  font-size: 11px;
+  color: var(--subtle);
+}
+
+.runtime-dot.is-pulsing {
+  animation: dot-pulse 1.4s ease-in-out infinite;
+}
+
+@keyframes dot-pulse {
+  50% {
+    opacity: 0.35;
+    transform: scale(0.8);
+  }
+}
+
+/* compact composer, preview-B proportions */
+.composer-box {
+  gap: 0;
+  padding: 0;
+}
+
+.composer-box textarea {
+  min-height: 48px;
+  max-height: 220px;
+  padding: 11px 14px 2px;
+  font-size: 13px;
+  line-height: 1.5;
+  resize: none;
+}
+
+.composer-box .composer-footer {
+  min-height: 0;
+  padding: 6px 8px 8px;
+}
+
+.chat-content .composer {
+  margin-bottom: 14px;
+}
+
+.composer-hint {
+  margin-top: 0;
+}
+
+.send-btn {
+  min-height: 28px;
+  padding: 0 12px;
+  font-size: 12px;
+}
+
+/* workflow page: full-width like tasks/teams */
+.shell.workflow-shell {
+  grid-template-columns: 76px minmax(0, 1fr);
+}
+
+.shell.workflow-shell .resource-sidebar {
+  display: none;
+}
+
+/* ───────────────── workflow page unification (Linear pass) ───────────────── */
+
+.workflow-page {
+  padding: 16px 20px;
+  gap: 14px;
+}
+
+.workflow-page-header h2 {
+  font-size: 14px;
+  font-weight: 600;
+  letter-spacing: -0.01em;
+}
+
+.workflow-page-header p {
+  font-size: 12px;
+  color: var(--subtle);
+}
+
+.workflow-page-header {
+  -webkit-app-region: drag;
+}
+
+.workflow-page-header button {
+  -webkit-app-region: no-drag;
+}
+
+.workflow-grill-surface,
+.workflow-graph-surface {
+  border: 1px solid var(--line);
+  border-radius: 12px;
+  background: var(--panel);
+  box-shadow: none;
+}
+
+.workflow-grill-head strong {
+  font-size: 12.5px;
+  font-weight: 600;
+}
+
+.workflow-grill-head span {
+  font-size: 11px;
+  color: var(--subtle);
+}
+
+.workflow-config-field > span {
+  font-size: 10.5px;
+  font-weight: 600;
+  letter-spacing: 0.08em;
+  color: var(--subtle);
+}
+
+.workflow-config-field select {
+  min-height: 30px;
+  border-radius: 7px;
+  font-size: 12px;
+  background: var(--panel);
+}
+
+.workflow-task-input,
+.workflow-reply-input {
+  border-radius: 10px;
+  background: var(--panel);
+  font-size: 13px;
+  font-family: inherit;
+  transition: border-color 140ms var(--ease), box-shadow 140ms var(--ease);
+}
+
+.workflow-task-input:focus,
+.workflow-reply-input:focus {
+  border-color: var(--accent);
+  box-shadow: 0 0 0 3px var(--accent-soft);
+  outline: none;
+}
+
+.workflow-task-input {
+  min-height: 120px;
+}
+
+.workflow-chat-bubble {
+  border-radius: 10px;
+  font-size: 13px;
+  line-height: 1.6;
+}
+
+.workflow-chat-bubble > span {
+  font-size: 11px;
+  font-weight: 600;
+  color: var(--subtle);
+}
+
+.workflow-chat-bubble.is-user {
+  background: var(--accent-tint);
+  border: 1px solid color-mix(in srgb, var(--accent) 18%, transparent);
+}
+
+.workflow-chat-bubble.is-assistant {
+  background: var(--panel-soft);
+  border: 1px solid var(--line);
 }

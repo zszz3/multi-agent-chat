@@ -57,6 +57,21 @@ export function normalizeClaudeStreamEvent(raw: unknown, state?: ClaudeStreamSta
   const record = raw as Record<string, unknown>;
   const type = asString(record.type);
 
+  if (type === "stream_event") {
+    const event = record.event;
+    if (!event || typeof event !== "object") return [];
+    const eventRecord = event as Record<string, unknown>;
+    if (asString(eventRecord.type) !== "content_block_delta") return [];
+    const delta = eventRecord.delta;
+    if (!delta || typeof delta !== "object") return [];
+    const deltaRecord = delta as Record<string, unknown>;
+    if (asString(deltaRecord.type) !== "text_delta") return [];
+    const text = asString(deltaRecord.text);
+    if (!text) return [];
+    if (state) state.lastText += text;
+    return [{ type: "delta", content: text }];
+  }
+
   if (type === "assistant" || type === "message") {
     const text = extractText(record.message ?? record);
     const delta = state ? consumeTextDelta(text, state) : text;
