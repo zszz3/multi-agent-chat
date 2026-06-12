@@ -3620,6 +3620,18 @@ export function WorkflowPage({
                 aria-label="Workflow task"
                 value={objective}
                 onChange={(event) => onObjectiveChange(event.currentTarget.value)}
+                onKeyDown={(event) => {
+                  if (shouldSendComposerKey({
+                    key: event.key,
+                    shiftKey: event.shiftKey,
+                    metaKey: event.metaKey,
+                    ctrlKey: event.ctrlKey,
+                    isComposing: event.nativeEvent.isComposing,
+                  })) {
+                    event.preventDefault();
+                    if (objective.trim() && !running) void onSendReply();
+                  }
+                }}
                 rows={6}
                 placeholder="Describe the workflow task..."
               />
@@ -3649,6 +3661,18 @@ export function WorkflowPage({
                     aria-label="Reply to grill question"
                     value={reply}
                     onChange={(event) => onReplyChange(event.currentTarget.value)}
+                    onKeyDown={(event) => {
+                      if (shouldSendComposerKey({
+                        key: event.key,
+                        shiftKey: event.shiftKey,
+                        metaKey: event.metaKey,
+                        ctrlKey: event.ctrlKey,
+                        isComposing: event.nativeEvent.isComposing,
+                      })) {
+                        event.preventDefault();
+                        if (reply.trim() && !running) void onSendReply();
+                      }
+                    }}
                     placeholder="Answer the current question..."
                     rows={3}
                   />
