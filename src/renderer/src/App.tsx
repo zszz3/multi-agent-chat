@@ -1215,6 +1215,25 @@ export function App() {
     setWorkflowAgentSessionId(undefined);
   }
 
+  async function resetWorkflowSession(): Promise<void> {
+    workflowRequestIdRef.current = undefined;
+    workflowAssistantMessageIdRef.current = undefined;
+    workflowStreamingStartedRef.current = false;
+    workflowAssistantContentRef.current = "";
+    setWorkflowObjective("");
+    setWorkflowReply("");
+    setWorkflowError(undefined);
+    setWorkflowRunning(false);
+    setWorkflowMessages(initialWorkflowMessages());
+    setWorkflowGraph(createWorkflowGraphFromObjective(""));
+    setWorkflowGraphReady(false);
+    setWorkflowRunProgress([]);
+    setWorkflowRunContextDocument("");
+    setWorkflowAgentSessionId(undefined);
+    const next = await window.multiAgentChat.updateWorkflowDraft(undefined);
+    setSnapshot(next);
+  }
+
   async function send(): Promise<void> {
     if (!activeChat || !canSend) return;
     const text = prompt.trim();
@@ -1952,6 +1971,7 @@ export function App() {
             onSendReply={sendWorkflowReply}
             onUpdateNode={updateWorkflowNode}
             onRunGraph={runWorkflowGraph}
+            onResetSession={resetWorkflowSession}
           />
         ) : activeFeature === "configs" ? (
           <ConfigPage
@@ -3480,6 +3500,7 @@ interface WorkflowPageProps {
   onSendReply: () => void;
   onUpdateNode: (nodeId: string, update: Partial<WorkflowGraphNode>) => void;
   onRunGraph: () => MaybePromise;
+  onResetSession: () => MaybePromise;
 }
 
 export function WorkflowPage({
@@ -3507,6 +3528,7 @@ export function WorkflowPage({
   onSendReply,
   onUpdateNode,
   onRunGraph,
+  onResetSession,
 }: WorkflowPageProps) {
   const validation = validateWorkflowGraph(graph);
   const workflowStarted = messages.length > 0;
@@ -3566,14 +3588,20 @@ export function WorkflowPage({
           <h2>Workflow</h2>
           <p>{workDir || "No work directory selected"}</p>
         </div>
-        {graphReady ? (
-          <div className="workflow-page-actions">
+        <div className="workflow-page-actions">
+          {workflowStarted || graphReady ? (
+            <button className="control-btn compact secondary" onClick={() => void onResetSession()}>
+              <Plus size={14} />
+              <span>New Session</span>
+            </button>
+          ) : null}
+          {graphReady ? (
             <button className="control-btn compact" onClick={() => void onRunGraph()} disabled={!validation.valid || running}>
               <Play size={14} />
               <span>{running ? "Running..." : "Run Graph"}</span>
             </button>
-          </div>
-        ) : null}
+          ) : null}
+        </div>
       </header>
 
       <div className={`workflow-page-grid ${graphReady ? "has-graph" : "is-chat-only"}`}>
