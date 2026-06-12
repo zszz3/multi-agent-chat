@@ -3538,6 +3538,20 @@ export function WorkflowPage({
   const runProgressVisible = runProgress.length > 0;
   const contextDocumentVisible = contextDocument.trim().length > 0;
   const [graphExpanded, setGraphExpanded] = useState(false);
+  const grillTranscriptRef = useRef<HTMLDivElement>(null);
+  const grillStickRef = useRef(true);
+
+  useEffect(() => {
+    const transcript = grillTranscriptRef.current;
+    if (!transcript || !grillStickRef.current) return;
+    transcript.scrollTop = transcript.scrollHeight;
+  }, [messages]);
+
+  function handleGrillTranscriptScroll(): void {
+    const transcript = grillTranscriptRef.current;
+    if (!transcript) return;
+    grillStickRef.current = transcript.scrollHeight - transcript.scrollTop - transcript.clientHeight < 48;
+  }
 
   function expandGraphFromBoardClick(event: MouseEvent<HTMLElement>): void {
     const target = event.target instanceof HTMLElement ? event.target : undefined;
@@ -3645,7 +3659,12 @@ export function WorkflowPage({
             </div>
           ) : (
             <>
-              <div className="workflow-chat-transcript" aria-label="Workflow grill transcript">
+              <div
+                className="workflow-chat-transcript"
+                aria-label="Workflow grill transcript"
+                ref={grillTranscriptRef}
+                onScroll={handleGrillTranscriptScroll}
+              >
                 {messages.map((message) => (
                   <article key={message.id} className={`workflow-chat-bubble is-${message.role}`}>
                     <span>{message.role === "assistant" ? "Grill" : "You"}</span>
