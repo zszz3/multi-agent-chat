@@ -48,6 +48,7 @@ import type {
   AgentWorkflowNode,
   AgentWorkflowNodeStatus,
   AppSnapshot,
+  ChatEvent,
   ChatMessage,
   ChatSession,
   CodexPluginCatalogItem,
@@ -62,6 +63,7 @@ import type {
   WorkflowGrillMessage,
   WorkflowRunNodeStatus,
   WorkflowRunProgressItem,
+  WorkflowStatus,
 } from "../../shared/types";
 
 const AGENTS: AgentId[] = ["codex", "claude"];
@@ -78,6 +80,7 @@ const WORKFLOW_THINKING_MESSAGE = "Agent is thinking...";
 const WORKFLOW_TASK_POLL_MS = 1000;
 const WORKFLOW_TASK_TIMEOUT_MS = 30 * 60 * 1000;
 const WORKFLOW_NODE_MAX_ATTEMPTS = 2;
+const WORKFLOW_FINAL_REVIEW_NODE_ID = "__final_review__";
 
 const TASK_STATUS_FILTERS: Array<{ id: TaskStatusFilterValue; label: string }> = [
   { id: "all", label: "All" },
@@ -145,6 +148,11 @@ const DEFAULT_SNAPSHOT: AppSnapshot = {
   tasks: [],
   teams: [],
   teamRuns: [],
+  workflowStore: {
+    activeWorkflowId: undefined,
+    workflows: [],
+    runs: [],
+  },
   workflowDraft: undefined,
 };
 
@@ -471,6 +479,14 @@ function initialWorkflowMessages(): WorkflowGrillMessage[] {
   return [];
 }
 
+function createWorkflowId(): string {
+  const randomPart =
+    typeof crypto !== "undefined" && "randomUUID" in crypto
+      ? crypto.randomUUID()
+      : `${Date.now().toString(36)}-${Math.random().toString(36).slice(2)}`;
+  return `wf_${randomPart}`;
+}
+
 export function workflowAssistantDisplayContent(content: string): string {
   const graph = parseWorkflowGraphUpsert(content);
   return graph ? `Workflow graph ready: ${graph.title}` : content;
@@ -486,6 +502,90 @@ function taskArtifact(task: TaskRun): string {
   const errorMessage = [...task.messages].reverse().find((message) => message.role === "error" && message.content.trim());
   if (errorMessage) return errorMessage.content.trim();
   return `${task.title} completed without assistant output.`;
+}
+
+function chatEventDisplayContent(event: ChatEvent): string {
+  if (event.type === "tool_call") {
+    const name = event.name ?? "tool";
+    return event.content ? `→ ${name}\n${event.content}` : `→ ${name}`;
+  }
+  if (event.type === "tool_result") {
+    const name = event.name ?? "tool";
+    return event.content ? `✓ ${name}\n${event.content}` : `✓ ${name}`;
+  }
+  if (event.type === "system") {
+    return event.content ? `system\n${event.content}` : "system";
+  }
+  if (event.type === "handoff") {
+    const from = event.fromAgentId ? agentLabel(event.fromAgentId) : "Agent";
+    const to = event.toAgentId ? agentLabel(event.toAgentId) : "Agent";
+    return event.content ? `${from} → ${to}\n${event.content}` : `${from} → ${to}`;
+  }
+  if (event.type === "error") {
+    return event.content ? `error\n${event.content}` : "error";
+  }
+  return event.content;
+}
+
+function compactWorkflowActivity(content: string, limit = 140): string {
+  const normalized = content.replace(/\s+/g, " ").trim();
+  if (normalized.length <= limit) return normalized;
+  return `${normalized.slice(0, Math.max(0, limit - 3)).trim()}...`;
+}
+
+export function workflowTaskLiveDetail(task: TaskRun): string {
+  const latestEvent = task.messages
+    .flatMap((message) => message.events ?? [])
+    .sort((left, right) => left.timestamp - right.timestamp)
+    .at(-1);
+
+  if (latestEvent) {
+    const name = latestEvent.name ?? "tool";
+    const content = compactWorkflowActivity(latestEvent.content);
+    if (latestEvent.type === "tool_call") return content ? `Tool ${name}: ${content}` : `Tool ${name} started`;
+    if (latestEvent.type === "tool_result") return content ? `Tool ${name} done: ${content}` : `Tool ${name} done`;
+    if (latestEvent.type === "system") return content ? `System: ${content}` : "System event";
+    if (latestEvent.type === "handoff") return content ? `Handoff: ${content}` : "Handoff received";
+    if (latestEvent.type === "error") return content ? `Error: ${content}` : "Agent error";
+    return content || "Agent event";
+  }
+
+  const latestAssistant = [...task.messages].reverse().find((message) => message.role === "assistant" && message.content.trim());
+  if (latestAssistant) return `Output: ${compactWorkflowActivity(latestAssistant.content)}`;
+  if (task.sessionId) return `Session ${task.sessionId}`;
+  return "Starting agent...";
+}
+
+interface WorkflowDraftPersistInput {
+  workflowId: string;
+  activeWorkflowId?: string | undefined;
+  workflowIds: string[];
+  objective: string;
+  messages: WorkflowGrillMessage[];
+  graphReady: boolean;
+  reply: string;
+  error: string | undefined;
+  runProgress: WorkflowRunProgressItem[];
+  runContextDocument: string;
+  contextDocument: string;
+  finalReport: string;
+  agentSessionId: string | undefined;
+}
+
+export function workflowDraftShouldPersist(input: WorkflowDraftPersistInput): boolean {
+  const hasContent = Boolean(
+    input.objective.trim() ||
+      input.messages.length > 0 ||
+      input.graphReady ||
+      input.reply.trim() ||
+      input.error ||
+      input.runProgress.length > 0 ||
+      input.runContextDocument.trim() ||
+      input.contextDocument.trim() ||
+      input.finalReport.trim() ||
+      input.agentSessionId,
+  );
+  return hasContent || input.activeWorkflowId === input.workflowId || input.workflowIds.includes(input.workflowId);
 }
 
 function extractWorkflowSection(content: string, headings: string[]): string | undefined {
@@ -640,6 +740,49 @@ export function workflowJudgePrompt(
   ].join("\n");
 }
 
+export function workflowFinalReviewPrompt(
+  graph: WorkflowGraph,
+  nodeArtifacts: Array<{ node: WorkflowGraphNode; artifact: string }>,
+  contextDocument: string,
+  progress: WorkflowRunProgressItem[],
+): string {
+  const artifactSection =
+    nodeArtifacts.length > 0
+      ? nodeArtifacts
+          .map((item) => [`## Node: ${item.node.title} (${item.node.id})`, item.artifact.trim() || "No output captured."].join("\n"))
+          .join("\n\n")
+      : "No node outputs captured.";
+  const progressSection =
+    progress.length > 0
+      ? progress.map((item) => `- ${item.title} (${item.nodeId}): ${item.status}${item.detail ? ` - ${item.detail}` : ""}`).join("\n")
+      : "No run progress captured.";
+
+  return [
+    "You are the main workflow agent. All workflow nodes have finished and passed evaluation.",
+    "Continue the same workflow chat with the user: summarize the run result, explain what the worker agents produced, and stay ready for follow-up questions.",
+    "",
+    `Workflow: ${graph.title}`,
+    `Objective: ${graph.objective}`,
+    "",
+    "Shared Workflow Context document:",
+    contextDocument.trim() || "No workflow context document yet.",
+    "",
+    "Run progress:",
+    progressSection,
+    "",
+    "Node outputs:",
+    artifactSection,
+    "",
+    "Review the full workflow once for the user. Check whether the node outputs collectively satisfy the objective, whether evidence is concrete, and what risks or gaps remain.",
+    "Do not rerun the workflow nodes. Do not invent work that is not supported by the node outputs or context.",
+    "",
+    "Write a concise Markdown report for the user. It must start with:",
+    "## Final User Report",
+    "",
+    "Include: outcome, important evidence or artifacts, remaining risks/gaps, and concrete next steps.",
+  ].join("\n");
+}
+
 export function parseWorkflowJudgeResult(content: string): WorkflowJudgeResult | undefined {
   const completeMatch = /["']?complete["']?\s*:\s*(true|false)/i.exec(content);
   if (!completeMatch) return undefined;
@@ -684,6 +827,10 @@ export function App() {
   const [taskAgentId, setTaskAgentId] = useState<AgentId>("codex");
   const [taskChannelId, setTaskChannelId] = useState("");
   const [taskModelId, setTaskModelId] = useState(DEFAULT_MODEL_ID);
+  const [workflowId, setWorkflowId] = useState(() => createWorkflowId());
+  const [workflowTitle, setWorkflowTitle] = useState("Untitled workflow");
+  const [workflowStatus, setWorkflowStatus] = useState<WorkflowStatus>("draft");
+  const [workflowRevision, setWorkflowRevision] = useState(1);
   const [workflowAgentId, setWorkflowAgentId] = useState<AgentId>("codex");
   const [workflowChannelId, setWorkflowChannelId] = useState("");
   const [workflowModelId, setWorkflowModelId] = useState(DEFAULT_MODEL_ID);
@@ -696,7 +843,11 @@ export function App() {
   const [workflowRunning, setWorkflowRunning] = useState(false);
   const [workflowRunProgress, setWorkflowRunProgress] = useState<WorkflowRunProgressItem[]>([]);
   const [workflowRunContextDocument, setWorkflowRunContextDocument] = useState("");
+  const [workflowContextDocument, setWorkflowContextDocument] = useState("");
+  const [workflowFinalReport, setWorkflowFinalReport] = useState("");
+  const [workflowRunIds, setWorkflowRunIds] = useState<string[]>([]);
   const [workflowAgentSessionId, setWorkflowAgentSessionId] = useState<string | undefined>();
+  const [workflowCreatedAt, setWorkflowCreatedAt] = useState(Date.now());
   const workflowRequestIdRef = useRef<string | undefined>(undefined);
   const workflowAssistantMessageIdRef = useRef<string | undefined>(undefined);
   const workflowStreamingStartedRef = useRef(false);
@@ -704,6 +855,7 @@ export function App() {
   const workflowDraftHydratedRef = useRef(false);
   const workflowDraftHydratingRef = useRef(false);
   const workflowDraftSaveTimerRef = useRef<number | undefined>(undefined);
+  const workflowStoreIds = snapshot.workflowStore.workflows.map((workflow) => workflow.workflowId).join(":");
   const [taskStatusFilter, setTaskStatusFilter] = useState<TaskStatusFilterValue>("all");
   const [selectedTaskDetailId, setSelectedTaskDetailId] = useState<string | undefined>();
   const [activeFeature, setActiveFeature] = useState<ActiveFeature>("chat");
@@ -730,6 +882,10 @@ export function App() {
 
   function applyPersistedWorkflowDraft(draft: WorkflowDraftState): void {
     workflowDraftHydratingRef.current = true;
+    setWorkflowId(draft.workflowId);
+    setWorkflowTitle(draft.title);
+    setWorkflowStatus(draft.status);
+    setWorkflowRevision(draft.revision);
     setWorkflowAgentId(draft.agentId);
     setWorkflowChannelId(draft.channelId);
     setWorkflowModelId(draft.modelId);
@@ -741,24 +897,41 @@ export function App() {
     setWorkflowError(draft.error);
     setWorkflowRunProgress(draft.runProgress);
     setWorkflowRunContextDocument(draft.runContextDocument);
+    setWorkflowContextDocument(draft.contextDocument);
+    setWorkflowFinalReport(draft.finalReport ?? "");
+    setWorkflowRunIds(draft.runIds);
     setWorkflowAgentSessionId(draft.agentSessionId);
+    setWorkflowCreatedAt(draft.createdAt);
     window.setTimeout(() => {
       workflowDraftHydratingRef.current = false;
     }, 0);
   }
 
   function buildWorkflowDraft(): WorkflowDraftState | undefined {
-    const hasContent =
-      workflowObjective.trim() ||
-      workflowMessages.length > 0 ||
-      workflowGraphReady ||
-      workflowReply.trim() ||
-      workflowError ||
-      workflowRunProgress.length > 0 ||
-      workflowRunContextDocument.trim() ||
-      workflowAgentSessionId;
-    if (!hasContent) return undefined;
+    if (
+      !workflowDraftShouldPersist({
+        workflowId,
+        activeWorkflowId: snapshot.workflowStore.activeWorkflowId,
+        workflowIds: snapshot.workflowStore.workflows.map((workflow) => workflow.workflowId),
+        objective: workflowObjective,
+        messages: workflowMessages,
+        graphReady: workflowGraphReady,
+        reply: workflowReply,
+        error: workflowError,
+        runProgress: workflowRunProgress,
+        runContextDocument: workflowRunContextDocument,
+        contextDocument: workflowContextDocument,
+        finalReport: workflowFinalReport,
+        agentSessionId: workflowAgentSessionId,
+      })
+    ) {
+      return undefined;
+    }
     return {
+      workflowId,
+      title: workflowTitle || workflowGraph.title || workflowObjective || "Untitled workflow",
+      status: workflowRunning ? "running" : workflowStatus,
+      revision: workflowRevision,
       agentId: workflowAgentId,
       channelId: workflowChannelId || defaultChannelForAgent(workflowAgentId, snapshot.channels),
       modelId: workflowModelId || DEFAULT_MODEL_ID,
@@ -770,7 +943,11 @@ export function App() {
       error: workflowError,
       runProgress: workflowRunProgress,
       runContextDocument: workflowRunContextDocument,
+      contextDocument: workflowContextDocument,
+      ...(workflowFinalReport.trim() ? { finalReport: workflowFinalReport } : {}),
+      runIds: workflowRunIds,
       agentSessionId: workflowAgentSessionId,
+      createdAt: workflowCreatedAt,
       updatedAt: Date.now(),
     };
   }
@@ -791,16 +968,29 @@ export function App() {
   }, [snapshot.detectedAt, snapshot.workflowDraft]);
 
   useEffect(() => {
+    const activeWorkflow = snapshot.workflowDraft;
+    if (!workflowDraftHydratedRef.current || !activeWorkflow) return;
+    if (activeWorkflow.workflowId === workflowId && activeWorkflow.revision === workflowRevision) return;
+    applyPersistedWorkflowDraft(activeWorkflow);
+  }, [snapshot.workflowStore.activeWorkflowId, snapshot.workflowDraft?.workflowId, snapshot.workflowDraft?.revision]);
+
+  useEffect(() => {
     if (!workflowDraftHydratedRef.current || workflowDraftHydratingRef.current) return;
     if (workflowDraftSaveTimerRef.current) window.clearTimeout(workflowDraftSaveTimerRef.current);
     workflowDraftSaveTimerRef.current = window.setTimeout(() => {
       workflowDraftSaveTimerRef.current = undefined;
-      void window.multiAgentChat.updateWorkflowDraft(buildWorkflowDraft()).then(setSnapshot);
+      const draft = buildWorkflowDraft();
+      if (!draft) return;
+      void window.multiAgentChat.updateWorkflowDraft(draft).then(setSnapshot);
     }, 300);
     return () => {
       if (workflowDraftSaveTimerRef.current) window.clearTimeout(workflowDraftSaveTimerRef.current);
     };
   }, [
+    workflowId,
+    workflowTitle,
+    workflowStatus,
+    workflowRevision,
     workflowAgentId,
     workflowChannelId,
     workflowModelId,
@@ -812,7 +1002,13 @@ export function App() {
     workflowError,
     workflowRunProgress,
     workflowRunContextDocument,
+    workflowContextDocument,
+    workflowFinalReport,
+    workflowRunIds,
     workflowAgentSessionId,
+    workflowCreatedAt,
+    snapshot.workflowStore.activeWorkflowId,
+    workflowStoreIds,
   ]);
 
   useEffect(() => {
@@ -1200,8 +1396,7 @@ export function App() {
   }
 
   async function clearHistory(): Promise<void> {
-    await window.multiAgentChat.clearHistory();
-    const next = await window.multiAgentChat.updateWorkflowDraft(undefined);
+    const next = await window.multiAgentChat.clearHistory();
     setSnapshot(next);
     setPrompt("");
     setTaskPrompt("");
@@ -1212,7 +1407,48 @@ export function App() {
     setWorkflowGraphReady(false);
     setWorkflowRunProgress([]);
     setWorkflowRunContextDocument("");
+    setWorkflowContextDocument("");
+    setWorkflowFinalReport("");
+    setWorkflowRunIds([]);
     setWorkflowAgentSessionId(undefined);
+    setWorkflowId(createWorkflowId());
+    setWorkflowTitle("Untitled workflow");
+    setWorkflowStatus("draft");
+    setWorkflowRevision(1);
+    setWorkflowCreatedAt(Date.now());
+  }
+
+  async function createNewWorkflow(): Promise<void> {
+    const now = Date.now();
+    const agentId = workflowAgentId;
+    const channelId = workflowChannelId || defaultChannelForAgent(agentId, snapshot.channels);
+    const graph = workflowGraphWithSelectedAgent(createWorkflowGraphFromObjective("", snapshot.channels));
+    const draft: WorkflowDraftState = {
+      workflowId: createWorkflowId(),
+      title: "Untitled workflow",
+      status: "draft",
+      revision: 1,
+      agentId,
+      channelId,
+      modelId: workflowModelId || DEFAULT_MODEL_ID,
+      objective: "",
+      graph,
+      graphReady: false,
+      messages: initialWorkflowMessages(),
+      reply: "",
+      error: undefined,
+      runProgress: [],
+      runContextDocument: "",
+      contextDocument: "",
+      runIds: [],
+      agentSessionId: undefined,
+      createdAt: now,
+      updatedAt: now,
+    };
+    applyPersistedWorkflowDraft(draft);
+    const next = await window.multiAgentChat.updateWorkflowDraft(draft);
+    setSnapshot(next);
+    setActiveFeature("workflow");
   }
 
   async function resetWorkflowSession(): Promise<void> {
@@ -1270,8 +1506,13 @@ export function App() {
 
   function syncWorkflowGraph(nextGraph: WorkflowGraph): void {
     setWorkflowGraph(nextGraph);
+    setWorkflowTitle(nextGraph.title);
+    setWorkflowObjective(nextGraph.objective);
+    setWorkflowRevision((current) => current + 1);
+    setWorkflowStatus("draft");
     setWorkflowRunProgress([]);
     setWorkflowRunContextDocument("");
+    setWorkflowFinalReport("");
   }
 
   function workflowGraphWithSelectedAgent(graph: WorkflowGraph): WorkflowGraph {
@@ -1382,6 +1623,11 @@ export function App() {
     syncWorkflowGraph(nextGraph);
   }
 
+  async function selectWorkflow(workflowId: string): Promise<void> {
+    const next = await window.multiAgentChat.selectWorkflow(workflowId);
+    setSnapshot(next);
+  }
+
   async function runWorkflowGraph(): Promise<void> {
     const validation = validateWorkflowGraph(workflowGraph);
     if (!validation.valid || workflowRunning) {
@@ -1394,24 +1640,60 @@ export function App() {
       return;
     }
     setWorkflowRunning(true);
+    setWorkflowStatus("running");
     setWorkflowError(undefined);
+    setWorkflowFinalReport("");
+    let activeWorkflowRunId: string | undefined;
+    let latestRunProgress: WorkflowRunProgressItem[] = [];
+    let finalRunContextDocument = "";
+    let finalReport = "";
     try {
       let latestSnapshot = snapshot;
+      latestSnapshot = await window.multiAgentChat.startWorkflowRun({
+        workflowId,
+        contextDocument: workflowContextDocument,
+      });
+      setSnapshot(latestSnapshot);
+      const runningWorkflow = latestSnapshot.workflowStore.workflows.find((workflow) => workflow.workflowId === workflowId);
+      activeWorkflowRunId = runningWorkflow?.runIds.at(-1);
+      if (!activeWorkflowRunId) throw new Error("Workflow run did not start.");
+      setWorkflowRunIds(runningWorkflow?.runIds ?? workflowRunIds);
       const nodeById = new Map(workflowGraph.nodes.map((node) => [node.id, node]));
-      setWorkflowRunProgress(
-        executionLevels.flat().map((nodeId) => {
-          const node = nodeById.get(nodeId);
-          return {
-            nodeId,
-            title: node?.title ?? nodeId,
-            status: "queued",
-          };
-        }),
-      );
-      setWorkflowRunContextDocument("");
+      latestRunProgress = executionLevels.flat().map((nodeId) => {
+        const node = nodeById.get(nodeId);
+        return {
+          nodeId,
+          title: node?.title ?? nodeId,
+          status: "queued",
+        };
+      });
+      setWorkflowRunProgress(latestRunProgress);
+      const updateWorkflowRunProgress = (nodeId: string, update: Partial<WorkflowRunProgressItem>): void => {
+        latestRunProgress = latestRunProgress.map((item) => (item.nodeId === nodeId ? { ...item, ...update } : item));
+        setWorkflowRunProgress(latestRunProgress);
+      };
+      const clearWorkflowRunProgressTaskId = (nodeId: string): void => {
+        latestRunProgress = latestRunProgress.map((item) => {
+          if (item.nodeId !== nodeId || item.taskId === undefined) return item;
+          const next = { ...item };
+          delete next.taskId;
+          return next;
+        });
+        setWorkflowRunProgress(latestRunProgress);
+      };
+      const cleanupWorkflowTask = async (taskId: string): Promise<void> => {
+        try {
+          latestSnapshot = await window.multiAgentChat.deleteTask(taskId);
+          setSnapshot(latestSnapshot);
+        } catch (error) {
+          console.warn("Failed to clean up workflow task", taskId, error);
+        }
+      };
+      setWorkflowRunContextDocument(workflowContextDocument);
       const artifactsByNodeId = new Map<string, string>();
       const contextArtifacts: Array<{ nodeId: string; title: string; summary: string }> = [];
-      let runContextDocument = "";
+      let runContextDocument = workflowContextDocument;
+      finalRunContextDocument = workflowContextDocument;
       const upstreamAgentNodeIdsByNodeId = new Map<string, string[]>();
       for (const nodeId of validation.executableNodeIds) upstreamAgentNodeIdsByNodeId.set(nodeId, []);
       for (const edge of workflowGraph.edges) {
@@ -1440,7 +1722,7 @@ export function App() {
         return fallbackTask;
       };
 
-      const waitForTask = async (taskId: string): Promise<TaskRun> => {
+      const waitForTask = async (taskId: string, onTaskUpdate?: (task: TaskRun) => void): Promise<TaskRun> => {
         const startedAt = Date.now();
         while (Date.now() - startedAt < WORKFLOW_TASK_TIMEOUT_MS) {
           const polledSnapshot = await window.multiAgentChat.getSnapshot();
@@ -1448,6 +1730,7 @@ export function App() {
           setSnapshot(polledSnapshot);
           const task = polledSnapshot.tasks.find((item) => item.id === taskId);
           if (!task) throw new Error(`Workflow task ${taskId} was deleted before completion.`);
+          onTaskUpdate?.(task);
           if (task.status === "completed") return task;
           if (task.status === "failed" || task.status === "stopped") {
             throw new Error(task.lastError || `Workflow task ${task.title} ${task.status}.`);
@@ -1510,7 +1793,13 @@ export function App() {
         try {
           return {
             node: startedTask.node,
-            task: await waitForTask(startedTask.taskId),
+            task: await waitForTask(startedTask.taskId, (task) =>
+              updateWorkflowRunProgress(startedTask.node.id, {
+                status: "running",
+                detail: workflowTaskLiveDetail(task),
+                taskId: startedTask.taskId,
+              }),
+            ),
             attempt: startedTask.attempt,
           };
         } catch (error) {
@@ -1519,6 +1808,8 @@ export function App() {
             detail: error instanceof Error ? error.message : String(error),
             taskId: startedTask.taskId,
           });
+          await cleanupWorkflowTask(startedTask.taskId);
+          clearWorkflowRunProgressTaskId(startedTask.node.id);
           throw error;
         }
       };
@@ -1542,7 +1833,18 @@ export function App() {
           modelId: workflowModelId || DEFAULT_MODEL_ID,
           workDir: latestSnapshot.workDir,
         });
-        const completedJudgeTask = await waitForTask(judgeTask.id);
+        const completedJudgeTask = await (async (): Promise<TaskRun> => {
+          try {
+            return await waitForTask(judgeTask.id, (task) =>
+              updateWorkflowRunProgress(node.id, {
+                status: "running",
+                detail: `Judge: ${workflowTaskLiveDetail(task)}`,
+              }),
+            );
+          } finally {
+            await cleanupWorkflowTask(judgeTask.id);
+          }
+        })();
         const result = parseWorkflowJudgeResult(taskArtifact(completedJudgeTask));
         if (!result) throw new Error(`Workflow judge for ${node.title} did not return workflowEvaluation.submit(...).`);
         return result;
@@ -1566,7 +1868,13 @@ export function App() {
           const nextPendingNodes: WorkflowGraphNode[] = [];
           for (const completedTask of completedTasks) {
             const artifact = taskArtifact(completedTask.task);
-            const judge = await evaluateNodeAttempt(completedTask.node, artifact, completedTask.attempt, levelContextDocument);
+            const judge = await (async (): Promise<WorkflowJudgeResult> => {
+              try {
+                return await evaluateNodeAttempt(completedTask.node, artifact, completedTask.attempt, levelContextDocument);
+              } finally {
+                await cleanupWorkflowTask(completedTask.task.id);
+              }
+            })();
             if (judge.complete) {
               artifactsByNodeId.set(completedTask.node.id, artifact);
               contextArtifacts.push({
@@ -1574,13 +1882,15 @@ export function App() {
                 title: completedTask.node.title,
                 summary: workflowArtifactSummary(artifact),
               });
-              runContextDocument = workflowContextDocumentFromArtifacts(contextArtifacts);
+              runContextDocument = [workflowContextDocument.trim(), workflowContextDocumentFromArtifacts(contextArtifacts)].filter(Boolean).join("\n\n");
+              finalRunContextDocument = runContextDocument;
               setWorkflowRunContextDocument(runContextDocument);
               updateWorkflowRunProgress(completedTask.node.id, {
                 status: "completed",
                 detail: `Approved: ${truncateWorkflowContext(judge.reason, 160)}`,
                 taskId: completedTask.task.id,
               });
+              clearWorkflowRunProgressTaskId(completedTask.node.id);
               continue;
             }
 
@@ -1591,6 +1901,7 @@ export function App() {
                 detail: `Retry requested: ${truncateWorkflowContext(judge.reason, 160)}`,
                 taskId: completedTask.task.id,
               });
+              clearWorkflowRunProgressTaskId(completedTask.node.id);
               nextPendingNodes.push(completedTask.node);
               continue;
             }
@@ -1600,12 +1911,101 @@ export function App() {
               detail: `Judge rejected after ${WORKFLOW_NODE_MAX_ATTEMPTS} attempts: ${truncateWorkflowContext(judge.reason, 160)}`,
               taskId: completedTask.task.id,
             });
+            clearWorkflowRunProgressTaskId(completedTask.node.id);
             throw new Error(`Workflow node ${completedTask.node.title} did not pass evaluation after ${WORKFLOW_NODE_MAX_ATTEMPTS} attempts: ${judge.reason}`);
           }
           pendingNodes = nextPendingNodes;
         }
       }
+      const completedNodeProgress = latestRunProgress;
+      const finalReviewProgress: WorkflowRunProgressItem = {
+        nodeId: WORKFLOW_FINAL_REVIEW_NODE_ID,
+        title: "Main agent review",
+        status: "running",
+        detail: "Main agent reviewing all node outputs",
+      };
+      latestRunProgress = [...completedNodeProgress, finalReviewProgress];
+      setWorkflowRunProgress(latestRunProgress);
+      const nodeArtifacts = validation.executableNodeIds
+        .map((nodeId) => {
+          const node = nodeById.get(nodeId);
+          const artifact = artifactsByNodeId.get(nodeId);
+          return node && artifact ? { node, artifact } : undefined;
+        })
+        .filter((item): item is { node: WorkflowGraphNode; artifact: string } => Boolean(item));
+      const finalReviewPrompt = workflowFinalReviewPrompt(workflowGraph, nodeArtifacts, runContextDocument, completedNodeProgress);
+      const finalReviewRequestId = `workflow-final-${Date.now()}-${Math.random().toString(36).slice(2)}`;
+      const finalAssistantMessageId = `workflow-final-assistant-${Date.now()}`;
+      workflowRequestIdRef.current = finalReviewRequestId;
+      workflowAssistantMessageIdRef.current = finalAssistantMessageId;
+      workflowStreamingStartedRef.current = false;
+      workflowAssistantContentRef.current = "";
+      setWorkflowMessages((current) => [...current, { id: finalAssistantMessageId, role: "assistant", content: WORKFLOW_THINKING_MESSAGE }]);
+      updateWorkflowRunProgress(WORKFLOW_FINAL_REVIEW_NODE_ID, {
+        status: "running",
+        detail: "Main agent reviewing all node outputs",
+      });
+      try {
+        finalReport = await askSelectedWorkflowAgent(finalReviewPrompt, workflowAgentSessionId, finalReviewRequestId);
+        if (!workflowStreamingStartedRef.current && finalReport) {
+          setWorkflowMessages((current) =>
+            current.map((message) => (message.id === finalAssistantMessageId ? { ...message, content: finalReport } : message)),
+          );
+        }
+      } catch (error) {
+        updateWorkflowRunProgress(WORKFLOW_FINAL_REVIEW_NODE_ID, {
+          status: "failed",
+          detail: error instanceof Error ? error.message : String(error),
+        });
+        setWorkflowMessages((current) =>
+          current.map((message) =>
+            message.id === finalAssistantMessageId
+              ? { ...message, content: `Workflow agent error: ${error instanceof Error ? error.message : String(error)}` }
+              : message,
+          ),
+        );
+        throw error;
+      }
+      setWorkflowFinalReport(finalReport);
+      finalRunContextDocument = [
+        runContextDocument.trim(),
+        ["# Workflow Final Report", "", finalReport].join("\n").trim(),
+      ].filter(Boolean).join("\n\n");
+      setWorkflowRunContextDocument(finalRunContextDocument);
+      updateWorkflowRunProgress(WORKFLOW_FINAL_REVIEW_NODE_ID, {
+        status: "completed",
+        detail: "Main agent report ready",
+      });
+      latestSnapshot = await window.multiAgentChat.finishWorkflowRun({
+        workflowId,
+        runId: activeWorkflowRunId,
+        status: "completed",
+        progress: latestRunProgress,
+        contextDocument: finalRunContextDocument,
+        finalReport,
+      });
+      setSnapshot(latestSnapshot);
+      setWorkflowStatus("completed");
     } catch (error) {
+      if (activeWorkflowRunId) {
+        try {
+          const failedSnapshot = await window.multiAgentChat.finishWorkflowRun({
+            workflowId,
+            runId: activeWorkflowRunId,
+            status: "failed",
+            progress: latestRunProgress,
+            contextDocument: finalRunContextDocument,
+            ...(finalReport ? { finalReport } : {}),
+            lastError: error instanceof Error ? error.message : String(error),
+          });
+          setSnapshot(failedSnapshot);
+          setWorkflowStatus("failed");
+        } catch {
+          setWorkflowStatus("failed");
+        }
+      } else {
+        setWorkflowStatus("failed");
+      }
       setWorkflowError(error instanceof Error ? error.message : String(error));
     } finally {
       setWorkflowRunning(false);
@@ -1857,16 +2257,13 @@ export function App() {
             </div>
           </section>
         ) : activeFeature === "workflow" ? (
-          <section className="resource-panel workflow-contract-panel">
-            <div className="panel-header">
-              <span>Workflow</span>
-              <GitBranch size={14} />
-            </div>
-            <div className="workflow-resource-summary">
-              <strong>Grill first</strong>
-              <span>Answer one question at a time, generate a graph, then configure each agent node.</span>
-            </div>
-          </section>
+          <WorkflowHistoryPanel
+            workflows={snapshot.workflowStore.workflows}
+            activeWorkflowId={snapshot.workflowStore.activeWorkflowId}
+            running={workflowRunning}
+            onNewWorkflow={createNewWorkflow}
+            onSelectWorkflow={selectWorkflow}
+          />
         ) : (
           <section className="resource-panel config-nav-panel">
             <div className="panel-header">
@@ -1962,6 +2359,7 @@ export function App() {
             running={workflowRunning}
             runProgress={workflowRunProgress}
             contextDocument={workflowRunContextDocument}
+            finalReport={workflowFinalReport}
             onObjectiveChange={setWorkflowObjective}
             onSelectAgent={setWorkflowAgent}
             onSelectChannel={setWorkflowChannel}
@@ -3457,7 +3855,7 @@ function TaskTimelineMessage({ message, agentId }: { message: ChatMessage; agent
         {message.events && message.events.length > 0 ? (
           <div className="task-log-events">
             {message.events.map((event) => (
-              <MetaMessage key={event.id} content={event.content} />
+              <MetaMessage key={event.id} content={chatEventDisplayContent(event)} />
             ))}
           </div>
         ) : null}
@@ -3472,6 +3870,51 @@ function TaskTimelineMessage({ message, agentId }: { message: ChatMessage; agent
         ) : null}
       </div>
     </article>
+  );
+}
+
+interface WorkflowHistoryPanelProps {
+  workflows: WorkflowDraftState[];
+  activeWorkflowId?: string | undefined;
+  running?: boolean;
+  onNewWorkflow: () => MaybePromise;
+  onSelectWorkflow: (workflowId: string) => MaybePromise;
+}
+
+export function WorkflowHistoryPanel({
+  workflows,
+  activeWorkflowId,
+  running = false,
+  onNewWorkflow,
+  onSelectWorkflow,
+}: WorkflowHistoryPanelProps) {
+  return (
+    <section className="resource-panel workflow-list-panel">
+      <div className="panel-header">
+        <span>Workflows</span>
+        <GitBranch size={14} />
+      </div>
+      <div className="new-chat-menu-wrap">
+        <button className="new-chat-compact-btn" onClick={() => void onNewWorkflow()} disabled={running}>
+          <Plus size={13} />
+          <span>New workflow</span>
+        </button>
+      </div>
+      <div className="workflow-history-list" aria-label="Workflow history">
+        {workflows.length === 0 ? <div className="workflow-empty-history">No workflows yet</div> : null}
+        {workflows.map((workflow) => (
+          <button
+            key={workflow.workflowId}
+            className={`workflow-history-card ${workflow.workflowId === activeWorkflowId ? "is-active" : ""}`}
+            onClick={() => void onSelectWorkflow(workflow.workflowId)}
+          >
+            <strong>{workflow.title}</strong>
+            <span>{`${workflow.status} · ${workflow.graph.nodes.length} nodes · rev ${workflow.revision}`}</span>
+            <small>{workflow.objective}</small>
+          </button>
+        ))}
+      </div>
+    </section>
   );
 }
 
@@ -3491,6 +3934,7 @@ interface WorkflowPageProps {
   running: boolean;
   runProgress?: WorkflowRunProgressItem[];
   contextDocument?: string;
+  finalReport?: string;
   onObjectiveChange: (value: string) => void;
   onSelectAgent: (agentId: AgentId) => void;
   onSelectChannel: (channelId: string) => void;
@@ -3519,6 +3963,7 @@ export function WorkflowPage({
   running,
   runProgress = [],
   contextDocument = "",
+  finalReport = "",
   onObjectiveChange,
   onSelectAgent,
   onSelectChannel,
@@ -3559,6 +4004,7 @@ export function WorkflowPage({
   const runProgressByNodeId = new Map(runProgress.map((item) => [item.nodeId, item]));
   const runProgressVisible = runProgress.length > 0;
   const contextDocumentVisible = contextDocument.trim().length > 0;
+  const finalReportVisible = finalReport.trim().length > 0;
   const [graphExpanded, setGraphExpanded] = useState(false);
   const grillTranscriptRef = useRef<HTMLDivElement>(null);
   const grillStickRef = useRef(true);
@@ -3701,45 +4147,39 @@ export function WorkflowPage({
                 ))}
               </div>
 
-              {!graphReady ? (
-                <>
-                  <textarea
-                    className="workflow-reply-input"
-                    aria-label="Reply to grill question"
-                    value={reply}
-                    onChange={(event) => onReplyChange(event.currentTarget.value)}
-                    onKeyDown={(event) => {
-                      if (shouldSendComposerKey({
-                        key: event.key,
-                        shiftKey: event.shiftKey,
-                        metaKey: event.metaKey,
-                        ctrlKey: event.ctrlKey,
-                        isComposing: event.nativeEvent.isComposing,
-                      })) {
-                        event.preventDefault();
-                        if (reply.trim() && !running) void onSendReply();
-                      }
-                    }}
-                    placeholder="Answer the current question..."
-                    rows={3}
-                  />
-                  {error ? <div className="workflow-error">{error}</div> : null}
-                  <div className="workflow-grill-actions">
-                    <button className="control-btn compact secondary" onClick={onSendReply} disabled={!reply.trim() || running}>
-                      <Send size={14} />
-                      <span>{running ? "Asking..." : "Send Answer"}</span>
-                    </button>
-                    {grillComplete ? (
-                      <button className="control-btn compact" onClick={onDraftGraph}>
-                        <Wand2 size={14} />
-                        <span>Generate Graph</span>
-                      </button>
-                    ) : null}
-                  </div>
-                </>
-              ) : error ? (
-                <div className="workflow-error">{error}</div>
-              ) : null}
+              <textarea
+                className="workflow-reply-input"
+                aria-label={graphReady ? "Reply to workflow agent" : "Reply to grill question"}
+                value={reply}
+                onChange={(event) => onReplyChange(event.currentTarget.value)}
+                onKeyDown={(event) => {
+                  if (shouldSendComposerKey({
+                    key: event.key,
+                    shiftKey: event.shiftKey,
+                    metaKey: event.metaKey,
+                    ctrlKey: event.ctrlKey,
+                    isComposing: event.nativeEvent.isComposing,
+                  })) {
+                    event.preventDefault();
+                    if (reply.trim() && !running) void onSendReply();
+                  }
+                }}
+                placeholder={graphReady ? "Ask the workflow agent to modify the graph..." : "Answer the current question..."}
+                rows={3}
+              />
+              {error ? <div className="workflow-error">{error}</div> : null}
+              <div className="workflow-grill-actions">
+                <button className="control-btn compact secondary" onClick={onSendReply} disabled={!reply.trim() || running}>
+                  <Send size={14} />
+                  <span>{running ? "Asking..." : graphReady ? "Send Change" : "Send Answer"}</span>
+                </button>
+                {!graphReady && grillComplete ? (
+                  <button className="control-btn compact" onClick={onDraftGraph}>
+                    <Wand2 size={14} />
+                    <span>Generate Graph</span>
+                  </button>
+                ) : null}
+              </div>
             </>
           )}
         </section>
@@ -3777,6 +4217,15 @@ export function WorkflowPage({
                     </div>
                   ))}
                 </div>
+              </section>
+            ) : null}
+            {finalReportVisible ? (
+              <section className="workflow-final-report" aria-label="Workflow final report">
+                <div className="workflow-final-report-head">
+                  <strong>Final report</strong>
+                  <span>Main agent review</span>
+                </div>
+                <pre>{finalReport}</pre>
               </section>
             ) : null}
             {contextDocumentVisible ? (
@@ -4346,7 +4795,7 @@ function CliMessage({ message, agentId, streaming = false }: { message: ChatMess
         {message.events && message.events.length > 0 ? (
           <div className="cli-message-events">
             {message.events.map((event) => (
-              <MetaMessage key={event.id} content={event.content} />
+              <MetaMessage key={event.id} content={chatEventDisplayContent(event)} />
             ))}
           </div>
         ) : null}

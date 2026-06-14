@@ -40,6 +40,22 @@ The built app files are written to `out/`.
 npm test -- --run
 ```
 
+## Local MCP Server
+
+Start the desktop app first:
+
+```bash
+npm run dev
+```
+
+Then point an MCP client at:
+
+```bash
+npm run mcp
+```
+
+The MCP process uses stdio and connects to the running Electron app through a local authenticated bridge on `127.0.0.1`. The bridge port is dynamic; discovery metadata is written under the app data directory while the app is running.
+
 ## Local Data
 
 The app stores local chat history and model channel configuration in Electron's `userData` directory. Use the in-app clear button to remove local history when needed.

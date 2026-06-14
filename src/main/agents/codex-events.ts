@@ -23,12 +23,6 @@ function truncate(value: string, maxLength = 1600): string {
   return `${value.slice(0, maxLength).trimEnd()}\n...`;
 }
 
-function firstLine(value: string, maxLength = 120): string {
-  const line = value.split("\n")[0]?.trim() ?? "";
-  if (line.length <= maxLength) return line;
-  return `${line.slice(0, maxLength).trimEnd()}...`;
-}
-
 function formatArguments(value: unknown): string {
   const raw = asString(value);
   if (!raw) return "";
@@ -80,15 +74,14 @@ function normalizeToolItem(item: Record<string, unknown> | undefined, state: Cod
     if (callId) state.toolNames.set(callId, name);
 
     const args = truncate(formatArguments(item.arguments), 600);
-    const summary = args ? `→ ${name} · ${firstLine(args)}` : `→ ${name}`;
-    return [{ type: "meta", content: args ? `${summary}\n${args}` : summary }];
+    return [{ type: "tool_call", name, content: args }];
   }
 
   if (itemType === "function_call_output") {
     const callId = asString(item.call_id) || asString(item.callId) || asString(item.id);
     const name = (callId && state.toolNames.get(callId)) || "tool";
     const output = truncate(extractToolOutput(item));
-    return [{ type: "meta", content: output ? `✓ ${name}\n${output}` : `✓ ${name}` }];
+    return [{ type: "tool_result", name, content: output }];
   }
 
   return [];

@@ -60,6 +60,10 @@ export type AgentEvent =
   | { type: "session"; sessionId: string }
   | { type: "delta"; content: string }
   | { type: "meta"; content: string }
+  | { type: "system"; content: string; metadata?: Record<string, unknown> }
+  | { type: "tool_call"; content: string; name?: string; metadata?: Record<string, unknown> }
+  | { type: "tool_result"; content: string; name?: string; metadata?: Record<string, unknown> }
+  | { type: "handoff"; content: string; fromAgentId?: AgentId; toAgentId?: AgentId; metadata?: Record<string, unknown> }
   | { type: "completed"; content?: string }
   | { type: "error"; error: string };
 
@@ -80,9 +84,14 @@ export interface ChatMessage {
 
 export interface ChatEvent {
   id: string;
-  type: "meta";
+  type: "meta" | "system" | "tool_call" | "tool_result" | "handoff" | "error";
   content: string;
   timestamp: number;
+  agentId?: AgentId;
+  name?: string;
+  fromAgentId?: AgentId;
+  toAgentId?: AgentId;
+  metadata?: Record<string, unknown>;
 }
 
 export interface ChatSession {
@@ -327,7 +336,21 @@ export interface WorkflowRunProgressItem {
   taskId?: string;
 }
 
+export type WorkflowStatus = "draft" | "running" | "completed" | "failed" | "stopped";
+
+export interface WorkflowArtifactReference {
+  kind: "text" | "file" | "url";
+  title: string;
+  content?: string;
+  path?: string;
+  url?: string;
+}
+
 export interface WorkflowDraftState {
+  workflowId: string;
+  title: string;
+  status: WorkflowStatus;
+  revision: number;
   agentId: AgentId;
   channelId: string;
   modelId: string;
@@ -339,8 +362,108 @@ export interface WorkflowDraftState {
   error: string | undefined;
   runProgress: WorkflowRunProgressItem[];
   runContextDocument: string;
+  contextDocument: string;
+  finalReport?: string;
+  runIds: string[];
   agentSessionId: string | undefined;
+  createdAt: number;
   updatedAt: number;
+}
+
+export interface WorkflowRunState {
+  runId: string;
+  workflowId: string;
+  status: WorkflowStatus;
+  graphSnapshot: WorkflowGraph;
+  progress: WorkflowRunProgressItem[];
+  contextDocument: string;
+  finalReport?: string;
+  startedAt: number;
+  finishedAt: number | undefined;
+  lastError: string | undefined;
+}
+
+export interface WorkflowStoreState {
+  activeWorkflowId: string | undefined;
+  workflows: WorkflowDraftState[];
+  runs: WorkflowRunState[];
+}
+
+export interface WorkflowOperationResult {
+  ok: boolean;
+  workflowId?: string;
+  runId?: string;
+  revision?: number;
+  error?: string;
+  validation?: WorkflowGraphValidation;
+}
+
+export interface CreateWorkflowRequest {
+  title: string;
+  objective: string;
+  graph: WorkflowGraph;
+  agentId?: AgentId;
+  channelId?: string;
+  modelId?: string;
+  graphReady?: boolean;
+  messages?: WorkflowGrillMessage[];
+  reply?: string;
+  error?: string;
+  runProgress?: WorkflowRunProgressItem[];
+  runContextDocument?: string;
+  contextDocument?: string;
+  finalReport?: string;
+  runIds?: string[];
+  agentSessionId?: string;
+  createdAt?: number;
+  updatedAt?: number;
+}
+
+export interface UpdateWorkflowRequest {
+  workflowId: string;
+  expectedRevision?: number;
+  title?: string;
+  objective?: string;
+  graph?: WorkflowGraph;
+  agentId?: AgentId;
+  channelId?: string;
+  modelId?: string;
+  graphReady?: boolean;
+  messages?: WorkflowGrillMessage[];
+  reply?: string;
+  error?: string;
+  runProgress?: WorkflowRunProgressItem[];
+  runContextDocument?: string;
+  contextDocument?: string;
+  finalReport?: string;
+  agentSessionId?: string;
+}
+
+export interface AppendWorkflowContextRequest {
+  workflowId: string;
+  report: string;
+  handoff: string;
+  artifacts?: WorkflowArtifactReference[];
+}
+
+export interface AppendWorkflowRunContextRequest extends AppendWorkflowContextRequest {
+  runId: string;
+  nodeId?: string;
+}
+
+export interface StartWorkflowRunRequest {
+  workflowId: string;
+  contextDocument?: string;
+}
+
+export interface FinishWorkflowRunRequest {
+  workflowId: string;
+  runId: string;
+  status: Exclude<WorkflowStatus, "draft" | "running">;
+  progress?: WorkflowRunProgressItem[];
+  contextDocument?: string;
+  finalReport?: string;
+  lastError?: string;
 }
 
 export interface AppSnapshot {
@@ -356,5 +479,6 @@ export interface AppSnapshot {
   tasks: TaskRun[];
   teams: AgentTeam[];
   teamRuns: TeamRun[];
+  workflowStore: WorkflowStoreState;
   workflowDraft: WorkflowDraftState | undefined;
 }

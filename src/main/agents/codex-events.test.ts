@@ -46,7 +46,7 @@ describe("normalizeCodexNotification", () => {
     expect(state.lastText).toBe("");
   });
 
-  test("emits compact meta events for tool calls and results", () => {
+  test("emits structured tool events for tool calls and results", () => {
     const state = createCodexStreamState();
 
     expect(
@@ -55,14 +55,14 @@ describe("normalizeCodexNotification", () => {
         { item: { type: "function_call", call_id: "call-1", name: "shell_command", arguments: "{\"command\":\"ls src\"}" } },
         state,
       ),
-    ).toEqual([{ type: "meta", content: "→ shell_command · ls src\nls src" }]);
+    ).toEqual([{ type: "tool_call", name: "shell_command", content: "ls src" }]);
     expect(
       normalizeCodexNotification(
         "rawResponseItem/completed",
         { item: { type: "function_call_output", call_id: "call-1", output: "Exit code: 0\nOutput:\nApp.tsx" } },
         state,
       ),
-    ).toEqual([{ type: "meta", content: "✓ shell_command\nExit code: 0\nOutput:\nApp.tsx" }]);
+    ).toEqual([{ type: "tool_result", name: "shell_command", content: "Exit code: 0\nOutput:\nApp.tsx" }]);
   });
 
   test("maps turn completion to completed event", () => {

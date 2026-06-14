@@ -22,11 +22,16 @@ import type {
   ChatMessage,
   ChatSession,
   CodexPluginCatalogItem,
+  AppendWorkflowContextRequest,
+  AppendWorkflowRunContextRequest,
+  CreateWorkflowRequest,
+  FinishWorkflowRunRequest,
   CreateAgentTeamRequest,
   GeneratedConfigFile,
   ImportedCodexConfig,
   RunAgentTeamRequest,
   RunTaskRequest,
+  StartWorkflowRunRequest,
   TaskProgress,
   TaskRun,
   TaskRunStatus,
@@ -35,20 +40,28 @@ import type {
   TeamRunStep,
   TeamRunStepStatus,
   UpdateAgentTeamRequest,
+  UpdateWorkflowRequest,
   WorkflowAgentRequest,
   WorkflowAgentEvent,
   WorkflowAgentResponse,
+  WorkflowArtifactReference,
   WorkflowDraftState,
   WorkflowGraph,
   WorkflowGraphEdge,
   WorkflowGraphNode,
+  WorkflowOperationResult,
+  WorkflowRunState,
+  WorkflowStatus,
+  WorkflowStoreState,
   WorkflowRunNodeStatus,
   WorkflowRunProgressItem,
 } from "../shared/types";
 import { defaultChannelForAgent, defaultModelForAgent, isModelForChannel, runtimeModelId } from "../shared/models";
+import { validateWorkflowGraph } from "../shared/workflow-graph";
 import { detectAgentRuntimes } from "./agents/detect";
 import { CodexRpcClient } from "./agents/codex-rpc";
 import { ClaudeRunner } from "./agents/claude-runner";
+import { RuntimeAgentExecutorFactory, type AgentExecutorFactory } from "./agent-executor";
 import {
   codexAppServerConfigArgs,
   createDefaultChannels,
@@ -65,9 +78,33 @@ const CODEX_CHAT_DEVELOPER_INSTRUCTIONS =
 const CODEX_TASK_DEVELOPER_INSTRUCTIONS =
   "You are executing a single local task from a lightweight desktop UI. Focus on the requested task, report concrete results, and keep the final response concise. User-visible tool activity is displayed separately by the UI.";
 const CODEX_WORKFLOW_DEVELOPER_INSTRUCTIONS =
-  "You are the workflow builder agent for a lightweight desktop UI. Interview the user one question at a time, include a recommended answer with every question, and produce only workflowGraph.upsert code when the workflow is ready.";
+  "You are the workflow builder and main review agent for a lightweight desktop UI. During workflow planning, interview the user one question at a time, include a recommended answer with every question, and produce only workflowGraph.upsert code when the workflow graph is ready. During completed workflow review, do not produce workflowGraph.upsert; write a Markdown Final User Report for the same user conversation and stay ready for follow-up questions.";
 const PERSIST_DEBOUNCE_MS = 400;
-const WORKFLOW_AGENT_TIMEOUT_MS = 120_000;
+const WORKFLOW_AGENT_IDLE_TIMEOUT_MS = 10 * 60_000;
+const MAX_WORKFLOW_COUNT = 200;
+const MAX_WORKFLOW_NODE_COUNT = 50;
+const MAX_WORKFLOW_EDGE_COUNT = 100;
+const MAX_WORKFLOW_NODE_PROMPT_CHARS = 8000;
+const MAX_WORKFLOW_CONTEXT_APPEND_CHARS = 12000;
+const MAX_WORKFLOW_ARTIFACTS_PER_APPEND = 20;
+const MAX_WORKFLOW_TEXT_ARTIFACT_CHARS = 8000;
+const MAX_WORKFLOW_TITLE_CHARS = 160;
+const MAX_WORKFLOW_OBJECTIVE_CHARS = 4000;
+
+export function createWorkflowAgentTimeout(input: { timeoutMs: number; onTimeout: () => void }): { refresh: () => void; clear: () => void } {
+  let timer: ReturnType<typeof setTimeout> | undefined;
+  const clear = (): void => {
+    if (!timer) return;
+    clearTimeout(timer);
+    timer = undefined;
+  };
+  const refresh = (): void => {
+    clear();
+    timer = setTimeout(input.onTimeout, input.timeoutMs);
+  };
+  refresh();
+  return { refresh, clear };
+}
 
 interface PersistedChatSessionRecord {
   id: string;
@@ -171,6 +208,7 @@ interface PersistedAppStateV2 {
   taskEvents?: PersistedTaskEventRecord[];
   teams?: PersistedAgentTeamRecord[];
   teamRuns?: PersistedTeamRunRecord[];
+  workflowStore?: WorkflowStoreState;
   workflowDraft?: WorkflowDraftState;
 }
 
@@ -203,15 +241,6 @@ function createErrorMessage(content: string): ChatMessage {
   };
 }
 
-function createChatEvent(content: string): ChatEvent {
-  return {
-    id: randomUUID(),
-    type: "meta",
-    content,
-    timestamp: Date.now(),
-  };
-}
-
 function defaultTitle(agentId: AgentId): string {
   return agentId === "codex" ? "New Codex chat" : "New Claude chat";
 }
@@ -231,7 +260,7 @@ function isMessageRole(value: unknown): value is ChatMessage["role"] {
 }
 
 function isChatEventType(value: unknown): value is ChatEvent["type"] {
-  return value === "meta";
+  return value === "meta" || value === "system" || value === "tool_call" || value === "tool_result" || value === "handoff" || value === "error";
 }
 
 function isTaskRunStatus(value: unknown): value is TaskRunStatus {
@@ -617,7 +646,9 @@ export class AgentHub {
   private activeTaskId: string | undefined;
   private activeTeamId: string | undefined;
   private activeTeamRunId: string | undefined;
-  private workflowDraft: WorkflowDraftState | undefined;
+  private workflows = new Map<string, WorkflowDraftState>();
+  private workflowRuns = new Map<string, WorkflowRunState>();
+  private activeWorkflowId: string | undefined;
   private activeStops = new Map<string, () => Promise<void> | void>();
   private listeners = new Set<Listener>();
   private workDir = process.cwd();
@@ -626,11 +657,24 @@ export class AgentHub {
   private modelConfigPath: string | undefined = undefined;
   private persistTimer: ReturnType<typeof setTimeout> | undefined = undefined;
   private persistInFlight: Promise<void> | undefined = undefined;
+  private readonly executorFactory: AgentExecutorFactory;
 
-  constructor(private readonly executables = {
-    codex: process.env.CODEX_PATH ?? "codex",
-    claude: process.env.CLAUDE_PATH ?? "claude",
-  }) {
+  constructor(
+    private readonly executables = {
+      codex: process.env.CODEX_PATH ?? "codex",
+      claude: process.env.CLAUDE_PATH ?? "claude",
+    },
+    executorFactory?: AgentExecutorFactory,
+  ) {
+    this.executorFactory =
+      executorFactory ??
+      new RuntimeAgentExecutorFactory({
+        executables: this.executables,
+        channelById: (channelId) => this.channelById(channelId),
+        respondToCodexServerRequest: (client, id, method, params) => {
+          this.respondToCodexServerRequest(client, id, method, params);
+        },
+      });
     const chat = this.createChatState(DEFAULT_AGENT);
     this.chats.set(chat.id, chat);
     this.activeChatId = chat.id;
@@ -770,7 +814,9 @@ export class AgentHub {
     this.chats.clear();
     this.tasks.clear();
     this.teamRuns.clear();
-    this.workflowDraft = undefined;
+    this.workflows.clear();
+    this.workflowRuns.clear();
+    this.activeWorkflowId = undefined;
     const chat = this.createChatState(DEFAULT_AGENT);
     this.chats.set(chat.id, chat);
     this.activeChatId = chat.id;
@@ -780,9 +826,185 @@ export class AgentHub {
   }
 
   updateWorkflowDraft(draft: WorkflowDraftState | undefined): AppSnapshot {
-    this.workflowDraft = draft ? this.cloneWorkflowDraft(draft) : undefined;
+    if (!draft) {
+      this.workflows.clear();
+      this.workflowRuns.clear();
+      this.activeWorkflowId = undefined;
+      this.emit();
+      return this.snapshot();
+    }
+    const normalized = this.cloneWorkflowDraft(draft);
+    this.workflows.set(normalized.workflowId, normalized);
+    this.activeWorkflowId = normalized.workflowId;
     this.emit();
     return this.snapshot();
+  }
+
+  createWorkflow(input: CreateWorkflowRequest): WorkflowOperationResult {
+    if (this.workflows.size >= MAX_WORKFLOW_COUNT) return { ok: false, error: `Workflow count exceeds ${MAX_WORKFLOW_COUNT}.` };
+    const limitError = this.workflowLimitError(input.graph, input.title, input.objective);
+    if (limitError) return { ok: false, error: limitError };
+    const validation = validateWorkflowGraph(input.graph);
+    if (!validation.valid) return { ok: false, error: validation.errors[0] ?? "Workflow graph is invalid.", validation };
+    const now = Date.now();
+    const workflow = this.cloneWorkflowDraft({
+      workflowId: `wf_${randomUUID()}`,
+      title: input.title.trim() || input.graph.title,
+      status: "draft",
+      revision: 1,
+      agentId: input.agentId ?? DEFAULT_AGENT,
+      channelId: input.channelId ?? defaultChannelForAgent(input.agentId ?? DEFAULT_AGENT, this.channels),
+      modelId: input.modelId ?? defaultModelForAgent(input.agentId ?? DEFAULT_AGENT),
+      objective: input.objective.trim() || input.graph.objective,
+      graph: input.graph,
+      graphReady: input.graphReady ?? true,
+      messages: input.messages ?? [],
+      reply: input.reply ?? "",
+      error: input.error,
+      runProgress: input.runProgress ?? [],
+      runContextDocument: input.runContextDocument ?? "",
+      contextDocument: input.contextDocument ?? "",
+      ...(input.finalReport !== undefined ? { finalReport: input.finalReport } : {}),
+      runIds: input.runIds ?? [],
+      agentSessionId: input.agentSessionId,
+      createdAt: input.createdAt ?? now,
+      updatedAt: input.updatedAt ?? now,
+    });
+    this.workflows.set(workflow.workflowId, workflow);
+    this.activeWorkflowId = workflow.workflowId;
+    this.emit();
+    return { ok: true, workflowId: workflow.workflowId, revision: workflow.revision, validation };
+  }
+
+  selectWorkflow(workflowId: string): AppSnapshot {
+    if (this.workflows.has(workflowId)) {
+      this.activeWorkflowId = workflowId;
+      this.emit();
+    }
+    return this.snapshot();
+  }
+
+  updateWorkflow(input: UpdateWorkflowRequest): WorkflowOperationResult {
+    const current = this.workflows.get(input.workflowId);
+    if (!current) return { ok: false, error: `Workflow ${input.workflowId} was not found.` };
+    if (current.status === "running") return { ok: false, error: "Cannot modify workflow graph while it is running." };
+    if (input.expectedRevision !== undefined && input.expectedRevision !== current.revision) {
+      return { ok: false, workflowId: current.workflowId, revision: current.revision, error: "Workflow changed since you read it. Call workflow_get and retry." };
+    }
+    const graph = input.graph ?? current.graph;
+    const limitError = this.workflowLimitError(graph, input.title ?? current.title, input.objective ?? current.objective);
+    if (limitError) return { ok: false, workflowId: current.workflowId, revision: current.revision, error: limitError };
+    const validation = validateWorkflowGraph(graph);
+    if (!validation.valid) return { ok: false, workflowId: current.workflowId, revision: current.revision, error: validation.errors[0] ?? "Workflow graph is invalid.", validation };
+    const next = this.cloneWorkflowDraft({
+      ...current,
+      title: input.title ?? current.title,
+      objective: input.objective ?? current.objective,
+      graph,
+      agentId: input.agentId ?? current.agentId,
+      channelId: input.channelId ?? current.channelId,
+      modelId: input.modelId ?? current.modelId,
+      graphReady: input.graphReady ?? current.graphReady,
+      messages: input.messages ?? current.messages,
+      reply: input.reply ?? current.reply,
+      error: input.error ?? current.error,
+      runProgress: input.runProgress ?? current.runProgress,
+      runContextDocument: input.runContextDocument ?? current.runContextDocument,
+      contextDocument: input.contextDocument ?? current.contextDocument,
+      ...((input.finalReport ?? current.finalReport) !== undefined ? { finalReport: input.finalReport ?? current.finalReport } : {}),
+      agentSessionId: input.agentSessionId ?? current.agentSessionId,
+      revision: current.revision + 1,
+      updatedAt: Date.now(),
+    });
+    this.workflows.set(next.workflowId, next);
+    this.emit();
+    return { ok: true, workflowId: next.workflowId, revision: next.revision, validation };
+  }
+
+  appendWorkflowContext(input: AppendWorkflowContextRequest): WorkflowOperationResult {
+    const workflow = this.workflows.get(input.workflowId);
+    if (!workflow) return { ok: false, error: `Workflow ${input.workflowId} was not found.` };
+    const limitError = this.contextAppendLimitError(input);
+    if (limitError) return { ok: false, workflowId: workflow.workflowId, revision: workflow.revision, error: limitError };
+    const appended = this.formatWorkflowContextAppend(input.report, input.handoff, input.artifacts);
+    const next = this.cloneWorkflowDraft({
+      ...workflow,
+      contextDocument: [workflow.contextDocument.trim(), appended].filter(Boolean).join("\n\n"),
+      revision: workflow.revision + 1,
+      updatedAt: Date.now(),
+    });
+    this.workflows.set(next.workflowId, next);
+    this.emit();
+    return { ok: true, workflowId: next.workflowId, revision: next.revision };
+  }
+
+  appendWorkflowRunContext(input: AppendWorkflowRunContextRequest): WorkflowOperationResult {
+    const run = this.workflowRuns.get(input.runId);
+    if (!run || run.workflowId !== input.workflowId) return { ok: false, error: `Workflow run ${input.runId} was not found.` };
+    if (run.status !== "running") return { ok: false, error: "Cannot append to a workflow run after it has finished." };
+    const limitError = this.contextAppendLimitError(input);
+    if (limitError) return { ok: false, workflowId: input.workflowId, error: limitError };
+    const appended = this.formatWorkflowContextAppend(input.report, input.handoff, input.artifacts, input.nodeId);
+    this.workflowRuns.set(run.runId, {
+      ...run,
+      contextDocument: [run.contextDocument.trim(), appended].filter(Boolean).join("\n\n"),
+    });
+    this.emit();
+    return { ok: true, workflowId: input.workflowId };
+  }
+
+  startWorkflowRun(input: StartWorkflowRunRequest): WorkflowOperationResult {
+    const workflow = this.workflows.get(input.workflowId);
+    if (!workflow) return { ok: false, error: `Workflow ${input.workflowId} was not found.` };
+    if (workflow.status === "running") return { ok: false, error: "Workflow is already running." };
+    const runId = `run_${randomUUID()}`;
+    const run: WorkflowRunState = {
+      runId,
+      workflowId: workflow.workflowId,
+      status: "running",
+      graphSnapshot: this.cloneWorkflowGraph(workflow.graph),
+      progress: [],
+      contextDocument: input.contextDocument ?? workflow.contextDocument,
+      startedAt: Date.now(),
+      finishedAt: undefined,
+      lastError: undefined,
+    };
+    this.workflowRuns.set(runId, run);
+    this.workflows.set(workflow.workflowId, this.cloneWorkflowDraft({
+      ...workflow,
+      status: "running",
+      runIds: [...workflow.runIds, runId],
+      updatedAt: Date.now(),
+    }));
+    this.emit();
+    return { ok: true, workflowId: workflow.workflowId, runId, revision: workflow.revision };
+  }
+
+  finishWorkflowRun(input: FinishWorkflowRunRequest): WorkflowOperationResult {
+    const workflow = this.workflows.get(input.workflowId);
+    const run = this.workflowRuns.get(input.runId);
+    if (!workflow) return { ok: false, error: `Workflow ${input.workflowId} was not found.` };
+    if (!run || run.workflowId !== input.workflowId) return { ok: false, error: `Workflow run ${input.runId} was not found.` };
+    const nextRun: WorkflowRunState = {
+      ...run,
+      status: input.status,
+      progress: input.progress ?? run.progress,
+      contextDocument: input.contextDocument ?? run.contextDocument,
+      ...((input.finalReport ?? run.finalReport) !== undefined ? { finalReport: input.finalReport ?? run.finalReport } : {}),
+      finishedAt: Date.now(),
+      lastError: input.lastError,
+    };
+    this.workflowRuns.set(run.runId, nextRun);
+    this.workflows.set(workflow.workflowId, this.cloneWorkflowDraft({
+      ...workflow,
+      status: input.status,
+      runProgress: input.progress ?? workflow.runProgress,
+      runContextDocument: input.contextDocument ?? workflow.runContextDocument,
+      ...((input.finalReport ?? workflow.finalReport) !== undefined ? { finalReport: input.finalReport ?? workflow.finalReport } : {}),
+      updatedAt: Date.now(),
+    }));
+    this.emit();
+    return { ok: true, workflowId: workflow.workflowId, runId: run.runId, revision: workflow.revision };
   }
 
   getWorkDir(): string {
@@ -811,7 +1033,8 @@ export class AgentHub {
       teamRuns: [...this.teamRuns.values()]
         .sort((left, right) => right.updatedAt - left.updatedAt)
         .map((run) => this.serializeTeamRun(run)),
-      workflowDraft: this.workflowDraft ? this.cloneWorkflowDraft(this.workflowDraft) : undefined,
+      workflowStore: this.cloneWorkflowStore(),
+      workflowDraft: this.activeWorkflowDraft(),
     };
   }
 
@@ -1428,11 +1651,54 @@ export class AgentHub {
     };
   }
 
+  private activeWorkflowDraft(): WorkflowDraftState | undefined {
+    const workflow = this.activeWorkflowId ? this.workflows.get(this.activeWorkflowId) : undefined;
+    return workflow ? this.cloneWorkflowDraft(workflow) : undefined;
+  }
+
+  private cloneWorkflowStore(): WorkflowStoreState {
+    return {
+      activeWorkflowId: this.activeWorkflowId,
+      workflows: [...this.workflows.values()]
+        .sort((left, right) => right.updatedAt - left.updatedAt)
+        .map((workflow) => this.cloneWorkflowDraft(workflow)),
+      runs: [...this.workflowRuns.values()]
+        .sort((left, right) => right.startedAt - left.startedAt)
+        .map((run) => this.cloneWorkflowRun(run)),
+    };
+  }
+
+  private cloneWorkflowRun(run: WorkflowRunState): WorkflowRunState {
+    return {
+      runId: run.runId,
+      workflowId: run.workflowId,
+      status: run.status,
+      graphSnapshot: this.cloneWorkflowGraph(run.graphSnapshot),
+      progress: run.progress.map((item) => ({
+        nodeId: item.nodeId,
+        title: item.title,
+        status: item.status,
+        ...(item.detail !== undefined ? { detail: item.detail } : {}),
+        ...(item.taskId !== undefined ? { taskId: item.taskId } : {}),
+      })),
+      contextDocument: run.contextDocument,
+      ...(run.finalReport !== undefined ? { finalReport: run.finalReport } : {}),
+      startedAt: run.startedAt,
+      finishedAt: run.finishedAt,
+      lastError: run.lastError,
+    };
+  }
+
   private cloneWorkflowDraft(draft: WorkflowDraftState): WorkflowDraftState {
     const agentId = isAgentId(draft.agentId) ? draft.agentId : DEFAULT_AGENT;
     const channelId = draft.channelId && this.channelById(draft.channelId)?.agentId === agentId ? draft.channelId : defaultChannelForAgent(agentId, this.channels);
     const modelId = isModelForChannel(agentId, channelId, draft.modelId, this.channels) ? draft.modelId : defaultModelForAgent(agentId);
+    const now = Date.now();
     return {
+      workflowId: draft.workflowId || `wf_${randomUUID()}`,
+      title: draft.title || draft.graph.title || draft.objective || "Untitled workflow",
+      status: this.normalizeWorkflowStatus(draft.status),
+      revision: Number.isFinite(draft.revision) && draft.revision > 0 ? Math.floor(draft.revision) : 1,
       agentId,
       channelId,
       modelId,
@@ -1454,9 +1720,56 @@ export class AgentHub {
         ...(item.taskId !== undefined ? { taskId: item.taskId } : {}),
       })),
       runContextDocument: draft.runContextDocument,
+      contextDocument: draft.contextDocument,
+      ...(draft.finalReport !== undefined ? { finalReport: draft.finalReport } : {}),
+      runIds: draft.runIds.map((runId) => runId),
       agentSessionId: draft.agentSessionId,
+      createdAt: draft.createdAt || draft.updatedAt || now,
       updatedAt: draft.updatedAt,
     };
+  }
+
+  private normalizeWorkflowStatus(status: WorkflowStatus): WorkflowStatus {
+    return status === "running" || status === "completed" || status === "failed" || status === "stopped" ? status : "draft";
+  }
+
+  private workflowLimitError(graph: WorkflowGraph, title: string, objective: string): string | undefined {
+    if (title.length > MAX_WORKFLOW_TITLE_CHARS) return `Workflow title exceeds ${MAX_WORKFLOW_TITLE_CHARS} characters.`;
+    if (objective.length > MAX_WORKFLOW_OBJECTIVE_CHARS) return `Workflow objective exceeds ${MAX_WORKFLOW_OBJECTIVE_CHARS} characters.`;
+    if (graph.nodes.length > MAX_WORKFLOW_NODE_COUNT) return `Workflow graph exceeds ${MAX_WORKFLOW_NODE_COUNT} nodes.`;
+    if (graph.edges.length > MAX_WORKFLOW_EDGE_COUNT) return `Workflow graph exceeds ${MAX_WORKFLOW_EDGE_COUNT} edges.`;
+    const oversizedNode = graph.nodes.find((node) => node.prompt.length > MAX_WORKFLOW_NODE_PROMPT_CHARS);
+    if (oversizedNode) return `Workflow node ${oversizedNode.id} prompt exceeds ${MAX_WORKFLOW_NODE_PROMPT_CHARS} characters.`;
+    return undefined;
+  }
+
+  private contextAppendLimitError(input: AppendWorkflowContextRequest): string | undefined {
+    if (input.report.length + input.handoff.length > MAX_WORKFLOW_CONTEXT_APPEND_CHARS) {
+      return `Workflow context append exceeds ${MAX_WORKFLOW_CONTEXT_APPEND_CHARS} characters.`;
+    }
+    const artifacts = input.artifacts ?? [];
+    if (artifacts.length > MAX_WORKFLOW_ARTIFACTS_PER_APPEND) return `Workflow context append exceeds ${MAX_WORKFLOW_ARTIFACTS_PER_APPEND} artifacts.`;
+    const oversizedArtifact = artifacts.find((artifact) => artifact.kind === "text" && (artifact.content ?? "").length > MAX_WORKFLOW_TEXT_ARTIFACT_CHARS);
+    if (oversizedArtifact) return `Workflow text artifact ${oversizedArtifact.title} exceeds ${MAX_WORKFLOW_TEXT_ARTIFACT_CHARS} characters.`;
+    return undefined;
+  }
+
+  private formatWorkflowContextAppend(report: string, handoff: string, artifacts: WorkflowArtifactReference[] = [], nodeId?: string): string {
+    const sections = [`## ${nodeId ? `Node ${nodeId}` : "Workflow"} Context Update`];
+    const trimmedReport = report.trim();
+    if (trimmedReport) sections.push("### Work Completion Report", trimmedReport);
+    const trimmedHandoff = handoff.trim();
+    if (trimmedHandoff) sections.push("### Handoff", trimmedHandoff);
+    const artifactLines = artifacts
+      .slice(0, 20)
+      .map((artifact) => {
+        if (artifact.kind === "text") return `- ${artifact.title}: ${artifact.content ?? ""}`.trim();
+        if (artifact.kind === "file") return `- ${artifact.title}: ${path.basename(artifact.path ?? "")}`;
+        return `- ${artifact.title}: ${artifact.url ?? ""}`;
+      })
+      .filter((line) => line.length > 2);
+    if (artifactLines.length > 0) sections.push("### Artifacts", artifactLines.join("\n"));
+    return sections.join("\n").trim();
   }
 
   private channelById(channelId: string): AgentChannel | undefined {
@@ -1485,7 +1798,9 @@ export class AgentHub {
     for (const team of this.teams.values()) {
       team.members = this.normalizeTeamMembers(team.members);
     }
-    if (this.workflowDraft) this.workflowDraft = this.cloneWorkflowDraft(this.workflowDraft);
+    for (const workflow of this.workflows.values()) {
+      this.workflows.set(workflow.workflowId, this.cloneWorkflowDraft(workflow));
+    }
   }
 
   private serializeChat(chat: ChatState): ChatSession {
@@ -1814,11 +2129,34 @@ export class AgentHub {
   }
 
   private async runChat(run: RunState, prompt: string, runtime: AgentRuntime): Promise<void> {
-    if (run.agentId === "codex") {
-      await this.runCodex(run, prompt, runtime);
-      return;
+    const developerInstructions = run.kind === "task" ? CODEX_TASK_DEVELOPER_INSTRUCTIONS : CODEX_CHAT_DEVELOPER_INSTRUCTIONS;
+    const executor = this.executorFactory.create({
+      runId: run.id,
+      runKind: run.kind,
+      agentId: run.agentId,
+      runtime,
+      channelId: run.channelId,
+      modelId: run.modelId,
+      prompt,
+      sessionId: run.sessionId,
+      workDir: this.runWorkDir(run),
+      developerInstructions,
+      emit: (event) => this.handleAgentEvent(run, event),
+      onExit: (code) => {
+        if (run.agentId === "claude" && typeof code === "number" && code !== 0) run.lastError = `Claude exited with code ${code}`;
+        this.markRunExited(run);
+        run.updatedAt = Date.now();
+        this.activeStops.delete(run.id);
+        this.emit();
+      },
+    });
+    this.activeStops.set(run.id, () => executor.stop());
+
+    try {
+      await executor.start();
+    } catch (error) {
+      this.markRunFailed(run, error instanceof Error ? error.message : String(error));
     }
-    await this.runClaude(run, prompt, runtime);
   }
 
   private async askCodexWorkflowAgent(input: {
@@ -1838,21 +2176,22 @@ export class AgentHub {
     let settled = false;
     let content = "";
     let sessionId = input.sessionId;
-    let timeout: ReturnType<typeof setTimeout> | undefined;
+    let timeout: ReturnType<typeof createWorkflowAgentTimeout> | undefined;
     let client: CodexRpcClient | undefined;
 
     return new Promise<WorkflowAgentResponse>((resolve, reject) => {
       const settle = (callback: () => void): void => {
         if (settled) return;
         settled = true;
-        if (timeout) clearTimeout(timeout);
+        timeout?.clear();
         void client?.shutdown();
         callback();
       };
 
-      timeout = setTimeout(() => {
-        settle(() => reject(new Error("Workflow agent timed out")));
-      }, WORKFLOW_AGENT_TIMEOUT_MS);
+      timeout = createWorkflowAgentTimeout({
+        timeoutMs: WORKFLOW_AGENT_IDLE_TIMEOUT_MS,
+        onTimeout: () => settle(() => reject(new Error("Workflow agent timed out after 10 minutes without activity"))),
+      });
 
       client = new CodexRpcClient({
         executable,
@@ -1860,6 +2199,7 @@ export class AgentHub {
         extraArgs: codexAppServerConfigArgs(channel, input.modelId),
         env: process.env as Record<string, string>,
         onEvent: (event) => {
+          timeout?.refresh();
           if (event.type === "delta") {
             content += event.content;
             input.onEvent?.({ requestId: input.requestId, type: "delta", content: event.content });
@@ -1940,19 +2280,22 @@ export class AgentHub {
     let errorMessage: string | undefined;
 
     return new Promise<WorkflowAgentResponse>((resolve, reject) => {
-      let timeout: ReturnType<typeof setTimeout> | undefined;
+      let timeout: ReturnType<typeof createWorkflowAgentTimeout> | undefined;
       let runner: ClaudeRunner | undefined;
       let settled = false;
       const settle = (callback: () => void): void => {
         if (settled) return;
         settled = true;
-        if (timeout) clearTimeout(timeout);
+        timeout?.clear();
         callback();
       };
-      timeout = setTimeout(() => {
-        void runner?.stop();
-        settle(() => reject(new Error("Workflow agent timed out")));
-      }, WORKFLOW_AGENT_TIMEOUT_MS);
+      timeout = createWorkflowAgentTimeout({
+        timeoutMs: WORKFLOW_AGENT_IDLE_TIMEOUT_MS,
+        onTimeout: () => {
+          void runner?.stop();
+          settle(() => reject(new Error("Workflow agent timed out after 10 minutes without activity")));
+        },
+      });
       runner = new ClaudeRunner({
         executable: input.runtime.command || this.executables.claude,
         cwd: input.workDir,
@@ -1961,6 +2304,7 @@ export class AgentHub {
         modelId: runtimeModelId(input.modelId) ?? undefined,
         sessionId,
         onEvent: (event) => {
+          timeout?.refresh();
           if (event.type === "delta") {
             content += event.content;
             input.onEvent?.({ requestId: input.requestId, type: "delta", content: event.content });
@@ -1987,100 +2331,6 @@ export class AgentHub {
     });
   }
 
-  private async runCodex(run: RunState, prompt: string, runtime: AgentRuntime): Promise<void> {
-    const executable = runtime.command || this.executables.codex;
-    const model = runtimeModelId(run.modelId);
-    const channel = this.channelById(run.channelId);
-    const cwd = this.runWorkDir(run);
-    const developerInstructions = run.kind === "task" ? CODEX_TASK_DEVELOPER_INSTRUCTIONS : CODEX_CHAT_DEVELOPER_INSTRUCTIONS;
-    const client = new CodexRpcClient({
-      executable,
-      cwd,
-      extraArgs: codexAppServerConfigArgs(channel, run.modelId),
-      env: process.env as Record<string, string>,
-      onEvent: (event) => this.handleAgentEvent(run, event),
-      onRequest: (id, method, params) => {
-        this.respondToCodexServerRequest(client, id, method, params);
-      },
-      onExit: () => {
-        this.markRunExited(run);
-        run.updatedAt = Date.now();
-        this.activeStops.delete(run.id);
-        this.emit();
-      },
-    });
-    this.activeStops.set(run.id, () => client.shutdown());
-
-    try {
-      await client.start();
-      const threadResult = run.sessionId
-        ? await client.request("thread/resume", {
-            threadId: run.sessionId,
-            model,
-            modelProvider: null,
-            cwd,
-            approvalPolicy: "never",
-            config: null,
-            baseInstructions: null,
-            developerInstructions,
-          })
-        : await client.request("thread/start", {
-            model,
-            modelProvider: null,
-            profile: null,
-            cwd,
-            approvalPolicy: "never",
-            config: null,
-            baseInstructions: null,
-            developerInstructions,
-            compactPrompt: null,
-            includeApplyPatchTool: null,
-            experimentalRawEvents: true,
-            persistExtendedHistory: true,
-          });
-
-      const threadId = (threadResult as { thread?: { id?: string } }).thread?.id;
-      if (threadId) {
-        run.sessionId = threadId;
-        run.updatedAt = Date.now();
-        this.emit();
-      }
-
-      await client.request("turn/start", {
-        threadId: threadId ?? run.sessionId,
-        input: [{ type: "text", text: prompt, text_elements: [] }],
-      });
-    } catch (error) {
-      this.markRunFailed(run, error instanceof Error ? error.message : String(error));
-    }
-  }
-
-  private async runClaude(run: RunState, prompt: string, runtime: AgentRuntime): Promise<void> {
-    const runner = new ClaudeRunner({
-      executable: runtime.command || this.executables.claude,
-      cwd: this.runWorkDir(run),
-      env: process.env as Record<string, string>,
-      prompt,
-      modelId: runtimeModelId(run.modelId) ?? undefined,
-      sessionId: run.sessionId,
-      onEvent: (event) => this.handleAgentEvent(run, event),
-      onExit: (code) => {
-        if (code !== 0) run.lastError = `Claude exited with code ${code}`;
-        this.markRunExited(run);
-        run.updatedAt = Date.now();
-        this.activeStops.delete(run.id);
-        this.emit();
-      },
-    });
-    this.activeStops.set(run.id, () => runner.stop());
-
-    try {
-      await runner.start();
-    } catch (error) {
-      this.markRunFailed(run, error instanceof Error ? error.message : String(error));
-    }
-  }
-
   private handleAgentEvent(run: RunState, event: AgentEvent): void {
     if (event.type === "session") {
       run.sessionId = event.sessionId;
@@ -2103,8 +2353,17 @@ export class AgentHub {
       return;
     }
 
-    if (event.type === "meta") {
-      this.appendEventToAssistant(run, createChatEvent(event.content));
+    if (event.type === "meta" || event.type === "system" || event.type === "tool_call" || event.type === "tool_result" || event.type === "handoff") {
+      this.appendEventToAssistant(run, {
+        id: randomUUID(),
+        type: event.type,
+        content: event.content,
+        timestamp: Date.now(),
+        ...("name" in event && event.name ? { name: event.name } : {}),
+        ...("fromAgentId" in event && event.fromAgentId ? { fromAgentId: event.fromAgentId } : {}),
+        ...("toAgentId" in event && event.toAgentId ? { toAgentId: event.toAgentId } : {}),
+        ...("metadata" in event && event.metadata ? { metadata: event.metadata } : {}),
+      });
       run.updatedAt = Date.now();
       this.emit();
       return;
@@ -2297,7 +2556,7 @@ export class AgentHub {
       ? record.teamRuns.map((item) => this.restoreTeamRunState(item)).filter((item): item is TeamRunState => Boolean(item))
       : [];
     this.installRestoredTeams(teams, teamRuns, asOptionalString(record.activeTeamId), asOptionalString(record.activeTeamRunId));
-    this.workflowDraft = this.restoreWorkflowDraft(record.workflowDraft);
+    this.restoreWorkflowStore(record.workflowStore, record.workflowDraft);
   }
 
   private installRestoredChats(chats: ChatState[], activeChatId: string | undefined, workDir: string | undefined): void {
@@ -2472,6 +2731,35 @@ export class AgentHub {
     };
   }
 
+  private restoreWorkflowStore(rawStore: unknown, legacyDraft: unknown): void {
+    this.workflows.clear();
+    this.workflowRuns.clear();
+    this.activeWorkflowId = undefined;
+
+    const storeRecord = asRecord(rawStore);
+    if (storeRecord) {
+      for (const item of asArray(storeRecord.workflows)) {
+        const workflow = this.restoreWorkflowDraft(item);
+        if (workflow) this.workflows.set(workflow.workflowId, workflow);
+      }
+      for (const item of asArray(storeRecord.runs)) {
+        const run = this.restoreWorkflowRun(item);
+        if (run) this.workflowRuns.set(run.runId, run);
+      }
+      const activeWorkflowId = asOptionalString(storeRecord.activeWorkflowId);
+      this.activeWorkflowId =
+        activeWorkflowId && this.workflows.has(activeWorkflowId)
+          ? activeWorkflowId
+          : [...this.workflows.values()].sort((left, right) => right.updatedAt - left.updatedAt)[0]?.workflowId;
+      return;
+    }
+
+    const workflow = this.restoreWorkflowDraft(legacyDraft);
+    if (!workflow) return;
+    this.workflows.set(workflow.workflowId, workflow);
+    this.activeWorkflowId = workflow.workflowId;
+  }
+
   private restoreWorkflowDraft(raw: unknown): WorkflowDraftState | undefined {
     const record = asRecord(raw);
     if (!record || !isAgentId(record.agentId)) return undefined;
@@ -2481,7 +2769,12 @@ export class AgentHub {
     const normalizedChannelId =
       channelId && this.channelById(channelId)?.agentId === record.agentId ? channelId : defaultChannelForAgent(record.agentId, this.channels);
     const modelId = asOptionalString(record.modelId);
+    const finalReport = asOptionalString(record.finalReport);
     return this.cloneWorkflowDraft({
+      workflowId: asOptionalString(record.workflowId) ?? `wf_${randomUUID()}`,
+      title: asOptionalString(record.title) ?? graph.title,
+      status: this.restoreWorkflowStatus(record.status),
+      revision: Math.max(1, Math.floor(asNumber(record.revision, 1))),
       agentId: record.agentId,
       channelId: normalizedChannelId,
       modelId: modelId && isModelForChannel(record.agentId, normalizedChannelId, modelId, this.channels) ? modelId : defaultModelForAgent(record.agentId),
@@ -2505,9 +2798,41 @@ export class AgentHub {
         .map((item) => this.restoreWorkflowRunProgressItem(item))
         .filter((item): item is WorkflowRunProgressItem => Boolean(item)),
       runContextDocument: asOptionalString(record.runContextDocument) ?? "",
+      contextDocument: asOptionalString(record.contextDocument) ?? "",
+      ...(finalReport !== undefined ? { finalReport } : {}),
+      runIds: asArray(record.runIds).map((item) => asOptionalString(item)).filter((item): item is string => Boolean(item)),
       agentSessionId: asOptionalString(record.agentSessionId),
+      createdAt: asNumber(record.createdAt, asNumber(record.updatedAt, Date.now())),
       updatedAt: asNumber(record.updatedAt, Date.now()),
     });
+  }
+
+  private restoreWorkflowRun(raw: unknown): WorkflowRunState | undefined {
+    const record = asRecord(raw);
+    if (!record) return undefined;
+    const runId = asOptionalString(record.runId);
+    const workflowId = asOptionalString(record.workflowId);
+    const graphSnapshot = this.restoreWorkflowGraph(record.graphSnapshot);
+    if (!runId || !workflowId || !graphSnapshot) return undefined;
+    const finalReport = asOptionalString(record.finalReport);
+    return {
+      runId,
+      workflowId,
+      status: this.restoreWorkflowStatus(record.status),
+      graphSnapshot,
+      progress: asArray(record.progress)
+        .map((item) => this.restoreWorkflowRunProgressItem(item))
+        .filter((item): item is WorkflowRunProgressItem => Boolean(item)),
+      contextDocument: asOptionalString(record.contextDocument) ?? "",
+      ...(finalReport !== undefined ? { finalReport } : {}),
+      startedAt: asNumber(record.startedAt, Date.now()),
+      finishedAt: typeof record.finishedAt === "number" ? record.finishedAt : undefined,
+      lastError: asOptionalString(record.lastError),
+    };
+  }
+
+  private restoreWorkflowStatus(value: unknown): WorkflowStatus {
+    return value === "running" || value === "completed" || value === "failed" || value === "stopped" ? value : "draft";
   }
 
   private restoreWorkflowGraph(raw: unknown): WorkflowGraph | undefined {
@@ -2596,12 +2921,20 @@ export class AgentHub {
     if (!raw || typeof raw !== "object") return null;
     const record = raw as Record<string, unknown>;
     if (!isChatEventType(record.type) || typeof record.content !== "string") return null;
-    return {
+    const event: ChatEvent = {
       id: asOptionalString(record.id) ?? randomUUID(),
       type: record.type,
       content: record.content,
       timestamp: asNumber(record.timestamp, Date.now()),
     };
+    if (isAgentId(record.agentId)) event.agentId = record.agentId;
+    const name = asOptionalString(record.name);
+    if (name) event.name = name;
+    if (isAgentId(record.fromAgentId)) event.fromAgentId = record.fromAgentId;
+    if (isAgentId(record.toAgentId)) event.toAgentId = record.toAgentId;
+    const metadata = asRecord(record.metadata);
+    if (metadata) event.metadata = metadata;
+    return event;
   }
 
   private normalizeRestoredMessages(messages: ChatMessage[]): ChatMessage[] {
@@ -2772,7 +3105,7 @@ export class AgentHub {
       taskEvents,
       teams,
       teamRuns,
-      ...(this.workflowDraft ? { workflowDraft: this.cloneWorkflowDraft(this.workflowDraft) } : {}),
+      workflowStore: this.cloneWorkflowStore(),
     };
 
     const targetPath = this.storagePath;

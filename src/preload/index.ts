@@ -5,10 +5,12 @@ import type {
   AppSnapshot,
   CodexPluginCatalogItem,
   CreateAgentTeamRequest,
+  FinishWorkflowRunRequest,
   GeneratedConfigFile,
   ImportedCodexConfig,
   RunAgentTeamRequest,
   RunTaskRequest,
+  StartWorkflowRunRequest,
   TaskProgress,
   UpdateAgentTeamRequest,
   WorkflowAgentEvent,
@@ -35,6 +37,9 @@ const api = {
   stopChat: (chatId: string): Promise<AppSnapshot> => ipcRenderer.invoke("run:stop", chatId),
   askWorkflowAgent: (request: WorkflowAgentRequest): Promise<WorkflowAgentResponse> => ipcRenderer.invoke("workflow-agent:ask", request),
   updateWorkflowDraft: (draft?: WorkflowDraftState): Promise<AppSnapshot> => ipcRenderer.invoke("workflow:draft:update", draft),
+  selectWorkflow: (workflowId: string): Promise<AppSnapshot> => ipcRenderer.invoke("workflow:select", workflowId),
+  startWorkflowRun: (request: StartWorkflowRunRequest): Promise<AppSnapshot> => ipcRenderer.invoke("workflow-run:start", request),
+  finishWorkflowRun: (request: FinishWorkflowRunRequest): Promise<AppSnapshot> => ipcRenderer.invoke("workflow-run:finish", request),
   onWorkflowAgentEvent: (callback: (event: WorkflowAgentEvent) => void): (() => void) => {
     const listener = (_event: Electron.IpcRendererEvent, event: WorkflowAgentEvent) => callback(event);
     ipcRenderer.on("workflow-agent:event", listener);

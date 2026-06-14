@@ -2,12 +2,15 @@ import { app, BrowserWindow, dialog, ipcMain, type OpenDialogOptions } from "ele
 import path from "node:path";
 import { fileURLToPath } from "node:url";
 import { AgentHub } from "./agent-hub";
+import { startMcpBridge, type McpBridgeServer } from "./mcp-bridge";
 import type {
   AgentChannel,
   AgentId,
   CreateAgentTeamRequest,
+  FinishWorkflowRunRequest,
   RunAgentTeamRequest,
   RunTaskRequest,
+  StartWorkflowRunRequest,
   TaskProgress,
   UpdateAgentTeamRequest,
   WorkflowAgentRequest,
@@ -18,10 +21,12 @@ const __dirname = path.dirname(fileURLToPath(import.meta.url));
 const PRODUCT_NAME = "Multi Agent Chat";
 const CHAT_HISTORY_FILE = "app-chats.json";
 const MODEL_CHANNELS_FILE = "model-channels.json";
+const MCP_BRIDGE_FILE = "mcp-bridge.json";
 const hub = new AgentHub();
 
 let mainWindow: BrowserWindow | null = null;
 let ipcRegistered = false;
+let mcpBridge: McpBridgeServer | undefined;
 
 function createWindow(): BrowserWindow {
   const preloadPath = path.join(__dirname, "../preload/index.mjs");
@@ -61,6 +66,9 @@ async function bootstrap(): Promise<void> {
   await app.whenReady();
   await hub.loadModelChannels(path.join(app.getPath("userData"), MODEL_CHANNELS_FILE));
   await hub.loadPersistedState(path.join(app.getPath("userData"), CHAT_HISTORY_FILE));
+  mcpBridge = await startMcpBridge(hub, {
+    discoveryPath: process.env.MULTI_AGENT_CHAT_MCP_BRIDGE || path.join(app.getPath("appData"), "multi-agent-chat", MCP_BRIDGE_FILE),
+  });
 
   registerIpcHandlers();
   hub.onChange((snapshot) => mainWindow?.webContents.send("snapshot:changed", snapshot));
@@ -132,6 +140,15 @@ function registerIpcHandlers(): void {
     hub.askWorkflowAgent(request, (agentEvent) => event.sender.send("workflow-agent:event", agentEvent)),
   );
   ipcMain.handle("workflow:draft:update", (_event, draft?: WorkflowDraftState) => hub.updateWorkflowDraft(draft));
+  ipcMain.handle("workflow:select", (_event, workflowId: string) => hub.selectWorkflow(workflowId));
+  ipcMain.handle("workflow-run:start", (_event, request: StartWorkflowRunRequest) => {
+    hub.startWorkflowRun(request);
+    return hub.snapshot();
+  });
+  ipcMain.handle("workflow-run:finish", (_event, request: FinishWorkflowRunRequest) => {
+    hub.finishWorkflowRun(request);
+    return hub.snapshot();
+  });
   ipcMain.handle("task:run", async (_event, request: RunTaskRequest) => hub.runTask(request));
   ipcMain.handle("task:select", (_event, taskId: string) => {
     hub.selectTask(taskId);
@@ -160,6 +177,7 @@ void bootstrap();
 
 app.on("before-quit", () => {
   void hub.flushPersistence();
+  void mcpBridge?.stop();
 });
 
 app.on("window-all-closed", () => {
