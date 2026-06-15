@@ -618,6 +618,31 @@ describe("AgentHub chat sessions", () => {
     ]);
   });
 
+  test("migrates legacy JSON history into SQLite storage", async () => {
+    const dir = await mkdtemp(path.join(os.tmpdir(), "multi-agent-chat-sqlite-"));
+    const legacyPath = path.join(dir, "app-chats.json");
+    const dbPath = path.join(dir, "app.db");
+    const legacyHub = new AgentHub();
+
+    await legacyHub.loadPersistedState(legacyPath);
+    legacyHub.setWorkDir("/tmp/legacy-project");
+    const chat = legacyHub.createChat("codex");
+    await legacyHub.flushPersistence();
+
+    const migrated = new AgentHub();
+    await migrated.loadPersistedState(dbPath, legacyPath);
+    expect(migrated.snapshot().chats.some((item) => item.id === chat.id)).toBe(true);
+    migrated.setWorkDir("/tmp/sqlite-project");
+    await migrated.flushPersistence();
+    expect((await readFile(dbPath)).byteLength).toBeGreaterThan(0);
+
+    const restored = new AgentHub();
+    await restored.loadPersistedState(dbPath);
+    const snapshot = restored.snapshot();
+    expect(snapshot.workDir).toBe("/tmp/sqlite-project");
+    expect(snapshot.chats.some((item) => item.id === chat.id)).toBe(true);
+  });
+
   test("persists and restores multiple workflow drafts", async () => {
     const dir = await mkdtemp(path.join(os.tmpdir(), "multi-agent-chat-"));
     const storagePath = path.join(dir, "app-chats.json");
@@ -654,11 +679,14 @@ describe("AgentHub chat sessions", () => {
       runContextDocument: "# Workflow Context\n\n## Inventory (inventory)\nMapped repo.",
       contextDocument: "# Workflow Context\n\nLong lived context.",
       agentSessionId: "thread-1",
-      updatedAt: 1710000000000,
+      createdAt: 1710000000000,
+      updatedAt: 1710002000000,
     });
     const second = (hub as any).createWorkflow({
       title: "release workflow",
       objective: "Prepare release",
+      createdAt: 1710001000000,
+      updatedAt: 1710001000000,
       graph: {
         title: "release workflow",
         objective: "Prepare release",
@@ -685,8 +713,8 @@ describe("AgentHub chat sessions", () => {
     const persisted = JSON.parse(await readFile(storagePath, "utf8")) as any;
     expect(persisted.workflowStore.activeWorkflowId).toBe(first.workflowId);
     expect(persisted.workflowStore.workflows).toHaveLength(2);
-    expect(persisted.workflowStore.workflows.map((workflow: any) => workflow.workflowId)).toEqual([first.workflowId, second.workflowId]);
-    expect(persisted.workflowStore.workflows[0]).toMatchObject({
+    expect(persisted.workflowStore.workflows.map((workflow: any) => workflow.workflowId)).toEqual([second.workflowId, first.workflowId]);
+    expect(persisted.workflowStore.workflows[1]).toMatchObject({
       title: "sample repo review",
       objective: "Review sample repo",
       revision: 2,
@@ -701,7 +729,8 @@ describe("AgentHub chat sessions", () => {
 
     expect(snapshot.workflowStore.activeWorkflowId).toBe(first.workflowId);
     expect(snapshot.workflowStore.workflows).toHaveLength(2);
-    expect(snapshot.workflowStore.workflows[0]).toMatchObject({
+    expect(snapshot.workflowStore.workflows.map((workflow: any) => workflow.workflowId)).toEqual([second.workflowId, first.workflowId]);
+    expect(snapshot.workflowStore.workflows[1]).toMatchObject({
       workflowId: first.workflowId,
       title: "sample repo review",
       objective: "Review sample repo",

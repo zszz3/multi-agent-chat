@@ -58,4 +58,6 @@ The MCP process uses stdio and connects to the running Electron app through a lo
 
 ## Local Data
 
-The app stores local chat history and model channel configuration in Electron's `userData` directory. Use the in-app clear button to remove local history when needed.
+The app stores local chat, task, team, and workflow history in `app.db` under Electron's `userData` directory. Model channel configuration stays in `model-channels.json`.
+
+On first launch with SQLite enabled, the app imports legacy history from `app-chats.json` if `app.db` is empty. Use the in-app clear button to remove local history when needed.

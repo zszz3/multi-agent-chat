@@ -5970,15 +5970,6 @@ textarea:focus-visible {
   font-size: 12px;
 }
 
-/* workflow page: full-width like tasks/teams */
-.shell.workflow-shell {
-  grid-template-columns: 76px minmax(0, 1fr);
-}
-
-.shell.workflow-shell .resource-sidebar {
-  display: none;
-}
-
 /* ───────────────── workflow page unification (Linear pass) ───────────────── */
 
 .workflow-page {
@@ -6077,4 +6068,518 @@ textarea:focus-visible {
 .workflow-chat-bubble.is-assistant {
   background: var(--panel-soft);
   border: 1px solid var(--line);
+}
+
+/* workflow page follows the chat layout: transcript first, graph as a result card */
+.workflow-content {
+  gap: 0;
+  padding: 0;
+}
+
+.workflow-chat-header {
+  border-bottom: 1px solid var(--line);
+}
+
+.workflow-chat-header .send-btn {
+  min-height: 30px;
+}
+
+.workflow-transcript {
+  padding: 24px 28px;
+}
+
+.workflow-transcript .empty-state,
+.workflow-transcript .workflow-inline-error,
+.workflow-transcript .workflow-result-card {
+  width: 100%;
+  max-width: 760px;
+  margin-right: auto;
+  margin-left: auto;
+}
+
+.workflow-result-card {
+  display: grid;
+  gap: 10px;
+  margin-top: 12px;
+  padding: 12px;
+  border: 1px solid var(--line);
+  border-radius: 12px;
+  background: var(--panel);
+}
+
+.workflow-result-card-head {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 12px;
+  min-width: 0;
+}
+
+.workflow-result-card-head > div:first-child {
+  display: grid;
+  gap: 3px;
+  min-width: 0;
+}
+
+.workflow-result-card-head strong {
+  overflow: hidden;
+  color: var(--text);
+  font-size: 13px;
+  font-weight: 600;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.workflow-result-card-head span {
+  color: var(--subtle);
+  font-size: 11.5px;
+}
+
+.workflow-result-card .workflow-run-progress,
+.workflow-result-card .workflow-context-doc,
+.workflow-result-card .workflow-final-report,
+.workflow-result-card .workflow-output-documents,
+.workflow-result-card .workflow-graph-board {
+  border-radius: 10px;
+}
+
+.workflow-result-card .workflow-graph-board {
+  order: 1;
+}
+
+.workflow-result-card .workflow-run-progress {
+  order: 2;
+}
+
+.workflow-result-card .workflow-final-report {
+  order: 3;
+}
+
+.workflow-result-card .workflow-output-documents {
+  order: 4;
+}
+
+.workflow-result-card .workflow-context-doc {
+  order: 5;
+}
+
+.workflow-result-card .workflow-run-progress,
+.workflow-result-card .workflow-context-doc,
+.workflow-result-card .workflow-final-report,
+.workflow-result-card .workflow-output-documents {
+  padding: 10px;
+  background: var(--panel-soft);
+}
+
+.workflow-result-card .workflow-final-report {
+  border-color: color-mix(in srgb, var(--accent) 28%, var(--line));
+  background: color-mix(in srgb, var(--accent-tint) 42%, var(--panel));
+}
+
+.workflow-result-card .workflow-final-report pre,
+.workflow-result-card .workflow-context-doc pre {
+  background: var(--panel);
+  color: var(--text);
+}
+
+.workflow-output-documents {
+  display: grid;
+  gap: 8px;
+  border: 1px solid var(--line);
+}
+
+.workflow-output-documents-head,
+.workflow-file-preview-modal header {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 12px;
+  min-width: 0;
+}
+
+.workflow-output-documents-head strong,
+.workflow-file-preview-modal header strong {
+  color: var(--text);
+  font-size: 13px;
+  font-weight: 650;
+}
+
+.workflow-output-documents-head span {
+  color: var(--subtle);
+  font-size: 11px;
+}
+
+.workflow-output-document-list {
+  display: grid;
+  gap: 6px;
+}
+
+.workflow-output-document {
+  display: grid;
+  grid-template-columns: auto minmax(0, 1fr);
+  gap: 2px 8px;
+  width: 100%;
+  min-width: 0;
+  padding: 8px 9px;
+  border: 1px solid var(--line);
+  border-radius: 8px;
+  background: var(--panel);
+  color: inherit;
+  text-align: left;
+}
+
+.workflow-output-document:hover:not(:disabled) {
+  border-color: color-mix(in srgb, var(--accent) 28%, var(--line));
+  background: color-mix(in srgb, var(--accent-tint) 28%, var(--panel));
+}
+
+.workflow-output-document svg {
+  grid-row: 1 / span 2;
+  align-self: center;
+  color: var(--accent);
+}
+
+.workflow-output-document span,
+.workflow-output-document small {
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.workflow-output-document span {
+  color: var(--text);
+  font-size: 12px;
+  font-weight: 600;
+}
+
+.workflow-output-document small {
+  color: var(--muted);
+  font-size: 11px;
+}
+
+.workflow-file-preview-overlay {
+  position: fixed;
+  inset: 0;
+  z-index: 110;
+  display: grid;
+  place-items: center;
+  padding: 28px;
+  background: var(--overlay);
+}
+
+.workflow-file-preview-modal {
+  display: grid;
+  grid-template-rows: auto auto minmax(0, 1fr);
+  gap: 10px;
+  width: min(980px, 100%);
+  max-height: min(760px, 100%);
+  padding: 14px;
+  border: 1px solid var(--line);
+  border-radius: 10px;
+  background: var(--panel);
+  box-shadow: 0 24px 80px color-mix(in srgb, var(--ink) 28%, transparent);
+}
+
+.workflow-file-preview-modal header > div {
+  display: grid;
+  gap: 3px;
+  min-width: 0;
+}
+
+.workflow-file-preview-modal header span {
+  overflow: hidden;
+  color: var(--muted);
+  font-size: 11px;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.workflow-file-preview-note {
+  padding: 7px 9px;
+  border: 1px solid color-mix(in srgb, var(--accent) 20%, var(--line));
+  border-radius: 8px;
+  background: color-mix(in srgb, var(--accent-tint) 36%, var(--panel));
+  color: var(--accent);
+  font-size: 12px;
+}
+
+.workflow-file-preview-modal pre {
+  overflow: auto;
+  min-height: 0;
+  margin: 0;
+  padding: 12px;
+  border: 1px solid var(--line);
+  border-radius: 8px;
+  background: var(--panel-soft);
+  color: var(--text);
+  font-family: var(--font-mono);
+  font-size: 12px;
+  line-height: 1.55;
+  white-space: pre-wrap;
+}
+
+.workflow-result-card .workflow-graph-board:not(.is-expanded) {
+  max-height: 360px;
+}
+
+.workflow-composer {
+  margin-bottom: 14px;
+}
+
+.workflow-composer-actions {
+  display: inline-flex;
+  align-items: center;
+  gap: 8px;
+  margin-left: auto;
+}
+
+.workflow-list-panel .new-chat-menu-wrap {
+  margin-bottom: 8px;
+}
+
+.workflow-history-list {
+  gap: 2px;
+}
+
+.workflow-history-card {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) auto;
+  gap: 2px 8px;
+  padding: 8px 9px;
+  border-color: transparent;
+  border-radius: 8px;
+  background: transparent;
+}
+
+.workflow-history-card:hover {
+  border-color: transparent;
+  background: var(--hover);
+}
+
+.workflow-history-card.is-active {
+  border-color: transparent;
+  background: var(--accent-soft);
+}
+
+.workflow-history-card strong {
+  font-size: 12.5px;
+  font-weight: 500;
+}
+
+.workflow-history-card span {
+  grid-column: 2;
+  grid-row: 1;
+  align-self: center;
+  font-size: 10.5px;
+  white-space: nowrap;
+}
+
+.workflow-history-card small {
+  grid-column: 1 / -1;
+  color: var(--subtle);
+  font-size: 11px;
+}
+
+.workflow-graph-card input:disabled,
+.workflow-graph-card textarea:disabled,
+.workflow-node-config-grid select:disabled {
+  cursor: not-allowed;
+  opacity: 0.7;
+}
+
+.workflow-result-card .workflow-graph-board:not(.is-expanded) {
+  max-height: none;
+  justify-content: center;
+  overflow: hidden;
+  padding: 16px 12px;
+  border-color: color-mix(in srgb, var(--line) 72%, transparent);
+  background:
+    linear-gradient(color-mix(in srgb, var(--line-faint) 80%, transparent) 1px, transparent 1px),
+    linear-gradient(90deg, color-mix(in srgb, var(--line-faint) 80%, transparent) 1px, transparent 1px),
+    color-mix(in srgb, var(--panel) 82%, var(--neutral-tint));
+  background-size: 24px 24px;
+  cursor: zoom-in;
+}
+
+.workflow-graph-board:not(.is-expanded) .workflow-graph-layer {
+  align-items: center;
+}
+
+.workflow-graph-board:not(.is-expanded) .workflow-graph-layer-stack {
+  gap: 7px;
+}
+
+.workflow-graph-board:not(.is-expanded) .workflow-graph-edge {
+  position: relative;
+  width: 18px;
+  height: 1px;
+  background: color-mix(in srgb, var(--muted) 42%, transparent);
+}
+
+.workflow-graph-board:not(.is-expanded) .workflow-graph-edge::after {
+  position: absolute;
+  top: 50%;
+  right: -1px;
+  width: 7px;
+  height: 7px;
+  border-top: 1px solid color-mix(in srgb, var(--muted) 44%, transparent);
+  border-right: 1px solid color-mix(in srgb, var(--muted) 44%, transparent);
+  content: "";
+  transform: translateY(-50%) rotate(45deg);
+}
+
+.workflow-graph-board:not(.is-expanded) .workflow-graph-card {
+  position: relative;
+  align-content: center;
+  justify-content: stretch;
+  width: 148px;
+  min-height: 54px;
+  gap: 0;
+  padding: 8px 10px 8px 22px;
+  border-color: color-mix(in srgb, var(--ink) 10%, var(--line));
+  border-radius: 7px;
+  background: var(--panel);
+  box-shadow: 0 1px 2px color-mix(in srgb, var(--ink) 7%, transparent);
+  text-align: left;
+}
+
+.workflow-graph-board:not(.is-expanded) .workflow-graph-card:hover {
+  border-color: color-mix(in srgb, var(--accent) 28%, var(--line));
+  box-shadow: 0 8px 18px color-mix(in srgb, var(--ink) 8%, transparent);
+}
+
+.workflow-graph-board:not(.is-expanded) .workflow-graph-card::before {
+  position: absolute;
+  top: 50%;
+  left: 8px;
+  width: 7px;
+  height: 7px;
+  border-radius: 999px;
+  background: var(--accent);
+  content: "";
+  transform: translateY(-50%);
+}
+
+.workflow-graph-board:not(.is-expanded) .workflow-graph-card.is-start,
+.workflow-graph-board:not(.is-expanded) .workflow-graph-card.is-end {
+  width: 68px;
+  min-height: 32px;
+  padding-left: 18px;
+  text-align: center;
+}
+
+.workflow-graph-board:not(.is-expanded) .workflow-graph-card.is-start {
+  border-color: color-mix(in srgb, var(--ok) 24%, var(--line));
+  background: color-mix(in srgb, var(--ok-tint) 42%, var(--panel));
+}
+
+.workflow-graph-board:not(.is-expanded) .workflow-graph-card.is-start::before {
+  background: var(--ok);
+}
+
+.workflow-graph-board:not(.is-expanded) .workflow-graph-card.is-end {
+  border-color: color-mix(in srgb, var(--ink) 16%, var(--line));
+  background: color-mix(in srgb, var(--neutral-tint) 70%, var(--panel));
+}
+
+.workflow-graph-board:not(.is-expanded) .workflow-graph-card.is-end::before {
+  background: var(--muted);
+}
+
+.workflow-graph-board:not(.is-expanded) .workflow-graph-card-head {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) auto;
+  align-items: center;
+  justify-content: stretch;
+  gap: 4px;
+  min-width: 0;
+}
+
+.workflow-graph-board:not(.is-expanded) .workflow-graph-card-head > span {
+  display: none;
+}
+
+.workflow-graph-board:not(.is-expanded) .workflow-graph-card-head strong {
+  display: -webkit-box;
+  min-width: 0;
+  max-width: 100%;
+  color: var(--text);
+  font-size: 11.5px;
+  font-weight: 600;
+  line-height: 1.25;
+  white-space: normal;
+  -webkit-box-orient: vertical;
+  -webkit-line-clamp: 2;
+}
+
+.workflow-graph-board:not(.is-expanded) .workflow-graph-card.is-start .workflow-graph-card-head strong,
+.workflow-graph-board:not(.is-expanded) .workflow-graph-card.is-end .workflow-graph-card-head strong {
+  display: block;
+  font-size: 10.5px;
+  white-space: nowrap;
+}
+
+.workflow-graph-board:not(.is-expanded) .workflow-node-run-pill {
+  flex: 0 0 auto;
+  width: 6px;
+  height: 6px;
+  overflow: hidden;
+  padding: 0;
+  border-radius: 999px;
+  color: transparent;
+  text-indent: -999px;
+}
+
+.workflow-node-prompt-preview {
+  display: -webkit-box;
+  overflow: hidden;
+  margin: 0;
+  color: var(--muted);
+  font-size: 11px;
+  line-height: 1.35;
+  -webkit-box-orient: vertical;
+  -webkit-line-clamp: 3;
+}
+
+.workflow-node-meta-row {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 5px;
+}
+
+.workflow-node-meta-row span {
+  overflow: hidden;
+  max-width: 100%;
+  padding: 2px 6px;
+  border: 1px solid color-mix(in srgb, var(--line) 78%, transparent);
+  border-radius: 999px;
+  background: var(--panel-soft);
+  color: var(--muted);
+  font-size: 10px;
+  line-height: 1.35;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.workflow-graph-board:not(.is-expanded) .workflow-graph-card input,
+.workflow-graph-board:not(.is-expanded) .workflow-graph-card textarea,
+.workflow-graph-board:not(.is-expanded) .workflow-node-config-grid,
+.workflow-graph-board:not(.is-expanded) .workflow-node-runtime,
+.workflow-graph-board:not(.is-expanded) .workflow-node-prompt-preview,
+.workflow-graph-board:not(.is-expanded) .workflow-node-meta-row,
+.workflow-graph-board:not(.is-expanded) .workflow-graph-card p {
+  display: none;
+}
+
+.workflow-graph-board.is-expanded .workflow-node-prompt-preview,
+.workflow-graph-board.is-expanded .workflow-node-meta-row {
+  display: none;
+}
+
+.workflow-graph-board.is-expanded {
+  overflow: auto;
+  background:
+    radial-gradient(circle at 1px 1px, color-mix(in srgb, var(--muted) 18%, transparent) 1px, transparent 0),
+    var(--panel);
+  background-size: 20px 20px;
 }

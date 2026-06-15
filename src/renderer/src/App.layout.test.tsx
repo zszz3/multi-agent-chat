@@ -16,6 +16,7 @@ import {
   TeamPage,
   WorkflowHistoryPanel,
   WorkflowPage,
+  extractWorkflowOutputDocuments,
   parseWorkflowJudgeResult,
   workflowArtifactSummary,
   workflowAssistantDisplayContent,
@@ -300,8 +301,9 @@ describe("ChatControls", () => {
     expect(styles).not.toContain(".workflow-free-canvas-stage");
   });
 
-  test("uses a full-width shell when workflows are shown", () => {
+  test("keeps the workflow history sidebar visible", () => {
     expect(appShellClass("workflow")).toBe("shell workflow-shell");
+    expect(styles).not.toContain(".shell.workflow-shell .resource-sidebar {\n  display: none");
   });
 
   test("uses compact segmented controls for workflow mode", () => {
@@ -948,13 +950,13 @@ describe("WorkflowPage", () => {
       />,
     );
 
-    expect(html).toContain("Workflow");
-    expect(html).toContain("Grill Session");
-    expect(html).toContain("aria-label=\"Workflow agent\"");
-    expect(html).toContain("aria-label=\"Workflow channel\"");
-    expect(html).toContain("aria-label=\"Workflow model\"");
+    expect(html).toContain("New workflow");
+    expect(html).toContain("输入任务描述开始生成 workflow。");
+    expect(html).toContain("aria-label=\"Agent\"");
+    expect(html).toContain("aria-label=\"Channel\"");
+    expect(html).toContain("aria-label=\"Model\"");
     expect(html).toContain("aria-label=\"Workflow task\"");
-    expect(html).toContain("Start Chat");
+    expect(html).toContain("Start");
     expect(html).not.toContain("第一个问题：最终交付物是什么？");
     expect(html).not.toContain("Send Answer");
     expect(html).not.toContain("Generate Graph");
@@ -966,6 +968,124 @@ describe("WorkflowPage", () => {
     expect(html).not.toContain("Run Graph");
     expect(html).not.toContain("Grill first");
     expect(html).not.toContain("Answer one question at a time");
+  });
+
+  test("shows the selected saved workflow title before a graph exists", () => {
+    const html = renderToStaticMarkup(
+      <WorkflowPage
+        title="qjagents Agent 功能速览"
+        status="failed"
+        graph={graph}
+        graphReady={false}
+        objective=""
+        messages={[]}
+        reply=""
+        error={undefined}
+        agentId="codex"
+        channelId="codex-openai"
+        modelId="gpt-5.5"
+        runtimes={runtimes}
+        channels={channels}
+        workDir="/tmp/workspace"
+        running={false}
+        onObjectiveChange={() => undefined}
+        onSelectAgent={() => undefined}
+        onSelectChannel={() => undefined}
+        onSelectModel={() => undefined}
+        onDraftGraph={() => undefined}
+        onReplyChange={() => undefined}
+        onSendReply={() => undefined}
+        onUpdateNode={() => undefined}
+        onRunGraph={async () => undefined}
+        onResetSession={() => undefined}
+      />,
+    );
+
+    expect(html).toContain("qjagents Agent 功能速览");
+    expect(html).toContain("failed");
+    expect(html).toContain("输入任务描述开始生成 workflow。");
+    expect(html).not.toContain("<h2>New workflow</h2>");
+  });
+
+  test("shows saved final output even when the graph was not restored", () => {
+    const html = renderToStaticMarkup(
+      <WorkflowPage
+        title="qjagents Agent 功能速览"
+        status="failed"
+        graph={graph}
+        graphReady={false}
+        objective=""
+        messages={[]}
+        reply=""
+        error={undefined}
+        agentId="codex"
+        channelId="codex-openai"
+        modelId="gpt-5.5"
+        runtimes={runtimes}
+        channels={channels}
+        workDir="/tmp/workspace"
+        running={false}
+        finalReport="## Final User Report\nqjagents workflow finished."
+        onObjectiveChange={() => undefined}
+        onSelectAgent={() => undefined}
+        onSelectChannel={() => undefined}
+        onSelectModel={() => undefined}
+        onDraftGraph={() => undefined}
+        onReplyChange={() => undefined}
+        onSendReply={() => undefined}
+        onUpdateNode={() => undefined}
+        onRunGraph={async () => undefined}
+        onResetSession={() => undefined}
+      />,
+    );
+
+    expect(html).toContain("DAG valid");
+    expect(html).toContain("Review payment release");
+    expect(html).toContain("主 Agent 总结");
+    expect(html).toContain("qjagents workflow finished.");
+    expect(html).toContain("Run Graph");
+  });
+
+  test("renders workflow output documents from final report paths", () => {
+    expect(extractWorkflowOutputDocuments("产物见 docs/learning-highlights.md 和 [summary](reports/summary.md).")).toEqual([
+      { path: "docs/learning-highlights.md", title: "learning-highlights.md" },
+      { path: "reports/summary.md", title: "summary.md" },
+    ]);
+
+    const html = renderToStaticMarkup(
+      <WorkflowPage
+        title="qjagents Agent 功能速览"
+        status="completed"
+        graph={graph}
+        graphReady
+        objective="Review qjagents"
+        messages={[]}
+        reply=""
+        error={undefined}
+        agentId="codex"
+        channelId="codex-openai"
+        modelId="gpt-5.5"
+        runtimes={runtimes}
+        channels={channels}
+        workDir="/tmp/workspace"
+        running={false}
+        finalReport="## Final User Report\n产物见 docs/learning-highlights.md。"
+        onObjectiveChange={() => undefined}
+        onSelectAgent={() => undefined}
+        onSelectChannel={() => undefined}
+        onSelectModel={() => undefined}
+        onDraftGraph={() => undefined}
+        onReplyChange={() => undefined}
+        onSendReply={() => undefined}
+        onUpdateNode={() => undefined}
+        onRunGraph={async () => undefined}
+        onResetSession={() => undefined}
+      />,
+    );
+
+    expect(html).toContain("产出文档");
+    expect(html).toContain("learning-highlights.md");
+    expect(html).toContain("docs/learning-highlights.md");
   });
 
   test("renders workflow history beside the workflow workspace", () => {
@@ -1282,7 +1402,7 @@ workflowGraph.upsert({
     expect(html).toContain("Review payment release");
     expect(html).toContain("第一个问题：最终交付物是什么？");
     expect(html).toContain("aria-label=\"Reply to grill question\"");
-    expect(html).toContain("Send Answer");
+    expect(html).toContain("Send");
     expect(html).not.toContain("DAG valid");
   });
 
@@ -1330,7 +1450,7 @@ workflowGraph.upsert({
     expect(html).toContain("Run Graph");
     expect(html).toContain("aria-label=\"Reply to workflow agent\"");
     expect(html).toContain("Ask the workflow agent to modify the graph");
-    expect(html).toContain("Send Change");
+    expect(html).toContain("Send");
     expect(html).not.toContain("Generate Graph");
   });
 
@@ -1416,10 +1536,10 @@ workflowGraph.upsert({
       />,
     );
 
-    expect(html).toContain("Final report");
+    expect(html).toContain("主 Agent 总结");
     expect(html).toContain("Main agent review");
     expect(html).toContain("Payment release is ready with one follow-up risk.");
-    expect(html).toContain("Workflow grill transcript");
+    expect(html).toContain("Workflow transcript");
     expect(html).toContain("Main agent report ready");
   });
 

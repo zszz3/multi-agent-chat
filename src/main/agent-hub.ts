@@ -70,6 +70,7 @@ import {
   loadModelChannels as readModelChannels,
   saveModelChannels as writeModelChannels,
 } from "./model-config";
+import { SqliteAppStore } from "./sqlite-store";
 
 const execFileAsync = promisify(execFile);
 const DEFAULT_AGENT: AgentId = "codex";
@@ -654,6 +655,7 @@ export class AgentHub {
   private workDir = process.cwd();
   private channels: AgentChannel[] = createDefaultChannels();
   private storagePath: string | undefined = undefined;
+  private sqliteStore: SqliteAppStore | undefined = undefined;
   private modelConfigPath: string | undefined = undefined;
   private persistTimer: ReturnType<typeof setTimeout> | undefined = undefined;
   private persistInFlight: Promise<void> | undefined = undefined;
@@ -691,8 +693,34 @@ export class AgentHub {
     this.emit();
   }
 
-  async loadPersistedState(storagePath: string): Promise<void> {
+  async loadPersistedState(storagePath: string, legacyJsonPath?: string): Promise<void> {
     this.storagePath = storagePath;
+    if (path.extname(storagePath) === ".db") {
+      this.sqliteStore = new SqliteAppStore(storagePath);
+      try {
+        const persisted = await this.sqliteStore.load();
+        if (persisted !== undefined) {
+          this.restorePersistedState(persisted);
+          return;
+        }
+      } catch (error) {
+        console.warn(`Failed to load app state from SQLite ${storagePath}:`, error);
+      }
+      if (legacyJsonPath) {
+        try {
+          const raw = await readFile(legacyJsonPath, "utf8");
+          const parsed = JSON.parse(raw) as unknown;
+          this.restorePersistedState(parsed);
+          await this.persistState();
+        } catch (error) {
+          const code = error && typeof error === "object" ? (error as { code?: unknown }).code : undefined;
+          if (code !== "ENOENT") {
+            console.warn(`Failed to migrate chat history from ${legacyJsonPath}:`, error);
+          }
+        }
+      }
+      return;
+    }
     try {
       const raw = await readFile(storagePath, "utf8");
       const parsed = JSON.parse(raw) as unknown;
@@ -1660,7 +1688,7 @@ export class AgentHub {
     return {
       activeWorkflowId: this.activeWorkflowId,
       workflows: [...this.workflows.values()]
-        .sort((left, right) => right.updatedAt - left.updatedAt)
+        .sort((left, right) => right.createdAt - left.createdAt)
         .map((workflow) => this.cloneWorkflowDraft(workflow)),
       runs: [...this.workflowRuns.values()]
         .sort((left, right) => right.startedAt - left.startedAt)
@@ -2773,7 +2801,7 @@ export class AgentHub {
     return this.cloneWorkflowDraft({
       workflowId: asOptionalString(record.workflowId) ?? `wf_${randomUUID()}`,
       title: asOptionalString(record.title) ?? graph.title,
-      status: this.restoreWorkflowStatus(record.status),
+      status: this.restoreWorkflowDraftStatus(record.status),
       revision: Math.max(1, Math.floor(asNumber(record.revision, 1))),
       agentId: record.agentId,
       channelId: normalizedChannelId,
@@ -2818,7 +2846,7 @@ export class AgentHub {
     return {
       runId,
       workflowId,
-      status: this.restoreWorkflowStatus(record.status),
+      status: this.restoreWorkflowRunStatus(record.status),
       graphSnapshot,
       progress: asArray(record.progress)
         .map((item) => this.restoreWorkflowRunProgressItem(item))
@@ -2833,6 +2861,16 @@ export class AgentHub {
 
   private restoreWorkflowStatus(value: unknown): WorkflowStatus {
     return value === "running" || value === "completed" || value === "failed" || value === "stopped" ? value : "draft";
+  }
+
+  private restoreWorkflowDraftStatus(value: unknown): WorkflowStatus {
+    const status = this.restoreWorkflowStatus(value);
+    return status === "running" ? "failed" : status;
+  }
+
+  private restoreWorkflowRunStatus(value: unknown): WorkflowStatus {
+    const status = this.restoreWorkflowStatus(value);
+    return status === "running" ? "failed" : status;
   }
 
   private restoreWorkflowGraph(raw: unknown): WorkflowGraph | undefined {
@@ -2971,10 +3009,7 @@ export class AgentHub {
     }, PERSIST_DEBOUNCE_MS);
   }
 
-  private async persistState(): Promise<void> {
-    if (!this.storagePath) return;
-    if (this.persistInFlight) await this.persistInFlight;
-
+  private buildPersistedPayload(): PersistedAppStateV2 {
     const sessions: PersistedChatSessionRecord[] = [];
     const messages: PersistedChatMessageRecord[] = [];
     const events: PersistedChatEventRecord[] = [];
@@ -3090,7 +3125,7 @@ export class AgentHub {
       });
     }
 
-    const payload: PersistedAppStateV2 = {
+    return {
       version: 2,
       activeChatId: this.activeChatId ?? null,
       activeTaskId: this.activeTaskId ?? null,
@@ -3107,6 +3142,24 @@ export class AgentHub {
       teamRuns,
       workflowStore: this.cloneWorkflowStore(),
     };
+  }
+
+  private async persistState(): Promise<void> {
+    if (!this.storagePath) return;
+    if (this.persistInFlight) await this.persistInFlight;
+
+    const payload = this.buildPersistedPayload();
+    if (this.sqliteStore) {
+      this.persistInFlight = this.sqliteStore.save(payload);
+      try {
+        await this.persistInFlight;
+      } catch (error) {
+        console.warn(`Failed to persist app state to SQLite ${this.storagePath}:`, error);
+      } finally {
+        this.persistInFlight = undefined;
+      }
+      return;
+    }
 
     const targetPath = this.storagePath;
     const tempPath = `${targetPath}.${process.pid}.${Date.now()}.tmp`;

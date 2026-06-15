@@ -346,6 +346,13 @@ export interface WorkflowArtifactReference {
   url?: string;
 }
 
+export interface LocalFilePreview {
+  path: string;
+  title: string;
+  content: string;
+  truncated: boolean;
+}
+
 export interface WorkflowDraftState {
   workflowId: string;
   title: string;

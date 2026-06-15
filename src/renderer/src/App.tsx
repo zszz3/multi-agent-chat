@@ -54,6 +54,7 @@ import type {
   CodexPluginCatalogItem,
   GeneratedConfigFile,
   ImportedCodexConfig,
+  LocalFilePreview,
   TeamRun,
   TaskProgress,
   TaskRun,
@@ -81,6 +82,7 @@ const WORKFLOW_TASK_POLL_MS = 1000;
 const WORKFLOW_TASK_TIMEOUT_MS = 30 * 60 * 1000;
 const WORKFLOW_NODE_MAX_ATTEMPTS = 2;
 const WORKFLOW_FINAL_REVIEW_NODE_ID = "__final_review__";
+const WORKFLOW_OUTPUT_DOCUMENT_EXTENSIONS = "md|markdown|txt|json|yaml|yml|html|htm";
 
 const TASK_STATUS_FILTERS: Array<{ id: TaskStatusFilterValue; label: string }> = [
   { id: "all", label: "All" },
@@ -662,6 +664,44 @@ export function workflowContextDocumentFromArtifacts(artifacts: Array<{ nodeId: 
   ]
     .join("\n")
     .trim();
+}
+
+export interface WorkflowOutputDocument {
+  path: string;
+  title: string;
+}
+
+function cleanWorkflowOutputPath(value: string): string {
+  return value.replace(/[),.;:!?]+$/g, "").replace(/^["'`(]+|["'`]+$/g, "");
+}
+
+export function extractWorkflowOutputDocuments(...sources: string[]): WorkflowOutputDocument[] {
+  const docs = new Map<string, WorkflowOutputDocument>();
+  const extensionPattern = WORKFLOW_OUTPUT_DOCUMENT_EXTENSIONS;
+  const markdownLinkPattern = new RegExp(String.raw`\[[^\]]+\]\(([^)]+\.(?:${extensionPattern})(?:#[^)]+)?)\)`, "gi");
+  const pathPattern = new RegExp(String.raw`(?:^|[\s"'` + "`" + String.raw`(])((?:~\/|\/|\.{1,2}\/|[\w.-]+\/)[^\s"'` + "`" + String.raw`()<>]*\.(?:${extensionPattern})(?:#[^\s"'` + "`" + String.raw`()<>]*)?)`, "gi");
+
+  for (const source of sources) {
+    const text = source || "";
+    const matches: Array<{ index: number; path: string }> = [];
+    for (const pattern of [markdownLinkPattern, pathPattern]) {
+      pattern.lastIndex = 0;
+      let match: RegExpExecArray | null;
+      while ((match = pattern.exec(text))) {
+        const rawPath = cleanWorkflowOutputPath(match[1] ?? "");
+        if (!rawPath || rawPath.startsWith("http://") || rawPath.startsWith("https://")) continue;
+        matches.push({ index: match.index + match[0].indexOf(match[1] ?? ""), path: rawPath.split("#")[0] ?? rawPath });
+      }
+    }
+    for (const item of matches.sort((left, right) => left.index - right.index)) {
+      if (docs.has(item.path)) continue;
+      docs.set(item.path, {
+        path: item.path,
+        title: item.path.split(/[\\/]/).filter(Boolean).at(-1) ?? item.path,
+      });
+    }
+  }
+  return [...docs.values()];
 }
 
 export function workflowNodeRunPrompt(
@@ -1393,6 +1433,14 @@ export function App() {
   async function chooseWorkDir(): Promise<void> {
     const next = await window.multiAgentChat.chooseWorkDir();
     setSnapshot(next);
+  }
+
+  async function readLocalFile(filePath: string): Promise<LocalFilePreview> {
+    const api = window.multiAgentChat as typeof window.multiAgentChat & {
+      readLocalFile?: (path: string) => Promise<LocalFilePreview>;
+    };
+    if (!api.readLocalFile) throw new Error("文件预览能力需要重启应用后生效。");
+    return api.readLocalFile(filePath);
   }
 
   async function clearHistory(): Promise<void> {
@@ -2344,6 +2392,8 @@ export function App() {
           />
         ) : activeFeature === "workflow" ? (
           <WorkflowPage
+            title={workflowTitle}
+            status={workflowStatus}
             graph={workflowGraph}
             graphReady={workflowGraphReady}
             objective={workflowObjective}
@@ -2370,6 +2420,9 @@ export function App() {
             onUpdateNode={updateWorkflowNode}
             onRunGraph={runWorkflowGraph}
             onResetSession={resetWorkflowSession}
+            onChooseWorkDir={chooseWorkDir}
+            onRefresh={refresh}
+            onReadOutputFile={readLocalFile}
           />
         ) : activeFeature === "configs" ? (
           <ConfigPage
@@ -3910,7 +3963,12 @@ export function WorkflowHistoryPanel({
           >
             <strong>{workflow.title}</strong>
             <span>{`${workflow.status} · ${workflow.graph.nodes.length} nodes · rev ${workflow.revision}`}</span>
-            <small>{workflow.objective}</small>
+            <small>
+              {workflow.objective ||
+                (workflow.graphReady || workflow.runProgress.length > 0 || Boolean(workflow.contextDocument || workflow.runContextDocument || workflow.finalReport)
+                  ? "未保存目标"
+                  : "未开始")}
+            </small>
           </button>
         ))}
       </div>
@@ -3919,6 +3977,8 @@ export function WorkflowHistoryPanel({
 }
 
 interface WorkflowPageProps {
+  title?: string;
+  status?: WorkflowStatus;
   graph: WorkflowGraph;
   graphReady: boolean;
   objective: string;
@@ -3945,9 +4005,14 @@ interface WorkflowPageProps {
   onUpdateNode: (nodeId: string, update: Partial<WorkflowGraphNode>) => void;
   onRunGraph: () => MaybePromise;
   onResetSession: () => MaybePromise;
+  onChooseWorkDir?: () => MaybePromise;
+  onRefresh?: () => MaybePromise;
+  onReadOutputFile?: (filePath: string) => Promise<LocalFilePreview>;
 }
 
 export function WorkflowPage({
+  title,
+  status = "draft",
   graph,
   graphReady,
   objective,
@@ -3974,6 +4039,9 @@ export function WorkflowPage({
   onUpdateNode,
   onRunGraph,
   onResetSession,
+  onChooseWorkDir = () => undefined,
+  onRefresh = () => undefined,
+  onReadOutputFile,
 }: WorkflowPageProps) {
   const validation = validateWorkflowGraph(graph);
   const workflowStarted = messages.length > 0;
@@ -4005,8 +4073,27 @@ export function WorkflowPage({
   const runProgressVisible = runProgress.length > 0;
   const contextDocumentVisible = contextDocument.trim().length > 0;
   const finalReportVisible = finalReport.trim().length > 0;
+  const outputDocuments = extractWorkflowOutputDocuments(
+    finalReport,
+    contextDocument,
+    messages.map((message) => message.content).join("\n\n"),
+  );
+  const outputDocumentsVisible = outputDocuments.length > 0;
+  const graphVisible = graphReady || runProgressVisible || contextDocumentVisible || finalReportVisible;
+  const workflowDisplayTitle = title?.trim() || (graphReady ? graph.title : "New workflow");
+  const composerValue = workflowStarted ? reply : objective;
+  const composerPlaceholder = workflowStarted
+    ? graphVisible
+      ? "Ask the workflow agent to modify the graph or explain the run..."
+      : "Answer the current question..."
+    : "Describe the workflow task...";
+  const composerCanSend = Boolean(composerValue.trim()) && !running;
+  const composerLocked = workflowStarted || running;
   const [graphExpanded, setGraphExpanded] = useState(false);
-  const grillTranscriptRef = useRef<HTMLDivElement>(null);
+  const [filePreview, setFilePreview] = useState<LocalFilePreview | undefined>(undefined);
+  const [filePreviewError, setFilePreviewError] = useState<string | undefined>(undefined);
+  const [filePreviewLoadingPath, setFilePreviewLoadingPath] = useState<string | undefined>(undefined);
+  const grillTranscriptRef = useRef<HTMLElement>(null);
   const grillStickRef = useRef(true);
 
   useEffect(() => {
@@ -4014,6 +4101,15 @@ export function WorkflowPage({
     if (!transcript || !grillStickRef.current) return;
     transcript.scrollTop = transcript.scrollHeight;
   }, [messages]);
+
+  useEffect(() => {
+    if (!graphExpanded) return;
+    function handleKeyDown(event: globalThis.KeyboardEvent): void {
+      if (event.key === "Escape") setGraphExpanded(false);
+    }
+    window.addEventListener("keydown", handleKeyDown);
+    return () => window.removeEventListener("keydown", handleKeyDown);
+  }, [graphExpanded]);
 
   function handleGrillTranscriptScroll(): void {
     const transcript = grillTranscriptRef.current;
@@ -4027,22 +4123,43 @@ export function WorkflowPage({
     setGraphExpanded(true);
   }
 
+  async function openOutputDocument(filePath: string): Promise<void> {
+    if (!onReadOutputFile) {
+      setFilePreviewError("当前环境不支持应用内文件预览。");
+      return;
+    }
+    setFilePreviewError(undefined);
+    setFilePreviewLoadingPath(filePath);
+    try {
+      setFilePreview(await onReadOutputFile(filePath));
+    } catch (error) {
+      setFilePreviewError(error instanceof Error ? error.message : String(error));
+    } finally {
+      setFilePreviewLoadingPath(undefined);
+    }
+  }
+
   return (
-    <section className="workflow-page">
-      <header className="workflow-page-header">
-        <div>
-          <h2>Workflow</h2>
-          <p>{workDir || "No work directory selected"}</p>
+    <>
+      <header className="chat-header workflow-chat-header">
+        <div className="chat-title-block">
+          <h2>{workflowDisplayTitle}</h2>
+          <div className="chat-subtitle">
+            <span className={`agent-badge mini ${agentAccent(agentId)}`}>{agentLabel(agentId)}</span>
+            <span>{workflowEffectiveChannels.find((channel) => channel.id === workflowSelectedChannelId)?.label ?? workflowSelectedChannelId}</span>
+            <span>{workflowModelOptions.find((model) => model.id === workflowSelectedModelId)?.label ?? workflowSelectedModelId}</span>
+            <span>{graphVisible ? `${validation.executableNodeIds.length} executable nodes` : status}</span>
+            <span>{workDir || "No work directory selected"}</span>
+          </div>
         </div>
-        <div className="workflow-page-actions">
-          {workflowStarted || graphReady ? (
-            <button className="control-btn compact secondary" onClick={() => void onResetSession()}>
+        <div className="chat-header-actions workflow-page-actions">
+          {workflowStarted || graphVisible ? (
+            <button className="icon-btn" onClick={() => void onResetSession()} title="New workflow session" disabled={running}>
               <Plus size={14} />
-              <span>New Session</span>
             </button>
           ) : null}
-          {graphReady ? (
-            <button className="control-btn compact" onClick={() => void onRunGraph()} disabled={!validation.valid || running}>
+          {graphVisible ? (
+            <button className="send-btn" onClick={() => void onRunGraph()} disabled={!validation.valid || running}>
               <Play size={14} />
               <span>{running ? "Running..." : "Run Graph"}</span>
             </button>
@@ -4050,146 +4167,47 @@ export function WorkflowPage({
         </div>
       </header>
 
-      <div className={`workflow-page-grid ${graphReady ? "has-graph" : "is-chat-only"}`}>
-        <section className="workflow-grill-surface">
-          <div className="workflow-grill-head">
-            <strong>Grill Session</strong>
-            <span>One question at a time</span>
+      <section className="cli-transcript workflow-transcript" aria-label="Workflow transcript" ref={grillTranscriptRef} onScroll={handleGrillTranscriptScroll}>
+        {!workflowStarted && !graphVisible ? (
+          <div className="empty-state terminal-empty">
+            <GitBranch size={17} />
+            <span>输入任务描述开始生成 workflow。</span>
           </div>
-
-          {!workflowStarted ? (
-            <div className="workflow-start-composer">
-              <div className="workflow-config-row">
-                <label className="workflow-config-field">
-                  <span>Agent</span>
-                  <select
-                    aria-label="Workflow agent"
-                    value={agentId}
-                    onChange={(event) => onSelectAgent(event.currentTarget.value as AgentId)}
-                  >
-                    {AGENTS.map((candidate) => (
-                      <option key={candidate} value={candidate}>
-                        {agentLabel(candidate)}
-                      </option>
-                    ))}
-                  </select>
-                </label>
-                <label className="workflow-config-field">
-                  <span>Channel</span>
-                  <select
-                    aria-label="Workflow channel"
-                    value={workflowSelectedChannelId}
-                    onChange={(event) => onSelectChannel(event.currentTarget.value)}
-                  >
-                    {workflowEffectiveChannels.map((channel) => (
-                      <option key={channel.id} value={channel.id}>
-                        {channel.label}
-                      </option>
-                    ))}
-                  </select>
-                </label>
-                <label className="workflow-config-field">
-                  <span>Model</span>
-                  <select
-                    aria-label="Workflow model"
-                    value={workflowSelectedModelId}
-                    onChange={(event) => onSelectModel(event.currentTarget.value)}
-                  >
-                    {workflowModelOptions.map((model) => (
-                      <option key={model.id} value={model.id}>
-                        {model.label}
-                      </option>
-                    ))}
-                  </select>
-                </label>
+        ) : workflowStarted ? (
+          messages.map((message) => (
+            <div key={message.id} className={`cli-message ${message.role}`}>
+              <div className="cli-agent-line">
+                {message.role === "assistant" ? <span className={`runtime-dot ${agentAccent(agentId)}`} /> : null}
+                <span>{message.role === "assistant" ? "Workflow agent" : "You"}</span>
               </div>
-              <textarea
-                className="workflow-task-input"
-                aria-label="Workflow task"
-                value={objective}
-                onChange={(event) => onObjectiveChange(event.currentTarget.value)}
-                onKeyDown={(event) => {
-                  if (shouldSendComposerKey({
-                    key: event.key,
-                    shiftKey: event.shiftKey,
-                    metaKey: event.metaKey,
-                    ctrlKey: event.ctrlKey,
-                    isComposing: event.nativeEvent.isComposing,
-                  })) {
-                    event.preventDefault();
-                    if (objective.trim() && !running) void onSendReply();
-                  }
-                }}
-                rows={6}
-                placeholder="Describe the workflow task..."
-              />
-              {error ? <div className="workflow-error">{error}</div> : null}
-              <div className="workflow-grill-actions">
-                <button className="control-btn compact" onClick={onSendReply} disabled={!objective.trim() || running}>
-                  <Send size={14} />
-                  <span>{running ? "Asking..." : "Start Chat"}</span>
-                </button>
-              </div>
+              {message.role === "user" ? (
+                <pre>{message.content}</pre>
+              ) : (
+                <div className={`cli-markdown ${running && message.content === WORKFLOW_THINKING_MESSAGE ? "is-streaming" : ""}`}>
+                  <Markdown text={workflowAssistantDisplayContent(message.content)} />
+                  {running && message.content === WORKFLOW_THINKING_MESSAGE ? <span className="stream-cursor" aria-hidden="true" /> : null}
+                </div>
+              )}
             </div>
-          ) : (
-            <>
-              <div
-                className="workflow-chat-transcript"
-                aria-label="Workflow grill transcript"
-                ref={grillTranscriptRef}
-                onScroll={handleGrillTranscriptScroll}
-              >
-                {messages.map((message) => (
-                  <article key={message.id} className={`workflow-chat-bubble is-${message.role}`}>
-                    <span>{message.role === "assistant" ? "Grill" : "You"}</span>
-                    <p>{message.role === "assistant" ? workflowAssistantDisplayContent(message.content) : message.content}</p>
-                  </article>
-                ))}
+          ))
+        ) : null}
+        {running ? (
+          <div className="cli-status-line">
+            <span className={`runtime-dot ${agentAccent(agentId)}`} />
+            <span>{agentLabel(agentId)} workflow agent is thinking</span>
+            <span className="stream-cursor" aria-hidden="true" />
+          </div>
+        ) : null}
+        {error ? <div className="workflow-error workflow-inline-error">{error}</div> : null}
+        {graphVisible ? (
+          <section className="workflow-result-card" aria-label="Workflow graph result">
+            <div className="workflow-result-card-head">
+              <div>
+                <strong>{graph.title}</strong>
+                <span>{validation.valid ? "DAG valid" : "DAG invalid"}</span>
               </div>
-
-              <textarea
-                className="workflow-reply-input"
-                aria-label={graphReady ? "Reply to workflow agent" : "Reply to grill question"}
-                value={reply}
-                onChange={(event) => onReplyChange(event.currentTarget.value)}
-                onKeyDown={(event) => {
-                  if (shouldSendComposerKey({
-                    key: event.key,
-                    shiftKey: event.shiftKey,
-                    metaKey: event.metaKey,
-                    ctrlKey: event.ctrlKey,
-                    isComposing: event.nativeEvent.isComposing,
-                  })) {
-                    event.preventDefault();
-                    if (reply.trim() && !running) void onSendReply();
-                  }
-                }}
-                placeholder={graphReady ? "Ask the workflow agent to modify the graph..." : "Answer the current question..."}
-                rows={3}
-              />
-              {error ? <div className="workflow-error">{error}</div> : null}
-              <div className="workflow-grill-actions">
-                <button className="control-btn compact secondary" onClick={onSendReply} disabled={!reply.trim() || running}>
-                  <Send size={14} />
-                  <span>{running ? "Asking..." : graphReady ? "Send Change" : "Send Answer"}</span>
-                </button>
-                {!graphReady && grillComplete ? (
-                  <button className="control-btn compact" onClick={onDraftGraph}>
-                    <Wand2 size={14} />
-                    <span>Generate Graph</span>
-                  </button>
-                ) : null}
-              </div>
-            </>
-          )}
-        </section>
-
-        {graphReady ? (
-          <section className="workflow-graph-surface">
-            <div className="workflow-validation-row">
-              <TaskStatusChip label={validation.valid ? "DAG valid" : "DAG invalid"} tone={validation.valid ? "done" : "failed"} />
               <div className="workflow-validation-row-actions">
-                <span>{`${validation.executableNodeIds.length} executable nodes`}</span>
+                <TaskStatusChip label={validation.valid ? "Ready" : "Invalid"} tone={validation.valid ? "done" : "failed"} />
                 <button className="icon-btn flat" onClick={() => setGraphExpanded(true)} title="Expand graph board" aria-label="Expand workflow graph board">
                   <Maximize2 size={14} />
                 </button>
@@ -4222,10 +4240,34 @@ export function WorkflowPage({
             {finalReportVisible ? (
               <section className="workflow-final-report" aria-label="Workflow final report">
                 <div className="workflow-final-report-head">
-                  <strong>Final report</strong>
-                  <span>Main agent review</span>
+                  <strong>主 Agent 总结</strong>
+                  <span>Workflow completed</span>
                 </div>
                 <pre>{finalReport}</pre>
+              </section>
+            ) : null}
+            {outputDocumentsVisible ? (
+              <section className="workflow-output-documents" aria-label="Workflow output documents">
+                <div className="workflow-output-documents-head">
+                  <strong>产出文档</strong>
+                  <span>{`${outputDocuments.length} files`}</span>
+                </div>
+                <div className="workflow-output-document-list">
+                  {outputDocuments.map((document) => (
+                    <button
+                      key={document.path}
+                      className="workflow-output-document"
+                      onClick={() => void openOutputDocument(document.path)}
+                      disabled={filePreviewLoadingPath === document.path}
+                      title={document.path}
+                    >
+                      <FileInput size={14} />
+                      <span>{document.title}</span>
+                      <small>{filePreviewLoadingPath === document.path ? "读取中" : document.path}</small>
+                    </button>
+                  ))}
+                </div>
+                {filePreviewError ? <div className="workflow-error">{filePreviewError}</div> : null}
               </section>
             ) : null}
             {contextDocumentVisible ? (
@@ -4237,7 +4279,6 @@ export function WorkflowPage({
                 <pre>{contextDocument}</pre>
               </section>
             ) : null}
-
             {graphExpanded ? (
               <>
                 <div className="workflow-graph-backdrop" onClick={() => setGraphExpanded(false)} />
@@ -4265,6 +4306,7 @@ export function WorkflowPage({
                       const modelOptions = modelsForChannel(agentId, channelId, channels);
                       const modelId = modelOptions.some((model) => model.id === node.modelId) ? node.modelId! : DEFAULT_MODEL_ID;
                       const runtime = runtimeMap.get(agentId) ?? fallbackRuntime(agentId);
+                      const nodeEditingDisabled = running;
                       return (
                         <article className={`workflow-graph-card is-${node.kind} ${nodeRunProgress ? `run-${nodeRunProgress.status}` : ""}`} key={node.id}>
                           <div className="workflow-graph-card-head">
@@ -4277,13 +4319,20 @@ export function WorkflowPage({
                           <input
                             aria-label={`Node ${node.id} title`}
                             value={node.title}
+                            disabled={nodeEditingDisabled}
                             onChange={(event) => onUpdateNode(node.id, { title: event.currentTarget.value })}
                           />
                           {node.kind === "agent" ? (
                             <>
+                              <p className="workflow-node-prompt-preview">{node.prompt}</p>
+                              <div className="workflow-node-meta-row">
+                                <span>{agentLabel(agentId)}</span>
+                                <span>{modelOptions.find((model) => model.id === modelId)?.label ?? modelId}</span>
+                              </div>
                               <textarea
                                 aria-label={`Node ${node.id} prompt`}
                                 value={node.prompt}
+                                disabled={nodeEditingDisabled}
                                 onChange={(event) => onUpdateNode(node.id, { prompt: event.currentTarget.value })}
                                 rows={4}
                               />
@@ -4293,6 +4342,7 @@ export function WorkflowPage({
                                   <select
                                     aria-label={`Node ${node.id} agent`}
                                     value={agentId}
+                                    disabled={nodeEditingDisabled}
                                     onChange={(event) => {
                                       const nextAgentId = event.currentTarget.value as AgentId;
                                       onUpdateNode(node.id, {
@@ -4314,6 +4364,7 @@ export function WorkflowPage({
                                   <select
                                     aria-label={`Node ${node.id} channel`}
                                     value={channelId}
+                                    disabled={nodeEditingDisabled}
                                     onChange={(event) => onUpdateNode(node.id, { channelId: event.currentTarget.value, modelId: DEFAULT_MODEL_ID })}
                                   >
                                     {channelOptions.map((channel) => (
@@ -4328,6 +4379,7 @@ export function WorkflowPage({
                                   <select
                                     aria-label={`Node ${node.id} model`}
                                     value={modelId}
+                                    disabled={nodeEditingDisabled}
                                     onChange={(event) => onUpdateNode(node.id, { modelId: event.currentTarget.value })}
                                   >
                                     {modelOptions.map((model) => (
@@ -4358,8 +4410,85 @@ export function WorkflowPage({
             </div>
           </section>
         ) : null}
-      </div>
-    </section>
+      </section>
+
+      {filePreview ? (
+        <section className="workflow-file-preview-overlay" role="dialog" aria-modal="true" aria-label="Workflow output document preview" onClick={() => setFilePreview(undefined)}>
+          <article className="workflow-file-preview-modal" onClick={(event) => event.stopPropagation()}>
+            <header>
+              <div>
+                <strong>{filePreview.title}</strong>
+                <span>{filePreview.path}</span>
+              </div>
+              <button className="icon-btn" onClick={() => setFilePreview(undefined)} title="Close document preview" aria-label="Close document preview">
+                <X size={15} />
+              </button>
+            </header>
+            {filePreview.truncated ? <div className="workflow-file-preview-note">文件较大，仅显示前 512KB。</div> : null}
+            <pre>{filePreview.content}</pre>
+          </article>
+        </section>
+      ) : null}
+
+      <section className="composer workflow-composer">
+        <div className="composer-box">
+          <textarea
+            aria-label={workflowStarted ? (graphVisible ? "Reply to workflow agent" : "Reply to grill question") : "Workflow task"}
+            value={composerValue}
+            onChange={(event) => {
+              if (workflowStarted) onReplyChange(event.currentTarget.value);
+              else onObjectiveChange(event.currentTarget.value);
+            }}
+            onKeyDown={(event) => {
+              if (shouldSendComposerKey({
+                key: event.key,
+                shiftKey: event.shiftKey,
+                metaKey: event.metaKey,
+                ctrlKey: event.ctrlKey,
+                isComposing: event.nativeEvent.isComposing,
+              })) {
+                event.preventDefault();
+                if (composerCanSend) void onSendReply();
+              }
+            }}
+            placeholder={composerPlaceholder}
+            rows={2}
+          />
+          <div className="composer-footer">
+            <ChatControls
+              agentId={agentId}
+              channelId={workflowSelectedChannelId}
+              modelId={workflowSelectedModelId}
+              channels={channels}
+              locked={composerLocked}
+              running={running}
+              workDir={workDir}
+              runtimes={runtimes}
+              onSelectAgent={onSelectAgent}
+              onSelectChannel={onSelectChannel}
+              onSelectModel={onSelectModel}
+              onChooseWorkDir={onChooseWorkDir}
+              onRefresh={onRefresh}
+            />
+            <div className="workflow-composer-actions">
+              {!graphVisible && grillComplete ? (
+                <button className="control-btn compact secondary" onClick={onDraftGraph} disabled={running}>
+                  <Wand2 size={14} />
+                  <span>Generate Graph</span>
+                </button>
+              ) : null}
+              <button className="send-btn" onClick={onSendReply} disabled={!composerCanSend}>
+                <Send size={14} />
+                <span>{running ? "Running" : workflowStarted ? "Send" : "Start"}</span>
+              </button>
+            </div>
+          </div>
+        </div>
+        <div className="composer-hint">
+          <kbd>↵</kbd> 发送 · <kbd>⇧↵</kbd> 换行 · {graphVisible ? "继续对话可修改 workflow" : "先对话生成 workflow"}
+        </div>
+      </section>
+    </>
   );
 }
 
