@@ -1,113 +1,178 @@
 # Multi Agent Chat
 
-Local Electron app for chatting with agent runtimes, running tasks, building workflow DAGs, and exposing configured agents through a local MCP bridge.
+一个本地 Electron 桌面应用，用来统一管理和使用多种 Agent 运行方式。它支持直接和 Codex / Claude Code 聊天，也支持配置纯 API Agent、创建任务、编排 Workflow，并通过本地 MCP 暴露能力给其他 Agent 调用。
 
-## Features
+## 目前有哪些功能
 
-- Chat with Codex CLI, Claude Code CLI, or direct API providers.
-- Configure reusable agents from provider presets.
-- Run one-off tasks with visible execution history.
-- Build and run workflow graphs from a chat-first planning flow.
-- Preview generated workflow output documents from inside the app.
-- Expose configured agents and workflow tools to other local agents through MCP.
-- Persist local chats, tasks, teams, workflows, and configured agents in SQLite.
+### 1. Chat 聊天
 
-## Runtime Types
+- 支持创建多个聊天会话。
+- 支持选择工作目录、CLI / Runtime、Provider 和模型。
+- 支持 `/status`、`/models`、`/plugins` 等 Codex 相关命令。
+- 已经开始对齐 CLI 的使用体验，例如 Enter 发送、历史会话、运行中状态展示。
 
-The app supports three runtime families:
+### 2. Agent 配置
 
-- `Codex`: starts the local `codex` CLI through its app-server protocol.
-- `Claude Code`: starts the local `claude` CLI in streaming JSON mode.
-- `API`: calls provider APIs directly from the app. OpenAI-compatible providers use `/chat/completions`; Anthropic uses `/messages`.
+在 Config 页面可以创建可复用的 Agent。每个 Agent 可以配置：
 
-Provider presets include OpenAI, Anthropic, DeepSeek, GLM, Kimi, LongCat, MiMo, OpenRouter, GitHub Models, Together, Novita, NVIDIA, SiliconFlow, Bailian, Volcengine, Hunyuan, MiniMax, Azure OpenAI, and custom API endpoints.
+- Agent 名称、描述、标签和默认 Prompt。
+- 使用哪种 Runtime：
+  - `Codex`：调用本机 Codex CLI。
+  - `Claude Code`：调用本机 Claude Code CLI。
+  - `API`：不启动 CLI，直接请求模型服务 API。
+- 使用哪个 Provider 模板。
+- 使用哪个模型。
+- Provider Key / Token。
+- 高级参数，例如 base URL、headers、provider id、model catalog。
 
-Provider keys are configured once per provider preset and reused by agents that select the same preset.
+Provider Key 按 Provider 维度保存一次，同一个 Provider 被多个 Agent 使用时会复用，不需要每个 Agent 重复配置。
 
-## Requirements
+### 3. Provider 模板
 
-- Node.js 22.13 or newer
+内置了一批类似 ccswitch 的 Provider Preset，创建 Agent 时可以直接点选：
+
+- Codex OpenAI
+- Claude Code
+- OpenAI API
+- Anthropic API
+- DeepSeek
+- GLM
+- Kimi
+- LongCat
+- MiMo
+- OpenRouter
+- GitHub Models
+- Together
+- Novita
+- NVIDIA
+- SiliconFlow
+- Bailian
+- Volcengine
+- Hunyuan
+- MiniMax
+- Azure OpenAI
+- Custom API
+
+其中 OpenAI-compatible Provider 会走 `/chat/completions`，Anthropic API 会走 `/messages`。
+
+### 4. Task 任务
+
+- 可以输入一段任务描述，让 Agent 执行。
+- 支持任务列表、状态流转和看板展示。
+- 支持查看任务执行日志。
+- 支持删除任务，并清理关联的本地会话记录。
+
+### 5. Workflow
+
+Workflow 页面是“先对话，再生成图”的流程：
+
+1. 先像聊天一样描述目标。
+2. Grill / 主 Agent 会逐步追问。
+3. 对话完成后生成 Workflow DAG。
+4. 用户可以编辑节点和模型配置。
+5. 运行 Workflow。
+6. 右侧展示运行进度。
+7. 运行结束后主 Agent 汇总结果。
+8. 产出文档可以在应用内点击预览。
+
+Workflow 的中间记忆和输出文档会放在本地工作目录下的 `.multi-agent-chat/workflows/<workflow-id>/`。
+
+### 6. Agent Teams
+
+- 支持创建 Agent Team。
+- 支持不同协作模式，例如并行、流水线、主管模式。
+- 成员可以配置不同 Agent、模型和 Prompt。
+- 适合把一个目标拆给多个 Agent 分工执行。
+
+### 7. 本地 MCP
+
+应用启动后会开启本地 bridge，`npm run mcp` 可以作为 MCP server 接入其他客户端。
+
+目前 MCP 侧主要用于：
+
+- 查询配置好的 Agent。
+- 操作 Workflow。
+- 给其他 Agent 提供创建 / 查询 / 运行 Workflow 的工具接口。
+
+## 运行要求
+
+- Node.js 22.13 或更高版本
 - npm
-- Optional CLIs:
-  - `codex` on `PATH`, or set `CODEX_PATH=/path/to/codex`
-  - `claude` on `PATH`, or set `CLAUDE_PATH=/path/to/claude`
+- 可选 CLI：
+  - Codex CLI：`codex` 在 PATH 中，或设置 `CODEX_PATH=/path/to/codex`
+  - Claude Code CLI：`claude` 在 PATH 中，或设置 `CLAUDE_PATH=/path/to/claude`
 
-The app opens without Codex or Claude installed. CLI-backed chats and tasks require the matching CLI. API-backed agents require a provider key.
+如果只使用 API Agent，可以不安装 Codex / Claude Code CLI。
 
-## Install
+## 安装
 
 ```bash
 npm install
 ```
 
-## Run In Development
+## 本地启动
 
 ```bash
 npm run dev
 ```
 
-This starts Electron through `electron-vite` and opens the desktop app. If the default Vite port is occupied, the dev server automatically picks the next available port.
+应用会通过 `electron-vite` 启动 Electron 桌面窗口。如果默认端口被占用，Vite 会自动选择下一个可用端口。
 
-## Build
+## 构建
 
 ```bash
 npm run build
 ```
 
-The built app files are written to `out/`.
+构建产物会输出到 `out/`。
 
-## Test
+## 测试
 
 ```bash
 npm test -- --run
 ```
 
-For type checking only:
+只做类型检查：
 
 ```bash
 npm run typecheck
 ```
 
-## Configure Agents
+## MCP 使用
 
-Open the Config page in the app:
-
-1. Click `New agent`.
-2. Choose a CLI/runtime: `Codex`, `Claude Code`, or `API`.
-3. Choose a provider preset.
-4. Enter the provider key if the preset needs one.
-5. Pick a model and write the agent prompt.
-6. Open `Advanced provider settings` only when you need to change base URL, headers, provider ID, or model catalog details.
-
-Each configured agent owns its provider/channel settings. Provider credentials are stored once per preset and reused locally.
-
-## Workflows
-
-The Workflow page starts as a conversation. Describe the goal, answer the planning questions, then let the app generate a workflow graph. You can edit the graph, run it, monitor progress, and preview output documents produced under the workflow storage directory.
-
-## Local MCP Server
-
-Start the desktop app first:
+先启动桌面应用：
 
 ```bash
 npm run dev
 ```
 
-Then point an MCP client at:
+然后启动 MCP server：
 
 ```bash
 npm run mcp
 ```
 
-The MCP process uses stdio and connects to the running Electron app through a local authenticated bridge on `127.0.0.1`. The bridge port is dynamic; discovery metadata is written under the app data directory while the app is running.
+MCP server 通过 stdio 与客户端通信，再连接本机 Electron 应用提供的本地 bridge。bridge 只监听 `127.0.0.1`，端口动态分配。
 
-Available MCP-facing capabilities include listing configured agents and operating workflow drafts/runs.
+## 本地数据说明
 
-## Local Data
+应用会把本地历史数据保存在 Electron `userData` 目录下：
 
-The app stores local chat, task, team, workflow, and configured-agent history in `app.db` under Electron's `userData` directory. Model/provider channel configuration is stored in `model-channels.json`.
+- `app.db`：聊天、任务、团队、Workflow、Agent 配置等历史数据。
+- `model-channels.json`：Provider / Channel 配置。
+- `.multi-agent-chat/`：Workflow 运行时的共享记忆和输出文档。
 
-On first launch with SQLite enabled, the app imports legacy history from `app-chats.json` if `app.db` is empty. Use the in-app clear button to remove local history when needed.
+这些都是本地数据，不应该提交到 Git。仓库已经忽略：
 
-Provider keys are stored locally by the renderer for development convenience. For production use, move credentials into an OS keychain or another secure secret store.
+- `eval-data/`
+- `datasets/`
+- `.venv/`
+- `*.db`
+- `*.sqlite`
+- `*.sqlite3`
+- `app-chats.json`
+- `model-channels.json`
+- `.multi-agent-chat/`
+
+Provider Key 目前为了开发便利保存在本地 renderer 存储中。后续如果要做正式发布，应该迁移到系统 Keychain 或其他安全密钥存储。
 

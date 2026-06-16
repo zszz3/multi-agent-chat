@@ -3,6 +3,7 @@ out/
 dist/
 build/
 coverage/
+.venv/
 
 .DS_Store
 *.log
@@ -14,3 +15,16 @@ CLAUDE.md
 .gdpa
 .multi-agent-chat/
 docs/*learning-review.md
+
+# Local datasets and evaluation corpora
+eval-data/
+datasets/
+
+# Local app data
+*.db
+*.db-shm
+*.db-wal
+*.sqlite
+*.sqlite3
+app-chats.json
+model-channels.json
