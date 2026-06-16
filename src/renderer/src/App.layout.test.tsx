@@ -17,6 +17,7 @@ import {
   WorkflowHistoryPanel,
   WorkflowPage,
   extractWorkflowOutputDocuments,
+  extractWorkflowOutputDocumentsForPlan,
   parseWorkflowJudgeResult,
   workflowArtifactSummary,
   workflowAssistantDisplayContent,
@@ -26,6 +27,7 @@ import {
   workflowJudgePrompt,
   workflowNodeRunPrompt,
   workflowRunProgressSummary,
+  workflowStoragePlanDocument,
   workflowTaskLiveDetail,
 } from "./App";
 import { DEFAULT_MODEL_ID } from "../../shared/models";
@@ -1051,9 +1053,19 @@ describe("WorkflowPage", () => {
       { path: "docs/learning-highlights.md", title: "learning-highlights.md" },
       { path: "reports/summary.md", title: "summary.md" },
     ]);
+    expect(
+      extractWorkflowOutputDocumentsForPlan(
+        {
+          memoryPath: ".multi-agent-chat/workflows/wf_review/memory.md",
+          outputDir: ".multi-agent-chat/workflows/wf_review/outputs",
+        },
+        "证据包含 README.md；最终产物见 .multi-agent-chat/workflows/wf_review/outputs/learning-highlights.md。",
+      ),
+    ).toEqual([{ path: ".multi-agent-chat/workflows/wf_review/outputs/learning-highlights.md", title: "learning-highlights.md" }]);
 
     const html = renderToStaticMarkup(
       <WorkflowPage
+        workflowId="wf_review"
         title="qjagents Agent 功能速览"
         status="completed"
         graph={graph}
@@ -1069,7 +1081,7 @@ describe("WorkflowPage", () => {
         channels={channels}
         workDir="/tmp/workspace"
         running={false}
-        finalReport="## Final User Report\n产物见 docs/learning-highlights.md。"
+        finalReport="## Final User Report\n证据包含 README.md；最终产物见 .multi-agent-chat/workflows/wf_review/outputs/learning-highlights.md。"
         onObjectiveChange={() => undefined}
         onSelectAgent={() => undefined}
         onSelectChannel={() => undefined}
@@ -1085,7 +1097,8 @@ describe("WorkflowPage", () => {
 
     expect(html).toContain("产出文档");
     expect(html).toContain("learning-highlights.md");
-    expect(html).toContain("docs/learning-highlights.md");
+    expect(html).toContain(".multi-agent-chat/workflows/wf_review/outputs/learning-highlights.md");
+    expect(html).not.toContain("README.md</span>");
   });
 
   test("renders workflow history beside the workflow workspace", () => {
@@ -1201,7 +1214,17 @@ workflowGraph.upsert({
       ],
     };
 
-    const prompt = workflowNodeRunPrompt(graph, graph.nodes[2]!, [{ node: graph.nodes[1]!, artifact: "Inventory artifact" }], "## Inventory\nKey context.");
+    const storagePlan = {
+      memoryPath: ".multi-agent-chat/workflows/wf_review/memory.md",
+      outputDir: ".multi-agent-chat/workflows/wf_review/outputs",
+    };
+    const prompt = workflowNodeRunPrompt(
+      graph,
+      graph.nodes[2]!,
+      [{ node: graph.nodes[1]!, artifact: "Inventory artifact" }],
+      "## Inventory\nKey context.",
+      storagePlan,
+    );
 
     expect(prompt).toContain("Workflow: Review DAG");
     expect(prompt).toContain("Node: Writer (writer)");
@@ -1213,7 +1236,32 @@ workflowGraph.upsert({
     expect(prompt).toContain("Inventory artifact");
     expect(prompt).toContain("Work Completion Report");
     expect(prompt).toContain("This report will be appended to the shared Workflow Context document");
+    expect(prompt).toContain("Workflow storage plan");
+    expect(prompt).toContain(storagePlan.outputDir);
     expect(prompt).toContain("When you finish, include a concise Handoff section.");
+  });
+
+  test("builds workflow storage plan instructions for shared memory and outputs", () => {
+    const storagePlan = {
+      memoryPath: ".multi-agent-chat/workflows/wf_review/memory.md",
+      outputDir: ".multi-agent-chat/workflows/wf_review/outputs",
+    };
+
+    expect(workflowStoragePlanDocument(storagePlan)).toContain("Shared memory file: .multi-agent-chat/workflows/wf_review/memory.md");
+    expect(workflowStoragePlanDocument(storagePlan)).toContain("Output document directory: .multi-agent-chat/workflows/wf_review/outputs");
+
+    const prompt = workflowFinalReviewPrompt(
+      graph,
+      [{ node: graph.nodes[1]!, artifact: "Wrote .multi-agent-chat/workflows/wf_review/outputs/summary.md" }],
+      workflowStoragePlanDocument(storagePlan),
+      [],
+      storagePlan,
+    );
+
+    expect(prompt).toContain("Workflow storage plan");
+    expect(prompt).toContain(storagePlan.memoryPath);
+    expect(prompt).toContain(storagePlan.outputDir);
+    expect(prompt).toContain("Only list output documents that are under the output document directory.");
   });
 
   test("builds and parses workflow judge prompts for node completion decisions", () => {

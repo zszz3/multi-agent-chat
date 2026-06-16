@@ -19,6 +19,9 @@ describe("workflow agent prompt", () => {
     expect(prompt).toContain("workflowGraph.upsert");
     expect(prompt).toContain("Output code template");
     expect(prompt).toContain(WORKFLOW_GRAPH_CODE_TEMPLATE);
+    expect(prompt).toContain("Workflow storage plan");
+    expect(prompt).toContain("shared memory");
+    expect(prompt).toContain("output documents");
   });
 
   test("provides a fillable workflow graph code template", () => {

@@ -12,4 +12,5 @@ coverage/
 !.env.example
 CLAUDE.md
 .gdpa
+.multi-agent-chat/
 docs/*learning-review.md

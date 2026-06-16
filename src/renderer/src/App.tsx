@@ -83,6 +83,7 @@ const WORKFLOW_TASK_TIMEOUT_MS = 30 * 60 * 1000;
 const WORKFLOW_NODE_MAX_ATTEMPTS = 2;
 const WORKFLOW_FINAL_REVIEW_NODE_ID = "__final_review__";
 const WORKFLOW_OUTPUT_DOCUMENT_EXTENSIONS = "md|markdown|txt|json|yaml|yml|html|htm";
+const WORKFLOW_STORAGE_ROOT = ".multi-agent-chat/workflows";
 
 const TASK_STATUS_FILTERS: Array<{ id: TaskStatusFilterValue; label: string }> = [
   { id: "all", label: "All" },
@@ -671,8 +672,39 @@ export interface WorkflowOutputDocument {
   title: string;
 }
 
+export interface WorkflowStoragePlan {
+  memoryPath: string;
+  outputDir: string;
+}
+
+function workflowStoragePlanFor(workflowId: string): WorkflowStoragePlan {
+  const safeWorkflowId = workflowId.replace(/[^a-zA-Z0-9_-]/g, "_") || "workflow";
+  const baseDir = `${WORKFLOW_STORAGE_ROOT}/${safeWorkflowId}`;
+  return {
+    memoryPath: `${baseDir}/memory.md`,
+    outputDir: `${baseDir}/outputs`,
+  };
+}
+
+export function workflowStoragePlanDocument(plan: WorkflowStoragePlan): string {
+  return [
+    "# Workflow Storage Plan",
+    "",
+    `- Shared memory file: ${plan.memoryPath}`,
+    `- Output document directory: ${plan.outputDir}`,
+    "",
+    "All agent nodes should treat the Workflow Context in the app as the source of shared memory.",
+    "If an agent creates user-facing documents, write them under the output document directory and report the exact relative file path.",
+  ].join("\n");
+}
+
 function cleanWorkflowOutputPath(value: string): string {
   return value.replace(/[),.;:!?]+$/g, "").replace(/^["'`(]+|["'`]+$/g, "");
+}
+
+function isWorkflowOutputDocumentMention(text: string, index: number): boolean {
+  const prefix = text.slice(Math.max(0, index - 80), index).toLowerCase();
+  return /产物|产出|输出|生成|创建|写入|更新|保存|文档|报告|deliverable|output|artifact|created|generated|wrote|written|saved|document|report/.test(prefix);
 }
 
 export function extractWorkflowOutputDocuments(...sources: string[]): WorkflowOutputDocument[] {
@@ -690,7 +722,9 @@ export function extractWorkflowOutputDocuments(...sources: string[]): WorkflowOu
       while ((match = pattern.exec(text))) {
         const rawPath = cleanWorkflowOutputPath(match[1] ?? "");
         if (!rawPath || rawPath.startsWith("http://") || rawPath.startsWith("https://")) continue;
-        matches.push({ index: match.index + match[0].indexOf(match[1] ?? ""), path: rawPath.split("#")[0] ?? rawPath });
+        const index = match.index + match[0].indexOf(match[1] ?? "");
+        if (!isWorkflowOutputDocumentMention(text, index)) continue;
+        matches.push({ index, path: rawPath.split("#")[0] ?? rawPath });
       }
     }
     for (const item of matches.sort((left, right) => left.index - right.index)) {
@@ -704,11 +738,17 @@ export function extractWorkflowOutputDocuments(...sources: string[]): WorkflowOu
   return [...docs.values()];
 }
 
+export function extractWorkflowOutputDocumentsForPlan(plan: WorkflowStoragePlan, ...sources: string[]): WorkflowOutputDocument[] {
+  const outputPrefix = `${plan.outputDir.replace(/\/+$/g, "")}/`;
+  return extractWorkflowOutputDocuments(...sources).filter((document) => document.path.startsWith(outputPrefix));
+}
+
 export function workflowNodeRunPrompt(
   graph: WorkflowGraph,
   node: WorkflowGraphNode,
   upstreamArtifacts: Array<{ node: WorkflowGraphNode; artifact: string }>,
   contextDocument = "",
+  storagePlan?: WorkflowStoragePlan,
 ): string {
   const upstreamSection =
     upstreamArtifacts.length > 0
@@ -729,6 +769,15 @@ export function workflowNodeRunPrompt(
     "Use this workflow context document first:",
     contextSection,
     "",
+    ...(storagePlan
+      ? [
+          "Workflow storage plan:",
+          `- Shared memory file: ${storagePlan.memoryPath}`,
+          `- Output document directory: ${storagePlan.outputDir}`,
+          "If you create a user-facing document, write it under the output document directory and include the exact relative path in your Work Completion Report.",
+          "",
+        ]
+      : []),
     "Use these upstream artifacts as context:",
     upstreamSection,
     "",
@@ -785,6 +834,7 @@ export function workflowFinalReviewPrompt(
   nodeArtifacts: Array<{ node: WorkflowGraphNode; artifact: string }>,
   contextDocument: string,
   progress: WorkflowRunProgressItem[],
+  storagePlan?: WorkflowStoragePlan,
 ): string {
   const artifactSection =
     nodeArtifacts.length > 0
@@ -807,6 +857,15 @@ export function workflowFinalReviewPrompt(
     "Shared Workflow Context document:",
     contextDocument.trim() || "No workflow context document yet.",
     "",
+    ...(storagePlan
+      ? [
+          "Workflow storage plan:",
+          `- Shared memory file: ${storagePlan.memoryPath}`,
+          `- Output document directory: ${storagePlan.outputDir}`,
+          "Only list output documents that are under the output document directory.",
+          "",
+        ]
+      : []),
     "Run progress:",
     progressSection,
     "",
@@ -819,7 +878,7 @@ export function workflowFinalReviewPrompt(
     "Write a concise Markdown report for the user. It must start with:",
     "## Final User Report",
     "",
-    "Include: outcome, important evidence or artifacts, remaining risks/gaps, and concrete next steps.",
+    "Include: outcome, important evidence or artifacts, output document paths under the planned output directory, remaining risks/gaps, and concrete next steps.",
   ].join("\n");
 }
 
@@ -1697,9 +1756,11 @@ export function App() {
     let finalReport = "";
     try {
       let latestSnapshot = snapshot;
+      const storagePlan = workflowStoragePlanFor(workflowId);
+      const baseWorkflowContextDocument = [workflowContextDocument.trim(), workflowStoragePlanDocument(storagePlan)].filter(Boolean).join("\n\n");
       latestSnapshot = await window.multiAgentChat.startWorkflowRun({
         workflowId,
-        contextDocument: workflowContextDocument,
+        contextDocument: baseWorkflowContextDocument,
       });
       setSnapshot(latestSnapshot);
       const runningWorkflow = latestSnapshot.workflowStore.workflows.find((workflow) => workflow.workflowId === workflowId);
@@ -1737,11 +1798,11 @@ export function App() {
           console.warn("Failed to clean up workflow task", taskId, error);
         }
       };
-      setWorkflowRunContextDocument(workflowContextDocument);
+      setWorkflowRunContextDocument(baseWorkflowContextDocument);
       const artifactsByNodeId = new Map<string, string>();
       const contextArtifacts: Array<{ nodeId: string; title: string; summary: string }> = [];
-      let runContextDocument = workflowContextDocument;
-      finalRunContextDocument = workflowContextDocument;
+      let runContextDocument = baseWorkflowContextDocument;
+      finalRunContextDocument = baseWorkflowContextDocument;
       const upstreamAgentNodeIdsByNodeId = new Map<string, string[]>();
       for (const nodeId of validation.executableNodeIds) upstreamAgentNodeIdsByNodeId.set(nodeId, []);
       for (const edge of workflowGraph.edges) {
@@ -1798,7 +1859,7 @@ export function App() {
           .filter((item): item is { node: WorkflowGraphNode; artifact: string } => Boolean(item));
 
       const nodeAttemptPrompt = (node: WorkflowGraphNode, attempt: number, retryPrompt: string, contextDocument: string): string => {
-        const basePrompt = workflowNodeRunPrompt(workflowGraph, node, upstreamArtifactsForNode(node), contextDocument);
+        const basePrompt = workflowNodeRunPrompt(workflowGraph, node, upstreamArtifactsForNode(node), contextDocument, storagePlan);
         if (!retryPrompt.trim()) return basePrompt;
         return [
           basePrompt,
@@ -1930,7 +1991,7 @@ export function App() {
                 title: completedTask.node.title,
                 summary: workflowArtifactSummary(artifact),
               });
-              runContextDocument = [workflowContextDocument.trim(), workflowContextDocumentFromArtifacts(contextArtifacts)].filter(Boolean).join("\n\n");
+              runContextDocument = [baseWorkflowContextDocument.trim(), workflowContextDocumentFromArtifacts(contextArtifacts)].filter(Boolean).join("\n\n");
               finalRunContextDocument = runContextDocument;
               setWorkflowRunContextDocument(runContextDocument);
               updateWorkflowRunProgress(completedTask.node.id, {
@@ -1981,7 +2042,7 @@ export function App() {
           return node && artifact ? { node, artifact } : undefined;
         })
         .filter((item): item is { node: WorkflowGraphNode; artifact: string } => Boolean(item));
-      const finalReviewPrompt = workflowFinalReviewPrompt(workflowGraph, nodeArtifacts, runContextDocument, completedNodeProgress);
+      const finalReviewPrompt = workflowFinalReviewPrompt(workflowGraph, nodeArtifacts, runContextDocument, completedNodeProgress, storagePlan);
       const finalReviewRequestId = `workflow-final-${Date.now()}-${Math.random().toString(36).slice(2)}`;
       const finalAssistantMessageId = `workflow-final-assistant-${Date.now()}`;
       workflowRequestIdRef.current = finalReviewRequestId;
@@ -2392,6 +2453,7 @@ export function App() {
           />
         ) : activeFeature === "workflow" ? (
           <WorkflowPage
+            workflowId={workflowId}
             title={workflowTitle}
             status={workflowStatus}
             graph={workflowGraph}
@@ -3977,6 +4039,7 @@ export function WorkflowHistoryPanel({
 }
 
 interface WorkflowPageProps {
+  workflowId?: string;
   title?: string;
   status?: WorkflowStatus;
   graph: WorkflowGraph;
@@ -4011,6 +4074,7 @@ interface WorkflowPageProps {
 }
 
 export function WorkflowPage({
+  workflowId,
   title,
   status = "draft",
   graph,
@@ -4073,11 +4137,14 @@ export function WorkflowPage({
   const runProgressVisible = runProgress.length > 0;
   const contextDocumentVisible = contextDocument.trim().length > 0;
   const finalReportVisible = finalReport.trim().length > 0;
-  const outputDocuments = extractWorkflowOutputDocuments(
-    finalReport,
-    contextDocument,
-    messages.map((message) => message.content).join("\n\n"),
-  );
+  const outputDocuments = workflowId
+    ? extractWorkflowOutputDocumentsForPlan(
+        workflowStoragePlanFor(workflowId),
+        finalReport,
+        contextDocument,
+        messages.map((message) => message.content).join("\n\n"),
+      )
+    : [];
   const outputDocumentsVisible = outputDocuments.length > 0;
   const graphVisible = graphReady || runProgressVisible || contextDocumentVisible || finalReportVisible;
   const workflowDisplayTitle = title?.trim() || (graphReady ? graph.title : "New workflow");

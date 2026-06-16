@@ -1,15 +1,14 @@
 import { app, BrowserWindow, dialog, ipcMain, type OpenDialogOptions } from "electron";
-import { readFile, stat } from "node:fs/promises";
 import path from "node:path";
 import { fileURLToPath } from "node:url";
 import { AgentHub } from "./agent-hub";
+import { createLocalTextFilePreview } from "./local-file-preview";
 import { startMcpBridge, type McpBridgeServer } from "./mcp-bridge";
 import type {
   AgentChannel,
   AgentId,
   CreateAgentTeamRequest,
   FinishWorkflowRunRequest,
-  LocalFilePreview,
   RunAgentTeamRequest,
   RunTaskRequest,
   StartWorkflowRunRequest,
@@ -25,7 +24,6 @@ const CHAT_HISTORY_FILE = "app-chats.json";
 const APP_DATABASE_FILE = "app.db";
 const MODEL_CHANNELS_FILE = "model-channels.json";
 const MCP_BRIDGE_FILE = "mcp-bridge.json";
-const MAX_LOCAL_FILE_PREVIEW_BYTES = 512 * 1024;
 const hub = new AgentHub();
 
 let mainWindow: BrowserWindow | null = null;
@@ -132,7 +130,7 @@ function registerIpcHandlers(): void {
     }
     return hub.snapshot();
   });
-  ipcMain.handle("file:read-text", async (_event, filePath: string) => readLocalTextFile(filePath));
+  ipcMain.handle("file:read-text", async (_event, filePath: string) => createLocalTextFilePreview(filePath, hub.getWorkDir(), app.getPath("home")));
   ipcMain.handle("run:send", (_event, prompt: string, chatId?: string) => {
     void hub.sendPrompt(prompt, chatId);
     return hub.snapshot();
@@ -176,28 +174,6 @@ function registerIpcHandlers(): void {
     hub.clearHistory();
     return hub.snapshot();
   });
-}
-
-async function readLocalTextFile(filePath: string): Promise<LocalFilePreview> {
-  if (typeof filePath !== "string" || !filePath.trim()) throw new Error("File path is required.");
-  const workDir = path.resolve(hub.getWorkDir());
-  const expandedPath = filePath.startsWith("~/") ? path.join(app.getPath("home"), filePath.slice(2)) : filePath;
-  const absolutePath = path.resolve(workDir, expandedPath);
-  const relativePath = path.relative(workDir, absolutePath);
-  if (relativePath.startsWith("..") || path.isAbsolute(relativePath)) {
-    throw new Error("Only files under the current work directory can be previewed.");
-  }
-  const info = await stat(absolutePath);
-  if (!info.isFile()) throw new Error("Only regular files can be previewed.");
-  const buffer = await readFile(absolutePath);
-  const truncated = buffer.byteLength > MAX_LOCAL_FILE_PREVIEW_BYTES;
-  const contentBuffer = truncated ? buffer.subarray(0, MAX_LOCAL_FILE_PREVIEW_BYTES) : buffer;
-  return {
-    path: absolutePath,
-    title: path.basename(absolutePath),
-    content: contentBuffer.toString("utf8"),
-    truncated,
-  };
 }
 
 void bootstrap();
