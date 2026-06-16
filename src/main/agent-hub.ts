@@ -5,6 +5,7 @@ import path from "node:path";
 import { promisify } from "node:util";
 import type {
   AgentChannel,
+  ConfiguredAgent,
   AgentEvent,
   AgentId,
   AgentRuntime,
@@ -56,7 +57,7 @@ import type {
   WorkflowRunNodeStatus,
   WorkflowRunProgressItem,
 } from "../shared/types";
-import { defaultChannelForAgent, defaultModelForAgent, isModelForChannel, runtimeModelId } from "../shared/models";
+import { DEFAULT_MODEL_ID, defaultChannelForAgent, defaultModelForAgent, isModelForChannel, runtimeModelId } from "../shared/models";
 import { validateWorkflowGraph } from "../shared/workflow-graph";
 import { detectAgentRuntimes } from "./agents/detect";
 import { CodexRpcClient } from "./agents/codex-rpc";
@@ -211,6 +212,7 @@ interface PersistedAppStateV2 {
   teamRuns?: PersistedTeamRunRecord[];
   workflowStore?: WorkflowStoreState;
   workflowDraft?: WorkflowDraftState;
+  configuredAgents?: ConfiguredAgent[];
 }
 
 function createAssistantMessage(content = "", local = false): ChatMessage {
@@ -243,7 +245,9 @@ function createErrorMessage(content: string): ChatMessage {
 }
 
 function defaultTitle(agentId: AgentId): string {
-  return agentId === "codex" ? "New Codex chat" : "New Claude chat";
+  if (agentId === "codex") return "New Codex chat";
+  if (agentId === "claude") return "New Claude chat";
+  return "New API chat";
 }
 
 function titleFromPrompt(prompt: string): string {
@@ -253,7 +257,7 @@ function titleFromPrompt(prompt: string): string {
 }
 
 function isAgentId(value: unknown): value is AgentId {
-  return value === "codex" || value === "claude";
+  return value === "codex" || value === "claude" || value === "api";
 }
 
 function isMessageRole(value: unknown): value is ChatMessage["role"] {
@@ -331,7 +335,9 @@ function hasAgentConversationMessages(messages: ChatMessage[]): boolean {
 }
 
 function agentLabel(agentId: AgentId): string {
-  return agentId === "codex" ? "Codex" : "Claude Code";
+  if (agentId === "codex") return "Codex";
+  if (agentId === "claude") return "Claude Code";
+  return "API";
 }
 
 function cloneTeamMember(member: AgentTeamMember): AgentTeamMember {
@@ -649,6 +655,7 @@ export class AgentHub {
   private activeTeamRunId: string | undefined;
   private workflows = new Map<string, WorkflowDraftState>();
   private workflowRuns = new Map<string, WorkflowRunState>();
+  private configuredAgents = new Map<string, ConfiguredAgent>();
   private activeWorkflowId: string | undefined;
   private activeStops = new Map<string, () => Promise<void> | void>();
   private listeners = new Set<Listener>();
@@ -660,14 +667,17 @@ export class AgentHub {
   private persistTimer: ReturnType<typeof setTimeout> | undefined = undefined;
   private persistInFlight: Promise<void> | undefined = undefined;
   private readonly executorFactory: AgentExecutorFactory;
+  private readonly executables: Record<AgentId, string>;
 
   constructor(
-    private readonly executables = {
-      codex: process.env.CODEX_PATH ?? "codex",
-      claude: process.env.CLAUDE_PATH ?? "claude",
-    },
+    executables: Partial<Record<AgentId, string>> = {},
     executorFactory?: AgentExecutorFactory,
   ) {
+    this.executables = {
+      codex: executables.codex ?? process.env.CODEX_PATH ?? "codex",
+      claude: executables.claude ?? process.env.CLAUDE_PATH ?? "claude",
+      api: executables.api ?? "api",
+    };
     this.executorFactory =
       executorFactory ??
       new RuntimeAgentExecutorFactory({
@@ -737,6 +747,7 @@ export class AgentHub {
     this.modelConfigPath = configPath;
     this.channels = await readModelChannels(configPath, this.executables.codex);
     this.normalizeRunSelections();
+    this.installRestoredConfiguredAgents(this.listConfiguredAgents());
     this.emit();
   }
 
@@ -745,6 +756,7 @@ export class AgentHub {
     if (!targetPath) throw new Error("Model channel config path is not initialized");
     this.channels = await writeModelChannels(targetPath, channels);
     this.normalizeRunSelections();
+    this.installRestoredConfiguredAgents(this.listConfiguredAgents());
     this.emit();
     return this.snapshot();
   }
@@ -762,6 +774,23 @@ export class AgentHub {
     return this.withCodexAppServer(chat, async (client) => {
       return this.codexPluginSummaries(await client.request("plugin/list", { cwds: [this.workDir] }));
     });
+  }
+
+  updateConfiguredAgents(agents: ConfiguredAgent[]): AppSnapshot {
+    this.configuredAgents.clear();
+    const now = Date.now();
+    for (const input of agents) {
+      const restored = this.restoreConfiguredAgent(input, now);
+      if (restored) this.configuredAgents.set(restored.id, restored);
+    }
+    this.emit();
+    return this.snapshot();
+  }
+
+  listConfiguredAgents(): ConfiguredAgent[] {
+    return [...this.configuredAgents.values()]
+      .sort((left, right) => left.name.localeCompare(right.name))
+      .map((agent) => ({ ...agent, tags: [...agent.tags] }));
   }
 
   async flushPersistence(): Promise<void> {
@@ -1049,6 +1078,7 @@ export class AgentHub {
       workDir: this.workDir,
       runtimes: [...this.runtimes.values()],
       channels: this.channels.map((channel) => ({ ...channel, models: channel.models.map((model) => ({ ...model })) })),
+      configuredAgents: this.listConfiguredAgents(),
       chats: [...this.chats.values()]
         .sort((left, right) => right.updatedAt - left.updatedAt)
         .map((chat) => this.serializeChat(chat)),
@@ -1394,6 +1424,9 @@ export class AgentHub {
     const requestId = input.requestId ?? randomUUID();
     if (input.agentId === "codex") {
       return this.askCodexWorkflowAgent({ requestId, prompt, runtime, channelId, modelId, workDir, sessionId: input.sessionId, onEvent });
+    }
+    if (input.agentId === "api") {
+      return this.askApiWorkflowAgent({ requestId, prompt, channelId, modelId, sessionId: input.sessionId, onEvent });
     }
     return this.askClaudeWorkflowAgent({ requestId, prompt, runtime, modelId, workDir, sessionId: input.sessionId, onEvent });
   }
@@ -2294,6 +2327,35 @@ export class AgentHub {
     });
   }
 
+  private async askApiWorkflowAgent(input: {
+    requestId: string;
+    prompt: string;
+    channelId: string;
+    modelId: string;
+    sessionId: string | undefined;
+    onEvent: ((event: WorkflowAgentEvent) => void) | undefined;
+  }): Promise<WorkflowAgentResponse> {
+    const channel = this.channelById(input.channelId);
+    if (!channel?.baseUrl) throw new Error("API workflow agent requires a provider base URL");
+    const model = this.resolveApiModel(channel, input.modelId);
+    if (!model) throw new Error("API workflow agent requires a model");
+
+    const response = await fetch(this.apiRequestUrl(channel), {
+      method: "POST",
+      headers: {
+        "content-type": "application/json",
+        ...(channel.httpHeaders ?? {}),
+      },
+      body: JSON.stringify(this.apiRequestBody(channel, model, input.prompt, CODEX_WORKFLOW_DEVELOPER_INSTRUCTIONS)),
+    });
+    const text = await response.text();
+    if (!response.ok) throw new Error(`API workflow request failed (${response.status}): ${text.slice(0, 800)}`);
+    const content = this.extractApiContent(channel, text).trim();
+    input.onEvent?.({ requestId: input.requestId, type: "delta", content });
+    input.onEvent?.({ requestId: input.requestId, type: "completed", content, sessionId: input.sessionId });
+    return { content, sessionId: input.sessionId };
+  }
+
   private async askClaudeWorkflowAgent(input: {
     requestId: string;
     prompt: string;
@@ -2357,6 +2419,65 @@ export class AgentHub {
         settle(() => reject(error instanceof Error ? error : new Error(String(error))));
       });
     });
+  }
+
+  private resolveApiModel(channel: AgentChannel, modelId: string): string | undefined {
+    const model = runtimeModelId(modelId);
+    if (model) return model;
+    return channel.models.find((item) => item.id !== DEFAULT_MODEL_ID)?.id;
+  }
+
+  private apiRequestUrl(channel: AgentChannel): string {
+    if (channel.modelProvider === "anthropic-api") {
+      const normalized = (channel.baseUrl ?? "").replace(/\/+$/, "");
+      if (normalized.endsWith("/messages")) return normalized;
+      return `${normalized}/messages`;
+    }
+    return this.chatCompletionsUrl(channel.baseUrl ?? "");
+  }
+
+  private apiRequestBody(channel: AgentChannel, model: string, prompt: string, system: string): Record<string, unknown> {
+    if (channel.modelProvider === "anthropic-api") {
+      return {
+        model,
+        max_tokens: 4096,
+        system,
+        messages: [{ role: "user", content: prompt }],
+      };
+    }
+    return {
+      model,
+      messages: [
+        { role: "system", content: system },
+        { role: "user", content: prompt },
+      ],
+      stream: false,
+    };
+  }
+
+  private chatCompletionsUrl(baseUrl: string): string {
+    const normalized = baseUrl.replace(/\/+$/, "");
+    if (normalized.endsWith("/chat/completions")) return normalized;
+    return `${normalized}/chat/completions`;
+  }
+
+  private extractApiContent(channel: AgentChannel, text: string): string {
+    if (channel.modelProvider === "anthropic-api") {
+      const parsed = JSON.parse(text) as { content?: Array<{ type?: string; text?: unknown }> };
+      const content = parsed.content
+        ?.map((item) => (typeof item.text === "string" ? item.text : ""))
+        .filter(Boolean)
+        .join("");
+      if (content) return content;
+      return JSON.stringify(parsed, null, 2);
+    }
+    const parsed = JSON.parse(text) as {
+      choices?: Array<{ message?: { content?: unknown }; text?: unknown }>;
+      output_text?: unknown;
+    };
+    const first = parsed.choices?.[0];
+    const content = first?.message?.content ?? first?.text ?? parsed.output_text;
+    return typeof content === "string" ? content : JSON.stringify(parsed, null, 2);
   }
 
   private handleAgentEvent(run: RunState, event: AgentEvent): void {
@@ -2584,7 +2705,42 @@ export class AgentHub {
       ? record.teamRuns.map((item) => this.restoreTeamRunState(item)).filter((item): item is TeamRunState => Boolean(item))
       : [];
     this.installRestoredTeams(teams, teamRuns, asOptionalString(record.activeTeamId), asOptionalString(record.activeTeamRunId));
+    this.installRestoredConfiguredAgents(Array.isArray(record.configuredAgents) ? record.configuredAgents : []);
     this.restoreWorkflowStore(record.workflowStore, record.workflowDraft);
+  }
+
+  private installRestoredConfiguredAgents(rawAgents: unknown[]): void {
+    this.configuredAgents.clear();
+    const now = Date.now();
+    for (const rawAgent of rawAgents) {
+      const agent = this.restoreConfiguredAgent(rawAgent, now);
+      if (agent) this.configuredAgents.set(agent.id, agent);
+    }
+  }
+
+  private restoreConfiguredAgent(raw: unknown, now = Date.now()): ConfiguredAgent | undefined {
+    const record = asRecord(raw);
+    if (!record) return undefined;
+    const id = asOptionalString(record.id)?.trim();
+    const name = asOptionalString(record.name)?.trim();
+    const runtimeAgentId = isAgentId(record.runtimeAgentId) ? record.runtimeAgentId : DEFAULT_AGENT;
+    if (!id || !name) return undefined;
+    const fallbackChannelId = defaultChannelForAgent(runtimeAgentId, this.channels);
+    const channelId = asOptionalString(record.channelId);
+    const normalizedChannelId = channelId && this.channelById(channelId)?.agentId === runtimeAgentId ? channelId : fallbackChannelId;
+    const modelId = asOptionalString(record.modelId);
+    return {
+      id,
+      name,
+      description: asOptionalString(record.description) ?? "",
+      runtimeAgentId,
+      channelId: normalizedChannelId,
+      modelId: modelId && isModelForChannel(runtimeAgentId, normalizedChannelId, modelId, this.channels) ? modelId : defaultModelForAgent(runtimeAgentId),
+      prompt: asOptionalString(record.prompt) ?? "",
+      tags: asArray(record.tags).map((tag) => asOptionalString(tag)).filter((tag): tag is string => Boolean(tag)),
+      createdAt: asNumber(record.createdAt, now),
+      updatedAt: asNumber(record.updatedAt, now),
+    };
   }
 
   private installRestoredChats(chats: ChatState[], activeChatId: string | undefined, workDir: string | undefined): void {
@@ -3140,6 +3296,7 @@ export class AgentHub {
       taskEvents,
       teams,
       teamRuns,
+      configuredAgents: this.listConfiguredAgents(),
       workflowStore: this.cloneWorkflowStore(),
     };
   }

@@ -32,7 +32,7 @@ import {
 } from "./App";
 import { DEFAULT_MODEL_ID } from "../../shared/models";
 import { firstWorkflowQuestionForObjective } from "../../shared/workflow-agent";
-import type { AgentChannel, AgentRuntime, AgentTeam, CodexPluginCatalogItem, TaskRun, TeamRun, WorkflowGraph } from "../../shared/types";
+import type { AgentChannel, AgentRuntime, AgentTeam, CodexPluginCatalogItem, ConfiguredAgent, TaskRun, TeamRun, WorkflowGraph } from "../../shared/types";
 
 const runtimes: AgentRuntime[] = [
   {
@@ -74,6 +74,21 @@ const channels: AgentChannel[] = [
       { id: DEFAULT_MODEL_ID, label: "Default" },
       { id: "sonnet", label: "Sonnet" },
     ],
+  },
+];
+
+const configuredAgents: ConfiguredAgent[] = [
+  {
+    id: "repo-reviewer",
+    name: "Repo Reviewer",
+    description: "Reviews repositories and writes learning docs.",
+    runtimeAgentId: "codex",
+    channelId: "codex-openai",
+    modelId: "gpt-5.5",
+    prompt: "Review the repo and produce a concise report.",
+    tags: ["review", "docs"],
+    createdAt: 1710000000000,
+    updatedAt: 1710000000000,
   },
 ];
 
@@ -436,6 +451,9 @@ describe("ConfigPage", () => {
     const html = renderToStaticMarkup(
       <ConfigPage
         channels={channels}
+        configuredAgents={configuredAgents}
+        selectedConfiguredAgentId="repo-reviewer"
+        providerKeys={{}}
         selectedChannelId="codex-openai"
         advancedMode={false}
         draft="[]"
@@ -457,6 +475,11 @@ describe("ConfigPage", () => {
         onGenerate={async () => undefined}
         onImportCodex={async () => undefined}
         onLoadCodexPluginCatalog={async () => undefined}
+        onAddConfiguredAgent={() => undefined}
+        onSelectConfiguredAgent={() => undefined}
+        onUpdateProviderKey={() => undefined}
+        onUpdateConfiguredAgent={() => undefined}
+        onRemoveConfiguredAgent={() => undefined}
       />,
     );
 
@@ -471,6 +494,9 @@ describe("ConfigPage", () => {
     expect(html).toContain("github@openai-curated");
     expect(html).toContain("Loaded 2 plugins");
     expect(html).toContain("Advanced JSON");
+    expect(html).toContain("Agents");
+    expect(html).toContain("Repo Reviewer");
+    expect(html).toContain("aria-label=\"Agent prompt\"");
   });
 });
 

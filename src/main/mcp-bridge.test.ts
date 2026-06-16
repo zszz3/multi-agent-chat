@@ -49,10 +49,38 @@ describe("MCP bridge", () => {
 
   test("requires bearer token and exposes workflow tools", async () => {
     const dir = await mkdtemp(path.join(os.tmpdir(), "multi-agent-chat-mcp-"));
-    bridge = await startMcpBridge(new AgentHub(), { discoveryPath: path.join(dir, "bridge.json") });
+    const hub = new AgentHub();
+    hub.updateConfiguredAgents([
+      {
+        id: "repo-reviewer",
+        name: "Repo Reviewer",
+        description: "Reviews repos and writes docs.",
+        runtimeAgentId: "codex",
+        channelId: "codex-openai",
+        modelId: "default",
+        prompt: "Review the repository.",
+        tags: ["review"],
+        createdAt: 1710000000000,
+        updatedAt: 1710000000000,
+      },
+    ]);
+    bridge = await startMcpBridge(hub, { discoveryPath: path.join(dir, "bridge.json") });
 
     const unauthorized = await fetch(`http://${bridge.host}:${bridge.port}/mcp/workflow/list`, { method: "POST" });
     expect(unauthorized.status).toBe(401);
+
+    const agents = (await (await bridgeRequest("/mcp/agents/list", bridge.token, {})).json()) as any;
+    expect(agents).toMatchObject({
+      ok: true,
+      agents: [
+        {
+          id: "repo-reviewer",
+          name: "Repo Reviewer",
+          runtimeAgentId: "codex",
+          prompt: "Review the repository.",
+        },
+      ],
+    });
 
     const create = await bridgeRequest("/mcp/workflow/create", bridge.token, {
       title: "Review workflow",

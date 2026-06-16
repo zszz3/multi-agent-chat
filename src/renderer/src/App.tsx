@@ -27,7 +27,7 @@ import {
 } from "lucide-react";
 import { CommandPalette, buildPaletteCommands, type Theme } from "./CommandPalette";
 import { Markdown } from "./Markdown";
-import { DEFAULT_MODEL_ID, defaultChannelForAgent, modelsForChannel } from "../../shared/models";
+import { DEFAULT_MODEL_ID, FALLBACK_MODEL_OPTIONS, defaultChannelForAgent, modelsForChannel } from "../../shared/models";
 import { buildWorkflowAgentPrompt, WORKFLOW_TOTAL_QUESTION_COUNT } from "../../shared/workflow-agent";
 import {
   createWorkflowGraphFromObjective,
@@ -52,6 +52,7 @@ import type {
   ChatMessage,
   ChatSession,
   CodexPluginCatalogItem,
+  ConfiguredAgent,
   GeneratedConfigFile,
   ImportedCodexConfig,
   LocalFilePreview,
@@ -67,11 +68,403 @@ import type {
   WorkflowStatus,
 } from "../../shared/types";
 
-const AGENTS: AgentId[] = ["codex", "claude"];
+const AGENTS: AgentId[] = ["codex", "claude", "api"];
 const THEME_STORAGE_KEY = "multi-agent-chat-theme";
+const PROVIDER_KEYS_STORAGE_KEY = "multi-agent-chat-provider-keys";
+
+interface AgentProviderPreset {
+  id: string;
+  label: string;
+  runtimeAgentId: AgentId;
+  providerName?: string;
+  modelProvider?: string;
+  baseUrl?: string;
+  wireApi?: string;
+  modelReasoningEffort?: string;
+  models: AgentModelOption[];
+  usesApiKey?: boolean;
+  apiKeyHeaderName?: string;
+  apiKeyPrefix?: string;
+  extraHeaders?: Record<string, string>;
+}
+
+const AGENT_PROVIDER_PRESETS: AgentProviderPreset[] = [
+  {
+    id: "codex-openai",
+    label: "Codex OpenAI",
+    runtimeAgentId: "codex",
+    providerName: "OpenAI",
+    modelProvider: "openai",
+    models: FALLBACK_MODEL_OPTIONS.codex,
+  },
+  {
+    id: "claude-code",
+    label: "Claude Code",
+    runtimeAgentId: "claude",
+    models: FALLBACK_MODEL_OPTIONS.claude,
+  },
+  {
+    id: "deepseek",
+    label: "DeepSeek",
+    runtimeAgentId: "codex",
+    providerName: "DeepSeek",
+    modelProvider: "deepseek",
+    baseUrl: "https://api.deepseek.com",
+    wireApi: "responses",
+    modelReasoningEffort: "high",
+    usesApiKey: true,
+    models: [
+      { id: DEFAULT_MODEL_ID, label: "Default" },
+      { id: "deepseek-v4-flash", label: "DeepSeek V4 Flash" },
+      { id: "deepseek-v4-pro", label: "DeepSeek V4 Pro" },
+    ],
+  },
+  {
+    id: "glm",
+    label: "GLM",
+    runtimeAgentId: "codex",
+    providerName: "Zhipu GLM",
+    modelProvider: "zhipu-glm",
+    baseUrl: "https://open.bigmodel.cn/api/paas/v4",
+    wireApi: "responses",
+    modelReasoningEffort: "high",
+    usesApiKey: true,
+    models: [
+      { id: DEFAULT_MODEL_ID, label: "Default" },
+      { id: "glm-5.1", label: "GLM-5.1" },
+    ],
+  },
+  {
+    id: "kimi",
+    label: "Kimi",
+    runtimeAgentId: "codex",
+    providerName: "Kimi",
+    modelProvider: "kimi",
+    baseUrl: "https://api.moonshot.cn/v1",
+    wireApi: "responses",
+    modelReasoningEffort: "high",
+    usesApiKey: true,
+    models: [
+      { id: DEFAULT_MODEL_ID, label: "Default" },
+      { id: "kimi-k2.6", label: "Kimi K2.6" },
+    ],
+  },
+  {
+    id: "longcat",
+    label: "LongCat",
+    runtimeAgentId: "codex",
+    providerName: "LongCat",
+    modelProvider: "longcat",
+    baseUrl: "https://api.longcat.chat/openai/v1",
+    wireApi: "responses",
+    modelReasoningEffort: "high",
+    usesApiKey: true,
+    models: [
+      { id: DEFAULT_MODEL_ID, label: "Default" },
+      { id: "LongCat-Flash-Chat", label: "LongCat Flash Chat" },
+    ],
+  },
+  {
+    id: "mimo",
+    label: "MiMo",
+    runtimeAgentId: "codex",
+    providerName: "MiMo",
+    modelProvider: "xiaomi-mimo",
+    baseUrl: "https://api.xiaomimimo.com/v1",
+    wireApi: "responses",
+    modelReasoningEffort: "high",
+    usesApiKey: true,
+    models: [
+      { id: DEFAULT_MODEL_ID, label: "Default" },
+      { id: "mimo-v2.5-pro", label: "MiMo V2.5 Pro" },
+    ],
+  },
+  {
+    id: "custom",
+    label: "Custom",
+    runtimeAgentId: "codex",
+    providerName: "Custom",
+    modelProvider: "custom",
+    wireApi: "responses",
+    usesApiKey: true,
+    models: [{ id: DEFAULT_MODEL_ID, label: "Default" }],
+  },
+  {
+    id: "api-openai",
+    label: "OpenAI API",
+    runtimeAgentId: "api",
+    providerName: "OpenAI",
+    modelProvider: "openai-api",
+    baseUrl: "https://api.openai.com/v1",
+    usesApiKey: true,
+    models: [
+      { id: DEFAULT_MODEL_ID, label: "Default" },
+      { id: "gpt-4o", label: "GPT-4o" },
+      { id: "gpt-4o-mini", label: "GPT-4o Mini" },
+    ],
+  },
+  {
+    id: "api-anthropic",
+    label: "Anthropic API",
+    runtimeAgentId: "api",
+    providerName: "Anthropic",
+    modelProvider: "anthropic-api",
+    baseUrl: "https://api.anthropic.com/v1",
+    usesApiKey: true,
+    apiKeyHeaderName: "x-api-key",
+    apiKeyPrefix: "",
+    extraHeaders: { "anthropic-version": "2023-06-01" },
+    models: [
+      { id: DEFAULT_MODEL_ID, label: "Default" },
+      { id: "claude-sonnet-4-6", label: "Claude Sonnet" },
+      { id: "claude-opus-4-6", label: "Claude Opus" },
+    ],
+  },
+  {
+    id: "api-deepseek",
+    label: "DeepSeek API",
+    runtimeAgentId: "api",
+    providerName: "DeepSeek",
+    modelProvider: "deepseek-api",
+    baseUrl: "https://api.deepseek.com/v1",
+    usesApiKey: true,
+    models: [
+      { id: DEFAULT_MODEL_ID, label: "Default" },
+      { id: "deepseek-v4-flash", label: "DeepSeek V4 Flash" },
+      { id: "deepseek-v4-pro", label: "DeepSeek V4 Pro" },
+    ],
+  },
+  {
+    id: "api-glm",
+    label: "GLM API",
+    runtimeAgentId: "api",
+    providerName: "Zhipu GLM",
+    modelProvider: "glm-api",
+    baseUrl: "https://open.bigmodel.cn/api/paas/v4",
+    usesApiKey: true,
+    models: [
+      { id: DEFAULT_MODEL_ID, label: "Default" },
+      { id: "glm-5.1", label: "GLM-5.1" },
+    ],
+  },
+  {
+    id: "api-kimi",
+    label: "Kimi API",
+    runtimeAgentId: "api",
+    providerName: "Kimi",
+    modelProvider: "kimi-api",
+    baseUrl: "https://api.moonshot.cn/v1",
+    usesApiKey: true,
+    models: [
+      { id: DEFAULT_MODEL_ID, label: "Default" },
+      { id: "kimi-k2.6", label: "Kimi K2.6" },
+    ],
+  },
+  {
+    id: "api-longcat",
+    label: "LongCat API",
+    runtimeAgentId: "api",
+    providerName: "LongCat",
+    modelProvider: "longcat-api",
+    baseUrl: "https://api.longcat.chat/openai/v1",
+    usesApiKey: true,
+    models: [
+      { id: DEFAULT_MODEL_ID, label: "Default" },
+      { id: "LongCat-Flash-Chat", label: "LongCat Flash Chat" },
+    ],
+  },
+  {
+    id: "api-mimo",
+    label: "MiMo API",
+    runtimeAgentId: "api",
+    providerName: "MiMo",
+    modelProvider: "mimo-api",
+    baseUrl: "https://api.xiaomimimo.com/v1",
+    usesApiKey: true,
+    models: [
+      { id: DEFAULT_MODEL_ID, label: "Default" },
+      { id: "mimo-v2.5-pro", label: "MiMo V2.5 Pro" },
+    ],
+  },
+  {
+    id: "api-openrouter",
+    label: "OpenRouter",
+    runtimeAgentId: "api",
+    providerName: "OpenRouter",
+    modelProvider: "openrouter-api",
+    baseUrl: "https://openrouter.ai/api/v1",
+    usesApiKey: true,
+    models: [
+      { id: DEFAULT_MODEL_ID, label: "Default" },
+      { id: "openai/gpt-4o", label: "OpenAI GPT-4o" },
+      { id: "anthropic/claude-sonnet-4.5", label: "Claude Sonnet" },
+      { id: "deepseek/deepseek-chat", label: "DeepSeek Chat" },
+    ],
+  },
+  {
+    id: "api-github-models",
+    label: "GitHub Models",
+    runtimeAgentId: "api",
+    providerName: "GitHub Models",
+    modelProvider: "github-models-api",
+    baseUrl: "https://models.github.ai/inference/v1",
+    usesApiKey: true,
+    models: [
+      { id: DEFAULT_MODEL_ID, label: "Default" },
+      { id: "openai/gpt-4o", label: "GPT-4o" },
+      { id: "xai/grok-3-mini", label: "Grok 3 Mini" },
+    ],
+  },
+  {
+    id: "api-together",
+    label: "Together",
+    runtimeAgentId: "api",
+    providerName: "Together",
+    modelProvider: "together-api",
+    baseUrl: "https://api.together.xyz/v1",
+    usesApiKey: true,
+    models: [
+      { id: DEFAULT_MODEL_ID, label: "Default" },
+      { id: "deepseek-ai/DeepSeek-V3.2", label: "DeepSeek V3.2" },
+    ],
+  },
+  {
+    id: "api-novita",
+    label: "Novita",
+    runtimeAgentId: "api",
+    providerName: "Novita",
+    modelProvider: "novita-api",
+    baseUrl: "https://api.novita.ai/v3/openai",
+    usesApiKey: true,
+    models: [
+      { id: DEFAULT_MODEL_ID, label: "Default" },
+      { id: "zai-org/glm-5.1", label: "GLM-5.1" },
+      { id: "moonshotai/kimi-k2.5", label: "Kimi K2.5" },
+    ],
+  },
+  {
+    id: "api-nvidia",
+    label: "NVIDIA",
+    runtimeAgentId: "api",
+    providerName: "NVIDIA",
+    modelProvider: "nvidia-api",
+    baseUrl: "https://integrate.api.nvidia.com/v1",
+    usesApiKey: true,
+    models: [
+      { id: DEFAULT_MODEL_ID, label: "Default" },
+      { id: "moonshotai/kimi-k2.5", label: "Kimi K2.5" },
+    ],
+  },
+  {
+    id: "api-siliconflow",
+    label: "SiliconFlow",
+    runtimeAgentId: "api",
+    providerName: "SiliconFlow",
+    modelProvider: "siliconflow-api",
+    baseUrl: "https://api.siliconflow.cn/v1",
+    usesApiKey: true,
+    models: [
+      { id: DEFAULT_MODEL_ID, label: "Default" },
+      { id: "deepseek-ai/DeepSeek-V3.2", label: "DeepSeek V3.2" },
+      { id: "zai-org/GLM-4.5", label: "GLM-4.5" },
+    ],
+  },
+  {
+    id: "api-alibaba-bailian",
+    label: "Bailian",
+    runtimeAgentId: "api",
+    providerName: "Alibaba Bailian",
+    modelProvider: "bailian-api",
+    baseUrl: "https://dashscope.aliyuncs.com/compatible-mode/v1",
+    usesApiKey: true,
+    models: [
+      { id: DEFAULT_MODEL_ID, label: "Default" },
+      { id: "qwen3-coder-plus", label: "Qwen3 Coder Plus" },
+      { id: "qwen-max", label: "Qwen Max" },
+    ],
+  },
+  {
+    id: "api-volcengine",
+    label: "Volcengine",
+    runtimeAgentId: "api",
+    providerName: "Volcengine",
+    modelProvider: "volcengine-api",
+    baseUrl: "https://ark.cn-beijing.volces.com/api/v3",
+    usesApiKey: true,
+    models: [
+      { id: DEFAULT_MODEL_ID, label: "Default" },
+      { id: "doubao-seed-1-6", label: "Doubao Seed 1.6" },
+    ],
+  },
+  {
+    id: "api-tencent-hunyuan",
+    label: "Hunyuan",
+    runtimeAgentId: "api",
+    providerName: "Tencent Hunyuan",
+    modelProvider: "hunyuan-api",
+    baseUrl: "https://api.hunyuan.cloud.tencent.com/v1",
+    usesApiKey: true,
+    models: [
+      { id: DEFAULT_MODEL_ID, label: "Default" },
+      { id: "hunyuan-turbos-latest", label: "Hunyuan Turbos" },
+    ],
+  },
+  {
+    id: "api-minimax",
+    label: "MiniMax",
+    runtimeAgentId: "api",
+    providerName: "MiniMax",
+    modelProvider: "minimax-api",
+    baseUrl: "https://api.minimax.chat/v1",
+    usesApiKey: true,
+    models: [
+      { id: DEFAULT_MODEL_ID, label: "Default" },
+      { id: "MiniMax-M2", label: "MiniMax M2" },
+    ],
+  },
+  {
+    id: "api-azure-openai",
+    label: "Azure OpenAI",
+    runtimeAgentId: "api",
+    providerName: "Azure OpenAI",
+    modelProvider: "azure-openai-api",
+    baseUrl: "https://YOUR_RESOURCE_NAME.openai.azure.com/openai/deployments/YOUR_DEPLOYMENT",
+    usesApiKey: true,
+    models: [
+      { id: DEFAULT_MODEL_ID, label: "Default" },
+      { id: "gpt-4o", label: "GPT-4o" },
+    ],
+  },
+  {
+    id: "api-custom",
+    label: "Custom API",
+    runtimeAgentId: "api",
+    providerName: "Custom API",
+    modelProvider: "custom-api",
+    baseUrl: "https://example.com/v1",
+    usesApiKey: true,
+    models: [{ id: DEFAULT_MODEL_ID, label: "Default" }],
+  },
+];
 
 export function loadStoredTheme(storage: Pick<Storage, "getItem">): Theme {
   return storage.getItem(THEME_STORAGE_KEY) === "dark" ? "dark" : "light";
+}
+
+function loadStoredProviderKeys(storage: Pick<Storage, "getItem">): Record<string, string> {
+  try {
+    const raw = storage.getItem(PROVIDER_KEYS_STORAGE_KEY);
+    if (!raw) return {};
+    const parsed = JSON.parse(raw) as unknown;
+    if (!parsed || typeof parsed !== "object" || Array.isArray(parsed)) return {};
+    return Object.fromEntries(
+      Object.entries(parsed as Record<string, unknown>)
+        .filter((entry): entry is [string, string] => typeof entry[1] === "string")
+        .map(([key, value]) => [key, value]),
+    );
+  } catch {
+    return {};
+  }
 }
 
 export type ActiveFeature = "chat" | "tasks" | "teams" | "workflow" | "configs";
@@ -147,6 +540,7 @@ const DEFAULT_SNAPSHOT: AppSnapshot = {
   workDir: "",
   runtimes: [],
   channels: [],
+  configuredAgents: [],
   chats: [],
   tasks: [],
   teams: [],
@@ -160,11 +554,15 @@ const DEFAULT_SNAPSHOT: AppSnapshot = {
 };
 
 function agentLabel(agentId: AgentId): string {
-  return agentId === "codex" ? "Codex" : "Claude Code";
+  if (agentId === "codex") return "Codex";
+  if (agentId === "claude") return "Claude Code";
+  return "API";
 }
 
 function agentAccent(agentId: AgentId): string {
-  return agentId === "codex" ? "agent-codex" : "agent-claude";
+  if (agentId === "codex") return "agent-codex";
+  if (agentId === "claude") return "agent-claude";
+  return "agent-api";
 }
 
 function fallbackRuntime(agentId: AgentId): AgentRuntime {
@@ -392,8 +790,66 @@ function createChannel(agentId: AgentId, existingIds: string[]): AgentChannel {
   return {
     id,
     agentId,
-    label: agentId === "codex" ? "New Codex Channel" : "New Claude Channel",
+    label: agentId === "codex" ? "New Codex Channel" : agentId === "claude" ? "New Claude Channel" : "New API Channel",
     models: [{ id: DEFAULT_MODEL_ID, label: "Default" }],
+  };
+}
+
+function createAgentChannel(agentId: AgentId, agentName: string, existingIds: string[]): AgentChannel {
+  const id = uniqueId(`${agentName.toLowerCase().replace(/[^a-z0-9]+/g, "-").replace(/^-|-$/g, "") || "agent"}-channel`, existingIds);
+  return {
+    ...createChannel(agentId, existingIds),
+    id,
+    label: agentName,
+  };
+}
+
+function applyProviderPresetToChannel(channel: AgentChannel, preset: AgentProviderPreset, apiKey = ""): AgentChannel {
+  const next: AgentChannel = {
+    ...channel,
+    agentId: preset.runtimeAgentId,
+    models: preset.models.map((model) => ({ ...model })),
+  };
+  delete next.providerName;
+  delete next.modelProvider;
+  delete next.baseUrl;
+  delete next.wireApi;
+  delete next.modelReasoningEffort;
+  delete next.modelCatalogJson;
+  delete next.httpHeaders;
+  if (preset.providerName) next.providerName = preset.providerName;
+  if (preset.modelProvider) next.modelProvider = preset.modelProvider;
+  if (preset.baseUrl) next.baseUrl = preset.baseUrl;
+  if (preset.wireApi) next.wireApi = preset.wireApi;
+  if (preset.modelReasoningEffort) next.modelReasoningEffort = preset.modelReasoningEffort;
+  if (preset.extraHeaders) next.httpHeaders = { ...preset.extraHeaders };
+  const normalizedApiKey = apiKey.trim();
+  if (preset.usesApiKey && normalizedApiKey) {
+    const headerName = preset.apiKeyHeaderName ?? "Authorization";
+    const prefix = preset.apiKeyPrefix ?? "Bearer ";
+    next.httpHeaders = {
+      ...(next.httpHeaders ?? {}),
+      [headerName]: `${prefix}${normalizedApiKey}`,
+    };
+  }
+  return next;
+}
+
+function createConfiguredAgent(channels: AgentChannel[], existingIds: string[]): ConfiguredAgent {
+  const runtimeAgentId: AgentId = "codex";
+  const id = uniqueId("agent", existingIds);
+  const channelId = defaultChannelForAgent(runtimeAgentId, channels);
+  return {
+    id,
+    name: "New Agent",
+    description: "",
+    runtimeAgentId,
+    channelId,
+    modelId: DEFAULT_MODEL_ID,
+    prompt: "",
+    tags: [],
+    createdAt: Date.now(),
+    updatedAt: Date.now(),
   };
 }
 
@@ -960,6 +1416,7 @@ export function App() {
   const [activeFeature, setActiveFeature] = useState<ActiveFeature>("chat");
   const [configChannels, setConfigChannels] = useState<AgentChannel[]>([]);
   const [selectedConfigChannelId, setSelectedConfigChannelId] = useState("");
+  const [selectedConfiguredAgentId, setSelectedConfiguredAgentId] = useState("");
   const [advancedMode, setAdvancedMode] = useState(false);
   const [configDraft, setConfigDraft] = useState("[]");
   const [configDirty, setConfigDirty] = useState(false);
@@ -969,6 +1426,7 @@ export function App() {
   const [codexPluginCatalog, setCodexPluginCatalog] = useState<CodexPluginCatalogItem[]>([]);
   const [pluginCatalogStatus, setPluginCatalogStatus] = useState("");
   const [theme, setTheme] = useState<Theme>(() => loadStoredTheme(window.localStorage));
+  const [providerKeys, setProviderKeys] = useState<Record<string, string>>(() => loadStoredProviderKeys(window.localStorage));
   const [paletteOpen, setPaletteOpen] = useState(false);
   const transcriptRef = useRef<HTMLElement>(null);
   const stickToBottomRef = useRef(true);
@@ -978,6 +1436,17 @@ export function App() {
     document.documentElement.dataset.theme = theme;
     window.localStorage.setItem(THEME_STORAGE_KEY, theme);
   }, [theme]);
+
+  useEffect(() => {
+    if (snapshot.configuredAgents.length === 0) {
+      setSelectedConfiguredAgentId("");
+      return;
+    }
+    const firstAgent = snapshot.configuredAgents[0];
+    if (firstAgent && !snapshot.configuredAgents.some((agent) => agent.id === selectedConfiguredAgentId)) {
+      setSelectedConfiguredAgentId(firstAgent.id);
+    }
+  }, [snapshot.configuredAgents, selectedConfiguredAgentId]);
 
   function applyPersistedWorkflowDraft(draft: WorkflowDraftState): void {
     workflowDraftHydratingRef.current = true;
@@ -1411,6 +1880,51 @@ export function App() {
     } catch (error) {
       setConfigStatus(error instanceof Error ? error.message : String(error));
     }
+  }
+
+  async function saveConfiguredAgents(agents: ConfiguredAgent[]): Promise<void> {
+    const next = await window.multiAgentChat.saveConfiguredAgents(agents);
+    setSnapshot(next);
+  }
+
+  async function addConfiguredAgent(): Promise<void> {
+    const nextAgent = createConfiguredAgent(configChannels, snapshot.configuredAgents.map((agent) => agent.id));
+    const defaultPreset = AGENT_PROVIDER_PRESETS[0]!;
+    const nextChannel = applyProviderPresetToChannel(
+      createAgentChannel(defaultPreset.runtimeAgentId, nextAgent.name, configChannels.map((channel) => channel.id)),
+      defaultPreset,
+      providerKeys[defaultPreset.id] ?? "",
+    );
+    nextAgent.channelId = nextChannel.id;
+    nextAgent.runtimeAgentId = nextChannel.agentId;
+    setSelectedConfiguredAgentId(nextAgent.id);
+    const nextChannels = [...configChannels, nextChannel];
+    const channelSnapshot = await window.multiAgentChat.saveModelChannels(nextChannels);
+    setConfigChannels(channelSnapshot.channels);
+    setConfigDraft(JSON.stringify(channelSnapshot.channels, null, 2));
+    setConfigDirty(false);
+    setSelectedConfigChannelId(nextChannel.id);
+    const agentSnapshot = await window.multiAgentChat.saveConfiguredAgents([nextAgent, ...snapshot.configuredAgents]);
+    setSnapshot(agentSnapshot);
+  }
+
+  function removeConfiguredAgent(agentId: string): void {
+    void saveConfiguredAgents(snapshot.configuredAgents.filter((agent) => agent.id !== agentId));
+  }
+
+  function updateConfiguredAgent(agentId: string, updater: (agent: ConfiguredAgent) => ConfiguredAgent): void {
+    const now = Date.now();
+    void saveConfiguredAgents(snapshot.configuredAgents.map((agent) => (agent.id === agentId ? { ...updater(agent), updatedAt: now } : agent)));
+  }
+
+  function updateProviderKey(presetId: string, value: string): void {
+    setProviderKeys((current) => {
+      const next = { ...current };
+      if (value.trim()) next[presetId] = value;
+      else delete next[presetId];
+      window.localStorage.setItem(PROVIDER_KEYS_STORAGE_KEY, JSON.stringify(next));
+      return next;
+    });
   }
 
   async function importCodexConfigs(): Promise<void> {
@@ -2376,17 +2890,29 @@ export function App() {
         ) : (
           <section className="resource-panel config-nav-panel">
             <div className="panel-header">
-              <span>Channels</span>
-              <Settings size={14} />
+              <span>Agents</span>
+              <Bot size={14} />
             </div>
+            <button className="new-chat-compact-btn" onClick={() => void addConfiguredAgent()}>
+              <Plus size={13} />
+              <span>New agent</span>
+            </button>
             <div className="config-nav-list">
-              {snapshot.channels.map((channel) => (
-                <div key={channel.id} className="config-nav-row">
-                  <span className={`agent-badge mini ${agentAccent(channel.agentId)}`}>{agentLabel(channel.agentId)}</span>
-                  <strong>{channel.label}</strong>
-                  <span>{channel.models.length} models</span>
-                </div>
-              ))}
+              {snapshot.configuredAgents.length === 0 ? (
+                <div className="empty-state config-empty">No configured agents</div>
+              ) : (
+                snapshot.configuredAgents.map((agent) => (
+                  <button
+                    key={agent.id}
+                    className={`config-nav-row ${agent.id === selectedConfiguredAgentId ? "is-active" : ""}`}
+                    onClick={() => setSelectedConfiguredAgentId(agent.id)}
+                  >
+                    <span className={`agent-badge mini ${agentAccent(agent.runtimeAgentId)}`}>{agentLabel(agent.runtimeAgentId)}</span>
+                    <strong>{agent.name || agent.id}</strong>
+                    <span>{agent.tags.length > 0 ? agent.tags.join(", ") : agent.id}</span>
+                  </button>
+                ))
+              )}
             </div>
           </section>
         )}
@@ -2489,6 +3015,9 @@ export function App() {
         ) : activeFeature === "configs" ? (
           <ConfigPage
             channels={configChannels}
+            configuredAgents={snapshot.configuredAgents}
+            selectedConfiguredAgentId={selectedConfiguredAgentId}
+            providerKeys={providerKeys}
             selectedChannelId={selectedConfigChannelId}
             advancedMode={advancedMode}
             draft={configDraft}
@@ -2510,6 +3039,11 @@ export function App() {
             onGenerate={generateChannelConfigs}
             onImportCodex={importCodexConfigs}
             onLoadCodexPluginCatalog={loadCodexPluginCatalog}
+            onAddConfiguredAgent={addConfiguredAgent}
+            onSelectConfiguredAgent={setSelectedConfiguredAgentId}
+            onUpdateProviderKey={updateProviderKey}
+            onUpdateConfiguredAgent={updateConfiguredAgent}
+            onRemoveConfiguredAgent={removeConfiguredAgent}
           />
         ) : activeChat ? (
           <>
@@ -4561,6 +5095,9 @@ export function WorkflowPage({
 
 interface ConfigPageProps {
   channels: AgentChannel[];
+  configuredAgents: ConfiguredAgent[];
+  selectedConfiguredAgentId: string;
+  providerKeys: Record<string, string>;
   selectedChannelId: string;
   advancedMode: boolean;
   draft: string;
@@ -4582,10 +5119,18 @@ interface ConfigPageProps {
   onGenerate: () => Promise<void>;
   onImportCodex: () => Promise<void>;
   onLoadCodexPluginCatalog: () => Promise<void>;
+  onAddConfiguredAgent: () => MaybePromise;
+  onSelectConfiguredAgent: (agentId: string) => void;
+  onUpdateProviderKey: (presetId: string, value: string) => void;
+  onUpdateConfiguredAgent: (agentId: string, updater: (agent: ConfiguredAgent) => ConfiguredAgent) => void;
+  onRemoveConfiguredAgent: (agentId: string) => void;
 }
 
 export function ConfigPage({
   channels,
+  configuredAgents,
+  selectedConfiguredAgentId,
+  providerKeys,
   selectedChannelId,
   advancedMode,
   draft,
@@ -4607,17 +5152,63 @@ export function ConfigPage({
   onGenerate,
   onImportCodex,
   onLoadCodexPluginCatalog,
+  onAddConfiguredAgent,
+  onSelectConfiguredAgent,
+  onUpdateProviderKey,
+  onUpdateConfiguredAgent,
+  onRemoveConfiguredAgent,
 }: ConfigPageProps) {
   const activeChannel = channels.find((channel) => channel.id === selectedChannelId) ?? channels[0];
   const configuredPluginIds = new Set((activeChannel?.plugins ?? []).map((plugin) => plugin.id));
   const availableCodexPlugins = codexPluginCatalog.filter((plugin) => !configuredPluginIds.has(plugin.id));
+  const selectedConfiguredAgent =
+    configuredAgents.find((agent) => agent.id === selectedConfiguredAgentId) ?? configuredAgents[0];
+  const selectedAgentChannelRecord =
+    selectedConfiguredAgent && channels.find((channel) => channel.id === selectedConfiguredAgent.channelId);
+  const selectedAgentChannel = selectedAgentChannelRecord?.id ?? channels[0]?.id ?? "";
+  const selectedAgentRuntime = selectedAgentChannelRecord?.agentId ?? selectedConfiguredAgent?.runtimeAgentId ?? "codex";
+  const selectedAgentModels = selectedConfiguredAgent
+    ? modelsForChannel(selectedAgentRuntime, selectedAgentChannel, channels)
+    : [];
+  const runtimeProviderPresets = AGENT_PROVIDER_PRESETS.filter((preset) => preset.runtimeAgentId === selectedAgentRuntime);
+  const updateSelectedAgentChannel = (updater: (channel: AgentChannel) => AgentChannel): void => {
+    if (!selectedAgentChannelRecord) return;
+    onUpdateChannel(selectedAgentChannelRecord.id, updater);
+  };
+  const selectedAgentPresetId = selectedAgentChannelRecord
+    ? (AGENT_PROVIDER_PRESETS.find(
+        (preset) =>
+          preset.runtimeAgentId === selectedAgentRuntime &&
+          (preset.modelProvider ?? "") === (selectedAgentChannelRecord.modelProvider ?? "") &&
+          (preset.baseUrl ?? "") === (selectedAgentChannelRecord.baseUrl ?? ""),
+      )?.id ?? "custom")
+    : undefined;
+  const selectedAgentPreset = selectedAgentPresetId ? AGENT_PROVIDER_PRESETS.find((preset) => preset.id === selectedAgentPresetId) : undefined;
+  const applySelectedAgentPreset = (preset: AgentProviderPreset): void => {
+    updateSelectedAgentChannel((channel) => applyProviderPresetToChannel(channel, preset, providerKeys[preset.id] ?? ""));
+    if (!selectedConfiguredAgent) return;
+    onUpdateConfiguredAgent(selectedConfiguredAgent.id, (item) => ({
+      ...item,
+      runtimeAgentId: preset.runtimeAgentId,
+      modelId: DEFAULT_MODEL_ID,
+    }));
+  };
+  const selectAgentRuntime = (runtimeAgentId: AgentId): void => {
+    const preset = AGENT_PROVIDER_PRESETS.find((item) => item.runtimeAgentId === runtimeAgentId) ?? AGENT_PROVIDER_PRESETS[0]!;
+    applySelectedAgentPreset(preset);
+  };
+  const updateSelectedProviderKey = (value: string): void => {
+    if (!selectedAgentPreset) return;
+    onUpdateProviderKey(selectedAgentPreset.id, value);
+    updateSelectedAgentChannel((channel) => applyProviderPresetToChannel(channel, selectedAgentPreset, value));
+  };
 
   return (
     <section className="config-page">
       <header className="config-header">
         <div>
-          <h2>Channels & Models</h2>
-          <p>model-channels.json</p>
+          <h2>Agents</h2>
+          <p>Pick a provider preset, then adjust only what this agent needs.</p>
         </div>
         <div className="config-actions">
           <button className="control-btn compact secondary" onClick={() => void onImportCodex()} aria-label="Import Codex profiles">
@@ -4656,34 +5247,298 @@ export function ConfigPage({
           </section>
         ) : (
           <section className="config-form">
-            <aside className="config-channel-browser">
-              <div className="config-channel-browser-actions">
-                <button className="control-btn compact secondary" onClick={() => onAddChannel("codex")}>
-                  <Plus size={13} />
-                  <span>Codex</span>
-                </button>
-                <button className="control-btn compact secondary" onClick={() => onAddChannel("claude")}>
-                  <Plus size={13} />
-                  <span>Claude</span>
-                </button>
-              </div>
-              <div className="config-channel-picker">
-                {channels.map((channel) => (
-                  <button
-                    key={channel.id}
-                    className={`config-channel-pick ${channel.id === activeChannel?.id ? "is-active" : ""}`}
-                    onClick={() => onSelectChannel(channel.id)}
-                  >
-                    <span className={`agent-badge mini ${agentAccent(channel.agentId)}`}>{agentLabel(channel.agentId)}</span>
-                    <strong>{channel.label}</strong>
-                    <span>{channel.id}</span>
-                  </button>
-                ))}
-              </div>
-            </aside>
+            <section className="configured-agent-panel">
+              <section className="configured-agent-editor">
+                {selectedConfiguredAgent ? (
+                  <>
+                    <div className="configured-agent-editor-head">
+                      <div>
+                        <h3>{selectedConfiguredAgent.name || "Untitled Agent"}</h3>
+                        <span>{selectedConfiguredAgent.id}</span>
+                      </div>
+                      <button
+                        className="icon-btn danger"
+                        onClick={() => onRemoveConfiguredAgent(selectedConfiguredAgent.id)}
+                        title="Remove agent"
+                      >
+                        <Trash2 size={13} />
+                      </button>
+                    </div>
 
-            {activeChannel ? (
-              <section className="config-form-fields">
+                    <section className="agent-provider-presets">
+                      <div className="agent-provider-presets-head">
+                        <h3>CLI</h3>
+                        <span>Choose the command this agent runs.</span>
+                      </div>
+                      <div className="agent-provider-preset-list">
+                        {AGENTS.map((agentId) => (
+                          <button
+                            key={agentId}
+                            className={`agent-provider-preset ${selectedAgentRuntime === agentId ? "is-active" : ""}`}
+                            onClick={() => selectAgentRuntime(agentId)}
+                          >
+                            <span className={`agent-badge mini ${agentAccent(agentId)}`}>{agentLabel(agentId)}</span>
+                            <strong>{agentLabel(agentId)}</strong>
+                          </button>
+                        ))}
+                      </div>
+                    </section>
+
+                    <section className="agent-provider-presets">
+                      <div className="agent-provider-presets-head">
+                        <h3>Provider</h3>
+                        <span>Choose a provider preset for {agentLabel(selectedAgentRuntime)}.</span>
+                      </div>
+                      <div className="agent-provider-preset-list">
+                        {runtimeProviderPresets.map((preset) => (
+                          <button
+                            key={preset.id}
+                            className={`agent-provider-preset ${selectedAgentPresetId === preset.id ? "is-active" : ""}`}
+                            onClick={() => applySelectedAgentPreset(preset)}
+                          >
+                            <strong>{preset.label}</strong>
+                          </button>
+                        ))}
+                      </div>
+                      {selectedAgentPreset?.usesApiKey ? (
+                        <label className="agent-provider-key-field">
+                          <span>API Key / Token</span>
+                          <input
+                            aria-label="Provider API key"
+                            type="password"
+                            value={providerKeys[selectedAgentPreset.id] ?? ""}
+                            placeholder={`Used by all ${selectedAgentPreset.label} agents`}
+                            onChange={(event) => updateSelectedProviderKey(event.currentTarget.value)}
+                          />
+                        </label>
+                      ) : null}
+                    </section>
+
+                    <div className="config-field-grid">
+                      <label className="config-field">
+                        <span>Name</span>
+                        <input
+                          aria-label="Agent name"
+                          value={selectedConfiguredAgent.name}
+                          onChange={(event) => {
+                            const nextName = event.currentTarget.value;
+                            onUpdateConfiguredAgent(selectedConfiguredAgent.id, (item) => ({ ...item, name: nextName }));
+                            updateSelectedAgentChannel((channel) => ({ ...channel, label: nextName || channel.label }));
+                          }}
+                        />
+                      </label>
+                      <label className="config-field">
+                        <span>ID</span>
+                        <input
+                          aria-label="Agent config id"
+                          value={selectedConfiguredAgent.id}
+                          onChange={(event) => {
+                            const nextId = event.currentTarget.value;
+                            onUpdateConfiguredAgent(selectedConfiguredAgent.id, (item) => ({ ...item, id: nextId }));
+                            onSelectConfiguredAgent(nextId);
+                          }}
+                        />
+                      </label>
+                      <label className="config-field">
+                        <span>Model</span>
+                        <select
+                          aria-label="Agent model"
+                          value={selectedAgentModels.some((model) => model.id === selectedConfiguredAgent.modelId) ? selectedConfiguredAgent.modelId : DEFAULT_MODEL_ID}
+                          onChange={(event) =>
+                            onUpdateConfiguredAgent(selectedConfiguredAgent.id, (item) => ({ ...item, modelId: event.currentTarget.value }))
+                          }
+                        >
+                          {selectedAgentModels.map((model) => (
+                            <option key={model.id} value={model.id}>
+                              {model.label}
+                            </option>
+                          ))}
+                        </select>
+                      </label>
+                      <label className="config-field">
+                        <span>Tags</span>
+                        <input
+                          aria-label="Agent tags"
+                          value={selectedConfiguredAgent.tags.join(", ")}
+                          onChange={(event) =>
+                            onUpdateConfiguredAgent(selectedConfiguredAgent.id, (item) => ({
+                              ...item,
+                              tags: event.currentTarget.value
+                                .split(",")
+                                .map((tag) => tag.trim())
+                                .filter(Boolean),
+                            }))
+                          }
+                        />
+                      </label>
+                      <label className="config-field config-field-wide">
+                        <span>Description</span>
+                        <input
+                          aria-label="Agent description"
+                          value={selectedConfiguredAgent.description}
+                          onChange={(event) =>
+                            onUpdateConfiguredAgent(selectedConfiguredAgent.id, (item) => ({ ...item, description: event.currentTarget.value }))
+                          }
+                        />
+                      </label>
+                      <label className="config-field config-field-wide">
+                        <span>Prompt</span>
+                        <textarea
+                          aria-label="Agent prompt"
+                          value={selectedConfiguredAgent.prompt}
+                          onChange={(event) =>
+                            onUpdateConfiguredAgent(selectedConfiguredAgent.id, (item) => ({ ...item, prompt: event.currentTarget.value }))
+                          }
+                        />
+                      </label>
+                    </div>
+                    {selectedAgentChannelRecord ? (
+                      <details className="agent-advanced-panel">
+                        <summary>Advanced provider settings</summary>
+                        <div className="config-field-grid">
+                          <label className="config-field">
+                            <span>Channel ID</span>
+                            <div className="configured-agent-runtime-readonly">
+                              <span className={`agent-badge mini ${agentAccent(selectedAgentRuntime)}`}>{agentLabel(selectedAgentRuntime)}</span>
+                              <strong>{selectedAgentChannelRecord.id}</strong>
+                            </div>
+                          </label>
+                          <label className="config-field">
+                            <span>Model Provider</span>
+                            <input
+                              value={selectedAgentChannelRecord.modelProvider ?? ""}
+                              onChange={(event) => updateSelectedAgentChannel((channel) => withOptionalString(channel, "modelProvider", event.currentTarget.value))}
+                            />
+                          </label>
+                          <label className="config-field">
+                            <span>Provider Name</span>
+                            <input
+                              value={selectedAgentChannelRecord.providerName ?? ""}
+                              onChange={(event) => updateSelectedAgentChannel((channel) => withOptionalString(channel, "providerName", event.currentTarget.value))}
+                            />
+                          </label>
+                          <label className="config-field">
+                            <span>Wire API</span>
+                            <input
+                              value={selectedAgentChannelRecord.wireApi ?? ""}
+                              onChange={(event) => updateSelectedAgentChannel((channel) => withOptionalString(channel, "wireApi", event.currentTarget.value))}
+                            />
+                          </label>
+                          <label className="config-field config-field-wide">
+                            <span>Base URL</span>
+                            <input
+                              value={selectedAgentChannelRecord.baseUrl ?? ""}
+                              onChange={(event) => updateSelectedAgentChannel((channel) => withOptionalString(channel, "baseUrl", event.currentTarget.value))}
+                            />
+                          </label>
+                          <label className="config-field">
+                            <span>Reasoning</span>
+                            <input
+                              value={selectedAgentChannelRecord.modelReasoningEffort ?? ""}
+                              onChange={(event) =>
+                                updateSelectedAgentChannel((channel) => withOptionalString(channel, "modelReasoningEffort", event.currentTarget.value))
+                              }
+                            />
+                          </label>
+                          <label className="config-field config-field-wide">
+                            <span>Catalog JSON</span>
+                            <input
+                              value={selectedAgentChannelRecord.modelCatalogJson ?? ""}
+                              onChange={(event) => updateSelectedAgentChannel((channel) => withOptionalString(channel, "modelCatalogJson", event.currentTarget.value))}
+                            />
+                          </label>
+                          <label className="config-field config-field-wide">
+                            <span>Headers</span>
+                            <textarea
+                              value={headersToText(selectedAgentChannelRecord.httpHeaders)}
+                              onChange={(event) => updateSelectedAgentChannel((channel) => withOptionalHeaders(channel, event.currentTarget.value))}
+                            />
+                          </label>
+                        </div>
+                      </details>
+                    ) : null}
+                    {selectedAgentChannelRecord ? (
+                      <section className="agent-channel-models">
+                        <div className="config-models-header">
+                          <h3>Models</h3>
+                          <button className="control-btn compact secondary" onClick={() => onAddModel(selectedAgentChannelRecord.id)}>
+                            <Plus size={13} />
+                            <span>Add model</span>
+                          </button>
+                        </div>
+                        <div className="config-model-list">
+                          {selectedAgentChannelRecord.models.map((model, index) => (
+                            <div key={`${model.id}:${index}`} className="config-model-row">
+                              <input
+                                aria-label="Agent model id"
+                                value={model.id}
+                                onChange={(event) => onUpdateModel(selectedAgentChannelRecord.id, index, (item) => ({ ...item, id: event.currentTarget.value }))}
+                              />
+                              <input
+                                aria-label="Agent model label"
+                                value={model.label}
+                                onChange={(event) => onUpdateModel(selectedAgentChannelRecord.id, index, (item) => ({ ...item, label: event.currentTarget.value }))}
+                              />
+                              <button
+                                className="icon-btn danger"
+                                onClick={() => onRemoveModel(selectedAgentChannelRecord.id, index)}
+                                disabled={model.id === DEFAULT_MODEL_ID}
+                              >
+                                <Trash2 size={13} />
+                              </button>
+                            </div>
+                          ))}
+                        </div>
+                      </section>
+                    ) : null}
+                  </>
+                ) : (
+                  <div className="empty-state config-empty configured-agent-empty">
+                    <span>Create an agent to bind a channel, model, and prompt.</span>
+                    <button className="control-btn compact" onClick={() => void onAddConfiguredAgent()}>
+                      <Plus size={13} />
+                      <span>New agent</span>
+                    </button>
+                  </div>
+                )}
+              </section>
+            </section>
+
+            <details className="channel-admin-panel">
+              <summary>Advanced channel records</summary>
+              <div className="channel-admin-grid">
+                <aside className="config-channel-browser">
+                  <div className="config-channel-browser-actions">
+                    <button className="control-btn compact secondary" onClick={() => onAddChannel("codex")}>
+                      <Plus size={13} />
+                      <span>Codex</span>
+                    </button>
+                    <button className="control-btn compact secondary" onClick={() => onAddChannel("claude")}>
+                      <Plus size={13} />
+                      <span>Claude</span>
+                    </button>
+                    <button className="control-btn compact secondary" onClick={() => onAddChannel("api")}>
+                      <Plus size={13} />
+                      <span>API</span>
+                    </button>
+                  </div>
+                  <div className="config-channel-picker">
+                    {channels.map((channel) => (
+                      <button
+                        key={channel.id}
+                        className={`config-channel-pick ${channel.id === activeChannel?.id ? "is-active" : ""}`}
+                        onClick={() => onSelectChannel(channel.id)}
+                      >
+                        <span className={`agent-badge mini ${agentAccent(channel.agentId)}`}>{agentLabel(channel.agentId)}</span>
+                        <strong>{channel.label}</strong>
+                        <span>{channel.id}</span>
+                      </button>
+                    ))}
+                  </div>
+                </aside>
+
+                {activeChannel ? (
+                  <section className="config-form-fields">
                 <div className="config-form-title">
                   <div>
                     <h3>{activeChannel.label}</h3>
@@ -4910,10 +5765,12 @@ export function ConfigPage({
                 </div>
 
                 {status ? <div className="config-status">{status}</div> : null}
-              </section>
-            ) : (
-              <div className="empty-state config-empty">No channels</div>
-            )}
+                  </section>
+                ) : (
+                  <div className="empty-state config-empty">No channels</div>
+                )}
+              </div>
+            </details>
           </section>
         )}
 

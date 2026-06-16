@@ -7,6 +7,7 @@ import { startMcpBridge, type McpBridgeServer } from "./mcp-bridge";
 import type {
   AgentChannel,
   AgentId,
+  ConfiguredAgent,
   CreateAgentTeamRequest,
   FinishWorkflowRunRequest,
   RunAgentTeamRequest,
@@ -109,6 +110,7 @@ function registerIpcHandlers(): void {
     return hub.snapshot();
   });
   ipcMain.handle("model-channels:save", async (_event, channels: AgentChannel[]) => hub.saveModelChannels(channels));
+  ipcMain.handle("configured-agents:save", async (_event, agents: ConfiguredAgent[]) => hub.updateConfiguredAgents(agents));
   ipcMain.handle("model-channels:generate", async () => hub.generateCodexConfigs());
   ipcMain.handle("model-channels:import-codex", async () => hub.importCodexConfigs());
   ipcMain.handle("codex:plugins:list", async () => hub.listCodexPluginCatalog());

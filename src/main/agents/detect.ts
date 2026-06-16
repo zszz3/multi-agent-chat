@@ -4,7 +4,7 @@ import type { AgentId, AgentRuntime } from "../../shared/types";
 
 const execFileAsync = promisify(execFile);
 
-const AGENT_COMMANDS: Record<AgentId, { label: string; env: string; executable: string }> = {
+const AGENT_COMMANDS: Record<Exclude<AgentId, "api">, { label: string; env: string; executable: string }> = {
   codex: { label: "Codex", env: "CODEX_PATH", executable: "codex" },
   claude: { label: "Claude Code", env: "CLAUDE_PATH", executable: "claude" },
 };
@@ -16,6 +16,16 @@ export function parseCliVersion(raw: string): string {
 }
 
 async function detectOne(id: AgentId): Promise<AgentRuntime> {
+  if (id === "api") {
+    return {
+      id,
+      label: "API",
+      command: "api",
+      version: null,
+      available: true,
+    };
+  }
+
   const spec = AGENT_COMMANDS[id];
   const command = process.env[spec.env] ?? spec.executable;
 
@@ -45,5 +55,5 @@ async function detectOne(id: AgentId): Promise<AgentRuntime> {
 }
 
 export async function detectAgentRuntimes(): Promise<AgentRuntime[]> {
-  return Promise.all([detectOne("codex"), detectOne("claude")]);
+  return Promise.all([detectOne("codex"), detectOne("claude"), detectOne("api")]);
 }

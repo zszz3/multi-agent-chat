@@ -15,6 +15,13 @@ export const FALLBACK_MODEL_OPTIONS: Record<AgentId, AgentModelOption[]> = {
     { id: "sonnet", label: "Sonnet" },
     { id: "opus", label: "Opus" },
   ],
+  api: [
+    { id: DEFAULT_MODEL_ID, label: "Default" },
+    { id: "gpt-4o", label: "GPT-4o" },
+    { id: "deepseek-v4-flash", label: "DeepSeek V4 Flash" },
+    { id: "glm-5.1", label: "GLM-5.1" },
+    { id: "kimi-k2.6", label: "Kimi K2.6" },
+  ],
 };
 
 export function defaultModelForAgent(_agentId: AgentId): string {

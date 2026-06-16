@@ -16,7 +16,7 @@ interface ModelChannelsFile {
 }
 
 function isAgentId(value: unknown): value is AgentId {
-  return value === "codex" || value === "claude";
+  return value === "codex" || value === "claude" || value === "api";
 }
 
 function asString(value: unknown): string | undefined {
@@ -305,6 +305,15 @@ export function createDefaultChannels(codexModels = FALLBACK_MODEL_OPTIONS.codex
       agentId: "claude",
       label: "Claude Code",
       models: FALLBACK_MODEL_OPTIONS.claude,
+    },
+    {
+      id: "api-openai",
+      agentId: "api",
+      label: "OpenAI API",
+      providerName: "OpenAI",
+      modelProvider: "openai-api",
+      baseUrl: "https://api.openai.com/v1",
+      models: FALLBACK_MODEL_OPTIONS.api,
     },
   ];
 }

@@ -56,8 +56,40 @@ function workflowListPayload(hub: AgentHub): unknown {
   };
 }
 
+function agentListPayload(hub: AgentHub): unknown {
+  const snapshot = hub.snapshot();
+  return {
+    ok: true,
+    agents: snapshot.configuredAgents.map((agent) => ({
+      id: agent.id,
+      name: agent.name,
+      description: agent.description,
+      runtimeAgentId: agent.runtimeAgentId,
+      channelId: agent.channelId,
+      modelId: agent.modelId,
+      prompt: agent.prompt,
+      tags: agent.tags,
+      updatedAt: agent.updatedAt,
+    })),
+    runtimes: snapshot.runtimes.map((runtime) => ({
+      id: runtime.id,
+      label: runtime.label,
+      available: runtime.available,
+      version: runtime.version,
+      error: runtime.error,
+    })),
+    channels: snapshot.channels.map((channel) => ({
+      id: channel.id,
+      agentId: channel.agentId,
+      label: channel.label,
+      models: channel.models,
+    })),
+  };
+}
+
 async function routeWorkflowRequest(hub: AgentHub, route: string, body: unknown): Promise<unknown> {
   const record = asRecord(body);
+  if (route === "/mcp/agents/list") return agentListPayload(hub);
   if (route === "/mcp/workflow/list") return workflowListPayload(hub);
   if (route === "/mcp/workflow/get") {
     const workflowId = typeof record.workflowId === "string" ? record.workflowId : "";
@@ -69,7 +101,7 @@ async function routeWorkflowRequest(hub: AgentHub, route: string, body: unknown)
       title: typeof record.title === "string" ? record.title : "",
       objective: typeof record.objective === "string" ? record.objective : "",
       graph: record.graph as WorkflowGraph,
-      agentId: record.agentId === "claude" ? "claude" : "codex",
+      agentId: record.agentId === "claude" ? "claude" : record.agentId === "api" ? "api" : "codex",
     };
     if (typeof record.channelId === "string") request.channelId = record.channelId;
     if (typeof record.modelId === "string") request.modelId = record.modelId;

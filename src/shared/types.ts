@@ -1,4 +1,4 @@
-export type AgentId = "codex" | "claude";
+export type AgentId = "codex" | "claude" | "api";
 
 export interface AgentRuntime {
   id: AgentId;
@@ -42,6 +42,19 @@ export interface AgentChannel {
   plugins?: AgentPluginConfig[];
   modelCatalogJson?: string;
   modelReasoningEffort?: string;
+}
+
+export interface ConfiguredAgent {
+  id: string;
+  name: string;
+  description: string;
+  runtimeAgentId: AgentId;
+  channelId: string;
+  modelId: string;
+  prompt: string;
+  tags: string[];
+  createdAt: number;
+  updatedAt: number;
 }
 
 export interface GeneratedConfigFile {
@@ -482,6 +495,7 @@ export interface AppSnapshot {
   workDir: string;
   runtimes: AgentRuntime[];
   channels: AgentChannel[];
+  configuredAgents: ConfiguredAgent[];
   chats: ChatSession[];
   tasks: TaskRun[];
   teams: AgentTeam[];
