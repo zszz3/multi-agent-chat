@@ -28,6 +28,7 @@ import {
 import { CommandPalette, buildPaletteCommands, type Theme } from "./CommandPalette";
 import { Markdown } from "./Markdown";
 import { DEFAULT_MODEL_ID, FALLBACK_MODEL_OPTIONS, defaultChannelForAgent, modelsForChannel } from "../../shared/models";
+import { AGENT_TEMPLATES } from "../../shared/agent-templates";
 import { buildWorkflowAgentPrompt, WORKFLOW_TOTAL_QUESTION_COUNT } from "../../shared/workflow-agent";
 import {
   createWorkflowGraphFromObjective,
@@ -42,6 +43,7 @@ import type {
   AgentModelOption,
   AgentPluginConfig,
   AgentRuntime,
+  AgentTemplate,
   AgentTeam,
   AgentTeamMember,
   AgentTeamMode,
@@ -804,7 +806,21 @@ function createAgentChannel(agentId: AgentId, agentName: string, existingIds: st
   };
 }
 
-function applyProviderPresetToChannel(channel: AgentChannel, preset: AgentProviderPreset, apiKey = ""): AgentChannel {
+export function resolveConfiguredAgentChannel(agent: ConfiguredAgent | undefined, channels: AgentChannel[]): AgentChannel | undefined {
+  if (!agent) return undefined;
+  return channels.find((channel) => channel.id === agent.channelId) ?? channels.find((channel) => channel.agentId === agent.runtimeAgentId) ?? channels[0];
+}
+
+export function applyProviderPresetToConfiguredAgent(agent: ConfiguredAgent, channel: AgentChannel, preset: AgentProviderPreset): ConfiguredAgent {
+  return {
+    ...agent,
+    channelId: channel.id,
+    runtimeAgentId: preset.runtimeAgentId,
+    modelId: DEFAULT_MODEL_ID,
+  };
+}
+
+export function applyProviderPresetToChannel(channel: AgentChannel, preset: AgentProviderPreset, apiKey = ""): AgentChannel {
   const next: AgentChannel = {
     ...channel,
     agentId: preset.runtimeAgentId,
@@ -850,6 +866,16 @@ function createConfiguredAgent(channels: AgentChannel[], existingIds: string[]):
     tags: [],
     createdAt: Date.now(),
     updatedAt: Date.now(),
+  };
+}
+
+export function applyAgentTemplate(agent: ConfiguredAgent, template: AgentTemplate): ConfiguredAgent {
+  return {
+    ...agent,
+    name: template.name,
+    description: template.description,
+    prompt: template.prompt,
+    tags: [...template.tags],
   };
 }
 
@@ -1428,6 +1454,7 @@ export function App() {
   const [theme, setTheme] = useState<Theme>(() => loadStoredTheme(window.localStorage));
   const [providerKeys, setProviderKeys] = useState<Record<string, string>>(() => loadStoredProviderKeys(window.localStorage));
   const [paletteOpen, setPaletteOpen] = useState(false);
+  const [agentContextMenu, setAgentContextMenu] = useState<{ agentId: string; x: number; y: number } | undefined>();
   const transcriptRef = useRef<HTMLElement>(null);
   const stickToBottomRef = useRef(true);
   const gChordRef = useRef(0);
@@ -1447,6 +1474,22 @@ export function App() {
       setSelectedConfiguredAgentId(firstAgent.id);
     }
   }, [snapshot.configuredAgents, selectedConfiguredAgentId]);
+
+  useEffect(() => {
+    if (!agentContextMenu) return;
+    const close = (): void => setAgentContextMenu(undefined);
+    const handleKeyDown = (event: globalThis.KeyboardEvent): void => {
+      if (event.key === "Escape") close();
+    };
+    window.addEventListener("click", close);
+    window.addEventListener("scroll", close, true);
+    window.addEventListener("keydown", handleKeyDown);
+    return () => {
+      window.removeEventListener("click", close);
+      window.removeEventListener("scroll", close, true);
+      window.removeEventListener("keydown", handleKeyDown);
+    };
+  }, [agentContextMenu]);
 
   function applyPersistedWorkflowDraft(draft: WorkflowDraftState): void {
     workflowDraftHydratingRef.current = true;
@@ -1887,8 +1930,15 @@ export function App() {
     setSnapshot(next);
   }
 
-  async function addConfiguredAgent(): Promise<void> {
-    const nextAgent = createConfiguredAgent(configChannels, snapshot.configuredAgents.map((agent) => agent.id));
+  async function addConfiguredAgent(template?: AgentTemplate): Promise<void> {
+    const existingAgentIds = snapshot.configuredAgents.map((agent) => agent.id);
+    let nextAgent = createConfiguredAgent(configChannels, existingAgentIds);
+    if (template) {
+      nextAgent = {
+        ...applyAgentTemplate(nextAgent, template),
+        id: uniqueId(template.id, existingAgentIds),
+      };
+    }
     const defaultPreset = AGENT_PROVIDER_PRESETS[0]!;
     const nextChannel = applyProviderPresetToChannel(
       createAgentChannel(defaultPreset.runtimeAgentId, nextAgent.name, configChannels.map((channel) => channel.id)),
@@ -1909,7 +1959,15 @@ export function App() {
   }
 
   function removeConfiguredAgent(agentId: string): void {
+    setAgentContextMenu(undefined);
     void saveConfiguredAgents(snapshot.configuredAgents.filter((agent) => agent.id !== agentId));
+  }
+
+  function openAgentContextMenu(event: MouseEvent, agentId: string): void {
+    event.preventDefault();
+    event.stopPropagation();
+    setSelectedConfiguredAgentId(agentId);
+    setAgentContextMenu({ agentId, x: event.clientX, y: event.clientY });
   }
 
   function updateConfiguredAgent(agentId: string, updater: (agent: ConfiguredAgent) => ConfiguredAgent): void {
@@ -2893,10 +2951,26 @@ export function App() {
               <span>Agents</span>
               <Bot size={14} />
             </div>
-            <button className="new-chat-compact-btn" onClick={() => void addConfiguredAgent()}>
-              <Plus size={13} />
-              <span>New agent</span>
-            </button>
+            <div className="config-agent-actions">
+              <button className="new-chat-compact-btn" type="button" onClick={() => void addConfiguredAgent()}>
+                <Plus size={13} />
+                <span>New agent</span>
+              </button>
+              <details className="agent-template-menu">
+                <summary>
+                  <FileInput size={13} />
+                  <span>Import template</span>
+                </summary>
+                <div className="agent-template-menu-list" aria-label="Agent templates">
+                  {AGENT_TEMPLATES.map((template) => (
+                    <button key={template.id} type="button" className="agent-template-menu-item" onClick={() => void addConfiguredAgent(template)}>
+                      <strong>{template.name}</strong>
+                      <span>{template.description}</span>
+                    </button>
+                  ))}
+                </div>
+              </details>
+            </div>
             <div className="config-nav-list">
               {snapshot.configuredAgents.length === 0 ? (
                 <div className="empty-state config-empty">No configured agents</div>
@@ -2905,7 +2979,11 @@ export function App() {
                   <button
                     key={agent.id}
                     className={`config-nav-row ${agent.id === selectedConfiguredAgentId ? "is-active" : ""}`}
-                    onClick={() => setSelectedConfiguredAgentId(agent.id)}
+                    onClick={() => {
+                      setAgentContextMenu(undefined);
+                      setSelectedConfiguredAgentId(agent.id);
+                    }}
+                    onContextMenu={(event) => openAgentContextMenu(event, agent.id)}
                   >
                     <span className={`agent-badge mini ${agentAccent(agent.runtimeAgentId)}`}>{agentLabel(agent.runtimeAgentId)}</span>
                     <strong>{agent.name || agent.id}</strong>
@@ -2914,6 +2992,19 @@ export function App() {
                 ))
               )}
             </div>
+            {agentContextMenu ? (
+              <div
+                className="agent-context-menu"
+                style={{ left: agentContextMenu.x, top: agentContextMenu.y }}
+                onClick={(event) => event.stopPropagation()}
+                onContextMenu={(event) => event.preventDefault()}
+              >
+                <button type="button" className="agent-context-menu-item danger" onClick={() => removeConfiguredAgent(agentContextMenu.agentId)}>
+                  <Trash2 size={13} />
+                  <span>Delete agent</span>
+                </button>
+              </div>
+            ) : null}
           </section>
         )}
       </aside>
@@ -3018,7 +3109,6 @@ export function App() {
             configuredAgents={snapshot.configuredAgents}
             selectedConfiguredAgentId={selectedConfiguredAgentId}
             providerKeys={providerKeys}
-            selectedChannelId={selectedConfigChannelId}
             advancedMode={advancedMode}
             draft={configDraft}
             status={configStatus}
@@ -3026,9 +3116,6 @@ export function App() {
             pluginCatalogStatus={pluginCatalogStatus}
             generatedConfigs={generatedConfigs}
             importedConfigs={importedConfigs}
-            onSelectChannel={setSelectedConfigChannelId}
-            onAddChannel={addConfigChannel}
-            onRemoveChannel={removeConfigChannel}
             onUpdateChannel={updateConfigChannel}
             onAddModel={addConfigModel}
             onUpdateModel={updateConfigModel}
@@ -5098,7 +5185,6 @@ interface ConfigPageProps {
   configuredAgents: ConfiguredAgent[];
   selectedConfiguredAgentId: string;
   providerKeys: Record<string, string>;
-  selectedChannelId: string;
   advancedMode: boolean;
   draft: string;
   status: string;
@@ -5106,9 +5192,6 @@ interface ConfigPageProps {
   pluginCatalogStatus: string;
   generatedConfigs: GeneratedConfigFile[];
   importedConfigs: ImportedCodexConfig[];
-  onSelectChannel: (channelId: string) => void;
-  onAddChannel: (agentId: AgentId) => void;
-  onRemoveChannel: (channelId: string) => void;
   onUpdateChannel: (channelId: string, updater: (channel: AgentChannel) => AgentChannel) => void;
   onAddModel: (channelId: string) => void;
   onUpdateModel: (channelId: string, modelIndex: number, updater: (model: AgentModelOption) => AgentModelOption) => void;
@@ -5131,7 +5214,6 @@ export function ConfigPage({
   configuredAgents,
   selectedConfiguredAgentId,
   providerKeys,
-  selectedChannelId,
   advancedMode,
   draft,
   status,
@@ -5139,9 +5221,6 @@ export function ConfigPage({
   pluginCatalogStatus,
   generatedConfigs,
   importedConfigs,
-  onSelectChannel,
-  onAddChannel,
-  onRemoveChannel,
   onUpdateChannel,
   onAddModel,
   onUpdateModel,
@@ -5158,13 +5237,11 @@ export function ConfigPage({
   onUpdateConfiguredAgent,
   onRemoveConfiguredAgent,
 }: ConfigPageProps) {
-  const activeChannel = channels.find((channel) => channel.id === selectedChannelId) ?? channels[0];
-  const configuredPluginIds = new Set((activeChannel?.plugins ?? []).map((plugin) => plugin.id));
-  const availableCodexPlugins = codexPluginCatalog.filter((plugin) => !configuredPluginIds.has(plugin.id));
   const selectedConfiguredAgent =
     configuredAgents.find((agent) => agent.id === selectedConfiguredAgentId) ?? configuredAgents[0];
-  const selectedAgentChannelRecord =
-    selectedConfiguredAgent && channels.find((channel) => channel.id === selectedConfiguredAgent.channelId);
+  const selectedAgentChannelRecord = resolveConfiguredAgentChannel(selectedConfiguredAgent, channels);
+  const configuredPluginIds = new Set((selectedAgentChannelRecord?.plugins ?? []).map((plugin) => plugin.id));
+  const availableCodexPlugins = codexPluginCatalog.filter((plugin) => !configuredPluginIds.has(plugin.id));
   const selectedAgentChannel = selectedAgentChannelRecord?.id ?? channels[0]?.id ?? "";
   const selectedAgentRuntime = selectedAgentChannelRecord?.agentId ?? selectedConfiguredAgent?.runtimeAgentId ?? "codex";
   const selectedAgentModels = selectedConfiguredAgent
@@ -5185,13 +5262,9 @@ export function ConfigPage({
     : undefined;
   const selectedAgentPreset = selectedAgentPresetId ? AGENT_PROVIDER_PRESETS.find((preset) => preset.id === selectedAgentPresetId) : undefined;
   const applySelectedAgentPreset = (preset: AgentProviderPreset): void => {
+    if (!selectedConfiguredAgent || !selectedAgentChannelRecord) return;
     updateSelectedAgentChannel((channel) => applyProviderPresetToChannel(channel, preset, providerKeys[preset.id] ?? ""));
-    if (!selectedConfiguredAgent) return;
-    onUpdateConfiguredAgent(selectedConfiguredAgent.id, (item) => ({
-      ...item,
-      runtimeAgentId: preset.runtimeAgentId,
-      modelId: DEFAULT_MODEL_ID,
-    }));
+    onUpdateConfiguredAgent(selectedConfiguredAgent.id, (item) => applyProviderPresetToConfiguredAgent(item, selectedAgentChannelRecord, preset));
   };
   const selectAgentRuntime = (runtimeAgentId: AgentId): void => {
     const preset = AGENT_PROVIDER_PRESETS.find((item) => item.runtimeAgentId === runtimeAgentId) ?? AGENT_PROVIDER_PRESETS[0]!;
@@ -5256,13 +5329,27 @@ export function ConfigPage({
                         <h3>{selectedConfiguredAgent.name || "Untitled Agent"}</h3>
                         <span>{selectedConfiguredAgent.id}</span>
                       </div>
-                      <button
-                        className="icon-btn danger"
-                        onClick={() => onRemoveConfiguredAgent(selectedConfiguredAgent.id)}
-                        title="Remove agent"
-                      >
-                        <Trash2 size={13} />
-                      </button>
+                      <div className="configured-agent-editor-actions">
+                        <details className="agent-template-menu inline">
+                          <summary>
+                            <FileInput size={13} />
+                            <span>Import template</span>
+                          </summary>
+                          <div className="agent-template-menu-list" aria-label="Agent templates">
+                            {AGENT_TEMPLATES.map((template) => (
+                              <button
+                                key={template.id}
+                                type="button"
+                                className="agent-template-menu-item"
+                                onClick={() => onUpdateConfiguredAgent(selectedConfiguredAgent.id, (item) => applyAgentTemplate(item, template))}
+                              >
+                                <strong>{template.name}</strong>
+                                <span>{template.description}</span>
+                              </button>
+                            ))}
+                          </div>
+                        </details>
+                      </div>
                     </div>
 
                     <section className="agent-provider-presets">
@@ -5273,6 +5360,7 @@ export function ConfigPage({
                       <div className="agent-provider-preset-list">
                         {AGENTS.map((agentId) => (
                           <button
+                            type="button"
                             key={agentId}
                             className={`agent-provider-preset ${selectedAgentRuntime === agentId ? "is-active" : ""}`}
                             onClick={() => selectAgentRuntime(agentId)}
@@ -5292,6 +5380,7 @@ export function ConfigPage({
                       <div className="agent-provider-preset-list">
                         {runtimeProviderPresets.map((preset) => (
                           <button
+                            type="button"
                             key={preset.id}
                             className={`agent-provider-preset ${selectedAgentPresetId === preset.id ? "is-active" : ""}`}
                             onClick={() => applySelectedAgentPreset(preset)}
@@ -5457,6 +5546,94 @@ export function ConfigPage({
                         </div>
                       </details>
                     ) : null}
+                    {selectedAgentChannelRecord && selectedAgentRuntime === "codex" ? (
+                      <section className="agent-channel-models">
+                        <div className="config-models-header">
+                          <h3>Plugins</h3>
+                          <div className="config-plugin-actions">
+                            <button
+                              className="control-btn compact secondary"
+                              type="button"
+                              onClick={() => void onLoadCodexPluginCatalog()}
+                              aria-label="Load Codex plugin catalog"
+                            >
+                              <RefreshCw size={13} />
+                              <span>Load catalog</span>
+                            </button>
+                            <button
+                              className="control-btn compact secondary"
+                              type="button"
+                              onClick={() =>
+                                updateSelectedAgentChannel((channel) => ({
+                                  ...channel,
+                                  plugins: [...(channel.plugins ?? []), { id: "plugin@marketplace", enabled: true }],
+                                }))
+                              }
+                              aria-label="Add manual plugin"
+                            >
+                              <Plus size={13} />
+                              <span>Manual</span>
+                            </button>
+                          </div>
+                        </div>
+                        <label className="config-field config-plugin-catalog">
+                          <span>Catalog</span>
+                          <select
+                            aria-label="Codex plugin catalog"
+                            value=""
+                            onChange={(event) => {
+                              const pluginId = event.currentTarget.value;
+                              if (!pluginId) return;
+                              updateSelectedAgentChannel((channel) => addPluginToChannel(channel, pluginId));
+                            }}
+                            disabled={availableCodexPlugins.length === 0}
+                          >
+                            <option value="">{availableCodexPlugins.length > 0 ? "Select plugin..." : "No plugins available"}</option>
+                            {availableCodexPlugins.map((plugin) => {
+                              const state = plugin.enabled ? "enabled" : plugin.installed ? "installed" : "available";
+                              return (
+                                <option key={plugin.id} value={plugin.id}>
+                                  {`${plugin.id} (${state})`}
+                                </option>
+                              );
+                            })}
+                          </select>
+                        </label>
+                        {pluginCatalogStatus ? <div className="config-plugin-catalog-status">{pluginCatalogStatus}</div> : null}
+                        <div className="config-plugin-list">
+                          {(selectedAgentChannelRecord.plugins ?? []).length === 0 ? (
+                            <div className="empty-state config-empty">No plugins configured</div>
+                          ) : (
+                            (selectedAgentChannelRecord.plugins ?? []).map((plugin, index) => (
+                              <div key={`${plugin.id}:${index}`} className="config-plugin-row">
+                                <input
+                                  aria-label="Plugin id"
+                                  value={plugin.id}
+                                  onChange={(event) =>
+                                    updateSelectedAgentChannel((channel) => updatePluginAt(channel, index, (item) => ({ ...item, id: event.currentTarget.value })))
+                                  }
+                                />
+                                <label className="config-plugin-toggle">
+                                  <input
+                                    type="checkbox"
+                                    checked={plugin.enabled}
+                                    onChange={(event) =>
+                                      updateSelectedAgentChannel((channel) =>
+                                        updatePluginAt(channel, index, (item) => ({ ...item, enabled: event.currentTarget.checked })),
+                                      )
+                                    }
+                                  />
+                                  <span>Enabled</span>
+                                </label>
+                                <button className="icon-btn danger" type="button" onClick={() => updateSelectedAgentChannel((channel) => removePluginAt(channel, index))}>
+                                  <Trash2 size={13} />
+                                </button>
+                              </div>
+                            ))
+                          )}
+                        </div>
+                      </section>
+                    ) : null}
                     {selectedAgentChannelRecord ? (
                       <section className="agent-channel-models">
                         <div className="config-models-header">
@@ -5504,290 +5681,10 @@ export function ConfigPage({
               </section>
             </section>
 
-            <details className="channel-admin-panel">
-              <summary>Advanced channel records</summary>
-              <div className="channel-admin-grid">
-                <aside className="config-channel-browser">
-                  <div className="config-channel-browser-actions">
-                    <button className="control-btn compact secondary" onClick={() => onAddChannel("codex")}>
-                      <Plus size={13} />
-                      <span>Codex</span>
-                    </button>
-                    <button className="control-btn compact secondary" onClick={() => onAddChannel("claude")}>
-                      <Plus size={13} />
-                      <span>Claude</span>
-                    </button>
-                    <button className="control-btn compact secondary" onClick={() => onAddChannel("api")}>
-                      <Plus size={13} />
-                      <span>API</span>
-                    </button>
-                  </div>
-                  <div className="config-channel-picker">
-                    {channels.map((channel) => (
-                      <button
-                        key={channel.id}
-                        className={`config-channel-pick ${channel.id === activeChannel?.id ? "is-active" : ""}`}
-                        onClick={() => onSelectChannel(channel.id)}
-                      >
-                        <span className={`agent-badge mini ${agentAccent(channel.agentId)}`}>{agentLabel(channel.agentId)}</span>
-                        <strong>{channel.label}</strong>
-                        <span>{channel.id}</span>
-                      </button>
-                    ))}
-                  </div>
-                </aside>
-
-                {activeChannel ? (
-                  <section className="config-form-fields">
-                <div className="config-form-title">
-                  <div>
-                    <h3>{activeChannel.label}</h3>
-                    <span>{activeChannel.id}</span>
-                  </div>
-                  <button className="icon-btn danger" onClick={() => onRemoveChannel(activeChannel.id)} title="Remove channel">
-                    <Trash2 size={13} />
-                  </button>
-                </div>
-
-                <div className="config-field-grid">
-                  <label className="config-field">
-                    <span>Agent</span>
-                    <select
-                      value={activeChannel.agentId}
-                      onChange={(event) =>
-                        onUpdateChannel(activeChannel.id, (channel) => ({
-                          ...channel,
-                          agentId: event.currentTarget.value as AgentId,
-                        }))
-                      }
-                    >
-                      {AGENTS.map((agentId) => (
-                        <option key={agentId} value={agentId}>
-                          {agentLabel(agentId)}
-                        </option>
-                      ))}
-                    </select>
-                  </label>
-                  <label className="config-field">
-                    <span>Label</span>
-                    <input
-                      aria-label="Channel label"
-                      value={activeChannel.label}
-                      onChange={(event) => onUpdateChannel(activeChannel.id, (channel) => ({ ...channel, label: event.currentTarget.value }))}
-                    />
-                  </label>
-                  <label className="config-field">
-                    <span>ID</span>
-                    <input
-                      aria-label="Channel id"
-                      value={activeChannel.id}
-                      onChange={(event) => {
-                        const nextId = event.currentTarget.value;
-                        onUpdateChannel(activeChannel.id, (channel) => ({ ...channel, id: nextId }));
-                        onSelectChannel(nextId);
-                      }}
-                    />
-                  </label>
-                  <label className="config-field">
-                    <span>Profile</span>
-                    <input
-                      value={activeChannel.profileName ?? ""}
-                      onChange={(event) => onUpdateChannel(activeChannel.id, (channel) => withOptionalString(channel, "profileName", event.currentTarget.value))}
-                    />
-                  </label>
-                  <label className="config-field">
-                    <span>Model Provider</span>
-                    <input
-                      value={activeChannel.modelProvider ?? ""}
-                      onChange={(event) => onUpdateChannel(activeChannel.id, (channel) => withOptionalString(channel, "modelProvider", event.currentTarget.value))}
-                    />
-                  </label>
-                  <label className="config-field">
-                    <span>Provider Name</span>
-                    <input
-                      value={activeChannel.providerName ?? ""}
-                      onChange={(event) => onUpdateChannel(activeChannel.id, (channel) => withOptionalString(channel, "providerName", event.currentTarget.value))}
-                    />
-                  </label>
-                  <label className="config-field">
-                    <span>Base URL</span>
-                    <input
-                      value={activeChannel.baseUrl ?? ""}
-                      onChange={(event) => onUpdateChannel(activeChannel.id, (channel) => withOptionalString(channel, "baseUrl", event.currentTarget.value))}
-                    />
-                  </label>
-                  <label className="config-field">
-                    <span>Wire API</span>
-                    <input
-                      value={activeChannel.wireApi ?? ""}
-                      onChange={(event) => onUpdateChannel(activeChannel.id, (channel) => withOptionalString(channel, "wireApi", event.currentTarget.value))}
-                    />
-                  </label>
-                  <label className="config-field">
-                    <span>Reasoning</span>
-                    <input
-                      value={activeChannel.modelReasoningEffort ?? ""}
-                      onChange={(event) =>
-                        onUpdateChannel(activeChannel.id, (channel) => withOptionalString(channel, "modelReasoningEffort", event.currentTarget.value))
-                      }
-                    />
-                  </label>
-                  <label className="config-field">
-                    <span>Catalog JSON</span>
-                    <input
-                      value={activeChannel.modelCatalogJson ?? ""}
-                      onChange={(event) => onUpdateChannel(activeChannel.id, (channel) => withOptionalString(channel, "modelCatalogJson", event.currentTarget.value))}
-                    />
-                  </label>
-                  <label className="config-field config-field-wide">
-                    <span>Headers</span>
-                    <textarea
-                      value={headersToText(activeChannel.httpHeaders)}
-                      onChange={(event) => onUpdateChannel(activeChannel.id, (channel) => withOptionalHeaders(channel, event.currentTarget.value))}
-                    />
-                  </label>
-                </div>
-
-                {activeChannel.agentId === "codex" ? (
-                  <>
-                    <div className="config-models-header">
-                      <h3>Plugins</h3>
-                      <div className="config-plugin-actions">
-                        <button
-                          className="control-btn compact secondary"
-                          onClick={() => void onLoadCodexPluginCatalog()}
-                          aria-label="Load Codex plugin catalog"
-                        >
-                          <RefreshCw size={13} />
-                          <span>Load catalog</span>
-                        </button>
-                        <button
-                          className="control-btn compact secondary"
-                          onClick={() =>
-                            onUpdateChannel(activeChannel.id, (channel) => ({
-                              ...channel,
-                              plugins: [...(channel.plugins ?? []), { id: "plugin@marketplace", enabled: true }],
-                            }))
-                          }
-                          aria-label="Add manual plugin"
-                        >
-                          <Plus size={13} />
-                          <span>Manual</span>
-                        </button>
-                      </div>
-                    </div>
-                    <label className="config-field config-plugin-catalog">
-                      <span>Catalog</span>
-                      <select
-                        aria-label="Codex plugin catalog"
-                        value=""
-                        onChange={(event) => {
-                          const pluginId = event.currentTarget.value;
-                          if (!pluginId) return;
-                          onUpdateChannel(activeChannel.id, (channel) => addPluginToChannel(channel, pluginId));
-                        }}
-                        disabled={availableCodexPlugins.length === 0}
-                      >
-                        <option value="">{availableCodexPlugins.length > 0 ? "Select plugin..." : "No plugins available"}</option>
-                        {availableCodexPlugins.map((plugin) => {
-                          const state = plugin.enabled ? "enabled" : plugin.installed ? "installed" : "available";
-                          return (
-                            <option key={plugin.id} value={plugin.id}>
-                              {`${plugin.id} (${state})`}
-                            </option>
-                          );
-                        })}
-                      </select>
-                    </label>
-                    {pluginCatalogStatus ? <div className="config-plugin-catalog-status">{pluginCatalogStatus}</div> : null}
-                    <div className="config-plugin-list">
-                      {(activeChannel.plugins ?? []).length === 0 ? (
-                        <div className="empty-state config-empty">No plugins configured</div>
-                      ) : (
-                        (activeChannel.plugins ?? []).map((plugin, index) => (
-                          <div key={`${plugin.id}:${index}`} className="config-plugin-row">
-                            <input
-                              aria-label="Plugin id"
-                              value={plugin.id}
-                              onChange={(event) =>
-                                onUpdateChannel(activeChannel.id, (channel) =>
-                                  updatePluginAt(channel, index, (item) => ({ ...item, id: event.currentTarget.value })),
-                                )
-                              }
-                            />
-                            <label className="config-plugin-toggle">
-                              <input
-                                type="checkbox"
-                                checked={plugin.enabled}
-                                onChange={(event) =>
-                                  onUpdateChannel(activeChannel.id, (channel) =>
-                                    updatePluginAt(channel, index, (item) => ({ ...item, enabled: event.currentTarget.checked })),
-                                  )
-                                }
-                              />
-                              <span>Enabled</span>
-                            </label>
-                            <button className="icon-btn danger" onClick={() => onUpdateChannel(activeChannel.id, (channel) => removePluginAt(channel, index))}>
-                              <Trash2 size={13} />
-                            </button>
-                          </div>
-                        ))
-                      )}
-                    </div>
-                  </>
-                ) : null}
-
-                <div className="config-models-header">
-                  <h3>Models</h3>
-                  <button className="control-btn compact secondary" onClick={() => onAddModel(activeChannel.id)}>
-                    <Plus size={13} />
-                    <span>Add model</span>
-                  </button>
-                </div>
-                <div className="config-model-list">
-                  {activeChannel.models.map((model, index) => (
-                    <div key={`${model.id}:${index}`} className="config-model-row">
-                      <input
-                        aria-label="Model id"
-                        value={model.id}
-                        onChange={(event) => onUpdateModel(activeChannel.id, index, (item) => ({ ...item, id: event.currentTarget.value }))}
-                      />
-                      <input
-                        aria-label="Model label"
-                        value={model.label}
-                        onChange={(event) => onUpdateModel(activeChannel.id, index, (item) => ({ ...item, label: event.currentTarget.value }))}
-                      />
-                      <button className="icon-btn danger" onClick={() => onRemoveModel(activeChannel.id, index)} disabled={model.id === DEFAULT_MODEL_ID}>
-                        <Trash2 size={13} />
-                      </button>
-                    </div>
-                  ))}
-                </div>
-
-                {status ? <div className="config-status">{status}</div> : null}
-                  </section>
-                ) : (
-                  <div className="empty-state config-empty">No channels</div>
-                )}
-              </div>
-            </details>
           </section>
         )}
 
         <section className="config-summary-panel">
-          <div className="config-summary-block">
-            <h3>Channels</h3>
-            <div className="config-channel-list">
-              {channels.map((channel) => (
-                <div key={channel.id} className="config-channel-row">
-                  <span className={`agent-badge mini ${agentAccent(channel.agentId)}`}>{agentLabel(channel.agentId)}</span>
-                  <strong>{channel.label}</strong>
-                  <span>{channel.models.map((model) => model.label).join(", ")}</span>
-                </div>
-              ))}
-            </div>
-          </div>
-
           <div className="config-summary-block">
             <h3>Imported Profiles</h3>
             {importedConfigs.length > 0 ? (

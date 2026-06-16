@@ -6,9 +6,13 @@ import {
   chatConfigLocked,
   ChatControls,
   ConfigPage,
+  applyAgentTemplate,
+  applyProviderPresetToChannel,
+  applyProviderPresetToConfiguredAgent,
   shouldSendComposerKey,
   SlashCommandSuggestions,
   slashCommandSuggestionsFor,
+  resolveConfiguredAgentChannel,
   reorderTeamMembers,
   taskDetailIdFor,
   TaskPage,
@@ -31,6 +35,7 @@ import {
   workflowTaskLiveDetail,
 } from "./App";
 import { DEFAULT_MODEL_ID } from "../../shared/models";
+import { AGENT_TEMPLATES } from "../../shared/agent-templates";
 import { firstWorkflowQuestionForObjective } from "../../shared/workflow-agent";
 import type { AgentChannel, AgentRuntime, AgentTeam, CodexPluginCatalogItem, ConfiguredAgent, TaskRun, TeamRun, WorkflowGraph } from "../../shared/types";
 
@@ -447,14 +452,13 @@ describe("ChatControls", () => {
 });
 
 describe("ConfigPage", () => {
-  test("renders channel form controls and advanced json editor", () => {
+  test("renders agent controls, plugins, templates, and advanced json editor", () => {
     const html = renderToStaticMarkup(
       <ConfigPage
         channels={channels}
         configuredAgents={configuredAgents}
         selectedConfiguredAgentId="repo-reviewer"
         providerKeys={{}}
-        selectedChannelId="codex-openai"
         advancedMode={false}
         draft="[]"
         status=""
@@ -462,9 +466,6 @@ describe("ConfigPage", () => {
         pluginCatalogStatus="Loaded 2 plugins"
         generatedConfigs={[]}
         importedConfigs={[]}
-        onSelectChannel={() => undefined}
-        onAddChannel={() => undefined}
-        onRemoveChannel={() => undefined}
         onUpdateChannel={() => undefined}
         onAddModel={() => undefined}
         onUpdateModel={() => undefined}
@@ -485,8 +486,7 @@ describe("ConfigPage", () => {
 
     expect(html).toContain("config-form");
     expect(html).toContain("aria-label=\"Import Codex profiles\"");
-    expect(html).toContain("aria-label=\"Channel label\"");
-    expect(html).toContain("aria-label=\"Model id\"");
+    expect(html).toContain("aria-label=\"Agent model id\"");
     expect(html).toContain("Plugins");
     expect(html).toContain("documents@openai-primary-runtime");
     expect(html).toContain("browser-use@openai-bundled");
@@ -495,8 +495,64 @@ describe("ConfigPage", () => {
     expect(html).toContain("Loaded 2 plugins");
     expect(html).toContain("Advanced JSON");
     expect(html).toContain("Agents");
+    expect(html).toContain("Agent templates");
+    expect(html).not.toContain("<h3>Channels</h3>");
+    expect(html).toContain("Code Review Agent");
     expect(html).toContain("Repo Reviewer");
     expect(html).toContain("aria-label=\"Agent prompt\"");
+  });
+
+  test("applies agent templates without changing runtime or provider selection", () => {
+    const template = AGENT_TEMPLATES.find((item) => item.id === "bug-diagnoser")!;
+    const agent = configuredAgents[0]!;
+
+    const nextAgent = applyAgentTemplate(agent, template);
+
+    expect(nextAgent.name).toBe("Bug Diagnosis Agent");
+    expect(nextAgent.description).toBe(template.description);
+    expect(nextAgent.prompt).toBe(template.prompt);
+    expect(nextAgent.tags).toEqual(template.tags);
+    expect(nextAgent.runtimeAgentId).toBe(agent.runtimeAgentId);
+    expect(nextAgent.channelId).toBe(agent.channelId);
+    expect(nextAgent.modelId).toBe(agent.modelId);
+  });
+
+  test("applies API provider presets to both the channel and configured agent", () => {
+    const apiPreset = {
+      id: "api-deepseek",
+      label: "DeepSeek API",
+      runtimeAgentId: "api" as const,
+      providerName: "DeepSeek",
+      modelProvider: "deepseek-api",
+      baseUrl: "https://api.deepseek.com/v1",
+      usesApiKey: true,
+      models: [
+        { id: DEFAULT_MODEL_ID, label: "Default" },
+        { id: "deepseek-v4-pro", label: "DeepSeek V4 Pro" },
+      ],
+    };
+    const staleAgent: ConfiguredAgent = {
+      ...configuredAgents[0]!,
+      channelId: "missing-channel",
+      runtimeAgentId: "api",
+      modelId: "old-model",
+    };
+    const fallbackChannel = resolveConfiguredAgentChannel(staleAgent, channels);
+
+    expect(fallbackChannel?.id).toBe("codex-openai");
+    expect(fallbackChannel).toBeDefined();
+
+    const nextChannel = applyProviderPresetToChannel(fallbackChannel!, apiPreset, "test-token");
+    const nextAgent = applyProviderPresetToConfiguredAgent(staleAgent, nextChannel, apiPreset);
+
+    expect(nextChannel.agentId).toBe("api");
+    expect(nextChannel.providerName).toBe("DeepSeek");
+    expect(nextChannel.modelProvider).toBe("deepseek-api");
+    expect(nextChannel.baseUrl).toBe("https://api.deepseek.com/v1");
+    expect(nextChannel.httpHeaders?.Authorization).toBe("Bearer test-token");
+    expect(nextAgent.channelId).toBe("codex-openai");
+    expect(nextAgent.runtimeAgentId).toBe("api");
+    expect(nextAgent.modelId).toBe(DEFAULT_MODEL_ID);
   });
 });
 

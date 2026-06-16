@@ -57,6 +57,14 @@ export interface ConfiguredAgent {
   updatedAt: number;
 }
 
+export interface AgentTemplate {
+  id: string;
+  name: string;
+  description: string;
+  prompt: string;
+  tags: string[];
+}
+
 export interface GeneratedConfigFile {
   channelId: string;
   modelId: string;

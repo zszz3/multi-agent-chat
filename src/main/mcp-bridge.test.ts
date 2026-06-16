@@ -82,6 +82,12 @@ describe("MCP bridge", () => {
       ],
     });
 
+    const templates = (await (await bridgeRequest("/mcp/agent-templates/list", bridge.token, {})).json()) as any;
+    expect(templates).toMatchObject({
+      ok: true,
+      templates: expect.arrayContaining([expect.objectContaining({ id: "code-reviewer", name: "Code Review Agent" })]),
+    });
+
     const create = await bridgeRequest("/mcp/workflow/create", bridge.token, {
       title: "Review workflow",
       objective: "Review example service",

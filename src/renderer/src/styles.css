@@ -703,6 +703,21 @@ textarea:focus-visible {
   gap: 7px;
 }
 
+.config-agent-actions {
+  display: grid;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  gap: 8px;
+}
+
+.config-agent-actions .agent-template-menu {
+  min-width: 0;
+}
+
+.config-agent-actions .agent-template-menu summary {
+  width: 100%;
+  min-width: 0;
+}
+
 .config-nav-row {
   display: grid;
   grid-template-columns: auto minmax(0, 1fr);
@@ -742,6 +757,40 @@ textarea:focus-visible {
   grid-column: 2;
   color: var(--muted);
   font-size: 11px;
+}
+
+.agent-context-menu {
+  position: fixed;
+  z-index: 100;
+  min-width: 150px;
+  padding: 5px;
+  border: 1px solid var(--line);
+  border-radius: 8px;
+  background: var(--panel);
+  box-shadow: var(--shadow);
+}
+
+.agent-context-menu-item {
+  display: flex;
+  width: 100%;
+  align-items: center;
+  gap: 8px;
+  min-height: 30px;
+  padding: 0 8px;
+  border: 0;
+  border-radius: 6px;
+  background: transparent;
+  color: var(--text);
+  font-size: 12px;
+  text-align: left;
+}
+
+.agent-context-menu-item:hover {
+  background: var(--panel-soft);
+}
+
+.agent-context-menu-item.danger {
+  color: var(--danger);
 }
 
 .chat-list {
@@ -3754,6 +3803,12 @@ textarea:focus-visible {
   gap: 10px;
 }
 
+.configured-agent-editor-actions {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+}
+
 .configured-agent-toolbar h3,
 .configured-agent-editor-head h3 {
   margin: 0;
@@ -3827,6 +3882,99 @@ textarea:focus-visible {
   flex-direction: column;
   gap: 12px;
   overflow: auto;
+}
+
+.agent-template-menu {
+  position: relative;
+}
+
+.agent-template-menu summary {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  gap: 7px;
+  min-height: 32px;
+  padding: 0 10px;
+  border: 1px solid var(--line);
+  border-radius: 8px;
+  background: var(--panel);
+  color: var(--text);
+  font-size: 12px;
+  font-weight: 700;
+  cursor: pointer;
+  list-style: none;
+}
+
+.agent-template-menu summary::-webkit-details-marker {
+  display: none;
+}
+
+.agent-template-menu summary:hover {
+  border-color: var(--line-strong);
+  background: var(--panel-soft);
+}
+
+.agent-template-menu[open] summary {
+  border-color: var(--accent);
+  background: var(--accent-soft);
+}
+
+.agent-template-menu-list {
+  position: absolute;
+  z-index: 40;
+  top: calc(100% + 6px);
+  left: 0;
+  display: grid;
+  gap: 4px;
+  width: min(320px, calc(100vw - 32px));
+  max-height: 360px;
+  overflow: auto;
+  padding: 6px;
+  border: 1px solid var(--line);
+  border-radius: 10px;
+  background: var(--panel);
+  box-shadow: var(--shadow);
+}
+
+.agent-template-menu.inline .agent-template-menu-list {
+  right: 0;
+  left: auto;
+}
+
+.agent-template-menu-item {
+  display: grid;
+  gap: 3px;
+  padding: 8px;
+  border: 1px solid transparent;
+  border-radius: 8px;
+  background: transparent;
+  color: var(--text);
+  text-align: left;
+}
+
+.agent-template-menu-item:hover {
+  border-color: var(--line);
+  background: var(--panel-soft);
+}
+
+.agent-template-menu-item strong,
+.agent-template-menu-item span {
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+
+.agent-template-menu-item strong {
+  white-space: nowrap;
+  font-size: 12px;
+}
+
+.agent-template-menu-item span {
+  display: -webkit-box;
+  color: var(--muted);
+  font-size: 11px;
+  line-height: 1.35;
+  -webkit-box-orient: vertical;
+  -webkit-line-clamp: 2;
 }
 
 .agent-provider-presets {

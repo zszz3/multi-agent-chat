@@ -17,6 +17,7 @@ interface JsonRpcRequest {
 }
 
 const TOOL_ROUTES: Record<string, string> = {
+  agent_templates_list: "/mcp/agent-templates/list",
   workflow_create: "/mcp/workflow/create",
   workflow_list: "/mcp/workflow/list",
   workflow_get: "/mcp/workflow/get",
@@ -59,6 +60,11 @@ const artifactsSchema = {
 
 export function mcpToolDefinitions(): McpToolDefinition[] {
   return [
+    {
+      name: "agent_templates_list",
+      description: "List built-in agent templates. Templates only contain agent persona fields: name, description, tags, and prompt. Runtime, provider, and model remain user configuration.",
+      inputSchema: objectSchema({}),
+    },
     {
       name: "workflow_create",
       description: "Create a new editable workflow DAG in Multi Agent Chat. Invalid graphs are rejected with validation errors.",

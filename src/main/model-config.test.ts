@@ -144,6 +144,58 @@ describe("model channel config", () => {
     ]);
   });
 
+  test("builds isolated app-server args for concurrent Codex provider channels", () => {
+    const openaiChannel: AgentChannel = {
+      id: "codex-openai",
+      agentId: "codex",
+      label: "Codex OpenAI",
+      modelProvider: "openai",
+      providerName: "OpenAI",
+      models: [
+        { id: "default", label: "Default" },
+        { id: "gpt-5.5", label: "GPT-5.5" },
+      ],
+    };
+    const deepseekChannel: AgentChannel = {
+      id: "codex-deepseek",
+      agentId: "codex",
+      label: "Codex DeepSeek",
+      modelProvider: "deepseek",
+      providerName: "DeepSeek",
+      baseUrl: "https://api.deepseek.com",
+      wireApi: "responses",
+      httpHeaders: { Authorization: "Bearer $DEEPSEEK_API_KEY" },
+      models: [
+        { id: "default", label: "Default" },
+        { id: "deepseek-v4-pro", label: "DeepSeek V4 Pro" },
+      ],
+    };
+
+    const openaiArgs = codexAppServerConfigArgs(openaiChannel, "gpt-5.5");
+    const deepseekArgs = codexAppServerConfigArgs(deepseekChannel, "deepseek-v4-pro");
+
+    expect(openaiArgs).toEqual(["-c", 'model_provider="openai"', "-c", 'model="gpt-5.5"']);
+    expect(openaiArgs.join("\n")).not.toContain("model_providers.openai");
+    expect(openaiArgs.join("\n")).not.toContain("deepseek");
+
+    expect(deepseekArgs).toEqual([
+      "-c",
+      'model_provider="deepseek"',
+      "-c",
+      'model="deepseek-v4-pro"',
+      "-c",
+      'model_providers.deepseek.name="DeepSeek"',
+      "-c",
+      'model_providers.deepseek.base_url="https://api.deepseek.com"',
+      "-c",
+      'model_providers.deepseek.wire_api="responses"',
+      "-c",
+      'model_providers.deepseek.http_headers={ "Authorization" = "Bearer $DEEPSEEK_API_KEY" }',
+    ]);
+    expect(deepseekArgs.join("\n")).not.toContain('model_provider="openai"');
+    expect(deepseekArgs.join("\n")).not.toContain("gpt-5.5");
+  });
+
   test("parses an existing Codex profile into an importable channel", () => {
     const imported = parseCodexProfileConfig(
       "/Users/example/.codex/config_bridge.config.toml",
