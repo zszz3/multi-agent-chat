@@ -5207,7 +5207,9 @@ export function WorkflowPage({
                   <strong>{workflowText.finalReport}</strong>
                   <span>{workflowText.completed}</span>
                 </div>
-                <pre>{finalReport}</pre>
+                <div className="workflow-final-report-body">
+                  <Markdown text={finalReport} />
+                </div>
               </section>
             ) : null}
             {outputDocumentsVisible ? (

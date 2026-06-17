@@ -1755,6 +1755,8 @@ workflowGraph.upsert({
 
     expect(html).toContain("Main agent summary");
     expect(html).toContain("Main agent review");
+    expect(html).toContain("<h2>Final User Report</h2>");
+    expect(html).not.toContain("<pre>## Final User Report");
     expect(html).toContain("Payment release is ready with one follow-up risk.");
     expect(html).toContain("Workflow transcript");
     expect(html).toContain("Main agent report ready");
