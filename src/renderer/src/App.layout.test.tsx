@@ -8,10 +8,13 @@ import {
   ChatControls,
   ConfigPage,
   SettingsPage,
+  SkillsPage,
   applyAgentTemplate,
   applyProviderPresetToChannel,
   applyProviderPresetToConfiguredAgent,
   applyProviderModelIdToAgentConfig,
+  onlineSkillTreeUrl,
+  parseSkillMarkdown,
   shouldSendComposerKey,
   SlashCommandSuggestions,
   slashCommandSuggestionsFor,
@@ -335,6 +338,7 @@ const styles = readFileSync(new URL("./styles.css", import.meta.url), "utf8");
 describe("ChatControls", () => {
   test("uses a full-width shell when tasks are shown", () => {
     expect(appShellClass("tasks")).toBe("shell tasks-shell");
+    expect(appShellClass("skills")).toBe("shell");
     expect(appShellClass("chat")).toBe("shell");
   });
 
@@ -665,6 +669,38 @@ describe("ConfigPage", () => {
     expect(AGENT_TEMPLATES.some((template) => "nameZh" in template || "descriptionZh" in template || "promptZh" in template)).toBe(false);
   });
 
+  test("includes the requested built-in skill templates first", () => {
+    expect(AGENT_TEMPLATES.slice(0, 5).map((template) => template.id)).toEqual([
+      "brainstorm-facilitator",
+      "personal-finance-planner",
+      "resume-writer",
+      "paper-writing-agent",
+      "code-reviewer",
+    ]);
+    expect(AGENT_TEMPLATES.map((template) => template.name)).toEqual(
+      expect.arrayContaining(["头脑风暴 Agent", "理财规划 Agent", "简历写作 Agent", "论文写作 Agent", "代码审查 Agent"]),
+    );
+  });
+
+  test("uses detailed prompts for the requested built-in skill templates", () => {
+    const expectedPromptSections = [
+      ["brainstorm-facilitator", ["工作方式", "输出格式", "质量标准"]],
+      ["personal-finance-planner", ["工作方式", "输出格式", "边界"]],
+      ["resume-writer", ["工作方式", "输出格式", "禁止"]],
+      ["paper-writing-agent", ["工作方式", "输出格式", "学术诚信"]],
+      ["code-reviewer", ["审查流程", "输出格式", "不要"]],
+    ] as const;
+
+    for (const [templateId, expectedSections] of expectedPromptSections) {
+      const template = AGENT_TEMPLATES.find((item) => item.id === templateId);
+
+      expect(template?.prompt.length).toBeGreaterThan(500);
+      for (const section of expectedSections) {
+        expect(template?.prompt).toContain(section);
+      }
+    }
+  });
+
   test("renders language controls without a duplicate settings sidebar", () => {
     const html = renderToStaticMarkup(<SettingsPage language="zh" onLanguageChange={() => undefined} />);
 
@@ -768,6 +804,56 @@ describe("ConfigPage", () => {
     expect(updatedChannel.models).toContainEqual({
       id: "ep-m-user-owned-endpoint",
       label: "ep-m-user-owned-endpoint",
+    });
+  });
+});
+
+describe("SkillsPage", () => {
+  test("renders the built-in skill library with create actions", () => {
+    const html = renderToStaticMarkup(<SkillsPage language="zh" templates={AGENT_TEMPLATES} onCreateAgent={() => undefined} />);
+
+    expect(html).toContain("skills-page");
+    expect(html).toContain("技能库");
+    expect(html).toContain("搜索网上 Skills");
+    expect(html).toContain("OpenAI Skills");
+    expect(html).toContain("Anthropic Skills");
+    expect(html).toContain("头脑风暴 Agent");
+    expect(html).toContain("理财规划 Agent");
+    expect(html).toContain("简历写作 Agent");
+    expect(html).toContain("论文写作 Agent");
+    expect(html).toContain("代码审查 Agent");
+    expect(html).toContain("检查代码缺陷");
+    expect(html).toContain("review");
+    expect(html).toContain("作为资深代码审查者");
+    expect(html).toContain("用此技能创建 Agent");
+  });
+
+  test("builds online skill source URLs and parses SKILL.md frontmatter", () => {
+    expect(onlineSkillTreeUrl({ id: "openai", label: "OpenAI Skills", owner: "openai", repo: "skills", branch: "main" })).toBe(
+      "https://api.github.com/repos/openai/skills/git/trees/main?recursive=1",
+    );
+
+    expect(
+      parseSkillMarkdown(
+        [
+          "---",
+          "name: code-review",
+          "description: Review code changes and identify defects.",
+          "metadata:",
+          "  short-description: Code review",
+          "---",
+          "",
+          "# Code Review",
+          "Use this workflow when reviewing a pull request.",
+        ].join("\n"),
+        "skills/code-review/SKILL.md",
+      ),
+    ).toMatchObject({
+      name: "code-review",
+      description: "Review code changes and identify defects.",
+      prompt: expect.stringContaining("Use this workflow"),
+      tags: ["code-review"],
+      path: "skills/code-review/SKILL.md",
     });
   });
 });

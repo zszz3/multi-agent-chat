@@ -7,6 +7,7 @@ Multi Agent Chat 是一个本地 Electron 桌面应用，用来把多种 Agent �
 ## 功能总览
 
 - 多会话 Chat：按工作目录、Runtime、Channel、模型运行 Codex / Claude / API Agent。
+- Skills 页面：集中查看内置 Agent 技能模板，也可以在线搜索 OpenAI / Anthropic 官方 GitHub skill 源，并基于技能创建 Agent。
 - 可复用 Agent 配置：为不同 Provider、模型、Prompt、插件和高级参数保存独立 Agent。
 - Provider Preset：内置 OpenAI、Anthropic、DeepSeek、GLM、Kimi、LongCat、MiMo、OpenRouter、GitHub Models、Together、Novita、NVIDIA、SiliconFlow、Bailian、Volcengine、Hunyuan、MiniMax、Azure OpenAI、Custom 等模板。
 - Volcengine / 豆包 endpoint 可配置：`ep-m-...` 这类用户自己的 endpoint 不写死在代码里，由用户在界面里配置。
@@ -34,6 +35,28 @@ Chat 页面用于直接和 Agent 对话。
 - Codex 支持 `/status`、`/models`、`/plugins`、`/help` 等 slash command。
 
 如果一个会话已经开始和 Agent 对话，应用会锁定关键运行配置，避免同一条会话中途切换 Runtime / Channel / Model 导致上下文不一致。
+
+## Skills
+
+Skills 页面用于集中管理 Agent 技能模板，并支持搜索公开 GitHub skill 源。
+
+当前包含两类来源：
+
+- 本地模板：来自 `src/shared/agent-templates.ts`。
+- 在线搜索：读取公开 GitHub 仓库里的 `SKILL.md` 元数据，目前内置 `openai/skills` 和 `anthropics/skills` 两个官方源。
+
+本地模板包含头脑风暴、理财规划、简历写作、论文写作、代码审查、问题诊断、测试编写、前端 UI、学习文档、工作流规划、PR 总结和通用助手等常用 Agent 技能。
+
+每个技能包含：
+
+- 名称和描述。
+- 标签。
+- 默认 Prompt。
+- 基于该技能创建 Agent 的入口。
+
+从 Skills 页面创建 Agent 后，会跳转到配置页继续选择 Runtime、Provider、模型、API Key、插件和高级参数。技能只提供 Agent 人设和 Prompt，不绑定用户自己的 Provider 或 endpoint。
+
+在线技能来自第三方仓库时，只作为未审查内容展示；创建 Agent 前需要自行检查 Prompt 内容和来源链接。
 
 ## Agent 配置
 

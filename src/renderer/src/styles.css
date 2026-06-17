@@ -3739,6 +3739,251 @@ textarea:focus-visible {
   gap: 14px;
 }
 
+.skills-content {
+  min-height: 0;
+}
+
+.skills-page {
+  display: flex;
+  flex-direction: column;
+  min-height: 0;
+  gap: 14px;
+}
+
+.skills-header,
+.online-skills-panel,
+.skill-card {
+  border: 1px solid var(--line);
+  border-radius: 12px;
+  background: var(--panel);
+  box-shadow: var(--shadow);
+}
+
+.skills-header {
+  padding: 13px 14px;
+}
+
+.skills-header h2,
+.skill-card h3 {
+  margin: 0;
+}
+
+.skills-header h2 {
+  font-size: 17px;
+  line-height: 1.25;
+}
+
+.skills-header p,
+.online-skills-head p,
+.skill-card p {
+  margin: 4px 0 0;
+  color: var(--muted);
+  font-size: 12px;
+}
+
+.online-skills-panel {
+  display: grid;
+  gap: 10px;
+  padding: 12px;
+}
+
+.online-skills-head {
+  display: flex;
+  align-items: flex-start;
+  justify-content: space-between;
+  gap: 12px;
+}
+
+.online-skills-head h3,
+.skills-section-title h3 {
+  margin: 0;
+  color: var(--text);
+  font-size: 13px;
+}
+
+.online-skill-sources {
+  display: flex;
+  flex-wrap: wrap;
+  justify-content: flex-end;
+  gap: 6px;
+}
+
+.online-skill-sources a,
+.skill-card-source a {
+  color: var(--accent);
+  font-size: 11px;
+  font-weight: 700;
+  text-decoration: none;
+}
+
+.online-skill-sources a {
+  padding: 4px 7px;
+  border: 1px solid color-mix(in srgb, var(--accent) 24%, var(--line));
+  border-radius: 999px;
+  background: var(--accent-soft);
+}
+
+.online-skills-search {
+  display: grid;
+  grid-template-columns: auto minmax(0, 1fr) auto;
+  align-items: center;
+  gap: 8px;
+  min-height: 36px;
+  padding: 0 8px;
+  border: 1px solid var(--line);
+  border-radius: 10px;
+  background: var(--panel-soft);
+  color: var(--muted);
+}
+
+.online-skills-search input {
+  width: 100%;
+  border: 0;
+  outline: none;
+  background: transparent;
+  color: var(--text);
+  font: inherit;
+  font-size: 12px;
+}
+
+.online-skills-status {
+  color: var(--muted);
+  font-size: 11px;
+}
+
+.online-skills-results {
+  display: grid;
+  grid-template-columns: repeat(auto-fill, minmax(280px, 1fr));
+  gap: 10px;
+}
+
+.skills-section-title {
+  display: flex;
+  align-items: center;
+  min-height: 18px;
+}
+
+.skills-grid {
+  display: grid;
+  align-content: start;
+  grid-template-columns: repeat(auto-fill, minmax(280px, 1fr));
+  gap: 12px;
+  min-height: 0;
+  overflow: auto;
+}
+
+.skill-card {
+  display: grid;
+  align-content: start;
+  gap: 10px;
+  padding: 12px;
+}
+
+.skill-card.online {
+  box-shadow: none;
+}
+
+.skill-card-source {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 8px;
+  color: var(--muted);
+  font-size: 11px;
+}
+
+.skill-card-head {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) auto;
+  align-items: start;
+  gap: 10px;
+}
+
+.skill-card h3 {
+  color: var(--text);
+  font-size: 13px;
+}
+
+.skill-tags {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 5px;
+}
+
+.skill-tags span {
+  padding: 3px 7px;
+  border: 1px solid var(--line);
+  border-radius: 999px;
+  background: var(--panel-soft);
+  color: var(--muted);
+  font-size: 10px;
+  font-weight: 700;
+}
+
+.skill-prompt {
+  display: grid;
+  gap: 5px;
+  min-width: 0;
+}
+
+.skill-prompt > span {
+  color: var(--muted);
+  font-size: 10px;
+  font-weight: 800;
+  text-transform: uppercase;
+}
+
+.skill-prompt pre {
+  max-height: 140px;
+  margin: 0;
+  overflow: auto;
+  padding: 8px;
+  border: 1px solid var(--line);
+  border-radius: 8px;
+  background: var(--panel-soft);
+  color: var(--text);
+  white-space: pre-wrap;
+  font-family: "Geist Mono Variable", ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, monospace;
+  font-size: 11px;
+  line-height: 1.5;
+}
+
+.skills-nav-panel {
+  gap: 10px;
+}
+
+.skills-nav-list {
+  display: grid;
+  gap: 7px;
+  overflow: auto;
+}
+
+.skills-nav-row {
+  display: grid;
+  gap: 3px;
+  padding: 9px;
+  border: 1px solid var(--line);
+  border-radius: 8px;
+  background: var(--panel-soft);
+}
+
+.skills-nav-row strong,
+.skills-nav-row span {
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.skills-nav-row strong {
+  color: var(--text);
+  font-size: 12px;
+}
+
+.skills-nav-row span {
+  color: var(--muted);
+  font-size: 11px;
+}
+
 .settings-header,
 .settings-layout {
   border: 1px solid var(--line);

@@ -84,6 +84,7 @@ const UI_TEXT = {
       tasks: "任务",
       teams: "团队",
       workflow: "工作流",
+      skills: "技能",
       configs: "配置",
       settings: "设置",
       configuration: "设置",
@@ -97,6 +98,9 @@ const UI_TEXT = {
       configuredAgents: "Agent",
       noConfiguredAgents: "暂无配置的 Agent",
       noChats: "新建对话后开始。",
+      skillLibrary: "技能库",
+      noSkills: "暂无技能",
+      createAgentFromSkill: "用此技能创建 Agent",
       darkTheme: "深色主题",
       lightTheme: "浅色主题",
       toggleTheme: "切换主题",
@@ -171,6 +175,7 @@ const UI_TEXT = {
       tasks: "Tasks",
       teams: "Teams",
       workflow: "Workflow",
+      skills: "Skills",
       configs: "Configs",
       settings: "Settings",
       configuration: "Configuration",
@@ -184,6 +189,9 @@ const UI_TEXT = {
       configuredAgents: "Agents",
       noConfiguredAgents: "No configured agents",
       noChats: "Create a chat to start.",
+      skillLibrary: "Skill library",
+      noSkills: "No skills",
+      createAgentFromSkill: "Create agent from skill",
       darkTheme: "Dark theme",
       lightTheme: "Light theme",
       toggleTheme: "Toggle theme",
@@ -294,6 +302,156 @@ interface AgentTestTranscriptItem {
   type: AgentTestEvent["type"];
   content: string;
   timestamp: number;
+}
+
+export interface OnlineSkillSource {
+  id: string;
+  label: string;
+  owner: string;
+  repo: string;
+  branch: string;
+  basePath?: string;
+  homepage?: string;
+  maxFetch?: number;
+}
+
+export interface OnlineSkillResult extends AgentTemplate {
+  sourceId: string;
+  sourceLabel: string;
+  path: string;
+  url: string;
+  rawUrl: string;
+}
+
+export const ONLINE_SKILL_SOURCES: OnlineSkillSource[] = [
+  {
+    id: "openai-skills",
+    label: "OpenAI Skills",
+    owner: "openai",
+    repo: "skills",
+    branch: "main",
+    basePath: "skills",
+    homepage: "https://github.com/openai/skills",
+    maxFetch: 80,
+  },
+  {
+    id: "anthropic-skills",
+    label: "Anthropic Skills",
+    owner: "anthropics",
+    repo: "skills",
+    branch: "main",
+    homepage: "https://github.com/anthropics/skills",
+    maxFetch: 80,
+  },
+];
+
+interface ParsedSkillMarkdown {
+  name: string;
+  description: string;
+  prompt: string;
+  tags: string[];
+  path: string;
+}
+
+export function onlineSkillTreeUrl(source: OnlineSkillSource): string {
+  return `https://api.github.com/repos/${source.owner}/${source.repo}/git/trees/${source.branch}?recursive=1`;
+}
+
+function onlineSkillBlobUrl(source: OnlineSkillSource, path: string): string {
+  return `https://github.com/${source.owner}/${source.repo}/blob/${source.branch}/${path}`;
+}
+
+function onlineSkillRawUrl(source: OnlineSkillSource, path: string): string {
+  return `https://raw.githubusercontent.com/${source.owner}/${source.repo}/${source.branch}/${path}`;
+}
+
+function stripYamlQuotes(value: string): string {
+  const trimmed = value.trim();
+  if ((trimmed.startsWith("\"") && trimmed.endsWith("\"")) || (trimmed.startsWith("'") && trimmed.endsWith("'"))) {
+    return trimmed.slice(1, -1);
+  }
+  return trimmed;
+}
+
+function skillNameFromPath(path: string): string {
+  const parts = path.split("/").filter(Boolean);
+  return parts.length >= 2 ? parts[parts.length - 2]! : path.replace(/\/?SKILL\.md$/i, "");
+}
+
+export function parseSkillMarkdown(markdown: string, path: string): ParsedSkillMarkdown {
+  const normalized = markdown.replace(/\r\n/g, "\n");
+  const fields: Record<string, string> = {};
+  let body = normalized;
+
+  if (normalized.startsWith("---\n")) {
+    const end = normalized.indexOf("\n---", 4);
+    if (end >= 0) {
+      const frontmatter = normalized.slice(4, end).split("\n");
+      for (const line of frontmatter) {
+        if (/^\s/.test(line)) continue;
+        const match = line.match(/^([A-Za-z0-9_-]+):\s*(.*)$/);
+        if (match) fields[match[1]!.toLowerCase()] = stripYamlQuotes(match[2] ?? "");
+      }
+      body = normalized.slice(end + 4).trim();
+    }
+  }
+
+  const fallbackName = skillNameFromPath(path);
+  const name = fields.name || fallbackName;
+  const description = fields.description || body.split("\n").find((line) => line.trim() && !line.trim().startsWith("#"))?.trim() || "";
+  return {
+    name,
+    description,
+    prompt: body,
+    tags: [name],
+    path,
+  };
+}
+
+function onlineSkillMatches(skill: ParsedSkillMarkdown, query: string): boolean {
+  const normalized = query.trim().toLowerCase();
+  if (!normalized) return true;
+  return [skill.name, skill.description, skill.prompt, skill.path, ...skill.tags].some((value) => value.toLowerCase().includes(normalized));
+}
+
+async function fetchOnlineSkills(query: string, sources: OnlineSkillSource[] = ONLINE_SKILL_SOURCES, fetcher: typeof fetch = fetch): Promise<OnlineSkillResult[]> {
+  const normalizedQuery = query.trim().toLowerCase();
+  const results = await Promise.all(
+    sources.map(async (source) => {
+      const treeResponse = await fetcher(onlineSkillTreeUrl(source), { headers: { Accept: "application/vnd.github+json" } });
+      if (!treeResponse.ok) throw new Error(`${source.label}: ${treeResponse.status}`);
+      const treePayload = (await treeResponse.json()) as { tree?: Array<{ path?: string; type?: string }> };
+      const skillPaths = (treePayload.tree ?? [])
+        .map((item) => item.path ?? "")
+        .filter((path) => path.endsWith("/SKILL.md") || path === "SKILL.md")
+        .filter((path) => !source.basePath || path === source.basePath || path.startsWith(`${source.basePath}/`));
+      const pathMatches = normalizedQuery ? skillPaths.filter((path) => path.toLowerCase().includes(normalizedQuery)) : skillPaths;
+      const candidates = [...pathMatches, ...skillPaths.filter((path) => !pathMatches.includes(path))].slice(0, source.maxFetch ?? 60);
+      const parsed = await Promise.all(
+        candidates.map(async (path) => {
+          const rawUrl = onlineSkillRawUrl(source, path);
+          const rawResponse = await fetcher(rawUrl);
+          if (!rawResponse.ok) return undefined;
+          const skill = parseSkillMarkdown(await rawResponse.text(), path);
+          if (!onlineSkillMatches(skill, query)) return undefined;
+          return {
+            id: `${source.id}:${path}`,
+            name: skill.name,
+            description: skill.description,
+            prompt: skill.prompt,
+            tags: skill.tags,
+            sourceId: source.id,
+            sourceLabel: source.label,
+            path,
+            url: onlineSkillBlobUrl(source, path),
+            rawUrl,
+          } satisfies OnlineSkillResult;
+        }),
+      );
+      return parsed.filter((skill): skill is OnlineSkillResult => Boolean(skill));
+    }),
+  );
+  return results.flat().slice(0, 60);
 }
 
 export const AGENT_PROVIDER_PRESETS: AgentProviderPreset[] = [
@@ -721,7 +879,7 @@ function loadStoredLanguage(storage: Pick<Storage, "getItem">): Language {
   return storage.getItem(LANGUAGE_STORAGE_KEY) === "en" ? "en" : "zh";
 }
 
-export type ActiveFeature = "chat" | "tasks" | "teams" | "workflow" | "configs" | "settings";
+export type ActiveFeature = "chat" | "tasks" | "teams" | "workflow" | "skills" | "configs" | "settings";
 type MaybePromise = void | Promise<void>;
 export type TaskStatusFilterValue = "all" | TaskProgress;
 const WORKFLOW_THINKING_MESSAGE = "Agent is thinking...";
@@ -3237,6 +3395,13 @@ export function App() {
             <span>{text.nav.workflow}</span>
           </button>
           <button
+            className={`feature-nav-item ${activeFeature === "skills" ? "is-active" : ""}`}
+            onClick={() => setActiveFeature("skills")}
+          >
+            <Wand2 size={15} />
+            <span>{text.nav.skills}</span>
+          </button>
+          <button
             className={`feature-nav-item ${activeFeature === "configs" ? "is-active" : ""}`}
             onClick={() => setActiveFeature("configs")}
           >
@@ -3272,9 +3437,11 @@ export function App() {
                     ? text.nav.teams
                     : activeFeature === "workflow"
                       ? text.nav.workflow
-                      : activeFeature === "settings"
-                        ? text.nav.settings
-                        : text.nav.configuration}
+                      : activeFeature === "skills"
+                        ? text.nav.skills
+                        : activeFeature === "settings"
+                          ? text.nav.settings
+                          : text.nav.configuration}
             </p>
           </div>
         </div>
@@ -3348,6 +3515,25 @@ export function App() {
             onNewWorkflow={createNewWorkflow}
             onSelectWorkflow={selectWorkflow}
           />
+        ) : activeFeature === "skills" ? (
+          <section className="resource-panel skills-nav-panel">
+            <div className="panel-header">
+              <span>{text.chrome.skillLibrary}</span>
+              <Wand2 size={14} />
+            </div>
+            <div className="skills-nav-list">
+              {AGENT_TEMPLATES.length === 0 ? (
+                <div className="empty-state config-empty">{text.chrome.noSkills}</div>
+              ) : (
+                AGENT_TEMPLATES.map((template) => (
+                  <div key={template.id} className="skills-nav-row">
+                    <strong>{template.name}</strong>
+                    <span>{template.tags.join(", ")}</span>
+                  </div>
+                ))
+              )}
+            </div>
+          </section>
         ) : activeFeature === "settings" ? (
           <section className="resource-panel settings-nav-panel">
             <div className="panel-header">
@@ -3433,9 +3619,11 @@ export function App() {
                   ? "teams-content"
                   : activeFeature === "workflow"
                     ? "workflow-content"
-                    : activeFeature === "settings"
-                      ? "settings-content"
-                      : "config-content"
+                    : activeFeature === "skills"
+                      ? "skills-content"
+                      : activeFeature === "settings"
+                        ? "settings-content"
+                        : "config-content"
         }`}
       >
         {activeFeature === "tasks" ? (
@@ -3521,6 +3709,15 @@ export function App() {
             onRefresh={refresh}
             onReadOutputFile={readLocalFile}
             language={language}
+          />
+        ) : activeFeature === "skills" ? (
+          <SkillsPage
+            language={language}
+            templates={AGENT_TEMPLATES}
+            onCreateAgent={(template) => {
+              setActiveFeature("configs");
+              return addConfiguredAgent(template);
+            }}
           />
         ) : activeFeature === "settings" ? (
           <SettingsPage language={language} onLanguageChange={setLanguage} />
@@ -5670,6 +5867,155 @@ interface ConfigPageProps {
   onUpdateConfiguredAgent: (agentId: string, updater: (agent: ConfiguredAgent) => ConfiguredAgent) => void;
   onRemoveConfiguredAgent: (agentId: string) => void;
   onTestConfiguredAgent: (agentId: string) => Promise<void>;
+}
+
+export function SkillsPage({
+  language,
+  templates,
+  onCreateAgent,
+}: {
+  language: Language;
+  templates: AgentTemplate[];
+  onCreateAgent: (template: AgentTemplate) => MaybePromise;
+}) {
+  const text = UI_TEXT[language].chrome;
+  const title = text.skillLibrary;
+  const description =
+    language === "zh"
+      ? `${templates.length} 个本地模板，可继续搜索 GitHub 上的公开 Skills`
+      : `${templates.length} local templates, plus online GitHub skill search`;
+  const promptLabel = language === "zh" ? "Prompt" : "Prompt";
+  const onlineTitle = language === "zh" ? "搜索网上 Skills" : "Search online skills";
+  const onlineDescription =
+    language === "zh"
+      ? "从公开 GitHub skill 仓库读取 SKILL.md 元数据。第三方 skill 只当作未审查内容展示。"
+      : "Read SKILL.md metadata from public GitHub skill repositories. Treat third-party skills as untrusted content.";
+  const localTitle = language === "zh" ? "本地技能模板" : "Local skill templates";
+  const searchPlaceholder = language === "zh" ? "搜索 code review、testing、pdf、docs..." : "Search code review, testing, pdf, docs...";
+  const searchButton = language === "zh" ? "搜索" : "Search";
+  const searchingText = language === "zh" ? "搜索中..." : "Searching...";
+  const noOnlineResults = language === "zh" ? "没有找到在线 Skills。" : "No online skills found.";
+  const openSource = language === "zh" ? "打开来源" : "Open source";
+  const [query, setQuery] = useState("");
+  const [onlineResults, setOnlineResults] = useState<OnlineSkillResult[]>([]);
+  const [onlineStatus, setOnlineStatus] = useState("");
+  const [onlineSearching, setOnlineSearching] = useState(false);
+
+  async function runOnlineSearch(): Promise<void> {
+    setOnlineSearching(true);
+    setOnlineStatus(searchingText);
+    try {
+      const results = await fetchOnlineSkills(query);
+      setOnlineResults(results);
+      setOnlineStatus(results.length === 0 ? noOnlineResults : `${results.length} skills`);
+    } catch (error) {
+      setOnlineStatus(error instanceof Error ? error.message : String(error));
+      setOnlineResults([]);
+    } finally {
+      setOnlineSearching(false);
+    }
+  }
+
+  return (
+    <section className="skills-page">
+      <header className="skills-header">
+        <div>
+          <h2>{title}</h2>
+          <p>{description}</p>
+        </div>
+      </header>
+
+      <section className="online-skills-panel">
+        <div className="online-skills-head">
+          <div>
+            <h3>{onlineTitle}</h3>
+            <p>{onlineDescription}</p>
+          </div>
+          <div className="online-skill-sources" aria-label="Online skill sources">
+            {ONLINE_SKILL_SOURCES.map((source) => (
+              <a key={source.id} href={source.homepage ?? onlineSkillTreeUrl(source)} target="_blank" rel="noreferrer">
+                {source.label}
+              </a>
+            ))}
+          </div>
+        </div>
+        <div className="online-skills-search">
+          <Search size={14} />
+          <input value={query} placeholder={searchPlaceholder} onChange={(event) => setQuery(event.currentTarget.value)} aria-label={onlineTitle} />
+          <button className="control-btn compact" type="button" onClick={() => void runOnlineSearch()} disabled={onlineSearching}>
+            <span>{onlineSearching ? searchingText : searchButton}</span>
+          </button>
+        </div>
+        {onlineStatus ? <div className="online-skills-status">{onlineStatus}</div> : null}
+        {onlineResults.length > 0 ? (
+          <div className="online-skills-results" aria-label="Online skill results">
+            {onlineResults.map((skill) => (
+              <article key={skill.id} className="skill-card online">
+                <div className="skill-card-head">
+                  <div>
+                    <h3>{skill.name}</h3>
+                    <p>{skill.description}</p>
+                  </div>
+                  <button className="control-btn compact" type="button" onClick={() => void onCreateAgent(skill)}>
+                    <Plus size={13} />
+                    <span>{text.createAgentFromSkill}</span>
+                  </button>
+                </div>
+                <div className="skill-card-source">
+                  <span>{skill.sourceLabel}</span>
+                  <a href={skill.url} target="_blank" rel="noreferrer">
+                    {openSource}
+                  </a>
+                </div>
+                <div className="skill-tags" aria-label="Skill tags">
+                  {skill.tags.map((tag) => (
+                    <span key={tag}>{tag}</span>
+                  ))}
+                </div>
+                <div className="skill-prompt">
+                  <span>{promptLabel}</span>
+                  <pre>{skill.prompt}</pre>
+                </div>
+              </article>
+            ))}
+          </div>
+        ) : null}
+      </section>
+
+      <div className="skills-section-title">
+        <h3>{localTitle}</h3>
+      </div>
+      <div className="skills-grid" aria-label={localTitle}>
+        {templates.length === 0 ? (
+          <div className="empty-state config-empty">{text.noSkills}</div>
+        ) : (
+          templates.map((template) => (
+            <article key={template.id} className="skill-card">
+              <div className="skill-card-head">
+                <div>
+                  <h3>{template.name}</h3>
+                  <p>{template.description}</p>
+                </div>
+                <button className="control-btn compact" type="button" onClick={() => void onCreateAgent(template)}>
+                  <Plus size={13} />
+                  <span>{text.createAgentFromSkill}</span>
+                </button>
+              </div>
+              <div className="skill-tags" aria-label="Skill tags">
+                {template.tags.map((tag) => (
+                  <span key={tag}>{tag}</span>
+                ))}
+              </div>
+              <div className="skill-prompt">
+                <span>{promptLabel}</span>
+                <pre>{template.prompt}</pre>
+              </div>
+            </article>
+          ))
+        )}
+      </div>
+    </section>
+  );
 }
 
 export function SettingsPage({
