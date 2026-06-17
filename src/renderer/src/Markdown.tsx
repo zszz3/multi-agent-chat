@@ -1,4 +1,28 @@
-import { Fragment, useMemo, type ReactNode } from "react";
+import { Fragment, useMemo, useState, type ReactNode } from "react";
+
+function CodeBlock({ language, code }: { language: string | undefined; code: string }) {
+  const [copied, setCopied] = useState(false);
+  const copy = (): void => {
+    void navigator.clipboard?.writeText(code).then(
+      () => {
+        setCopied(true);
+        window.setTimeout(() => setCopied(false), 1400);
+      },
+      () => undefined,
+    );
+  };
+  return (
+    <div className="md-codeblock">
+      <div className="md-codeblock-head">
+        <span className="md-codeblock-lang">{language || "code"}</span>
+        <button type="button" className="md-codeblock-copy" onClick={copy}>
+          {copied ? "已复制 ✓" : "复制"}
+        </button>
+      </div>
+      <pre>{code}</pre>
+    </div>
+  );
+}
 
 function renderInline(text: string, keyPrefix: string): ReactNode[] {
   // tokenize inline code first so markdown inside backticks stays literal
@@ -92,12 +116,7 @@ export function Markdown({ text }: { text: string }) {
       {blocks.map((block, blockIndex) => {
         const key = `block-${blockIndex}`;
         if (block.kind === "code") {
-          return (
-            <div className="md-codeblock" key={key}>
-              {block.language ? <div className="md-codeblock-lang">{block.language}</div> : null}
-              <pre>{block.lines.join("\n")}</pre>
-            </div>
-          );
+          return <CodeBlock key={key} language={block.language} code={block.lines.join("\n")} />;
         }
         if (block.kind === "heading") {
           const level = Math.min(4, Math.max(1, block.level ?? 1));

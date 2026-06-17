@@ -2097,7 +2097,34 @@ export function App() {
     setWorkflowCreatedAt(Date.now());
   }
 
+  function abandonWorkflowGrillRequest(): void {
+    workflowRequestIdRef.current = undefined;
+    workflowAssistantMessageIdRef.current = undefined;
+    workflowStreamingStartedRef.current = false;
+    workflowAssistantContentRef.current = "";
+  }
+
+  function stopWorkflowGrill(): void {
+    if (!workflowRunning) return;
+    const assistantMessageId = workflowAssistantMessageIdRef.current;
+    const partial = workflowAssistantContentRef.current.trim();
+    abandonWorkflowGrillRequest();
+    setWorkflowRunning(false);
+    setWorkflowError(undefined);
+    if (assistantMessageId) {
+      setWorkflowMessages((current) =>
+        current.map((message) =>
+          message.id === assistantMessageId
+            ? { ...message, content: partial || "已停止：agent 未返回结果，可重试或新建 workflow。" }
+            : message,
+        ),
+      );
+    }
+  }
+
   async function createNewWorkflow(): Promise<void> {
+    abandonWorkflowGrillRequest();
+    setWorkflowRunning(false);
     const now = Date.now();
     const agentId = workflowAgentId;
     const channelId = workflowChannelId || defaultChannelForAgent(agentId, snapshot.channels);
@@ -2277,6 +2304,8 @@ export function App() {
         starting ? undefined : workflowAgentSessionId,
         requestId,
       );
+      // request was stopped / superseded while awaiting — drop its result
+      if (workflowRequestIdRef.current !== requestId) return;
       if (!workflowStreamingStartedRef.current && assistantContent) {
         setWorkflowMessages((current) =>
           current.map((message) => (message.id === assistantMessageId ? { ...message, content: assistantContent } : message)),
@@ -2284,13 +2313,15 @@ export function App() {
       }
       applyWorkflowGraphFromAgentContent(assistantContent);
     } catch (error) {
+      if (workflowRequestIdRef.current !== requestId) return;
       const message = error instanceof Error ? error.message : String(error);
       setWorkflowError(message);
       setWorkflowMessages((current) =>
         current.map((item) => (item.id === assistantMessageId ? { ...item, content: `Workflow agent error: ${message}` } : item)),
       );
     } finally {
-      setWorkflowRunning(false);
+      // only clear running if this is still the active request (avoid turning off a newer run)
+      if (workflowRequestIdRef.current === requestId) setWorkflowRunning(false);
     }
   }
 
@@ -3099,6 +3130,7 @@ export function App() {
             onUpdateNode={updateWorkflowNode}
             onRunGraph={runWorkflowGraph}
             onResetSession={resetWorkflowSession}
+            onStopGrill={stopWorkflowGrill}
             onChooseWorkDir={chooseWorkDir}
             onRefresh={refresh}
             onReadOutputFile={readLocalFile}
@@ -3171,9 +3203,10 @@ export function App() {
               )}
               {activeChat.running ? (
                 <div className="cli-status-line">
-                  <span className={`runtime-dot ${agentAccent(activeChat.agentId)}`} />
-                  <span>{agentLabel(activeChat.agentId)} is thinking</span>
-                  <span className="stream-cursor" aria-hidden="true" />
+                  <span className="stream-pill">
+                    <span className="stream-spinner" aria-hidden="true" />
+                    <span>{agentLabel(activeChat.agentId)} is working…</span>
+                  </span>
                 </div>
               ) : null}
             </section>
@@ -4631,7 +4664,7 @@ export function WorkflowHistoryPanel({
         <GitBranch size={14} />
       </div>
       <div className="new-chat-menu-wrap">
-        <button className="new-chat-compact-btn" onClick={() => void onNewWorkflow()} disabled={running}>
+        <button className="new-chat-compact-btn" onClick={() => void onNewWorkflow()}>
           <Plus size={13} />
           <span>New workflow</span>
         </button>
@@ -4689,6 +4722,7 @@ interface WorkflowPageProps {
   onUpdateNode: (nodeId: string, update: Partial<WorkflowGraphNode>) => void;
   onRunGraph: () => MaybePromise;
   onResetSession: () => MaybePromise;
+  onStopGrill?: () => void;
   onChooseWorkDir?: () => MaybePromise;
   onRefresh?: () => MaybePromise;
   onReadOutputFile?: (filePath: string) => Promise<LocalFilePreview>;
@@ -4724,6 +4758,7 @@ export function WorkflowPage({
   onUpdateNode,
   onRunGraph,
   onResetSession,
+  onStopGrill = () => undefined,
   onChooseWorkDir = () => undefined,
   onRefresh = () => undefined,
   onReadOutputFile,
@@ -4841,7 +4876,11 @@ export function WorkflowPage({
           </div>
         </div>
         <div className="chat-header-actions workflow-page-actions">
-          {workflowStarted || graphVisible ? (
+          {running && !graphVisible ? (
+            <button className="icon-btn danger" onClick={() => onStopGrill()} title="Stop agent">
+              <CircleStop size={14} />
+            </button>
+          ) : workflowStarted || graphVisible ? (
             <button className="icon-btn" onClick={() => void onResetSession()} title="New workflow session" disabled={running}>
               <Plus size={14} />
             </button>
@@ -4881,9 +4920,10 @@ export function WorkflowPage({
         ) : null}
         {running ? (
           <div className="cli-status-line">
-            <span className={`runtime-dot ${agentAccent(agentId)}`} />
-            <span>{agentLabel(agentId)} workflow agent is thinking</span>
-            <span className="stream-cursor" aria-hidden="true" />
+            <span className="stream-pill">
+              <span className="stream-spinner" aria-hidden="true" />
+              <span>{agentLabel(agentId)} workflow agent is working…</span>
+            </span>
           </div>
         ) : null}
         {error ? <div className="workflow-error workflow-inline-error">{error}</div> : null}

@@ -5261,24 +5261,42 @@ body,
   }
 }
 
-/* ───────────────── Linear reskin v2 — full overhaul layer (变体 B:舒适密度) ───────────────── */
+/* ============================================================================
+   LINEAR DESIGN LAYER — consolidated
+   Replaces the former stacked reskin layers (v2–v6). The structural base lives
+   above; this single, deduplicated layer carries the Linear identity: tokens,
+   density, the frameless icon rail, the centered chat reading column, the
+   composer, kanban, the team/workflow builder, motion, and the streaming pill.
+   Light "Variant A" by default; dark via [data-theme="dark"].
+   ============================================================================ */
 
+/* ---- tokens, density, focus ---- */
 :root {
   font-size: 15px;
-  --bg: var(--panel)fff;
+  --bg: #f7f8fa;
   --sidebar: #fafbfc;
+  --shadow: 0 1px 3px color-mix(in srgb, var(--ink) 5%, transparent);
 }
 
 [data-theme="dark"] {
   --bg: #101117;
   --sidebar: #14151b;
+  --shadow: 0 1px 3px color-mix(in srgb, var(--ink) 35%, transparent);
 }
 
 body {
   font-size: 13.5px;
 }
 
-/* shell density */
+button:focus-visible,
+input:focus-visible,
+select:focus-visible,
+textarea:focus-visible {
+  outline: 2px solid color-mix(in srgb, var(--accent) 45%, transparent);
+  outline-offset: 1px;
+}
+
+/* ---- shell ---- */
 .shell {
   grid-template-columns: 76px 252px minmax(0, 1fr);
 }
@@ -5288,41 +5306,63 @@ body {
   grid-template-columns: 76px minmax(0, 1fr);
 }
 
-/* icon rail */
+/* ---- icon rail (hosts the mac traffic lights; draggable window region) ---- */
 .feature-rail {
+  position: relative;
+  z-index: 30;
   gap: 6px;
-  padding: 14px 0;
+  padding: 48px 0 14px;
+  overflow: visible;
   background: var(--sidebar);
+  -webkit-app-region: drag;
+}
+
+.feature-rail button {
+  -webkit-app-region: no-drag;
 }
 
 .rail-brand {
-  width: 28px;
-  height: 28px;
+  width: 34px;
+  height: 34px;
+  margin-bottom: 10px;
   border: 0;
-  border-radius: 8px;
+  border-radius: 9px;
   background: linear-gradient(135deg, var(--accent), var(--accent-strong));
   color: var(--on-accent);
-  margin-bottom: 10px;
+}
+
+.rail-brand svg {
+  width: 20px;
+  height: 20px;
+}
+
+.feature-nav {
+  justify-items: center;
 }
 
 .feature-nav-item {
-  display: grid;
-  place-items: center;
-  width: 36px;
-  min-height: 36px;
-  padding: 0;
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  justify-content: center;
+  gap: 3px;
+  width: 60px;
+  min-height: 52px;
+  padding: 6px 0;
   border: 0;
-  border-radius: 8px;
-  gap: 0;
-}
-
-.feature-nav-item span {
-  display: none;
+  border-radius: 10px;
 }
 
 .feature-nav-item svg {
-  width: 17px;
-  height: 17px;
+  width: 19px;
+  height: 19px;
+}
+
+.feature-nav-item span {
+  display: block;
+  font-size: 10px;
+  font-weight: 600;
+  letter-spacing: 0.02em;
 }
 
 .feature-nav-item:hover {
@@ -5336,10 +5376,32 @@ body {
   color: var(--accent-strong);
 }
 
-/* sidebar */
+.rail-footer {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  gap: 6px;
+}
+
+.rail-footer .icon-btn {
+  width: 38px;
+  height: 38px;
+  border-radius: 9px;
+}
+
+.rail-footer .icon-btn svg {
+  width: 18px;
+  height: 18px;
+}
+
+/* ---- sidebar ---- */
 .resource-sidebar {
   gap: 12px;
   padding: 14px 12px;
+}
+
+.resource-sidebar .brand {
+  -webkit-app-region: drag;
 }
 
 .brand h1 {
@@ -5375,14 +5437,6 @@ body {
 
 .sidebar-search-btn kbd {
   margin-left: auto;
-  font-family: inherit;
-  font-size: 10.5px;
-  color: var(--muted);
-  background: var(--panel-soft);
-  border: 1px solid var(--line);
-  border-radius: 4px;
-  padding: 1px 5px;
-  line-height: 1.4;
 }
 
 .panel-header {
@@ -5390,6 +5444,14 @@ body {
   font-size: 10.5px;
   letter-spacing: 0.08em;
   color: var(--subtle);
+}
+
+.resource-panel {
+  padding: 0;
+  border: 0;
+  border-radius: 0;
+  background: transparent;
+  box-shadow: none;
 }
 
 .new-chat-compact-btn {
@@ -5412,7 +5474,10 @@ body {
 }
 
 .chat-row {
-  gap: 4px;
+  display: flex;
+  flex-direction: row;
+  align-items: center;
+  gap: 8px;
   padding: 9px 10px;
   border: 0;
   border-radius: 8px;
@@ -5427,45 +5492,71 @@ body {
   background: var(--accent-soft);
 }
 
+.chat-row .runtime-dot {
+  flex: none;
+}
+
 .chat-row strong {
+  display: block;
+  flex: 1;
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
   font-size: 12.5px;
   font-weight: 500;
-  -webkit-line-clamp: 1;
 }
 
 .chat-row span:last-child {
+  flex: none;
   font-size: 11px;
   color: var(--subtle);
+}
+
+.runtime-dot {
+  width: 7px;
+  height: 7px;
+}
+
+.runtime-dot.is-pulsing {
+  animation: dot-pulse 1.4s ease-in-out infinite;
+}
+
+@keyframes dot-pulse {
+  50% {
+    opacity: 0.35;
+    transform: scale(0.8);
+  }
 }
 
 /* agent badges as tinted chips */
 .agent-badge.mini {
   min-height: 18px;
   padding: 0 7px;
+  border: 1px solid transparent;
   font-size: 10.5px;
   font-weight: 600;
-  border: 1px solid transparent;
 }
 
 .agent-badge.mini.agent-codex {
-  background: color-mix(in srgb, var(--codex) 10%, transparent);
   border-color: color-mix(in srgb, var(--codex) 30%, transparent);
+  background: color-mix(in srgb, var(--codex) 10%, transparent);
   color: var(--codex);
 }
 
 .agent-badge.mini.agent-claude {
-  background: color-mix(in srgb, var(--claude) 10%, transparent);
   border-color: color-mix(in srgb, var(--claude) 30%, transparent);
+  background: color-mix(in srgb, var(--claude) 10%, transparent);
   color: var(--claude);
 }
 
 .agent-badge.mini.agent-api {
-  background: color-mix(in srgb, var(--accent) 10%, transparent);
   border-color: color-mix(in srgb, var(--accent) 30%, transparent);
+  background: color-mix(in srgb, var(--accent) 10%, transparent);
   color: var(--accent);
 }
 
-/* chat page — flat surfaces, centered column */
+/* ---- chat surface: flat, centered reading column ---- */
 .chat-content {
   gap: 0;
   padding: 0;
@@ -5478,6 +5569,11 @@ body {
   border-radius: 0;
   background: transparent;
   box-shadow: none;
+  -webkit-app-region: drag;
+}
+
+.chat-header button {
+  -webkit-app-region: no-drag;
 }
 
 .chat-title-block h2 {
@@ -5503,6 +5599,35 @@ body {
   margin: 0 auto;
   padding: 12px 0;
   border-bottom: 0;
+  animation: msg-in 220ms var(--ease) backwards;
+}
+
+@keyframes msg-in {
+  from {
+    opacity: 0;
+    transform: translateY(6px);
+  }
+}
+
+.cli-message.user {
+  display: block;
+  font-weight: 400;
+}
+
+.cli-message.assistant,
+.cli-message.meta {
+  padding-left: 0;
+}
+
+.cli-prompt-mark {
+  display: none;
+}
+
+.cli-message pre {
+  font-family: inherit;
+  font-size: 13px;
+  line-height: 1.7;
+  color: var(--text);
 }
 
 .cli-message.user pre {
@@ -5510,153 +5635,6 @@ body {
   border: 1px solid var(--line);
   border-radius: 10px;
   background: var(--panel);
-  color: var(--muted);
-}
-
-.cli-status-line {
-  max-width: 720px;
-  margin: 0 auto;
-  padding: 6px 0;
-  color: var(--subtle);
-  font-size: 12px;
-  gap: 7px;
-}
-
-.composer {
-  width: 100%;
-  max-width: 760px;
-  margin: 0 auto;
-  padding: 12px;
-  gap: 8px;
-  border-radius: 14px;
-  box-shadow: none;
-  transition: border-color 140ms var(--ease), box-shadow 140ms var(--ease);
-}
-
-.chat-content .composer {
-  margin-bottom: 20px;
-}
-
-.composer-hint {
-  text-align: center;
-  color: var(--subtle);
-  font-size: 11px;
-}
-
-.composer-hint kbd {
-  font-family: inherit;
-  font-size: 10.5px;
-  color: var(--muted);
-  background: var(--panel-soft);
-  border: 1px solid var(--line);
-  border-radius: 4px;
-  padding: 1px 5px;
-  line-height: 1.4;
-}
-
-.composer:focus-within {
-  border-color: var(--accent);
-  box-shadow: 0 0 0 3px var(--accent-soft);
-}
-
-.composer textarea {
-  min-height: 64px;
-}
-
-/* buttons */
-.send-btn,
-.control-btn {
-  min-height: 30px;
-  border-radius: 7px;
-  font-size: 12.5px;
-}
-
-.send-btn:hover:not(:disabled) {
-  background: var(--accent-strong);
-}
-
-/* page headers */
-.topbar h2,
-.teams-header h2,
-.config-header h2,
-.task-section-heading h2 {
-  font-size: 14px;
-  font-weight: 600;
-  letter-spacing: -0.01em;
-}
-
-.teams-header p,
-.config-header p {
-  font-size: 12px;
-  color: var(--subtle);
-}
-
-/* kanban */
-.task-kanban-column {
-  padding: 8px;
-  border-radius: 10px;
-  background: var(--panel);
-}
-
-.task-kanban-column .task-kanban-column-head,
-.task-kanban-column-head {
-  font-size: 12px;
-  color: var(--muted);
-}
-
-.task-kanban-card {
-  padding: 12px;
-  border-radius: 10px;
-  background: var(--panel-soft);
-  box-shadow: none;
-}
-
-.task-kanban-card strong {
-  font-size: 12.5px;
-}
-
-/* scrollbars */
-::-webkit-scrollbar {
-  width: 8px;
-  height: 8px;
-}
-
-::-webkit-scrollbar-thumb {
-  background: var(--scrollbar);
-  border-radius: 99px;
-  border: 2px solid transparent;
-  background-clip: content-box;
-}
-
-::-webkit-scrollbar-track {
-  background: transparent;
-}
-
-/* ───────────────── Linear reskin v3 — premium polish layer ───────────────── */
-
-/* kill heavy floating shadows globally; hairline elevation only */
-:root {
-  --shadow: 0 1px 3px color-mix(in srgb, var(--ink) 5%, transparent);
-}
-
-[data-theme="dark"] {
-  --shadow: 0 1px 3px color-mix(in srgb, var(--ink) 35%, transparent);
-}
-
-/* softer focus ring */
-button:focus-visible,
-input:focus-visible,
-select:focus-visible,
-textarea:focus-visible {
-  outline: 2px solid color-mix(in srgb, var(--accent) 45%, transparent);
-  outline-offset: 1px;
-}
-
-/* conversational typography — sans body, mono only for payloads */
-.cli-message pre {
-  font-family: inherit;
-  font-size: 13px;
-  line-height: 1.7;
   color: var(--text);
 }
 
@@ -5668,19 +5646,6 @@ textarea:focus-visible {
 .task-prompt-block pre {
   font-family: "Geist Mono Variable", ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, monospace;
   font-size: 12px;
-}
-
-.cli-message.user {
-  display: block;
-  font-weight: 400;
-}
-
-.cli-prompt-mark {
-  display: none;
-}
-
-.cli-message.user pre {
-  color: var(--text);
 }
 
 .cli-agent-line {
@@ -5697,12 +5662,211 @@ textarea:focus-visible {
   color: var(--subtle);
 }
 
-.runtime-dot {
-  width: 7px;
-  height: 7px;
+.cli-markdown {
+  font-size: 13px;
+  line-height: 1.7;
+  color: var(--text);
 }
 
-/* composer controls as quiet chips */
+.cli-status-line {
+  max-width: 720px;
+  margin: 0 auto;
+  padding: 6px 0;
+  gap: 7px;
+  color: var(--subtle);
+  font-size: 12px;
+}
+
+/* streaming status pill */
+.stream-pill {
+  display: inline-flex;
+  align-items: center;
+  gap: 7px;
+  padding: 4px 11px;
+  border: 1px solid var(--line);
+  border-radius: 999px;
+  background: var(--panel);
+  color: var(--muted);
+  font-size: 11.5px;
+  font-weight: 500;
+  box-shadow: 0 1px 2px color-mix(in srgb, var(--ink) 5%, transparent);
+}
+
+.stream-spinner {
+  width: 11px;
+  height: 11px;
+  flex: none;
+  border-radius: 50%;
+  border: 1.5px solid var(--line-strong);
+  border-top-color: var(--accent-strong);
+  animation: spin 0.7s linear infinite;
+}
+
+@keyframes spin {
+  to {
+    transform: rotate(360deg);
+  }
+}
+
+/* ---- markdown body ---- */
+.md-body > *:first-child {
+  margin-top: 0;
+}
+
+.md-body > *:last-child {
+  margin-bottom: 0;
+}
+
+.md-body p {
+  margin: 0 0 8px;
+  white-space: pre-wrap;
+}
+
+.md-body h1,
+.md-body h2,
+.md-body h3,
+.md-body h4 {
+  margin: 14px 0 6px;
+  font-weight: 600;
+  letter-spacing: -0.01em;
+}
+
+.md-body h1 { font-size: 15px; }
+.md-body h2 { font-size: 14px; }
+.md-body h3 { font-size: 13.5px; }
+.md-body h4 { font-size: 13px; }
+
+.md-body ul {
+  margin: 0 0 8px;
+  padding-left: 18px;
+}
+
+.md-body li {
+  margin: 2px 0;
+}
+
+.md-body code {
+  padding: 1px 5px;
+  border: 1px solid var(--line);
+  border-radius: 4px;
+  background: var(--panel-soft);
+  font-family: "Geist Mono Variable", ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, monospace;
+  font-size: 11.5px;
+}
+
+.md-codeblock {
+  margin: 8px 0;
+  overflow: hidden;
+  border: 1px solid var(--line);
+  border-radius: 8px;
+  background: var(--panel-soft);
+}
+
+.md-codeblock-head {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 10px;
+  padding: 5px 8px 5px 12px;
+  border-bottom: 1px solid var(--line);
+}
+
+.md-codeblock-lang {
+  color: var(--subtle);
+  font-family: "Geist Mono Variable", ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, monospace;
+  font-size: 11px;
+}
+
+.md-codeblock-copy {
+  padding: 2px 8px;
+  border-radius: 5px;
+  color: var(--subtle);
+  font-size: 11px;
+  transition: background 110ms var(--ease), color 110ms var(--ease);
+}
+
+.md-codeblock-copy:hover {
+  background: var(--hover);
+  color: var(--text);
+}
+
+.md-codeblock pre {
+  margin: 0;
+  padding: 11px 12px;
+  overflow-x: auto;
+  font-family: "Geist Mono Variable", ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, monospace;
+  font-size: 12px;
+  line-height: 1.6;
+}
+
+/* ---- composer (outer frame is invisible; .composer-box owns the border) ---- */
+.composer {
+  width: 100%;
+  max-width: 760px;
+  margin: 0 auto;
+  padding: 0;
+  gap: 8px;
+  border: 0;
+  border-radius: 14px;
+  background: transparent;
+  box-shadow: none;
+}
+
+.composer:focus-within {
+  border: 0;
+  box-shadow: none;
+}
+
+.chat-content .composer {
+  margin-bottom: 14px;
+}
+
+.composer-box {
+  display: flex;
+  flex-direction: column;
+  gap: 0;
+  padding: 0;
+  border: 1px solid var(--line);
+  border-radius: 14px;
+  background: var(--panel);
+  transition: border-color 140ms var(--ease), box-shadow 140ms var(--ease);
+}
+
+.composer-box:focus-within {
+  border-color: var(--accent);
+  box-shadow: 0 0 0 3px var(--accent-soft);
+}
+
+.composer-box textarea {
+  min-height: 48px;
+  max-height: 220px;
+  padding: 11px 14px 2px;
+  border: 0;
+  background: transparent;
+  font-size: 13px;
+  line-height: 1.5;
+  resize: none;
+}
+
+.composer-box textarea:focus,
+.composer-box textarea:focus-visible {
+  border: 0;
+  outline: none;
+  box-shadow: none;
+}
+
+.composer-box .composer-footer {
+  min-height: 0;
+  padding: 6px 8px 8px;
+}
+
+.composer-hint {
+  margin-top: 0;
+  text-align: center;
+  color: var(--subtle);
+  font-size: 11px;
+}
+
 .composer-select-wrap {
   min-height: 26px;
   padding: 0 7px;
@@ -5747,7 +5911,37 @@ textarea:focus-visible {
   white-space: nowrap;
 }
 
-/* ghost icon buttons */
+.composer-refresh-btn {
+  width: 26px;
+  height: 26px;
+  border: 1px solid var(--line);
+  border-radius: 6px;
+  background: transparent;
+}
+
+.composer-refresh-btn:hover {
+  border-color: var(--line-strong);
+  background: var(--hover);
+}
+
+/* ---- buttons, icon buttons, pills ---- */
+.control-btn {
+  min-height: 30px;
+  border-radius: 7px;
+  font-size: 12.5px;
+}
+
+.send-btn {
+  min-height: 28px;
+  padding: 0 12px;
+  border-radius: 7px;
+  font-size: 12px;
+}
+
+.send-btn:hover:not(:disabled) {
+  background: var(--accent-strong);
+}
+
 .icon-btn {
   border-color: transparent;
   background: transparent;
@@ -5764,49 +5958,99 @@ textarea:focus-visible {
   color: var(--danger);
 }
 
-/* compact pills */
 .status-pill {
   min-height: 0;
   padding: 4px 10px;
   font-size: 11.5px;
 }
 
-/* tighter content frame */
+/* ---- page headers + content frame ---- */
 .content {
   gap: 12px;
   padding: 16px;
 }
 
+/* feature panes that own their padding must win over .content (equal
+   specificity → must come after it in the cascade) */
 .chat-content {
-  padding: 0;
   gap: 0;
+  padding: 0;
 }
 
-/* empty states */
+.topbar h2,
+.teams-header h2,
+.config-header h2,
+.task-section-heading h2 {
+  font-size: 14px;
+  font-weight: 600;
+  letter-spacing: -0.01em;
+}
+
+.teams-header p,
+.config-header p {
+  font-size: 12px;
+  color: var(--subtle);
+}
+
+.teams-header,
+.config-header {
+  -webkit-app-region: drag;
+}
+
+.teams-header button,
+.config-header button {
+  -webkit-app-region: no-drag;
+}
+
 .empty-state {
   color: var(--subtle);
 }
 
-.cli-message.assistant,
-.cli-message.meta {
-  padding-left: 0;
+/* ---- tasks: kanban ---- */
+.task-kanban-stack {
+  padding: 5px 3px 0;
+  margin-right: -3px;
+  margin-left: -3px;
 }
 
-/* ───────────────── Linear reskin v4 — rail fix + workflow board to template ───────────────── */
-
-/* center rail nav buttons */
-.feature-nav {
-  justify-items: center;
+.task-kanban-column {
+  padding: 8px;
+  border-radius: 10px;
+  background: var(--panel);
 }
 
-.rail-footer {
-  display: flex;
-  flex-direction: column;
-  align-items: center;
-  gap: 6px;
+.task-kanban-column .task-kanban-column-head,
+.task-kanban-column-head {
+  color: var(--muted);
+  font-size: 12px;
 }
 
-/* workflow node cards — clean template look */
+.task-kanban-card {
+  padding: 12px;
+  border-radius: 10px;
+  background: var(--panel-soft);
+  box-shadow: none;
+}
+
+.task-kanban-card strong {
+  font-size: 12.5px;
+}
+
+.task-kanban-card:hover {
+  border-color: var(--line-strong);
+  box-shadow: 0 8px 24px color-mix(in srgb, var(--ink) 12%, transparent);
+  transform: translateY(-3px);
+}
+
+.task-section-divider {
+  color: var(--subtle);
+  font-size: 10.5px;
+  font-weight: 600;
+  letter-spacing: 0.08em;
+  text-transform: uppercase;
+}
+
+/* ---- teams + workflow builder ---- */
 .team-member-card {
   position: relative;
   grid-template-columns: 12px minmax(0, 1fr);
@@ -5844,7 +6088,6 @@ textarea:focus-visible {
   color: var(--subtle);
 }
 
-/* floating status pill, like the template */
 .workflow-node-status-pill {
   position: absolute;
   top: -8px;
@@ -5874,21 +6117,13 @@ textarea:focus-visible {
   color: var(--danger);
 }
 
-/* node states stay calm — colored border only */
-.workflow-node-card.is-running {
+.workflow-node-card.is-running,
+.workflow-node-card.is-completed,
+.workflow-node-card.is-failed {
   background: var(--panel);
   box-shadow: none;
 }
 
-.workflow-node-card.is-completed {
-  background: var(--panel);
-}
-
-.workflow-node-card.is-failed {
-  background: var(--panel);
-}
-
-/* dashed pill terminals */
 .workflow-terminal,
 .workflow-join-node {
   display: inline-flex;
@@ -5905,7 +6140,6 @@ textarea:focus-visible {
   font-size: 11px;
 }
 
-/* edges with arrowheads */
 .workflow-edge {
   position: relative;
   height: 1.5px;
@@ -5921,7 +6155,6 @@ textarea:focus-visible {
   border-left-color: var(--line-strong);
 }
 
-/* clean topology board */
 .workflow-topology-board {
   border: 1px solid var(--line);
   border-radius: 12px;
@@ -5942,7 +6175,6 @@ textarea:focus-visible {
   background: transparent;
 }
 
-/* segmented mode control */
 .workflow-mode-row {
   gap: 2px;
   padding: 2px;
@@ -5964,7 +6196,6 @@ textarea:focus-visible {
   box-shadow: 0 1px 2px color-mix(in srgb, var(--ink) 8%, transparent);
 }
 
-/* panes and lists */
 .team-list-pane,
 .team-config-pane,
 .team-run-pane {
@@ -5998,15 +6229,6 @@ textarea:focus-visible {
   background: var(--accent-soft);
 }
 
-/* labels and dividers like template */
-.task-section-divider {
-  color: var(--subtle);
-  font-size: 10.5px;
-  font-weight: 600;
-  letter-spacing: 0.08em;
-  text-transform: uppercase;
-}
-
 .workflow-region-label {
   padding: 0;
   border: 0;
@@ -6018,7 +6240,11 @@ textarea:focus-visible {
   text-transform: uppercase;
 }
 
-/* run trace as timeline rows */
+.workflow-synthesis-card {
+  border-radius: 10px;
+}
+
+/* run trace as a timeline */
 .workflow-trace-item {
   display: flex;
   align-items: baseline;
@@ -6051,155 +6277,12 @@ textarea:focus-visible {
   color: var(--danger);
 }
 
-.workflow-synthesis-card {
-  border-radius: 10px;
-}
-
-/* ───────────────── Linear reskin v5 — frameless, tooltips, markdown ───────────────── */
-
-/* frameless window: rail hosts mac traffic lights */
-.feature-rail {
-  padding-top: 46px;
-  -webkit-app-region: drag;
-}
-
-.feature-rail button {
-  -webkit-app-region: no-drag;
-}
-
-.resource-sidebar .brand {
-  -webkit-app-region: drag;
-}
-
-.chat-header,
-.teams-header,
-.config-header {
-  -webkit-app-region: drag;
-}
-
-.chat-header button,
-.teams-header button,
-.config-header button {
-  -webkit-app-region: no-drag;
-}
-
-/* instant rail tooltips */
-[data-tip] {
-  position: relative;
-}
-
-[data-tip]::after {
-  content: attr(data-tip);
-  position: absolute;
-  left: calc(100% + 10px);
-  top: 50%;
-  transform: translateY(-50%) translateX(-4px);
-  padding: 4px 9px;
-  border-radius: 6px;
-  background: var(--ink);
-  color: var(--panel);
-  font-size: 11px;
-  font-weight: 500;
-  white-space: nowrap;
-  opacity: 0;
-  pointer-events: none;
-  transition: opacity 120ms var(--ease), transform 120ms var(--ease);
-  z-index: 70;
-}
-
-[data-tip]:hover::after {
-  opacity: 1;
-  transform: translateY(-50%) translateX(0);
-}
-
-/* palette: no focus ring artifacts */
-.palette-input-row input:focus-visible,
-.palette-item:focus-visible {
-  outline: none;
-}
-
-/* markdown body */
-.cli-markdown {
-  font-size: 13px;
-  line-height: 1.7;
-  color: var(--text);
-}
-
-.md-body > *:first-child {
-  margin-top: 0;
-}
-
-.md-body > *:last-child {
-  margin-bottom: 0;
-}
-
-.md-body p {
-  margin: 0 0 8px;
-}
-
-.md-body h1,
-.md-body h2,
-.md-body h3,
-.md-body h4 {
-  margin: 14px 0 6px;
-  font-weight: 600;
-  letter-spacing: -0.01em;
-}
-
-.md-body h1 { font-size: 15px; }
-.md-body h2 { font-size: 14px; }
-.md-body h3 { font-size: 13.5px; }
-.md-body h4 { font-size: 13px; }
-
-.md-body ul {
-  margin: 0 0 8px;
-  padding-left: 18px;
-}
-
-.md-body li {
-  margin: 2px 0;
-}
-
-.md-body code {
-  padding: 1px 5px;
-  border: 1px solid var(--line);
-  border-radius: 4px;
-  background: var(--panel-soft);
-  font-family: "Geist Mono Variable", ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, monospace;
-  font-size: 11.5px;
-}
-
-.md-codeblock {
-  margin: 8px 0;
-  border: 1px solid var(--line);
-  border-radius: 8px;
-  background: var(--panel-soft);
-  overflow: hidden;
-}
-
-.md-codeblock-lang {
-  padding: 5px 12px;
-  border-bottom: 1px solid var(--line);
-  color: var(--subtle);
-  font-size: 11px;
-}
-
-.md-codeblock pre {
-  margin: 0;
-  padding: 11px 12px;
-  overflow-x: auto;
-  font-family: "Geist Mono Variable", ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, monospace;
-  font-size: 12px;
-  line-height: 1.6;
-}
-
-/* trace timeline columns */
 .workflow-trace-item .trace-time {
   flex: none;
   min-width: 52px;
+  color: var(--subtle);
   font-family: "Geist Mono Variable", ui-monospace, monospace;
   font-size: 10.5px;
-  color: var(--subtle);
 }
 
 .workflow-trace-item .trace-glyph {
@@ -6217,260 +6300,76 @@ textarea:focus-visible {
 
 .workflow-trace-item p {
   margin: 0;
+  overflow: hidden;
   color: var(--muted);
   font-size: 11.5px;
-  overflow: hidden;
   text-overflow: ellipsis;
   white-space: nowrap;
 }
 
-/* tooltips must escape the rail */
-.feature-rail {
-  position: relative;
-  z-index: 30;
-  overflow: visible;
+/* ---- command palette + shared shortcut badges ---- */
+.palette-input-row input:focus-visible,
+.palette-item:focus-visible {
+  outline: none;
 }
 
-/* ───────────────── review fixes ───────────────── */
-
-/* keep whitespace fidelity inside markdown paragraphs (agent output often aligns text) */
-.md-body p {
-  white-space: pre-wrap;
-}
-
-/* shared kbd treatment — single source for every shortcut badge */
 .palette kbd,
 .sidebar-search-btn kbd,
 .composer-hint kbd {
-  font-family: inherit;
-  font-size: 10.5px;
-  color: var(--muted);
-  background: var(--panel-soft);
+  padding: 1px 5px;
   border: 1px solid var(--line);
   border-radius: 4px;
-  padding: 1px 5px;
+  background: var(--panel-soft);
+  color: var(--muted);
+  font-family: inherit;
+  font-size: 10.5px;
   line-height: 1.4;
 }
 
-/* ───────────────── kanban hover lift + traffic-light spacing ───────────────── */
-
-/* room for the lifted card so the stack's overflow doesn't clip it */
-.task-kanban-stack {
-  padding-top: 5px;
-  padding-left: 3px;
-  padding-right: 3px;
-  margin-left: -3px;
-  margin-right: -3px;
+/* ---- instant rail tooltips ---- */
+[data-tip] {
+  position: relative;
 }
 
-.task-kanban-card:hover {
-  transform: translateY(-3px);
-  border-color: var(--line-strong);
-  box-shadow: 0 8px 24px color-mix(in srgb, var(--ink) 12%, transparent);
-}
-
-/* rail is now 76px wide: traffic lights (x12-64) stay inside it,
-   logo sits below them */
-.feature-rail {
-  padding-top: 48px;
-}
-
-/* bigger rail icons to fill the 76px column */
-.rail-brand {
-  width: 34px;
-  height: 34px;
-  border-radius: 9px;
-}
-
-.rail-brand svg {
-  width: 20px;
-  height: 20px;
-}
-
-.feature-nav-item {
-  width: 44px;
-  min-height: 44px;
-  border-radius: 10px;
-}
-
-.feature-nav-item svg {
-  width: 21px;
-  height: 21px;
-}
-
-.rail-footer .icon-btn {
-  width: 38px;
-  height: 38px;
-  border-radius: 9px;
-}
-
-.rail-footer .icon-btn svg {
-  width: 18px;
-  height: 18px;
-}
-
-/* icon + english caption, like the original rail but Linear-tight */
-.feature-nav-item {
-  display: flex;
-  flex-direction: column;
-  align-items: center;
-  justify-content: center;
-  gap: 3px;
-  width: 60px;
-  min-height: 52px;
-  padding: 6px 0;
-}
-
-.feature-nav-item span {
-  display: block;
-  font-size: 10px;
-  font-weight: 600;
-  letter-spacing: 0.02em;
-}
-
-.feature-nav-item svg {
-  width: 19px;
-  height: 19px;
-}
-
-/* ───────────────── composer box + preview-B sidebar list ───────────────── */
-
-/* one frame only: outer .composer goes invisible, .composer-box owns the border */
-.composer {
-  padding: 0;
-  gap: 8px;
-  border: 0;
-  background: transparent;
-  box-shadow: none;
-}
-
-.composer:focus-within {
-  border: 0;
-  box-shadow: none;
-}
-
-.composer-box {
-  display: flex;
-  flex-direction: column;
-  gap: 6px;
-  padding: 12px;
-  border: 1px solid var(--line);
-  border-radius: 14px;
-  background: var(--panel);
-  transition: border-color 140ms var(--ease), box-shadow 140ms var(--ease);
-}
-
-.composer-box:focus-within {
-  border-color: var(--accent);
-  box-shadow: 0 0 0 3px var(--accent-soft);
-}
-
-.composer-box textarea {
-  border: 0;
-  background: transparent;
-}
-
-.composer-box textarea:focus,
-.composer-box textarea:focus-visible {
-  border: 0;
-  outline: none;
-  box-shadow: none;
-}
-
-/* the "bracket": refresh icon floating bare — give it a chip frame */
-.composer-refresh-btn {
-  width: 26px;
-  height: 26px;
-  border: 1px solid var(--line);
+[data-tip]::after {
+  content: attr(data-tip);
+  position: absolute;
+  left: calc(100% + 10px);
+  top: 50%;
+  z-index: 70;
+  padding: 4px 9px;
   border-radius: 6px;
-  background: transparent;
-}
-
-.composer-refresh-btn:hover {
-  border-color: var(--line-strong);
-  background: var(--hover);
-}
-
-/* sidebar: flat panels, preview-B rows */
-.resource-panel {
-  border: 0;
-  border-radius: 0;
-  background: transparent;
-  box-shadow: none;
-  padding: 0;
-}
-
-.chat-row {
-  display: flex;
-  flex-direction: row;
-  align-items: center;
-  gap: 8px;
-}
-
-.chat-row .runtime-dot {
-  flex: none;
-}
-
-.chat-row strong {
-  display: block;
-  flex: 1;
-  min-width: 0;
-  overflow: hidden;
-  text-overflow: ellipsis;
-  white-space: nowrap;
-  font-size: 12.5px;
-  font-weight: 500;
-}
-
-.chat-row span:last-child {
-  flex: none;
+  background: var(--ink);
+  color: var(--panel);
   font-size: 11px;
-  color: var(--subtle);
+  font-weight: 500;
+  white-space: nowrap;
+  opacity: 0;
+  pointer-events: none;
+  transform: translateY(-50%) translateX(-4px);
+  transition: opacity 120ms var(--ease), transform 120ms var(--ease);
 }
 
-.runtime-dot.is-pulsing {
-  animation: dot-pulse 1.4s ease-in-out infinite;
+[data-tip]:hover::after {
+  opacity: 1;
+  transform: translateY(-50%) translateX(0);
 }
 
-@keyframes dot-pulse {
-  50% {
-    opacity: 0.35;
-    transform: scale(0.8);
-  }
+/* ---- scrollbars ---- */
+::-webkit-scrollbar {
+  width: 8px;
+  height: 8px;
 }
 
-/* compact composer, preview-B proportions */
-.composer-box {
-  gap: 0;
-  padding: 0;
+::-webkit-scrollbar-thumb {
+  border: 2px solid transparent;
+  border-radius: 99px;
+  background: var(--scrollbar);
+  background-clip: content-box;
 }
 
-.composer-box textarea {
-  min-height: 48px;
-  max-height: 220px;
-  padding: 11px 14px 2px;
-  font-size: 13px;
-  line-height: 1.5;
-  resize: none;
-}
-
-.composer-box .composer-footer {
-  min-height: 0;
-  padding: 6px 8px 8px;
-}
-
-.chat-content .composer {
-  margin-bottom: 14px;
-}
-
-.composer-hint {
-  margin-top: 0;
-}
-
-.send-btn {
-  min-height: 28px;
-  padding: 0 12px;
-  font-size: 12px;
+::-webkit-scrollbar-track {
+  background: transparent;
 }
 
 /* ───────────────── workflow page unification (Linear pass) ───────────────── */
@@ -7086,3 +6985,4 @@ textarea:focus-visible {
     var(--panel);
   background-size: 20px 20px;
 }
+
