@@ -539,9 +539,11 @@ describe("ConfigPage", () => {
     expect(html).toContain("Agents");
     expect(html).not.toContain("aria-label=\"Language\"");
     expect(html).not.toContain("统一中文");
-    expect(html).toContain("Agent templates");
+    expect(html).not.toContain("Agent templates");
     expect(html).not.toContain("<h3>Channels</h3>");
-    expect(html).toContain("代码审查 Agent");
+    expect(html).not.toContain("代码审查 Agent");
+    expect(html).not.toContain(">Import template<");
+    expect(html).not.toContain(">导入模板<");
     expect(html).toContain("Repo Reviewer");
     expect(html).toContain("aria-label=\"Agent prompt\"");
     expect(html).toContain("Test");
@@ -592,39 +594,14 @@ describe("ConfigPage", () => {
     expect(html).toContain("value=\"saved-key\"");
   });
 
-  test("renders agent templates in Chinese without separate localized fields", () => {
-    const html = renderToStaticMarkup(
-      <ConfigPage
-        language="zh"
-        channels={channels}
-        configuredAgents={configuredAgents}
-        selectedConfiguredAgentId="repo-reviewer"
-        providerKeys={{}}
-        status=""
-        codexPluginCatalog={codexPluginCatalog}
-        pluginCatalogStatus=""
-        agentTestResults={{}}
-        testingAgentId={undefined}
-        agentTestTick={0}
-        onUpdateChannel={() => undefined}
-        onAddModel={() => undefined}
-        onUpdateModel={() => undefined}
-        onRemoveModel={() => undefined}
-        onSave={async () => undefined}
-        onLoadCodexPluginCatalog={async () => undefined}
-        onAddConfiguredAgent={() => undefined}
-        onSelectConfiguredAgent={() => undefined}
-        onUpdateProviderKey={() => undefined}
-        onUpdateConfiguredAgent={() => undefined}
-        onRemoveConfiguredAgent={() => undefined}
-        onTestConfiguredAgent={async () => undefined}
-      />,
-    );
+  test("keeps agent templates in Chinese without separate localized fields", () => {
+    const codeReviewer = AGENT_TEMPLATES.find((template) => template.id === "code-reviewer");
 
-    expect(html).toContain("代码审查 Agent");
-    expect(html).toContain("检查代码缺陷");
-    expect(html).not.toContain("Code Review Agent");
-    expect(html).not.toContain("Reviews code for bugs");
+    expect(codeReviewer).toMatchObject({
+      name: "代码审查 Agent",
+      description: expect.stringContaining("检查代码缺陷"),
+      prompt: expect.stringContaining("作为资深代码审查者"),
+    });
     expect(AGENT_TEMPLATES.some((template) => "nameZh" in template || "descriptionZh" in template || "promptZh" in template)).toBe(false);
   });
 

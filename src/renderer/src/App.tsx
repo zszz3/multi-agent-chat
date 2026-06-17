@@ -5827,25 +5827,6 @@ export function ConfigPage({
                           <RefreshCw size={13} />
                           <span>{selectedAgentTesting ? "Testing" : "Test"}</span>
                         </button>
-                        <details className="agent-template-menu inline">
-                          <summary>
-                            <FileInput size={13} />
-                            <span>{UI_TEXT[language].chrome.importTemplate}</span>
-                          </summary>
-                          <div className="agent-template-menu-list" aria-label="Agent templates">
-                            {AGENT_TEMPLATES.map((template) => (
-                              <button
-                                key={template.id}
-                                type="button"
-                                className="agent-template-menu-item"
-                                onClick={() => onUpdateConfiguredAgent(selectedConfiguredAgent.id, (item) => applyAgentTemplate(item, template))}
-                              >
-                                <strong>{template.name}</strong>
-                                <span>{template.description}</span>
-                              </button>
-                            ))}
-                          </div>
-                        </details>
                       </div>
                     </div>
                     {status ? <div className="config-status">{status}</div> : null}
