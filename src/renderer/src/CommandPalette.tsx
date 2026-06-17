@@ -29,11 +29,13 @@ export function filterPaletteCommands(commands: PaletteCommand[], query: string)
 }
 
 export type Theme = "light" | "dark";
+export type PaletteLanguage = "zh" | "en";
 
 export interface PaletteContext {
   chats: Array<{ id: string; title: string; agentId: string }>;
   theme: Theme;
-  onNavigate: (feature: "chat" | "tasks" | "teams" | "workflow" | "configs") => void;
+  language?: PaletteLanguage;
+  onNavigate: (feature: "chat" | "tasks" | "teams" | "workflow" | "configs" | "settings") => void;
   onSelectChat: (chatId: string) => void;
   onNewChat: () => void;
   onToggleTheme: () => void;
@@ -42,28 +44,64 @@ export interface PaletteContext {
 }
 
 export function buildPaletteCommands(context: PaletteContext): PaletteCommand[] {
+  const language = context.language ?? "en";
+  const label =
+    language === "zh"
+      ? {
+          jump: "跳转",
+          action: "操作",
+          chats: "对话",
+          chat: "对话",
+          tasks: "任务",
+          teams: "团队",
+          workflow: "工作流",
+          configs: "配置",
+          settings: "设置",
+          newChat: "新建对话",
+          lightTheme: "切换到浅色主题",
+          darkTheme: "切换到深色主题",
+          workDir: "选择工作目录...",
+          refresh: "刷新 Agent 状态",
+        }
+      : {
+          jump: "Navigate",
+          action: "Action",
+          chats: "Chats",
+          chat: "Chat",
+          tasks: "Tasks",
+          teams: "Teams",
+          workflow: "Workflow",
+          configs: "Configs",
+          settings: "Settings",
+          newChat: "New chat",
+          lightTheme: "Switch to light theme",
+          darkTheme: "Switch to dark theme",
+          workDir: "Choose work directory...",
+          refresh: "Refresh agent status",
+        };
   const navigation: PaletteCommand[] = [
-    { id: "nav-chat", section: "跳转", label: "Chat 对话", hint: "G C", icon: <MessageSquareText size={14} />, run: () => context.onNavigate("chat") },
-    { id: "nav-tasks", section: "跳转", label: "Tasks 看板", hint: "G T", icon: <ClipboardList size={14} />, run: () => context.onNavigate("tasks") },
-    { id: "nav-teams", section: "跳转", label: "Teams 团队", hint: "G W", icon: <Users size={14} />, run: () => context.onNavigate("teams") },
-    { id: "nav-workflow", section: "跳转", label: "Workflow 工作流", hint: "G F", icon: <Users size={14} />, run: () => context.onNavigate("workflow") },
-    { id: "nav-configs", section: "跳转", label: "Configs 配置", hint: "G S", icon: <Settings size={14} />, run: () => context.onNavigate("configs") },
+    { id: "nav-chat", section: label.jump, label: label.chat, hint: "G C", icon: <MessageSquareText size={14} />, run: () => context.onNavigate("chat") },
+    { id: "nav-tasks", section: label.jump, label: label.tasks, hint: "G T", icon: <ClipboardList size={14} />, run: () => context.onNavigate("tasks") },
+    { id: "nav-teams", section: label.jump, label: label.teams, hint: "G W", icon: <Users size={14} />, run: () => context.onNavigate("teams") },
+    { id: "nav-workflow", section: label.jump, label: label.workflow, hint: "G F", icon: <Users size={14} />, run: () => context.onNavigate("workflow") },
+    { id: "nav-configs", section: label.jump, label: label.configs, hint: "G S", icon: <Settings size={14} />, run: () => context.onNavigate("configs") },
+    { id: "nav-settings", section: label.jump, label: label.settings, icon: <Settings size={14} />, run: () => context.onNavigate("settings") },
   ];
   const actions: PaletteCommand[] = [
-    { id: "act-new-chat", section: "操作", label: "新建对话", hint: "⌘N", icon: <Plus size={14} />, run: context.onNewChat },
+    { id: "act-new-chat", section: label.action, label: label.newChat, hint: "⌘N", icon: <Plus size={14} />, run: context.onNewChat },
     {
       id: "act-theme",
-      section: "操作",
-      label: context.theme === "dark" ? "切换到浅色主题" : "切换到深色主题",
+      section: label.action,
+      label: context.theme === "dark" ? label.lightTheme : label.darkTheme,
       icon: context.theme === "dark" ? <Sun size={14} /> : <Moon size={14} />,
       run: context.onToggleTheme,
     },
-    { id: "act-workdir", section: "操作", label: "选择工作目录…", icon: <FolderOpen size={14} />, run: context.onChooseWorkDir },
-    { id: "act-refresh", section: "操作", label: "刷新 Agent 状态", icon: <RefreshCw size={14} />, run: context.onRefreshAgents },
+    { id: "act-workdir", section: label.action, label: label.workDir, icon: <FolderOpen size={14} />, run: context.onChooseWorkDir },
+    { id: "act-refresh", section: label.action, label: label.refresh, icon: <RefreshCw size={14} />, run: context.onRefreshAgents },
   ];
   const chats: PaletteCommand[] = context.chats.map((chat) => ({
     id: `chat-${chat.id}`,
-    section: "对话",
+    section: label.chats,
     label: chat.title,
     hint: chat.agentId === "codex" ? "Codex" : "Claude",
     icon: <MessageSquareText size={14} />,

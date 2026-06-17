@@ -2,10 +2,12 @@ import { readFileSync } from "node:fs";
 import { renderToStaticMarkup } from "react-dom/server";
 import { describe, expect, test } from "vitest";
 import {
+  App,
   appShellClass,
   chatConfigLocked,
   ChatControls,
   ConfigPage,
+  SettingsPage,
   applyAgentTemplate,
   applyProviderPresetToChannel,
   applyProviderPresetToConfiguredAgent,
@@ -37,7 +39,7 @@ import {
 import { DEFAULT_MODEL_ID } from "../../shared/models";
 import { AGENT_TEMPLATES } from "../../shared/agent-templates";
 import { firstWorkflowQuestionForObjective } from "../../shared/workflow-agent";
-import type { AgentChannel, AgentRuntime, AgentTeam, CodexPluginCatalogItem, ConfiguredAgent, TaskRun, TeamRun, WorkflowGraph } from "../../shared/types";
+import type { AgentChannel, AgentRuntime, AgentTeam, AppSnapshot, CodexPluginCatalogItem, ConfiguredAgent, TaskRun, TeamRun, WorkflowGraph } from "../../shared/types";
 
 const runtimes: AgentRuntime[] = [
   {
@@ -135,6 +137,43 @@ const taskRuns: TaskRun[] = [
     updatedAt: 1710000000000,
   },
 ];
+
+const appSnapshot: AppSnapshot = {
+  detectedAt: 1710000000000,
+  activeChatId: "chat-1",
+  activeTaskId: undefined,
+  activeTeamId: undefined,
+  activeTeamRunId: undefined,
+  workDir: "/tmp/workspace",
+  runtimes,
+  channels,
+  configuredAgents,
+  chats: [
+    {
+      id: "chat-1",
+      title: "Repo chat",
+      agentId: "codex",
+      channelId: "codex-openai",
+      modelId: "gpt-5.5",
+      messages: [],
+      running: false,
+      sessionId: undefined,
+      pendingAssistantMessageId: undefined,
+      lastError: undefined,
+      createdAt: 1710000000000,
+      updatedAt: 1710000000000,
+    },
+  ],
+  tasks: [],
+  teams: [],
+  teamRuns: [],
+  workflowStore: {
+    activeWorkflowId: undefined,
+    workflows: [],
+    runs: [],
+  },
+  workflowDraft: undefined,
+};
 
 const teams: AgentTeam[] = [
   {
@@ -495,11 +534,24 @@ describe("ConfigPage", () => {
     expect(html).toContain("Loaded 2 plugins");
     expect(html).toContain("Advanced JSON");
     expect(html).toContain("Agents");
+    expect(html).not.toContain("aria-label=\"Language\"");
+    expect(html).not.toContain("统一中文");
     expect(html).toContain("Agent templates");
     expect(html).not.toContain("<h3>Channels</h3>");
     expect(html).toContain("Code Review Agent");
     expect(html).toContain("Repo Reviewer");
     expect(html).toContain("aria-label=\"Agent prompt\"");
+  });
+
+  test("renders language controls without a duplicate settings sidebar", () => {
+    const html = renderToStaticMarkup(<SettingsPage language="zh" onLanguageChange={() => undefined} />);
+
+    expect(html).toContain("settings-page");
+    expect(html).not.toContain("settings-sidebar");
+    expect(html).toContain("语言");
+    expect(html).toContain("aria-label=\"Language\"");
+    expect(html).toContain("统一中文");
+    expect(html).toContain("English");
   });
 
   test("applies agent templates without changing runtime or provider selection", () => {
@@ -690,6 +742,41 @@ describe("TaskPage", () => {
     expect(html).not.toContain("Task detail");
     expect(html).not.toContain("Full prompt");
     expect(html).not.toContain("Execution timeline");
+  });
+});
+
+describe("App chrome", () => {
+  test("uses the rail footer for settings instead of clearing all history", () => {
+    const originalWindow = globalThis.window;
+    const storage = new Map<string, string>();
+    Object.defineProperty(globalThis, "window", {
+      configurable: true,
+      value: {
+        localStorage: {
+          getItem: (key: string) => storage.get(key) ?? null,
+          setItem: (key: string, value: string) => storage.set(key, value),
+        },
+        multiAgentChat: {
+          getSnapshot: async () => appSnapshot,
+          onSnapshot: () => () => undefined,
+        },
+      },
+    });
+
+    try {
+      const html = renderToStaticMarkup(<App />);
+
+      expect(html).toContain("aria-label=\"打开设置\"");
+      expect(html).toContain("data-tip=\"设置\"");
+      expect(html).toContain("<span>配置</span>");
+      expect(html).not.toContain("清除全部历史");
+      expect(html).not.toContain("danger");
+    } finally {
+      Object.defineProperty(globalThis, "window", {
+        configurable: true,
+        value: originalWindow,
+      });
+    }
   });
 });
 
@@ -1035,7 +1122,7 @@ describe("WorkflowPage", () => {
     );
 
     expect(html).toContain("New workflow");
-    expect(html).toContain("输入任务描述开始生成 workflow。");
+    expect(html).toContain("Describe a task to start generating a workflow.");
     expect(html).toContain("aria-label=\"Agent\"");
     expect(html).toContain("aria-label=\"Channel\"");
     expect(html).toContain("aria-label=\"Model\"");
@@ -1087,7 +1174,7 @@ describe("WorkflowPage", () => {
 
     expect(html).toContain("qjagents Agent 功能速览");
     expect(html).toContain("failed");
-    expect(html).toContain("输入任务描述开始生成 workflow。");
+    expect(html).toContain("Describe a task to start generating a workflow.");
     expect(html).not.toContain("<h2>New workflow</h2>");
   });
 
@@ -1125,7 +1212,7 @@ describe("WorkflowPage", () => {
 
     expect(html).toContain("DAG valid");
     expect(html).toContain("Review payment release");
-    expect(html).toContain("主 Agent 总结");
+    expect(html).toContain("Main agent summary");
     expect(html).toContain("qjagents workflow finished.");
     expect(html).toContain("Run Graph");
   });
@@ -1177,7 +1264,7 @@ describe("WorkflowPage", () => {
       />,
     );
 
-    expect(html).toContain("产出文档");
+    expect(html).toContain("Output documents");
     expect(html).toContain("learning-highlights.md");
     expect(html).toContain(".multi-agent-chat/workflows/wf_review/outputs/learning-highlights.md");
     expect(html).not.toContain("README.md</span>");
@@ -1623,8 +1710,8 @@ workflowGraph.upsert({
     expect(html).toContain("Running 2/3 · 1 done · 1 queued");
     expect(html).toContain("Task running");
     expect(html).toContain("Output captured");
-    expect(html).toContain("Workflow context");
-    expect(html).toContain("Use active turn guards.");
+    expect(html).not.toContain("Workflow context");
+    expect(html).not.toContain("Use active turn guards.");
     expect(html).toContain("Running...");
   });
 
@@ -1666,8 +1753,10 @@ workflowGraph.upsert({
       />,
     );
 
-    expect(html).toContain("主 Agent 总结");
+    expect(html).toContain("Main agent summary");
     expect(html).toContain("Main agent review");
+    expect(html).toContain("<h2>Final User Report</h2>");
+    expect(html).not.toContain("<pre>## Final User Report");
     expect(html).toContain("Payment release is ready with one follow-up risk.");
     expect(html).toContain("Workflow transcript");
     expect(html).toContain("Main agent report ready");

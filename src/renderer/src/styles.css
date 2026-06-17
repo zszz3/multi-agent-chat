@@ -2370,7 +2370,7 @@ textarea:focus-visible {
   white-space: pre-wrap;
 }
 
-.workflow-final-report pre {
+.workflow-final-report-body {
   max-height: 240px;
   overflow: auto;
   margin: 0;
@@ -2378,10 +2378,7 @@ textarea:focus-visible {
   border-radius: 8px;
   background: #fff;
   color: #1f2937;
-  font-family: var(--font-mono);
-  font-size: 11px;
   line-height: 1.5;
-  white-space: pre-wrap;
 }
 
 .workflow-graph-board {
@@ -3734,6 +3731,95 @@ textarea:focus-visible {
   display: flex;
   align-items: center;
   gap: 8px;
+}
+
+.settings-page {
+  display: grid;
+  min-height: 0;
+  gap: 14px;
+}
+
+.settings-header,
+.settings-layout {
+  border: 1px solid var(--line);
+  border-radius: 12px;
+  background: var(--panel);
+  box-shadow: var(--shadow);
+}
+
+.settings-header {
+  padding: 13px 14px;
+}
+
+.settings-header h2,
+.settings-panel h3 {
+  margin: 0;
+}
+
+.settings-header p,
+.settings-panel p {
+  margin: 4px 0 0;
+  color: var(--muted);
+  font-size: 12px;
+}
+
+.settings-layout {
+  min-height: 0;
+  overflow: hidden;
+}
+
+.settings-nav-row {
+  display: flex;
+  align-items: center;
+  gap: 7px;
+  width: 100%;
+  padding: 8px 9px;
+  border: 1px solid transparent;
+  border-radius: 8px;
+  background: transparent;
+  color: var(--muted);
+  font-size: 12px;
+  font-weight: 650;
+  text-align: left;
+}
+
+.settings-nav-row.is-active,
+.settings-nav-row:hover {
+  border-color: color-mix(in srgb, var(--accent) 20%, var(--line));
+  background: var(--accent-tint);
+  color: var(--text);
+}
+
+.settings-panel {
+  display: grid;
+  align-content: start;
+  gap: 14px;
+  padding: 14px;
+}
+
+.settings-language-select {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 12px;
+  max-width: 420px;
+  min-height: 38px;
+  padding: 0 10px;
+  border: 1px solid var(--line);
+  border-radius: 8px;
+  background: var(--panel-soft);
+  color: var(--muted);
+  font-size: 11px;
+  font-weight: 650;
+}
+
+.settings-language-select select {
+  min-width: 132px;
+  border: 0;
+  background: transparent;
+  color: var(--text);
+  font: inherit;
+  outline: none;
 }
 
 .config-grid {
@@ -5998,7 +6084,8 @@ textarea:focus-visible {
 }
 
 .teams-header button,
-.config-header button {
+.config-header button,
+.config-header select {
   -webkit-app-region: no-drag;
 }
 
@@ -6578,7 +6665,7 @@ textarea:focus-visible {
   background: color-mix(in srgb, var(--accent-tint) 42%, var(--panel));
 }
 
-.workflow-result-card .workflow-final-report pre,
+.workflow-result-card .workflow-final-report-body,
 .workflow-result-card .workflow-context-doc pre {
   background: var(--panel);
   color: var(--text);
@@ -6985,4 +7072,3 @@ textarea:focus-visible {
     var(--panel);
   background-size: 20px 20px;
 }
-

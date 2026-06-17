@@ -73,6 +73,200 @@ import type {
 const AGENTS: AgentId[] = ["codex", "claude", "api"];
 const THEME_STORAGE_KEY = "multi-agent-chat-theme";
 const PROVIDER_KEYS_STORAGE_KEY = "multi-agent-chat-provider-keys";
+const LANGUAGE_STORAGE_KEY = "multi-agent-chat-language";
+
+export type Language = "zh" | "en";
+
+const UI_TEXT = {
+  zh: {
+    nav: {
+      chat: "对话",
+      tasks: "任务",
+      teams: "团队",
+      workflow: "工作流",
+      configs: "配置",
+      settings: "设置",
+      configuration: "设置",
+    },
+    chrome: {
+      featureNav: "功能导航",
+      search: "搜索或执行命令...",
+      newChat: "新建对话",
+      newAgent: "新建 Agent",
+      importTemplate: "导入模板",
+      configuredAgents: "Agent",
+      noConfiguredAgents: "暂无配置的 Agent",
+      noChats: "新建对话后开始。",
+      darkTheme: "深色主题",
+      lightTheme: "浅色主题",
+      toggleTheme: "切换主题",
+      settings: "设置",
+      openSettings: "打开设置",
+    },
+    config: {
+      title: "Agent 设置",
+      description: "选择 Provider 预设，然后只调整这个 Agent 需要的配置。",
+      importCodex: "导入 Codex",
+      importCodexAria: "导入 Codex 配置",
+      advancedJson: "高级 JSON",
+      save: "保存",
+      generate: "生成",
+      language: "界面语言",
+      zh: "统一中文",
+      en: "English",
+      cliHelp: "选择这个 Agent 使用的命令。",
+      providerHelp: "选择 Provider 预设。",
+      apiKey: "API Key / Token",
+      usedByAll: "同一 Provider 的 Agent 共用",
+      name: "名称",
+      model: "模型",
+      tags: "标签",
+      descriptionField: "描述",
+      prompt: "Prompt",
+      advancedProvider: "高级 Provider 设置",
+      plugins: "插件",
+      loadCatalog: "加载目录",
+      manual: "手动添加",
+      catalog: "目录",
+      selectPlugin: "选择插件...",
+      noPluginsAvailable: "暂无可用插件",
+      noPluginsConfigured: "暂无插件配置",
+      enabled: "启用",
+      models: "模型",
+      addModel: "添加模型",
+      emptyAgent: "新建 Agent 后可绑定 Channel、模型和 Prompt。",
+      importedProfiles: "导入的配置",
+      generatedProfiles: "生成的配置",
+      noImportedProfiles: "暂无导入配置",
+      noGeneratedProfiles: "暂无生成配置",
+    },
+    workflow: {
+      newWorkflow: "新建工作流会话",
+      runGraph: "运行图",
+      running: "运行中...",
+      executableNodes: "可执行节点",
+      noWorkDir: "未选择工作目录",
+      empty: "输入任务描述开始生成工作流。",
+      agentWorking: "工作流 Agent 正在处理...",
+      result: "工作流图结果",
+      ready: "就绪",
+      invalid: "无效",
+      dagValid: "DAG 有效",
+      dagInvalid: "DAG 无效",
+      runProgress: "运行进度",
+      finalReport: "主 Agent 总结",
+      completed: "工作流已完成",
+      outputDocuments: "产出文档",
+      files: "个文件",
+      loading: "读取中",
+      closePreview: "关闭文档预览",
+      largeFile: "文件较大，仅显示前 512KB。",
+      entryNode: "入口节点",
+      terminalNode: "终止节点",
+      replyToAgent: "回复工作流 Agent",
+      replyToQuestion: "回复追问",
+      task: "工作流任务",
+      modifyPlaceholder: "让工作流 Agent 修改图或解释运行结果...",
+      answerPlaceholder: "回答当前问题...",
+      taskPlaceholder: "描述工作流任务...",
+      send: "发送",
+    },
+  },
+  en: {
+    nav: {
+      chat: "Chat",
+      tasks: "Tasks",
+      teams: "Teams",
+      workflow: "Workflow",
+      configs: "Configs",
+      settings: "Settings",
+      configuration: "Configuration",
+    },
+    chrome: {
+      featureNav: "Feature navigation",
+      search: "Search or run command...",
+      newChat: "New chat",
+      newAgent: "New agent",
+      importTemplate: "Import template",
+      configuredAgents: "Agents",
+      noConfiguredAgents: "No configured agents",
+      noChats: "Create a chat to start.",
+      darkTheme: "Dark theme",
+      lightTheme: "Light theme",
+      toggleTheme: "Toggle theme",
+      settings: "Settings",
+      openSettings: "Open settings",
+    },
+    config: {
+      title: "Agents",
+      description: "Pick a provider preset, then adjust only what this agent needs.",
+      importCodex: "Import Codex",
+      importCodexAria: "Import Codex profiles",
+      advancedJson: "Advanced JSON",
+      save: "Save",
+      generate: "Generate",
+      language: "Language",
+      zh: "统一中文",
+      en: "English",
+      cliHelp: "Choose the command this agent runs.",
+      providerHelp: "Choose a provider preset.",
+      apiKey: "API Key / Token",
+      usedByAll: "Used by all",
+      name: "Name",
+      model: "Model",
+      tags: "Tags",
+      descriptionField: "Description",
+      prompt: "Prompt",
+      advancedProvider: "Advanced provider settings",
+      plugins: "Plugins",
+      loadCatalog: "Load catalog",
+      manual: "Manual",
+      catalog: "Catalog",
+      selectPlugin: "Select plugin...",
+      noPluginsAvailable: "No plugins available",
+      noPluginsConfigured: "No plugins configured",
+      enabled: "Enabled",
+      models: "Models",
+      addModel: "Add model",
+      emptyAgent: "Create an agent to bind a channel, model, and prompt.",
+      importedProfiles: "Imported Profiles",
+      generatedProfiles: "Generated Profiles",
+      noImportedProfiles: "No imported profiles",
+      noGeneratedProfiles: "No generated profiles",
+    },
+    workflow: {
+      newWorkflow: "New workflow session",
+      runGraph: "Run Graph",
+      running: "Running...",
+      executableNodes: "executable nodes",
+      noWorkDir: "No work directory selected",
+      empty: "Describe a task to start generating a workflow.",
+      agentWorking: "workflow agent is working...",
+      result: "Workflow graph result",
+      ready: "Ready",
+      invalid: "Invalid",
+      dagValid: "DAG valid",
+      dagInvalid: "DAG invalid",
+      runProgress: "Run progress",
+      finalReport: "Main agent summary",
+      completed: "Workflow completed",
+      outputDocuments: "Output documents",
+      files: "files",
+      loading: "Loading",
+      closePreview: "Close document preview",
+      largeFile: "File is large; showing the first 512KB.",
+      entryNode: "Entry node",
+      terminalNode: "Terminal node",
+      replyToAgent: "Reply to workflow agent",
+      replyToQuestion: "Reply to grill question",
+      task: "Workflow task",
+      modifyPlaceholder: "Ask the workflow agent to modify the graph or explain the run...",
+      answerPlaceholder: "Answer the current question...",
+      taskPlaceholder: "Describe the workflow task...",
+      send: "Send",
+    },
+  },
+} as const;
 
 interface AgentProviderPreset {
   id: string;
@@ -469,7 +663,11 @@ function loadStoredProviderKeys(storage: Pick<Storage, "getItem">): Record<strin
   }
 }
 
-export type ActiveFeature = "chat" | "tasks" | "teams" | "workflow" | "configs";
+function loadStoredLanguage(storage: Pick<Storage, "getItem">): Language {
+  return storage.getItem(LANGUAGE_STORAGE_KEY) === "en" ? "en" : "zh";
+}
+
+export type ActiveFeature = "chat" | "tasks" | "teams" | "workflow" | "configs" | "settings";
 type MaybePromise = void | Promise<void>;
 export type TaskStatusFilterValue = "all" | TaskProgress;
 const WORKFLOW_THINKING_MESSAGE = "Agent is thinking...";
@@ -1453,6 +1651,7 @@ export function App() {
   const [pluginCatalogStatus, setPluginCatalogStatus] = useState("");
   const [theme, setTheme] = useState<Theme>(() => loadStoredTheme(window.localStorage));
   const [providerKeys, setProviderKeys] = useState<Record<string, string>>(() => loadStoredProviderKeys(window.localStorage));
+  const [language, setLanguage] = useState<Language>(() => loadStoredLanguage(window.localStorage));
   const [paletteOpen, setPaletteOpen] = useState(false);
   const [agentContextMenu, setAgentContextMenu] = useState<{ agentId: string; x: number; y: number } | undefined>();
   const transcriptRef = useRef<HTMLElement>(null);
@@ -1463,6 +1662,10 @@ export function App() {
     document.documentElement.dataset.theme = theme;
     window.localStorage.setItem(THEME_STORAGE_KEY, theme);
   }, [theme]);
+
+  useEffect(() => {
+    window.localStorage.setItem(LANGUAGE_STORAGE_KEY, language);
+  }, [language]);
 
   useEffect(() => {
     if (snapshot.configuredAgents.length === 0) {
@@ -1720,6 +1923,7 @@ export function App() {
   const activeChat = useMemo(() => activeChatFrom(snapshot), [snapshot]);
   const activeTask = useMemo(() => activeTaskFrom(snapshot), [snapshot]);
   const activeTeam = useMemo(() => activeTeamFrom(snapshot), [snapshot]);
+  const text = UI_TEXT[language];
   const activeTeamRun = useMemo(() => activeTeamRunFrom(snapshot, activeTeam?.id), [snapshot, activeTeam?.id]);
   const visibleTasks = useMemo(
     () => (taskStatusFilter === "all" ? snapshot.tasks : snapshot.tasks.filter((task) => task.progress === taskStatusFilter)),
@@ -1801,6 +2005,7 @@ export function App() {
       buildPaletteCommands({
         chats: snapshot.chats.map((chat) => ({ id: chat.id, title: chat.title, agentId: chat.agentId })),
         theme,
+        language,
         onNavigate: setActiveFeature,
         onSelectChat: (chatId) => void selectChat(chatId),
         onNewChat: () => void createChat(),
@@ -1808,7 +2013,7 @@ export function App() {
         onChooseWorkDir: () => void chooseWorkDir(),
         onRefreshAgents: () => void refresh(),
       }),
-    [snapshot.chats, theme],
+    [snapshot.chats, theme, language],
   );
 
   async function refresh(): Promise<void> {
@@ -2834,14 +3039,14 @@ export function App() {
         <div className="rail-brand" title="Multi Agent Chat">
           <Bot size={18} />
         </div>
-        <nav className="feature-nav" aria-label="Feature navigation">
+        <nav className="feature-nav" aria-label={text.chrome.featureNav}>
           <button
             className={`feature-nav-item ${activeFeature === "chat" ? "is-active" : ""}`}
             onClick={() => setActiveFeature("chat")}
            
           >
             <MessageSquareText size={15} />
-            <span>Chat</span>
+            <span>{text.nav.chat}</span>
           </button>
           <button
             className={`feature-nav-item ${activeFeature === "tasks" ? "is-active" : ""}`}
@@ -2849,7 +3054,7 @@ export function App() {
            
           >
             <ClipboardList size={15} />
-            <span>Tasks</span>
+            <span>{text.nav.tasks}</span>
           </button>
           <button
             className={`feature-nav-item ${activeFeature === "teams" ? "is-active" : ""}`}
@@ -2857,34 +3062,34 @@ export function App() {
            
           >
             <Users size={15} />
-            <span>Teams</span>
+            <span>{text.nav.teams}</span>
           </button>
           <button
             className={`feature-nav-item ${activeFeature === "workflow" ? "is-active" : ""}`}
             onClick={() => setActiveFeature("workflow")}
           >
             <GitBranch size={15} />
-            <span>Workflow</span>
+            <span>{text.nav.workflow}</span>
           </button>
           <button
             className={`feature-nav-item ${activeFeature === "configs" ? "is-active" : ""}`}
             onClick={() => setActiveFeature("configs")}
           >
             <Settings size={15} />
-            <span>Configs</span>
+            <span>{text.nav.configs}</span>
           </button>
         </nav>
         <div className="rail-footer">
           <button
             className="icon-btn"
             onClick={toggleTheme}
-            data-tip={theme === "dark" ? "浅色主题" : "深色主题"}
-            aria-label="Toggle theme"
+            data-tip={theme === "dark" ? text.chrome.lightTheme : text.chrome.darkTheme}
+            aria-label={text.chrome.toggleTheme}
           >
             {theme === "dark" ? <Sun size={14} /> : <Moon size={14} />}
           </button>
-          <button className="icon-btn danger" onClick={() => void clearHistory()} data-tip="清除全部历史">
-            <Trash2 size={14} />
+          <button className="icon-btn" onClick={() => setActiveFeature("settings")} data-tip={text.chrome.settings} aria-label={text.chrome.openSettings}>
+            <Settings size={14} />
           </button>
         </div>
       </aside>
@@ -2895,21 +3100,23 @@ export function App() {
             <h1>Multi Agent Chat</h1>
             <p>
               {activeFeature === "chat"
-                ? "Chats"
+                ? text.nav.chat
                 : activeFeature === "tasks"
-                  ? "Tasks"
+                  ? text.nav.tasks
                   : activeFeature === "teams"
-                    ? "Teams"
+                    ? text.nav.teams
                     : activeFeature === "workflow"
-                      ? "Workflow"
-                      : "Configuration"}
+                      ? text.nav.workflow
+                      : activeFeature === "settings"
+                        ? text.nav.settings
+                        : text.nav.configuration}
             </p>
           </div>
         </div>
 
         <button className="sidebar-search-btn" onClick={() => setPaletteOpen(true)} aria-label="Open command palette">
           <Search size={13} />
-          <span>搜索或执行命令…</span>
+          <span>{text.chrome.search}</span>
           <kbd>⌘K</kbd>
         </button>
 
@@ -2922,7 +3129,7 @@ export function App() {
             <div className="new-chat-menu-wrap">
               <button className="new-chat-compact-btn" onClick={() => void createChat()}>
                 <Plus size={13} />
-                <span>New chat</span>
+              <span>{text.chrome.newChat}</span>
               </button>
             </div>
             <div className="chat-list">
@@ -2976,21 +3183,32 @@ export function App() {
             onNewWorkflow={createNewWorkflow}
             onSelectWorkflow={selectWorkflow}
           />
+        ) : activeFeature === "settings" ? (
+          <section className="resource-panel settings-nav-panel">
+            <div className="panel-header">
+              <span>{text.nav.settings}</span>
+              <Settings size={14} />
+            </div>
+            <button className="settings-nav-row is-active" type="button">
+              <Settings size={13} />
+              <span>{language === "zh" ? "语言" : "Language"}</span>
+            </button>
+          </section>
         ) : (
           <section className="resource-panel config-nav-panel">
             <div className="panel-header">
-              <span>Agents</span>
+              <span>{text.chrome.configuredAgents}</span>
               <Bot size={14} />
             </div>
             <div className="config-agent-actions">
               <button className="new-chat-compact-btn" type="button" onClick={() => void addConfiguredAgent()}>
                 <Plus size={13} />
-                <span>New agent</span>
+                <span>{text.chrome.newAgent}</span>
               </button>
               <details className="agent-template-menu">
                 <summary>
                   <FileInput size={13} />
-                  <span>Import template</span>
+                  <span>{text.chrome.importTemplate}</span>
                 </summary>
                 <div className="agent-template-menu-list" aria-label="Agent templates">
                   {AGENT_TEMPLATES.map((template) => (
@@ -3004,7 +3222,7 @@ export function App() {
             </div>
             <div className="config-nav-list">
               {snapshot.configuredAgents.length === 0 ? (
-                <div className="empty-state config-empty">No configured agents</div>
+                <div className="empty-state config-empty">{text.chrome.noConfiguredAgents}</div>
               ) : (
                 snapshot.configuredAgents.map((agent) => (
                   <button
@@ -3046,11 +3264,13 @@ export function App() {
             ? "chat-content"
             : activeFeature === "tasks"
               ? "tasks-content"
-              : activeFeature === "teams"
-                ? "teams-content"
-                : activeFeature === "workflow"
-                  ? "workflow-content"
-                  : "config-content"
+                : activeFeature === "teams"
+                  ? "teams-content"
+                  : activeFeature === "workflow"
+                    ? "workflow-content"
+                    : activeFeature === "settings"
+                      ? "settings-content"
+                      : "config-content"
         }`}
       >
         {activeFeature === "tasks" ? (
@@ -3134,9 +3354,13 @@ export function App() {
             onChooseWorkDir={chooseWorkDir}
             onRefresh={refresh}
             onReadOutputFile={readLocalFile}
+            language={language}
           />
+        ) : activeFeature === "settings" ? (
+          <SettingsPage language={language} onLanguageChange={setLanguage} />
         ) : activeFeature === "configs" ? (
           <ConfigPage
+            language={language}
             channels={configChannels}
             configuredAgents={snapshot.configuredAgents}
             selectedConfiguredAgentId={selectedConfiguredAgentId}
@@ -4726,6 +4950,7 @@ interface WorkflowPageProps {
   onChooseWorkDir?: () => MaybePromise;
   onRefresh?: () => MaybePromise;
   onReadOutputFile?: (filePath: string) => Promise<LocalFilePreview>;
+  language?: Language;
 }
 
 export function WorkflowPage({
@@ -4762,7 +4987,9 @@ export function WorkflowPage({
   onChooseWorkDir = () => undefined,
   onRefresh = () => undefined,
   onReadOutputFile,
+  language = "en",
 }: WorkflowPageProps) {
+  const workflowText = UI_TEXT[language].workflow;
   const validation = validateWorkflowGraph(graph);
   const workflowStarted = messages.length > 0;
   const grillComplete = Math.max(0, messages.filter((message) => message.role === "user").length - 1) >= WORKFLOW_TOTAL_QUESTION_COUNT;
@@ -4807,9 +5034,9 @@ export function WorkflowPage({
   const composerValue = workflowStarted ? reply : objective;
   const composerPlaceholder = workflowStarted
     ? graphVisible
-      ? "Ask the workflow agent to modify the graph or explain the run..."
-      : "Answer the current question..."
-    : "Describe the workflow task...";
+      ? workflowText.modifyPlaceholder
+      : workflowText.answerPlaceholder
+    : workflowText.taskPlaceholder;
   const composerCanSend = Boolean(composerValue.trim()) && !running;
   const composerLocked = workflowStarted || running;
   const [graphExpanded, setGraphExpanded] = useState(false);
@@ -4833,6 +5060,15 @@ export function WorkflowPage({
     window.addEventListener("keydown", handleKeyDown);
     return () => window.removeEventListener("keydown", handleKeyDown);
   }, [graphExpanded]);
+
+  useEffect(() => {
+    if (!filePreview) return;
+    function handleKeyDown(event: globalThis.KeyboardEvent): void {
+      if (event.key === "Escape") setFilePreview(undefined);
+    }
+    window.addEventListener("keydown", handleKeyDown);
+    return () => window.removeEventListener("keydown", handleKeyDown);
+  }, [filePreview]);
 
   function handleGrillTranscriptScroll(): void {
     const transcript = grillTranscriptRef.current;
@@ -4871,8 +5107,8 @@ export function WorkflowPage({
             <span className={`agent-badge mini ${agentAccent(agentId)}`}>{agentLabel(agentId)}</span>
             <span>{workflowEffectiveChannels.find((channel) => channel.id === workflowSelectedChannelId)?.label ?? workflowSelectedChannelId}</span>
             <span>{workflowModelOptions.find((model) => model.id === workflowSelectedModelId)?.label ?? workflowSelectedModelId}</span>
-            <span>{graphVisible ? `${validation.executableNodeIds.length} executable nodes` : status}</span>
-            <span>{workDir || "No work directory selected"}</span>
+            <span>{graphVisible ? `${validation.executableNodeIds.length} ${workflowText.executableNodes}` : status}</span>
+            <span>{workDir || workflowText.noWorkDir}</span>
           </div>
         </div>
         <div className="chat-header-actions workflow-page-actions">
@@ -4881,14 +5117,14 @@ export function WorkflowPage({
               <CircleStop size={14} />
             </button>
           ) : workflowStarted || graphVisible ? (
-            <button className="icon-btn" onClick={() => void onResetSession()} title="New workflow session" disabled={running}>
+            <button className="icon-btn" onClick={() => void onResetSession()} title={workflowText.newWorkflow} disabled={running}>
               <Plus size={14} />
             </button>
           ) : null}
           {graphVisible ? (
             <button className="send-btn" onClick={() => void onRunGraph()} disabled={!validation.valid || running}>
               <Play size={14} />
-              <span>{running ? "Running..." : "Run Graph"}</span>
+              <span>{running ? workflowText.running : workflowText.runGraph}</span>
             </button>
           ) : null}
         </div>
@@ -4898,7 +5134,7 @@ export function WorkflowPage({
         {!workflowStarted && !graphVisible ? (
           <div className="empty-state terminal-empty">
             <GitBranch size={17} />
-            <span>输入任务描述开始生成 workflow。</span>
+            <span>{workflowText.empty}</span>
           </div>
         ) : workflowStarted ? (
           messages.map((message) => (
@@ -4922,20 +5158,20 @@ export function WorkflowPage({
           <div className="cli-status-line">
             <span className="stream-pill">
               <span className="stream-spinner" aria-hidden="true" />
-              <span>{agentLabel(agentId)} workflow agent is working…</span>
+              <span>{`${agentLabel(agentId)} ${workflowText.agentWorking}`}</span>
             </span>
           </div>
         ) : null}
         {error ? <div className="workflow-error workflow-inline-error">{error}</div> : null}
         {graphVisible ? (
-          <section className="workflow-result-card" aria-label="Workflow graph result">
+          <section className="workflow-result-card" aria-label={workflowText.result}>
             <div className="workflow-result-card-head">
               <div>
                 <strong>{graph.title}</strong>
-                <span>{validation.valid ? "DAG valid" : "DAG invalid"}</span>
+                <span>{validation.valid ? workflowText.dagValid : workflowText.dagInvalid}</span>
               </div>
               <div className="workflow-validation-row-actions">
-                <TaskStatusChip label={validation.valid ? "Ready" : "Invalid"} tone={validation.valid ? "done" : "failed"} />
+                <TaskStatusChip label={validation.valid ? workflowText.ready : workflowText.invalid} tone={validation.valid ? "done" : "failed"} />
                 <button className="icon-btn flat" onClick={() => setGraphExpanded(true)} title="Expand graph board" aria-label="Expand workflow graph board">
                   <Maximize2 size={14} />
                 </button>
@@ -4949,9 +5185,9 @@ export function WorkflowPage({
               </div>
             ) : null}
             {runProgressVisible ? (
-              <section className="workflow-run-progress" aria-label="Workflow run progress">
+              <section className="workflow-run-progress" aria-label={workflowText.runProgress}>
                 <div className="workflow-run-progress-head">
-                  <strong>Run progress</strong>
+                  <strong>{workflowText.runProgress}</strong>
                   <span>{workflowRunProgressSummary(runProgress)}</span>
                 </div>
                 <div className="workflow-run-progress-list">
@@ -4968,17 +5204,19 @@ export function WorkflowPage({
             {finalReportVisible ? (
               <section className="workflow-final-report" aria-label="Workflow final report">
                 <div className="workflow-final-report-head">
-                  <strong>主 Agent 总结</strong>
-                  <span>Workflow completed</span>
+                  <strong>{workflowText.finalReport}</strong>
+                  <span>{workflowText.completed}</span>
                 </div>
-                <pre>{finalReport}</pre>
+                <div className="workflow-final-report-body">
+                  <Markdown text={finalReport} />
+                </div>
               </section>
             ) : null}
             {outputDocumentsVisible ? (
               <section className="workflow-output-documents" aria-label="Workflow output documents">
                 <div className="workflow-output-documents-head">
-                  <strong>产出文档</strong>
-                  <span>{`${outputDocuments.length} files`}</span>
+                  <strong>{workflowText.outputDocuments}</strong>
+                  <span>{`${outputDocuments.length} ${workflowText.files}`}</span>
                 </div>
                 <div className="workflow-output-document-list">
                   {outputDocuments.map((document) => (
@@ -4991,20 +5229,11 @@ export function WorkflowPage({
                     >
                       <FileInput size={14} />
                       <span>{document.title}</span>
-                      <small>{filePreviewLoadingPath === document.path ? "读取中" : document.path}</small>
+                      <small>{filePreviewLoadingPath === document.path ? workflowText.loading : document.path}</small>
                     </button>
                   ))}
                 </div>
                 {filePreviewError ? <div className="workflow-error">{filePreviewError}</div> : null}
-              </section>
-            ) : null}
-            {contextDocumentVisible ? (
-              <section className="workflow-context-doc" aria-label="Workflow context document">
-                <div className="workflow-context-doc-head">
-                  <strong>Workflow context</strong>
-                  <span>Shared one-way handoff document</span>
-                </div>
-                <pre>{contextDocument}</pre>
               </section>
             ) : null}
             {graphExpanded ? (
@@ -5127,7 +5356,7 @@ export function WorkflowPage({
                               ) : null}
                             </>
                           ) : (
-                            <p>{node.kind === "start" ? "Entry node" : "Terminal node"}</p>
+                            <p>{node.kind === "start" ? workflowText.entryNode : workflowText.terminalNode}</p>
                           )}
                         </article>
                       );
@@ -5148,11 +5377,11 @@ export function WorkflowPage({
                 <strong>{filePreview.title}</strong>
                 <span>{filePreview.path}</span>
               </div>
-              <button className="icon-btn" onClick={() => setFilePreview(undefined)} title="Close document preview" aria-label="Close document preview">
+              <button className="icon-btn" onClick={() => setFilePreview(undefined)} title={workflowText.closePreview} aria-label={workflowText.closePreview}>
                 <X size={15} />
               </button>
             </header>
-            {filePreview.truncated ? <div className="workflow-file-preview-note">文件较大，仅显示前 512KB。</div> : null}
+            {filePreview.truncated ? <div className="workflow-file-preview-note">{workflowText.largeFile}</div> : null}
             <pre>{filePreview.content}</pre>
           </article>
         </section>
@@ -5161,7 +5390,7 @@ export function WorkflowPage({
       <section className="composer workflow-composer">
         <div className="composer-box">
           <textarea
-            aria-label={workflowStarted ? (graphVisible ? "Reply to workflow agent" : "Reply to grill question") : "Workflow task"}
+            aria-label={workflowStarted ? (graphVisible ? workflowText.replyToAgent : workflowText.replyToQuestion) : workflowText.task}
             value={composerValue}
             onChange={(event) => {
               if (workflowStarted) onReplyChange(event.currentTarget.value);
@@ -5221,6 +5450,7 @@ export function WorkflowPage({
 }
 
 interface ConfigPageProps {
+  language?: Language;
   channels: AgentChannel[];
   configuredAgents: ConfiguredAgent[];
   selectedConfiguredAgentId: string;
@@ -5249,7 +5479,48 @@ interface ConfigPageProps {
   onRemoveConfiguredAgent: (agentId: string) => void;
 }
 
+export function SettingsPage({
+  language,
+  onLanguageChange,
+}: {
+  language: Language;
+  onLanguageChange: (language: Language) => void;
+}) {
+  const configText = UI_TEXT[language].config;
+  const title = language === "zh" ? "设置" : "Settings";
+  const description = language === "zh" ? "调整应用级偏好。" : "Adjust app-level preferences.";
+  const languageTitle = language === "zh" ? "语言" : "Language";
+  const languageDescription = language === "zh" ? "选择界面显示语言。" : "Choose the interface language.";
+
+  return (
+    <section className="settings-page">
+      <header className="settings-header">
+        <div>
+          <h2>{title}</h2>
+          <p>{description}</p>
+        </div>
+      </header>
+      <div className="settings-layout">
+        <section className="settings-panel" aria-label={languageTitle}>
+          <div className="settings-panel-head">
+            <h3>{languageTitle}</h3>
+            <p>{languageDescription}</p>
+          </div>
+          <label className="settings-language-select">
+            <span>{configText.language}</span>
+            <select aria-label="Language" value={language} onChange={(event) => onLanguageChange(event.currentTarget.value as Language)}>
+              <option value="zh">{configText.zh}</option>
+              <option value="en">{configText.en}</option>
+            </select>
+          </label>
+        </section>
+      </div>
+    </section>
+  );
+}
+
 export function ConfigPage({
+  language = "en",
   channels,
   configuredAgents,
   selectedConfiguredAgentId,
@@ -5277,6 +5548,7 @@ export function ConfigPage({
   onUpdateConfiguredAgent,
   onRemoveConfiguredAgent,
 }: ConfigPageProps) {
+  const configText = UI_TEXT[language].config;
   const selectedConfiguredAgent =
     configuredAgents.find((agent) => agent.id === selectedConfiguredAgentId) ?? configuredAgents[0];
   const selectedAgentChannelRecord = resolveConfiguredAgentChannel(selectedConfiguredAgent, channels);
@@ -5320,13 +5592,13 @@ export function ConfigPage({
     <section className="config-page">
       <header className="config-header">
         <div>
-          <h2>Agents</h2>
-          <p>Pick a provider preset, then adjust only what this agent needs.</p>
+          <h2>{configText.title}</h2>
+          <p>{configText.description}</p>
         </div>
         <div className="config-actions">
-          <button className="control-btn compact secondary" onClick={() => void onImportCodex()} aria-label="Import Codex profiles">
+          <button className="control-btn compact secondary" onClick={() => void onImportCodex()} aria-label={configText.importCodexAria}>
             <FileInput size={14} />
-            <span>Import Codex</span>
+            <span>{configText.importCodex}</span>
           </button>
           <button
             className={`control-btn compact secondary ${advancedMode ? "is-active" : ""}`}
@@ -5334,15 +5606,15 @@ export function ConfigPage({
             aria-pressed={advancedMode}
           >
             <Settings size={14} />
-            <span>Advanced JSON</span>
+            <span>{configText.advancedJson}</span>
           </button>
           <button className="control-btn compact" onClick={() => void onSave()}>
             <Save size={14} />
-            <span>Save</span>
+            <span>{configText.save}</span>
           </button>
           <button className="control-btn compact secondary" onClick={() => void onGenerate()}>
             <Wand2 size={14} />
-            <span>Generate</span>
+            <span>{configText.generate}</span>
           </button>
         </div>
       </header>
@@ -5373,7 +5645,7 @@ export function ConfigPage({
                         <details className="agent-template-menu inline">
                           <summary>
                             <FileInput size={13} />
-                            <span>Import template</span>
+                            <span>{UI_TEXT[language].chrome.importTemplate}</span>
                           </summary>
                           <div className="agent-template-menu-list" aria-label="Agent templates">
                             {AGENT_TEMPLATES.map((template) => (
@@ -5395,7 +5667,7 @@ export function ConfigPage({
                     <section className="agent-provider-presets">
                       <div className="agent-provider-presets-head">
                         <h3>CLI</h3>
-                        <span>Choose the command this agent runs.</span>
+                        <span>{configText.cliHelp}</span>
                       </div>
                       <div className="agent-provider-preset-list">
                         {AGENTS.map((agentId) => (
@@ -5415,7 +5687,7 @@ export function ConfigPage({
                     <section className="agent-provider-presets">
                       <div className="agent-provider-presets-head">
                         <h3>Provider</h3>
-                        <span>Choose a provider preset for {agentLabel(selectedAgentRuntime)}.</span>
+                        <span>{`${configText.providerHelp} ${agentLabel(selectedAgentRuntime)}.`}</span>
                       </div>
                       <div className="agent-provider-preset-list">
                         {runtimeProviderPresets.map((preset) => (
@@ -5431,12 +5703,12 @@ export function ConfigPage({
                       </div>
                       {selectedAgentPreset?.usesApiKey ? (
                         <label className="agent-provider-key-field">
-                          <span>API Key / Token</span>
+                          <span>{configText.apiKey}</span>
                           <input
                             aria-label="Provider API key"
                             type="password"
                             value={providerKeys[selectedAgentPreset.id] ?? ""}
-                            placeholder={`Used by all ${selectedAgentPreset.label} agents`}
+                            placeholder={`${configText.usedByAll} ${selectedAgentPreset.label} agents`}
                             onChange={(event) => updateSelectedProviderKey(event.currentTarget.value)}
                           />
                         </label>
@@ -5445,7 +5717,7 @@ export function ConfigPage({
 
                     <div className="config-field-grid">
                       <label className="config-field">
-                        <span>Name</span>
+                        <span>{configText.name}</span>
                         <input
                           aria-label="Agent name"
                           value={selectedConfiguredAgent.name}
@@ -5469,7 +5741,7 @@ export function ConfigPage({
                         />
                       </label>
                       <label className="config-field">
-                        <span>Model</span>
+                        <span>{configText.model}</span>
                         <select
                           aria-label="Agent model"
                           value={selectedAgentModels.some((model) => model.id === selectedConfiguredAgent.modelId) ? selectedConfiguredAgent.modelId : DEFAULT_MODEL_ID}
@@ -5485,7 +5757,7 @@ export function ConfigPage({
                         </select>
                       </label>
                       <label className="config-field">
-                        <span>Tags</span>
+                        <span>{configText.tags}</span>
                         <input
                           aria-label="Agent tags"
                           value={selectedConfiguredAgent.tags.join(", ")}
@@ -5501,7 +5773,7 @@ export function ConfigPage({
                         />
                       </label>
                       <label className="config-field config-field-wide">
-                        <span>Description</span>
+                        <span>{configText.descriptionField}</span>
                         <input
                           aria-label="Agent description"
                           value={selectedConfiguredAgent.description}
@@ -5511,7 +5783,7 @@ export function ConfigPage({
                         />
                       </label>
                       <label className="config-field config-field-wide">
-                        <span>Prompt</span>
+                        <span>{configText.prompt}</span>
                         <textarea
                           aria-label="Agent prompt"
                           value={selectedConfiguredAgent.prompt}
@@ -5523,7 +5795,7 @@ export function ConfigPage({
                     </div>
                     {selectedAgentChannelRecord ? (
                       <details className="agent-advanced-panel">
-                        <summary>Advanced provider settings</summary>
+                        <summary>{configText.advancedProvider}</summary>
                         <div className="config-field-grid">
                           <label className="config-field">
                             <span>Channel ID</span>
@@ -5589,7 +5861,7 @@ export function ConfigPage({
                     {selectedAgentChannelRecord && selectedAgentRuntime === "codex" ? (
                       <section className="agent-channel-models">
                         <div className="config-models-header">
-                          <h3>Plugins</h3>
+                          <h3>{configText.plugins}</h3>
                           <div className="config-plugin-actions">
                             <button
                               className="control-btn compact secondary"
@@ -5598,7 +5870,7 @@ export function ConfigPage({
                               aria-label="Load Codex plugin catalog"
                             >
                               <RefreshCw size={13} />
-                              <span>Load catalog</span>
+                              <span>{configText.loadCatalog}</span>
                             </button>
                             <button
                               className="control-btn compact secondary"
@@ -5612,12 +5884,12 @@ export function ConfigPage({
                               aria-label="Add manual plugin"
                             >
                               <Plus size={13} />
-                              <span>Manual</span>
+                              <span>{configText.manual}</span>
                             </button>
                           </div>
                         </div>
                         <label className="config-field config-plugin-catalog">
-                          <span>Catalog</span>
+                          <span>{configText.catalog}</span>
                           <select
                             aria-label="Codex plugin catalog"
                             value=""
@@ -5628,7 +5900,7 @@ export function ConfigPage({
                             }}
                             disabled={availableCodexPlugins.length === 0}
                           >
-                            <option value="">{availableCodexPlugins.length > 0 ? "Select plugin..." : "No plugins available"}</option>
+                            <option value="">{availableCodexPlugins.length > 0 ? configText.selectPlugin : configText.noPluginsAvailable}</option>
                             {availableCodexPlugins.map((plugin) => {
                               const state = plugin.enabled ? "enabled" : plugin.installed ? "installed" : "available";
                               return (
@@ -5642,7 +5914,7 @@ export function ConfigPage({
                         {pluginCatalogStatus ? <div className="config-plugin-catalog-status">{pluginCatalogStatus}</div> : null}
                         <div className="config-plugin-list">
                           {(selectedAgentChannelRecord.plugins ?? []).length === 0 ? (
-                            <div className="empty-state config-empty">No plugins configured</div>
+                            <div className="empty-state config-empty">{configText.noPluginsConfigured}</div>
                           ) : (
                             (selectedAgentChannelRecord.plugins ?? []).map((plugin, index) => (
                               <div key={`${plugin.id}:${index}`} className="config-plugin-row">
@@ -5663,7 +5935,7 @@ export function ConfigPage({
                                       )
                                     }
                                   />
-                                  <span>Enabled</span>
+                                  <span>{configText.enabled}</span>
                                 </label>
                                 <button className="icon-btn danger" type="button" onClick={() => updateSelectedAgentChannel((channel) => removePluginAt(channel, index))}>
                                   <Trash2 size={13} />
@@ -5677,10 +5949,10 @@ export function ConfigPage({
                     {selectedAgentChannelRecord ? (
                       <section className="agent-channel-models">
                         <div className="config-models-header">
-                          <h3>Models</h3>
+                          <h3>{configText.models}</h3>
                           <button className="control-btn compact secondary" onClick={() => onAddModel(selectedAgentChannelRecord.id)}>
                             <Plus size={13} />
-                            <span>Add model</span>
+                            <span>{configText.addModel}</span>
                           </button>
                         </div>
                         <div className="config-model-list">
@@ -5711,10 +5983,10 @@ export function ConfigPage({
                   </>
                 ) : (
                   <div className="empty-state config-empty configured-agent-empty">
-                    <span>Create an agent to bind a channel, model, and prompt.</span>
+                    <span>{configText.emptyAgent}</span>
                     <button className="control-btn compact" onClick={() => void onAddConfiguredAgent()}>
                       <Plus size={13} />
-                      <span>New agent</span>
+                      <span>{UI_TEXT[language].chrome.newAgent}</span>
                     </button>
                   </div>
                 )}
@@ -5726,7 +5998,7 @@ export function ConfigPage({
 
         <section className="config-summary-panel">
           <div className="config-summary-block">
-            <h3>Imported Profiles</h3>
+            <h3>{configText.importedProfiles}</h3>
             {importedConfigs.length > 0 ? (
               <div className="generated-config-list">
                 {importedConfigs.map((config) => (
@@ -5737,12 +6009,12 @@ export function ConfigPage({
                 ))}
               </div>
             ) : (
-              <div className="empty-state config-empty">No imported profiles</div>
+              <div className="empty-state config-empty">{configText.noImportedProfiles}</div>
             )}
           </div>
 
           <div className="config-summary-block">
-            <h3>Generated Profiles</h3>
+            <h3>{configText.generatedProfiles}</h3>
             {generatedConfigs.length > 0 ? (
               <div className="generated-config-list">
                 {generatedConfigs.map((config) => (
@@ -5753,7 +6025,7 @@ export function ConfigPage({
                 ))}
               </div>
             ) : (
-              <div className="empty-state config-empty">No generated profiles</div>
+              <div className="empty-state config-empty">{configText.noGeneratedProfiles}</div>
             )}
           </div>
         </section>
