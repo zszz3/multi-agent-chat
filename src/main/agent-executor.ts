@@ -1,5 +1,7 @@
 import type { AgentChannel, AgentEvent, AgentId, AgentRuntime } from "../shared/types";
 import { DEFAULT_MODEL_ID, runtimeModelId } from "../shared/models";
+import { codexEnvironmentForChannel } from "./agents/codex-env";
+import { claudeCliModelForChannel, claudeEnvironmentForChannel } from "./agents/claude-env";
 import { ClaudeRunner } from "./agents/claude-runner";
 import { CodexRpcClient } from "./agents/codex-rpc";
 import { codexAppServerConfigArgs } from "./model-config";
@@ -70,7 +72,7 @@ class CodexAgentExecutor implements AgentExecutor {
       executable,
       cwd: this.context.workDir,
       extraArgs: codexAppServerConfigArgs(channel, this.context.modelId),
-      env: process.env as Record<string, string>,
+      env: codexEnvironmentForChannel(channel),
       onEvent: this.context.emit,
       onRequest: (id, method, params) => {
         this.options.respondToCodexServerRequest(client, id, method, params);
@@ -132,12 +134,13 @@ class ClaudeAgentExecutor implements AgentExecutor {
   ) {}
 
   async start(): Promise<void> {
+    const channel = this.options.channelById(this.context.channelId);
     this.runner = new ClaudeRunner({
       executable: this.context.runtime.command || this.options.executables.claude,
       cwd: this.context.workDir,
-      env: process.env as Record<string, string>,
+      env: claudeEnvironmentForChannel(channel, this.context.modelId, process.env),
       prompt: this.context.prompt,
-      modelId: runtimeModelId(this.context.modelId) ?? undefined,
+      modelId: claudeCliModelForChannel(channel, this.context.modelId),
       sessionId: this.context.sessionId,
       onEvent: this.context.emit,
       onExit: (code) => {

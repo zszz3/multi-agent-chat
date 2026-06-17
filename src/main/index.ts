@@ -1,9 +1,11 @@
-import { app, BrowserWindow, dialog, ipcMain, type OpenDialogOptions } from "electron";
+import { app, BrowserWindow, dialog, ipcMain, screen, type OpenDialogOptions } from "electron";
 import path from "node:path";
 import { fileURLToPath } from "node:url";
 import { AgentHub } from "./agent-hub";
+import { setCodexChatRouterBaseUrl, startCodexChatRouter, type CodexChatRouterServer } from "./codex-chat-router";
 import { createLocalTextFilePreview } from "./local-file-preview";
 import { startMcpBridge, type McpBridgeServer } from "./mcp-bridge";
+import { centeredWindowBounds } from "./window-bounds";
 import type {
   AgentChannel,
   AgentId,
@@ -25,19 +27,24 @@ const CHAT_HISTORY_FILE = "app-chats.json";
 const APP_DATABASE_FILE = "app.db";
 const MODEL_CHANNELS_FILE = "model-channels.json";
 const MCP_BRIDGE_FILE = "mcp-bridge.json";
+const DEFAULT_WINDOW_WIDTH = 1360;
+const DEFAULT_WINDOW_HEIGHT = 860;
+const MIN_WINDOW_WIDTH = 980;
+const MIN_WINDOW_HEIGHT = 680;
 const hub = new AgentHub();
 
 let mainWindow: BrowserWindow | null = null;
 let ipcRegistered = false;
 let mcpBridge: McpBridgeServer | undefined;
+let codexChatRouter: CodexChatRouterServer | undefined;
 
 function createWindow(): BrowserWindow {
   const preloadPath = path.join(__dirname, "../preload/index.mjs");
+  const bounds = preferredWindowBounds();
   const window = new BrowserWindow({
-    width: 1360,
-    height: 860,
-    minWidth: 980,
-    minHeight: 680,
+    ...bounds,
+    minWidth: MIN_WINDOW_WIDTH,
+    minHeight: MIN_WINDOW_HEIGHT,
     title: PRODUCT_NAME,
     backgroundColor: "#ffffff",
     show: false,
@@ -65,10 +72,18 @@ function createWindow(): BrowserWindow {
   return window;
 }
 
+function preferredWindowBounds(): { x: number; y: number; width: number; height: number } {
+  const cursorPoint = screen.getCursorScreenPoint();
+  const { workArea } = screen.getDisplayNearestPoint(cursorPoint);
+  return centeredWindowBounds(workArea, DEFAULT_WINDOW_WIDTH, DEFAULT_WINDOW_HEIGHT);
+}
+
 async function bootstrap(): Promise<void> {
   await app.whenReady();
   await hub.loadModelChannels(path.join(app.getPath("userData"), MODEL_CHANNELS_FILE));
   await hub.loadPersistedState(path.join(app.getPath("userData"), APP_DATABASE_FILE), path.join(app.getPath("userData"), CHAT_HISTORY_FILE));
+  codexChatRouter = await startCodexChatRouter({ channels: () => hub.snapshot().channels });
+  setCodexChatRouterBaseUrl(codexChatRouter.baseUrl);
   mcpBridge = await startMcpBridge(hub, {
     discoveryPath: process.env.MULTI_AGENT_CHAT_MCP_BRIDGE || path.join(app.getPath("appData"), "multi-agent-chat", MCP_BRIDGE_FILE),
   });
@@ -111,6 +126,9 @@ function registerIpcHandlers(): void {
   });
   ipcMain.handle("model-channels:save", async (_event, channels: AgentChannel[]) => hub.saveModelChannels(channels));
   ipcMain.handle("configured-agents:save", async (_event, agents: ConfiguredAgent[]) => hub.updateConfiguredAgents(agents));
+  ipcMain.handle("configured-agents:test", async (event, agentId: string) =>
+    hub.testConfiguredAgent(agentId, (agentEvent) => event.sender.send("configured-agents:test-event", agentEvent)),
+  );
   ipcMain.handle("model-channels:generate", async () => hub.generateCodexConfigs());
   ipcMain.handle("model-channels:import-codex", async () => hub.importCodexConfigs());
   ipcMain.handle("codex:plugins:list", async () => hub.listCodexPluginCatalog());
@@ -182,6 +200,7 @@ void bootstrap();
 
 app.on("before-quit", () => {
   void hub.flushPersistence();
+  void codexChatRouter?.stop();
   void mcpBridge?.stop();
 });
 

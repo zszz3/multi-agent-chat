@@ -88,6 +88,60 @@ describe("MCP bridge", () => {
       templates: expect.arrayContaining([expect.objectContaining({ id: "code-reviewer", name: "Code Review Agent" })]),
     });
 
+    const channels = (await (await bridgeRequest("/mcp/channels/list", bridge.token, { agentId: "codex" })).json()) as any;
+    expect(channels).toMatchObject({
+      ok: true,
+      channels: [expect.objectContaining({ id: "codex-openai", agentId: "codex", models: expect.any(Array) })],
+    });
+    expect(JSON.stringify(channels)).not.toContain("httpHeaders");
+    expect(JSON.stringify(channels)).not.toContain("Bearer");
+
+    const models = (await (await bridgeRequest("/mcp/models/list", bridge.token, { channelId: "codex-openai" })).json()) as any;
+    expect(models).toMatchObject({
+      ok: true,
+      channels: [expect.objectContaining({ channelId: "codex-openai", models: expect.any(Array) })],
+    });
+
+    const createdAgent = (await (await bridgeRequest("/mcp/agents/create", bridge.token, {
+      id: "doc-writer",
+      name: "Doc Writer",
+      runtimeAgentId: "codex",
+      channelId: "codex-openai",
+      modelId: "default",
+      prompt: "Write docs.",
+      tags: ["docs"],
+    })).json()) as any;
+    expect(createdAgent).toMatchObject({
+      ok: true,
+      agent: {
+        id: "doc-writer",
+        name: "Doc Writer",
+        runtimeAgentId: "codex",
+        channelId: "codex-openai",
+        modelId: "default",
+        prompt: "Write docs.",
+        tags: ["docs"],
+      },
+    });
+
+    const updatedAgent = (await (await bridgeRequest("/mcp/agents/update", bridge.token, {
+      agentId: "doc-writer",
+      description: "Writes polished docs.",
+      tags: ["docs", "writer"],
+    })).json()) as any;
+    expect(updatedAgent).toMatchObject({
+      ok: true,
+      agent: {
+        id: "doc-writer",
+        description: "Writes polished docs.",
+        tags: ["docs", "writer"],
+      },
+    });
+
+    const deletedAgent = (await (await bridgeRequest("/mcp/agents/delete", bridge.token, { agentId: "doc-writer" })).json()) as any;
+    expect(deletedAgent).toMatchObject({ ok: true, agentId: "doc-writer" });
+    expect(deletedAgent.agents.some((agent: any) => agent.id === "doc-writer")).toBe(false);
+
     const create = await bridgeRequest("/mcp/workflow/create", bridge.token, {
       title: "Review workflow",
       objective: "Review example service",

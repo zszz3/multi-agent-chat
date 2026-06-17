@@ -4,9 +4,10 @@ import http from "node:http";
 import path from "node:path";
 import type { AddressInfo } from "node:net";
 import type { AgentHub } from "./agent-hub";
-import type { CreateWorkflowRequest, UpdateWorkflowRequest, WorkflowArtifactReference, WorkflowGraph, AppendWorkflowRunContextRequest } from "../shared/types";
+import type { AgentChannel, AgentId, ConfiguredAgent, CreateWorkflowRequest, UpdateWorkflowRequest, WorkflowArtifactReference, WorkflowGraph, AppendWorkflowRunContextRequest } from "../shared/types";
 import { AGENT_TEMPLATES } from "../shared/agent-templates";
 import { validateWorkflowGraph } from "../shared/workflow-graph";
+import { DEFAULT_MODEL_ID, defaultChannelForAgent, defaultModelForAgent, isModelForChannel } from "../shared/models";
 
 export interface McpBridgeServer {
   host: string;
@@ -39,6 +40,36 @@ function isAuthorized(request: http.IncomingMessage, token: string): boolean {
 
 function asRecord(value: unknown): Record<string, unknown> {
   return value && typeof value === "object" && !Array.isArray(value) ? (value as Record<string, unknown>) : {};
+}
+
+function asString(value: unknown): string | undefined {
+  return typeof value === "string" && value.trim() ? value.trim() : undefined;
+}
+
+function isAgentId(value: unknown): value is AgentId {
+  return value === "codex" || value === "claude" || value === "api";
+}
+
+function asTags(value: unknown, fallback: string[] = []): string[] {
+  if (!Array.isArray(value)) return fallback;
+  return [...new Set(value.map((item) => asString(item)).filter((item): item is string => Boolean(item)))];
+}
+
+function publicChannel(channel: AgentChannel): unknown {
+  return {
+    id: channel.id,
+    agentId: channel.agentId,
+    label: channel.label,
+    profileName: channel.profileName,
+    modelProvider: channel.modelProvider,
+    providerName: channel.providerName,
+    baseUrl: channel.baseUrl,
+    wireApi: channel.wireApi,
+    modelReasoningEffort: channel.modelReasoningEffort,
+    plugins: channel.plugins,
+    models: channel.models,
+    hasAuthorizationHeader: Boolean(channel.httpHeaders?.Authorization),
+  };
 }
 
 function workflowListPayload(hub: AgentHub): unknown {
@@ -79,8 +110,26 @@ function agentListPayload(hub: AgentHub): unknown {
       version: runtime.version,
       error: runtime.error,
     })),
-    channels: snapshot.channels.map((channel) => ({
-      id: channel.id,
+    channels: snapshot.channels.map(publicChannel),
+  };
+}
+
+function channelsListPayload(hub: AgentHub, record: Record<string, unknown>): unknown {
+  const agentId = isAgentId(record.agentId) ? record.agentId : undefined;
+  return {
+    ok: true,
+    channels: hub.snapshot().channels.filter((channel) => !agentId || channel.agentId === agentId).map(publicChannel),
+  };
+}
+
+function modelsListPayload(hub: AgentHub, record: Record<string, unknown>): unknown {
+  const agentId = isAgentId(record.agentId) ? record.agentId : undefined;
+  const channelId = asString(record.channelId);
+  const channels = hub.snapshot().channels.filter((channel) => (!agentId || channel.agentId === agentId) && (!channelId || channel.id === channelId));
+  return {
+    ok: true,
+    channels: channels.map((channel) => ({
+      channelId: channel.id,
       agentId: channel.agentId,
       label: channel.label,
       models: channel.models,
@@ -95,10 +144,95 @@ function agentTemplateListPayload(): unknown {
   };
 }
 
+function templatePatch(templateId: string | undefined): Partial<ConfiguredAgent> {
+  if (!templateId) return {};
+  const template = AGENT_TEMPLATES.find((item) => item.id === templateId);
+  if (!template) return {};
+  return {
+    name: template.name,
+    description: template.description,
+    prompt: template.prompt,
+    tags: [...template.tags],
+  };
+}
+
+function normalizeAgentInput(hub: AgentHub, record: Record<string, unknown>, existing?: ConfiguredAgent): ConfiguredAgent | { ok: false; error: string } {
+  const snapshot = hub.snapshot();
+  const now = Date.now();
+  const template = templatePatch(asString(record.templateId));
+  const runtimeAgentId = isAgentId(record.runtimeAgentId) ? record.runtimeAgentId : (existing?.runtimeAgentId ?? "codex");
+  const channelIdInput = asString(record.channelId) ?? existing?.channelId;
+  const channelId =
+    channelIdInput && snapshot.channels.some((channel) => channel.id === channelIdInput && channel.agentId === runtimeAgentId)
+      ? channelIdInput
+      : defaultChannelForAgent(runtimeAgentId, snapshot.channels);
+  const modelIdInput = asString(record.modelId) ?? existing?.modelId ?? DEFAULT_MODEL_ID;
+  const modelId = isModelForChannel(runtimeAgentId, channelId, modelIdInput, snapshot.channels) ? modelIdInput : defaultModelForAgent(runtimeAgentId);
+  const id = asString(record.id) ?? existing?.id;
+  const name = asString(record.name) ?? template.name ?? existing?.name;
+  if (!id) return { ok: false, error: "Agent id is required." };
+  if (!name) return { ok: false, error: "Agent name is required." };
+  return {
+    id,
+    name,
+    description: asString(record.description) ?? template.description ?? existing?.description ?? "",
+    runtimeAgentId,
+    channelId,
+    modelId,
+    prompt: asString(record.prompt) ?? template.prompt ?? existing?.prompt ?? "",
+    tags: asTags(record.tags, template.tags ?? existing?.tags ?? []),
+    createdAt: existing?.createdAt ?? now,
+    updatedAt: now,
+  };
+}
+
+function isAgentInputError(value: ConfiguredAgent | { ok: false; error: string }): value is { ok: false; error: string } {
+  return "ok" in value && value.ok === false;
+}
+
+function upsertAgent(hub: AgentHub, agent: ConfiguredAgent, existingId?: string): unknown {
+  const current = hub.listConfiguredAgents();
+  const duplicate = current.find((item) => item.id === agent.id && item.id !== existingId);
+  if (duplicate) return { ok: false, error: `Agent ${agent.id} already exists.` };
+  const next = existingId ? current.map((item) => (item.id === existingId ? agent : item)) : [agent, ...current];
+  const snapshot = hub.updateConfiguredAgents(next);
+  return { ok: true, agent, agents: snapshot.configuredAgents };
+}
+
 async function routeWorkflowRequest(hub: AgentHub, route: string, body: unknown): Promise<unknown> {
   const record = asRecord(body);
   if (route === "/mcp/agent-templates/list") return agentTemplateListPayload();
   if (route === "/mcp/agents/list") return agentListPayload(hub);
+  if (route === "/mcp/channels/list") return channelsListPayload(hub, record);
+  if (route === "/mcp/models/list") return modelsListPayload(hub, record);
+  if (route === "/mcp/agents/create") {
+    const agent = normalizeAgentInput(hub, record);
+    if (isAgentInputError(agent)) return agent;
+    if (hub.listConfiguredAgents().some((item) => item.id === agent.id)) return { ok: false, error: `Agent ${agent.id} already exists.` };
+    return upsertAgent(hub, agent);
+  }
+  if (route === "/mcp/agents/update") {
+    const agentId = asString(record.agentId);
+    if (!agentId) return { ok: false, error: "agents_update requires agentId." };
+    const existing = hub.listConfiguredAgents().find((agent) => agent.id === agentId);
+    if (!existing) return { ok: false, error: `Agent ${agentId} was not found.` };
+    const agent = normalizeAgentInput(hub, record, existing);
+    if (isAgentInputError(agent)) return agent;
+    return upsertAgent(hub, agent, agentId);
+  }
+  if (route === "/mcp/agents/delete") {
+    const agentId = asString(record.agentId);
+    if (!agentId) return { ok: false, error: "agents_delete requires agentId." };
+    const current = hub.listConfiguredAgents();
+    if (!current.some((agent) => agent.id === agentId)) return { ok: false, error: `Agent ${agentId} was not found.` };
+    const snapshot = hub.updateConfiguredAgents(current.filter((agent) => agent.id !== agentId));
+    return { ok: true, agentId, agents: snapshot.configuredAgents };
+  }
+  if (route === "/mcp/agents/test") {
+    const agentId = asString(record.agentId);
+    if (!agentId) return { ok: false, error: "agents_test requires agentId." };
+    return hub.testConfiguredAgent(agentId);
+  }
   if (route === "/mcp/workflow/list") return workflowListPayload(hub);
   if (route === "/mcp/workflow/get") {
     const workflowId = typeof record.workflowId === "string" ? record.workflowId : "";

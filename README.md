@@ -1,168 +1,274 @@
 # Multi Agent Chat
 
-一个本地 Electron 桌面应用，用来统一管理和使用多种 Agent 运行方式。它支持直接和 Codex / Claude Code 聊天，也支持配置纯 API Agent、创建任务、编排 Workflow，并通过本地 MCP 暴露能力给其他 Agent 调用。
+Multi Agent Chat 是一个本地 Electron 桌面应用，用来把多种 Agent 运行方式统一到一个工作台里。它可以直接驱动本机的 Codex CLI、Claude Code CLI，也可以把任意 OpenAI-compatible / Anthropic-compatible 服务配置成纯 API Agent。
 
-## 目前有哪些功能
+应用重点不是做一个单一聊天窗口，而是把“聊天、可复用 Agent、任务、团队协作、Workflow、MCP 暴露能力”放在同一个本地工具里。
 
-### 1. Chat 聊天
+## 功能总览
 
-- 支持创建多个聊天会话。
-- 支持选择工作目录、CLI / Runtime、Provider 和模型。
-- 支持 `/status`、`/models`、`/plugins` 等 Codex 相关命令。
-- 已经开始对齐 CLI 的使用体验，例如 Enter 发送、历史会话、运行中状态展示。
+- 多会话 Chat：按工作目录、Runtime、Channel、模型运行 Codex / Claude / API Agent。
+- 可复用 Agent 配置：为不同 Provider、模型、Prompt、插件和高级参数保存独立 Agent。
+- Provider Preset：内置 OpenAI、Anthropic、DeepSeek、GLM、Kimi、LongCat、MiMo、OpenRouter、GitHub Models、Together、Novita、NVIDIA、SiliconFlow、Bailian、Volcengine、Hunyuan、MiniMax、Azure OpenAI、Custom 等模板。
+- Volcengine / 豆包 endpoint 可配置：`ep-m-...` 这类用户自己的 endpoint 不写死在代码里，由用户在界面里配置。
+- Agent Test：配置页可以直接测试 Agent 是否可用，并展示测试过程、输出和错误。
+- Test session 清理：Claude 测试会删除测试 session 文件；Codex 测试如果从 `codex exec --json` 输出中拿到测试 session id，会执行 `codex archive <sessionId>` 清理测试会话。
+- Codex 插件配置：可以加载 Codex plugin catalog，也可以手动给 Channel 添加插件。
+- Task 看板：把一次 Agent 执行作为任务管理，支持状态流转、日志查看、停止和删除。
+- Agent Teams：把多个 Agent 组成团队，以并行、流水线或主管模式协作。
+- Workflow：先对话澄清目标，再生成 DAG，运行节点，汇总结果，预览产出文档。
+- 本地 MCP：通过 `npm run mcp` 把配置好的 Agent / Workflow 能力暴露给其他 MCP 客户端。
+- 设置页：支持界面语言切换和本地偏好。
 
-### 2. Agent 配置
+## Chat
 
-在 Config 页面可以创建可复用的 Agent。每个 Agent 可以配置：
+Chat 页面用于直接和 Agent 对话。
 
-- Agent 名称、描述、标签和默认 Prompt。
-- 使用哪种 Runtime：
-  - `Codex`：调用本机 Codex CLI。
-  - `Claude Code`：调用本机 Claude Code CLI。
-  - `API`：不启动 CLI，直接请求模型服务 API。
-- 使用哪个 Provider 模板。
-- 使用哪个模型。
-- Provider Key / Token。
-- 高级参数，例如 base URL、headers、provider id、model catalog。
+支持能力：
 
-Provider Key 按 Provider 维度保存一次，同一个 Provider 被多个 Agent 使用时会复用，不需要每个 Agent 重复配置。
+- 创建和切换多个聊天会话。
+- 选择工作目录。
+- 选择 Runtime：`Codex`、`Claude Code`、`API`。
+- 选择 Channel / Provider 和模型。
+- 对正在运行的会话展示流式输出、工具事件、错误和运行状态。
+- 已经开始对齐 CLI 体验：Enter 发送、Shift+Enter 换行、会话历史、快捷搜索入口。
+- Codex 支持 `/status`、`/models`、`/plugins`、`/help` 等 slash command。
 
-### 3. Provider 模板
+如果一个会话已经开始和 Agent 对话，应用会锁定关键运行配置，避免同一条会话中途切换 Runtime / Channel / Model 导致上下文不一致。
 
-内置了一批类似 ccswitch 的 Provider Preset，创建 Agent 时可以直接点选：
+## Agent 配置
+
+配置页用于创建可复用 Agent。每个 Agent 可以保存：
+
+- 名称、ID、描述、标签。
+- 默认 Runtime：Codex、Claude Code 或 API。
+- 默认 Channel / Provider。
+- 默认模型。
+- 默认 Prompt。
+- Provider API Key / Token。
+- Codex 插件列表。
+- 高级 Provider 参数：
+  - `modelProvider`
+  - `providerName`
+  - `baseUrl`
+  - `wireApi`
+  - `modelReasoningEffort`
+  - HTTP headers
+  - model catalog JSON
+
+Provider Key 按 Provider Preset 保存。同一个 Provider 被多个 Agent 复用时，只需要配置一次 Key。
+
+## Provider 和模型
+
+内置 Provider Preset 覆盖常见平台：
 
 - Codex OpenAI
 - Claude Code
-- OpenAI API
-- Anthropic API
 - DeepSeek
 - GLM
 - Kimi
 - LongCat
 - MiMo
+- OpenAI API
+- Anthropic API
 - OpenRouter
 - GitHub Models
 - Together
 - Novita
 - NVIDIA
 - SiliconFlow
-- Bailian
+- Alibaba Bailian
 - Volcengine
-- Hunyuan
+- Tencent Hunyuan
 - MiniMax
 - Azure OpenAI
-- Custom API
+- Custom
 
-其中 OpenAI-compatible Provider 会走 `/chat/completions`，Anthropic API 会走 `/messages`。
+OpenAI-compatible Provider 走兼容接口；Anthropic API 走 Anthropic messages 语义；Codex / Claude Code Runtime 会通过各自 CLI 所需的环境变量和参数注入 Provider 配置。
 
-### 4. Task 任务
+### Volcengine / 豆包 endpoint
 
-- 可以输入一段任务描述，让 Agent 执行。
-- 支持任务列表、状态流转和看板展示。
-- 支持查看任务执行日志。
-- 支持删除任务，并清理关联的本地会话记录。
+Volcengine 的 endpoint / model id 是用户自己的配置，不会硬编码仓库里的某个 `ep-m-...`。
 
-### 5. Workflow
+支持配置的 Volcengine Preset：
 
-Workflow 页面是“先对话，再生成图”的流程：
+- `claude-code-volcengine`
+- `codex-volcengine`
+- `api-volcengine`
 
-1. 先像聊天一样描述目标。
-2. Grill / 主 Agent 会逐步追问。
+在配置页选择 Volcengine 后，可以在 `Endpoint / model ID` 输入框里填：
+
+- `ep-m-...`
+- `doubao-seed-...`
+- 其他平台允许的模型或 endpoint id
+
+保存后，该值会加入当前 Channel 的 model 列表，并成为该 Agent 的 `modelId`。后续只更新 API Key / Token 时，会保留用户自己填的 endpoint。
+
+## Agent Test
+
+配置页的 `Test` 按钮用于验证当前 Agent 能否真正启动并返回结果。
+
+不同 Runtime 的测试方式：
+
+- Codex：启动 `codex exec --ephemeral --json --skip-git-repo-check --sandbox read-only ...`
+- Claude Code：启动 Claude CLI 的一次性测试调用。
+- API：直接向配置的 API Provider 发送测试请求。
+
+测试 UI 会展示：
+
+- 当前阶段。
+- Runtime、Provider、Model。
+- 流式 transcript。
+- 最终输出或错误。
+- 耗时。
+
+### Test session 清理
+
+为了避免本地 session 被测试刷屏：
+
+- Claude 测试会根据输出里的 `session_id` / `sessionId` 找到本地测试 session 文件并删除。
+- Codex 测试会解析 `codex exec --json` 输出中的 `session_id`、`sessionId`、`thread_id`、`threadId`、`thread.id`、`session.id` 等字段。
+- 如果 Codex 测试输出了 session id，应用会执行 `codex archive <sessionId>` 清理这个测试 session。
+- 如果 Codex CLI 没有输出 session id，应用不会猜测最近的本地 session，也不会扫描 `.codex/sessions` 删除文件。
+
+这个逻辑只处理 Test 子进程自己输出的测试 session id，不会使用当前正在对话的 Codex TUI session id。
+
+## Task
+
+Task 页面适合把一次 Agent 执行作为可跟踪任务来管理。
+
+支持：
+
+- 输入任务目标并选择 Runtime / Channel / Model。
+- 启动、停止任务。
+- 任务列表和看板视图。
+- 按状态筛选：待处理、运行中、Review、完成等。
+- 查看任务执行日志、工具事件和最终输出。
+- 删除任务，并清理关联的本地 Agent session。
+
+## Agent Teams
+
+Teams 页面用于把多个 Agent 组成团队处理同一个目标。
+
+支持：
+
+- 创建和编辑 Team。
+- 添加多个成员，每个成员配置独立 Agent、模型、Prompt。
+- 并行模式：多个 Agent 同时处理。
+- 流水线模式：上一个成员输出传给下一个成员。
+- 主管模式：由 lead / supervisor 组织其他成员。
+- 查看团队运行步骤、状态、输出和错误。
+
+## Workflow
+
+Workflow 页面是“先澄清，再生成图，再执行”的工作流能力。
+
+流程：
+
+1. 用户描述目标。
+2. Workflow Agent 追问关键约束。
 3. 对话完成后生成 Workflow DAG。
-4. 用户可以编辑节点和模型配置。
-5. 运行 Workflow。
-6. 右侧展示运行进度。
-7. 运行结束后主 Agent 汇总结果。
-8. 产出文档可以在应用内点击预览。
+4. 用户可以检查和编辑节点。
+5. 运行 DAG。
+6. 应用展示每个节点的运行状态。
+7. 节点输出被汇总成上下文。
+8. 主 Agent 做最终 review。
+9. 产出文档可以在应用内预览。
 
-Workflow 的中间记忆和输出文档会放在本地工作目录下的 `.multi-agent-chat/workflows/<workflow-id>/`。
+Workflow 支持：
 
-### 6. Agent Teams
+- 新建和切换多个 Workflow 会话。
+- DAG 校验。
+- 节点运行状态展示。
+- 运行进度摘要。
+- 节点输出、handoff、artifact 汇总。
+- 输出文档路径识别和本地预览。
+- Workflow 运行上下文持久化。
 
-- 支持创建 Agent Team。
-- 支持不同协作模式，例如并行、流水线、主管模式。
-- 成员可以配置不同 Agent、模型和 Prompt。
-- 适合把一个目标拆给多个 Agent 分工执行。
+Workflow 的本地运行数据默认放在工作目录：
 
-### 7. 本地 MCP
+```text
+.multi-agent-chat/workflows/<workflow-id>/
+```
 
-应用启动后会开启本地 bridge，`npm run mcp` 可以作为 MCP server 接入其他客户端。
+## 本地 MCP
 
-目前 MCP 侧主要用于：
+应用提供一个本地 bridge，`npm run mcp` 可以启动 MCP server，让其他 MCP 客户端调用本应用能力。
 
-- 查询配置好的 Agent。
-- 操作 Workflow。
-- 给其他 Agent 提供创建 / 查询 / 运行 Workflow 的工具接口。
+典型用途：
+
+- 查询已配置 Agent。
+- 创建、读取、更新 Workflow。
+- 启动 Workflow run。
+- 追加 Workflow 上下文。
+- 把 Multi Agent Chat 当成本机 Agent 编排服务使用。
+
+使用方式：
+
+```bash
+npm run dev
+npm run mcp
+```
+
+MCP server 通过 stdio 与客户端通信，再连接 Electron 主进程提供的本地 bridge。bridge 只监听 `127.0.0.1`。
 
 ## 运行要求
 
-- Node.js 22.13 或更高版本
+- Node.js `>=22.13.0`
 - npm
 - 可选 CLI：
   - Codex CLI：`codex` 在 PATH 中，或设置 `CODEX_PATH=/path/to/codex`
   - Claude Code CLI：`claude` 在 PATH 中，或设置 `CLAUDE_PATH=/path/to/claude`
 
-如果只使用 API Agent，可以不安装 Codex / Claude Code CLI。
+只使用 API Agent 时，可以不安装 Codex / Claude Code CLI。
 
-## 安装
+## 安装和启动
+
+安装依赖：
 
 ```bash
 npm install
 ```
 
-## 本地启动
+启动开发版桌面应用：
 
 ```bash
 npm run dev
 ```
 
-应用会通过 `electron-vite` 启动 Electron 桌面窗口。如果默认端口被占用，Vite 会自动选择下一个可用端口。
+应用会通过 `electron-vite` 启动 Electron 窗口。Renderer dev server 默认使用 Vite 端口，如果端口被占用会自动选择可用端口。
 
-## 构建
+## 构建和测试
 
-```bash
-npm run build
-```
-
-构建产物会输出到 `out/`。
-
-## 测试
-
-```bash
-npm test -- --run
-```
-
-只做类型检查：
+类型检查：
 
 ```bash
 npm run typecheck
 ```
 
-## MCP 使用
-
-先启动桌面应用：
+运行测试：
 
 ```bash
-npm run dev
+npm test
 ```
 
-然后启动 MCP server：
+构建：
 
 ```bash
-npm run mcp
+npm run build
 ```
 
-MCP server 通过 stdio 与客户端通信，再连接本机 Electron 应用提供的本地 bridge。bridge 只监听 `127.0.0.1`，端口动态分配。
+## 本地数据
 
-## 本地数据说明
+应用数据保存在 Electron `userData` 目录，以及当前工作目录下的运行产物目录。
 
-应用会把本地历史数据保存在 Electron `userData` 目录下：
+常见本地数据：
 
-- `app.db`：聊天、任务、团队、Workflow、Agent 配置等历史数据。
-- `model-channels.json`：Provider / Channel 配置。
-- `.multi-agent-chat/`：Workflow 运行时的共享记忆和输出文档。
+- `app.db`：聊天、任务、团队、Workflow、配置等持久化数据。
+- `model-channels.json`：Channel / Provider 配置。
+- renderer local storage：Provider Key / Token 等开发期本地凭据。
+- `.multi-agent-chat/`：Workflow 运行上下文和输出文档。
 
-这些都是本地数据，不应该提交到 Git。仓库已经忽略：
+这些文件不应该提交到 Git。仓库已忽略常见本地数据：
 
 - `eval-data/`
 - `datasets/`
@@ -174,5 +280,22 @@ MCP server 通过 stdio 与客户端通信，再连接本机 Electron 应用提�
 - `model-channels.json`
 - `.multi-agent-chat/`
 
-Provider Key 目前为了开发便利保存在本地 renderer 存储中。后续如果要做正式发布，应该迁移到系统 Keychain 或其他安全密钥存储。
+正式发布前，Provider Key 建议迁移到系统 Keychain 或其他安全密钥存储。
 
+## 开发说明
+
+主要入口：
+
+- `src/main/agent-hub.ts`：主进程状态、Agent 调用、任务/团队/Workflow 编排。
+- `src/main/index.ts`：Electron 主进程和 IPC 注册。
+- `src/preload/index.ts`：Renderer 可用 API。
+- `src/renderer/src/App.tsx`：前端主界面。
+- `src/shared/types.ts`：主进程、renderer、MCP 共享类型。
+- `src/mcp/server.ts`：MCP server。
+
+提交前建议至少运行：
+
+```bash
+npm run typecheck
+npm test
+```

@@ -18,6 +18,13 @@ interface JsonRpcRequest {
 
 const TOOL_ROUTES: Record<string, string> = {
   agent_templates_list: "/mcp/agent-templates/list",
+  agents_list: "/mcp/agents/list",
+  agents_create: "/mcp/agents/create",
+  agents_update: "/mcp/agents/update",
+  agents_delete: "/mcp/agents/delete",
+  agents_test: "/mcp/agents/test",
+  channels_list: "/mcp/channels/list",
+  models_list: "/mcp/models/list",
   workflow_create: "/mcp/workflow/create",
   workflow_list: "/mcp/workflow/list",
   workflow_get: "/mcp/workflow/get",
@@ -64,6 +71,70 @@ export function mcpToolDefinitions(): McpToolDefinition[] {
       name: "agent_templates_list",
       description: "List built-in agent templates. Templates only contain agent persona fields: name, description, tags, and prompt. Runtime, provider, and model remain user configuration.",
       inputSchema: objectSchema({}),
+    },
+    {
+      name: "agents_list",
+      description: "List configured agents and their runtime/channel/model selections.",
+      inputSchema: objectSchema({}),
+    },
+    {
+      name: "agents_create",
+      description: "Create a configured agent. Use agent_templates_list first when you want a reusable persona template.",
+      inputSchema: objectSchema(
+        {
+          id: { type: "string" },
+          name: { type: "string" },
+          description: { type: "string" },
+          runtimeAgentId: { type: "string", enum: ["codex", "claude", "api"] },
+          channelId: { type: "string" },
+          modelId: { type: "string" },
+          prompt: { type: "string" },
+          tags: { type: "array", items: { type: "string" } },
+          templateId: { type: "string" },
+        },
+        ["id", "name"],
+      ),
+    },
+    {
+      name: "agents_update",
+      description: "Update an existing configured agent. Omitted fields keep their current values.",
+      inputSchema: objectSchema(
+        {
+          agentId: { type: "string" },
+          name: { type: "string" },
+          description: { type: "string" },
+          runtimeAgentId: { type: "string", enum: ["codex", "claude", "api"] },
+          channelId: { type: "string" },
+          modelId: { type: "string" },
+          prompt: { type: "string" },
+          tags: { type: "array", items: { type: "string" } },
+          templateId: { type: "string" },
+        },
+        ["agentId"],
+      ),
+    },
+    {
+      name: "agents_delete",
+      description: "Delete a configured agent by id. This does not delete workflow graphs that reference it.",
+      inputSchema: objectSchema({ agentId: { type: "string" } }, ["agentId"]),
+    },
+    {
+      name: "agents_test",
+      description: "Run the same connectivity smoke test as the desktop UI for a configured agent.",
+      inputSchema: objectSchema({ agentId: { type: "string" } }, ["agentId"]),
+    },
+    {
+      name: "channels_list",
+      description: "List available runtime provider channels. Secrets and HTTP authorization headers are not returned.",
+      inputSchema: objectSchema({ agentId: { type: "string", enum: ["codex", "claude", "api"] } }),
+    },
+    {
+      name: "models_list",
+      description: "List models available on channels, optionally filtered by channelId or agent runtime.",
+      inputSchema: objectSchema({
+        agentId: { type: "string", enum: ["codex", "claude", "api"] },
+        channelId: { type: "string" },
+      }),
     },
     {
       name: "workflow_create",

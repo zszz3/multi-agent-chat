@@ -65,6 +65,29 @@ export interface AgentTemplate {
   tags: string[];
 }
 
+export interface AgentTestResult {
+  agentId: string;
+  ok: boolean;
+  status: "passed" | "failed";
+  message: string;
+  output?: string;
+  elapsedMs: number;
+  testedAt: number;
+  runtimeAgentId: AgentId;
+  channelId: string;
+  modelId: string;
+}
+
+export type AgentTestEvent =
+  | { agentId: string; type: "phase"; content: string; timestamp: number }
+  | { agentId: string; type: "user"; content: string; timestamp: number }
+  | { agentId: string; type: "assistant_delta"; content: string; timestamp: number }
+  | { agentId: string; type: "assistant"; content: string; timestamp: number }
+  | { agentId: string; type: "tool"; content: string; timestamp: number }
+  | { agentId: string; type: "warning"; content: string; timestamp: number }
+  | { agentId: string; type: "stderr"; content: string; timestamp: number }
+  | { agentId: string; type: "error"; content: string; timestamp: number };
+
 export interface GeneratedConfigFile {
   channelId: string;
   modelId: string;

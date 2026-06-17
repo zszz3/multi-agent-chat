@@ -43,6 +43,7 @@ import type {
   AgentModelOption,
   AgentPluginConfig,
   AgentRuntime,
+  AgentTestEvent,
   AgentTemplate,
   AgentTeam,
   AgentTeamMember,
@@ -268,7 +269,7 @@ const UI_TEXT = {
   },
 } as const;
 
-interface AgentProviderPreset {
+export interface AgentProviderPreset {
   id: string;
   label: string;
   runtimeAgentId: AgentId;
@@ -282,9 +283,35 @@ interface AgentProviderPreset {
   apiKeyHeaderName?: string;
   apiKeyPrefix?: string;
   extraHeaders?: Record<string, string>;
+  configurableModelId?: boolean;
+  configurableModelLabel?: string;
+  configurableModelPlaceholder?: string;
 }
 
-const AGENT_PROVIDER_PRESETS: AgentProviderPreset[] = [
+interface AgentTestUiState {
+  agentId: string;
+  state: "running" | "passed" | "failed";
+  phase: string;
+  message: string;
+  startedAt: number;
+  testedAt?: number;
+  elapsedMs?: number;
+  runtimeAgentId: AgentId;
+  channelId: string;
+  modelId: string;
+  providerLabel: string;
+  output?: string;
+  transcript: AgentTestTranscriptItem[];
+}
+
+interface AgentTestTranscriptItem {
+  id: string;
+  type: AgentTestEvent["type"];
+  content: string;
+  timestamp: number;
+}
+
+export const AGENT_PROVIDER_PRESETS: AgentProviderPreset[] = [
   {
     id: "codex-openai",
     label: "Codex OpenAI",
@@ -298,6 +325,22 @@ const AGENT_PROVIDER_PRESETS: AgentProviderPreset[] = [
     label: "Claude Code",
     runtimeAgentId: "claude",
     models: FALLBACK_MODEL_OPTIONS.claude,
+  },
+  {
+    id: "claude-code-volcengine",
+    label: "Volcengine",
+    runtimeAgentId: "claude",
+    providerName: "Volcengine",
+    modelProvider: "volcengine-anthropic",
+    baseUrl: "https://ark.cn-beijing.volces.com/api/compatible",
+    usesApiKey: true,
+    configurableModelId: true,
+    configurableModelLabel: "Endpoint / model ID",
+    configurableModelPlaceholder: "ep-m-... or doubao-seed-...",
+    models: [
+      { id: DEFAULT_MODEL_ID, label: "Default" },
+      { id: "doubao-seed-2-0-code-preview-latest", label: "Doubao Seed Code" },
+    ],
   },
   {
     id: "deepseek",
@@ -373,6 +416,27 @@ const AGENT_PROVIDER_PRESETS: AgentProviderPreset[] = [
     models: [
       { id: DEFAULT_MODEL_ID, label: "Default" },
       { id: "mimo-v2.5-pro", label: "MiMo V2.5 Pro" },
+    ],
+  },
+  {
+    id: "codex-volcengine",
+    label: "Volcengine",
+    runtimeAgentId: "codex",
+    providerName: "Volcengine",
+    modelProvider: "volcengine",
+    baseUrl: "https://ark.cn-beijing.volces.com/api/v3",
+    wireApi: "responses",
+    modelReasoningEffort: "high",
+    usesApiKey: true,
+    configurableModelId: true,
+    configurableModelLabel: "Endpoint / model ID",
+    configurableModelPlaceholder: "ep-m-... or doubao-seed-...",
+    models: [
+      { id: DEFAULT_MODEL_ID, label: "Default" },
+      { id: "doubao-seed-1-6-lite-251015", label: "Doubao Seed 1.6 Lite" },
+      { id: "doubao-seed-2-0-lite-260428", label: "Doubao Seed 2.0 Lite" },
+      { id: "doubao-seed-1-6", label: "Doubao Seed 1.6" },
+      { id: "doubao-seed-2-0-code-preview-latest", label: "Doubao Seed Code" },
     ],
   },
   {
@@ -587,8 +651,13 @@ const AGENT_PROVIDER_PRESETS: AgentProviderPreset[] = [
     modelProvider: "volcengine-api",
     baseUrl: "https://ark.cn-beijing.volces.com/api/v3",
     usesApiKey: true,
+    configurableModelId: true,
+    configurableModelLabel: "Endpoint / model ID",
+    configurableModelPlaceholder: "ep-m-... or doubao-seed-...",
     models: [
       { id: DEFAULT_MODEL_ID, label: "Default" },
+      { id: "doubao-seed-1-6-lite-251015", label: "Doubao Seed 1.6 Lite" },
+      { id: "doubao-seed-2-0-lite-260428", label: "Doubao Seed 2.0 Lite" },
       { id: "doubao-seed-1-6", label: "Doubao Seed 1.6" },
     ],
   },
@@ -784,6 +853,21 @@ function runtimeStatus(runtime: AgentRuntime): string {
 function formatTime(value: number): string {
   const date = new Date(value);
   return date.toLocaleTimeString([], { hour: "2-digit", minute: "2-digit" });
+}
+
+function formatDuration(value: number): string {
+  if (value < 1000) return `${Math.max(0, Math.round(value))}ms`;
+  return `${Math.max(0, value / 1000).toFixed(1)}s`;
+}
+
+function agentTestEventLabel(type: AgentTestTranscriptItem["type"]): string {
+  if (type === "user") return "You";
+  if (type === "assistant" || type === "assistant_delta") return "Agent";
+  if (type === "tool") return "Tool";
+  if (type === "warning") return "warning";
+  if (type === "stderr") return "stderr";
+  if (type === "error") return "error";
+  return "system";
 }
 
 function activeChatFrom(snapshot: AppSnapshot): ChatSession | undefined {
@@ -1019,10 +1103,12 @@ export function applyProviderPresetToConfiguredAgent(agent: ConfiguredAgent, cha
 }
 
 export function applyProviderPresetToChannel(channel: AgentChannel, preset: AgentProviderPreset, apiKey = ""): AgentChannel {
+  const presetModelIds = new Set(preset.models.map((model) => model.id));
+  const customModels = channel.models.filter((model) => model.id !== DEFAULT_MODEL_ID && !presetModelIds.has(model.id));
   const next: AgentChannel = {
     ...channel,
     agentId: preset.runtimeAgentId,
-    models: preset.models.map((model) => ({ ...model })),
+    models: [...preset.models.map((model) => ({ ...model })), ...customModels.map((model) => ({ ...model }))],
   };
   delete next.providerName;
   delete next.modelProvider;
@@ -1047,6 +1133,29 @@ export function applyProviderPresetToChannel(channel: AgentChannel, preset: Agen
     };
   }
   return next;
+}
+
+export function applyProviderModelIdToAgentConfig(
+  agent: ConfiguredAgent,
+  channel: AgentChannel,
+  rawModelId: string,
+): { agent: ConfiguredAgent; channel: AgentChannel } {
+  const modelId = rawModelId.trim();
+  if (!modelId) {
+    return {
+      agent: { ...agent, modelId: DEFAULT_MODEL_ID },
+      channel,
+    };
+  }
+
+  const models = channel.models.some((model) => model.id === modelId)
+    ? channel.models.map((model) => (model.id === modelId ? { ...model, label: model.label || modelId } : model))
+    : [...channel.models, { id: modelId, label: modelId }];
+
+  return {
+    agent: { ...agent, modelId },
+    channel: { ...channel, models },
+  };
 }
 
 function createConfiguredAgent(channels: AgentChannel[], existingIds: string[]): ConfiguredAgent {
@@ -1652,6 +1761,9 @@ export function App() {
   const [theme, setTheme] = useState<Theme>(() => loadStoredTheme(window.localStorage));
   const [providerKeys, setProviderKeys] = useState<Record<string, string>>(() => loadStoredProviderKeys(window.localStorage));
   const [language, setLanguage] = useState<Language>(() => loadStoredLanguage(window.localStorage));
+  const [agentTestResults, setAgentTestResults] = useState<Record<string, AgentTestUiState>>({});
+  const [testingAgentId, setTestingAgentId] = useState<string | undefined>();
+  const [agentTestTick, setAgentTestTick] = useState(0);
   const [paletteOpen, setPaletteOpen] = useState(false);
   const [agentContextMenu, setAgentContextMenu] = useState<{ agentId: string; x: number; y: number } | undefined>();
   const transcriptRef = useRef<HTMLElement>(null);
@@ -1666,6 +1778,36 @@ export function App() {
   useEffect(() => {
     window.localStorage.setItem(LANGUAGE_STORAGE_KEY, language);
   }, [language]);
+
+  useEffect(() => {
+    if (!testingAgentId) return undefined;
+    const timer = window.setInterval(() => setAgentTestTick((value) => value + 1), 1000);
+    return () => window.clearInterval(timer);
+  }, [testingAgentId]);
+
+  useEffect(() => {
+    return window.multiAgentChat.onAgentTestEvent((event) => {
+      setAgentTestResults((current) => {
+        const existing = current[event.agentId];
+        if (!existing) return current;
+        const transcriptItem: AgentTestTranscriptItem = {
+          id: `${event.timestamp}:${existing.transcript.length}:${event.type}`,
+          type: event.type,
+          content: event.content,
+          timestamp: event.timestamp,
+        };
+        return {
+          ...current,
+          [event.agentId]: {
+            ...existing,
+            phase: event.type === "phase" ? event.content : existing.phase,
+            message: event.type === "phase" ? event.content : existing.message,
+            transcript: [...existing.transcript, transcriptItem].slice(-80),
+          },
+        };
+      });
+    });
+  }, []);
 
   useEffect(() => {
     if (snapshot.configuredAgents.length === 0) {
@@ -2178,6 +2320,84 @@ export function App() {
   function updateConfiguredAgent(agentId: string, updater: (agent: ConfiguredAgent) => ConfiguredAgent): void {
     const now = Date.now();
     void saveConfiguredAgents(snapshot.configuredAgents.map((agent) => (agent.id === agentId ? { ...updater(agent), updatedAt: now } : agent)));
+  }
+
+  async function testConfiguredAgent(agentId: string): Promise<void> {
+    const agent = snapshot.configuredAgents.find((item) => item.id === agentId);
+    const channel = agent ? configChannels.find((item) => item.id === agent.channelId) : undefined;
+    const startedAt = Date.now();
+    const baseState: AgentTestUiState = {
+      agentId,
+      state: "running",
+      phase: "Preparing",
+      message: "Preparing agent test...",
+      startedAt,
+      testedAt: startedAt,
+      elapsedMs: 0,
+      runtimeAgentId: agent?.runtimeAgentId ?? "codex",
+      channelId: agent?.channelId ?? "",
+      modelId: agent?.modelId ?? DEFAULT_MODEL_ID,
+      providerLabel: channel?.providerName ?? channel?.label ?? "Provider",
+      transcript: [],
+    };
+    setTestingAgentId(agentId);
+    setAgentTestTick((value) => value + 1);
+    setAgentTestResults((current) => ({ ...current, [agentId]: baseState }));
+    setConfigStatus("");
+    try {
+      setAgentTestResults((current) => ({
+        ...current,
+        [agentId]: {
+          ...(current[agentId] ?? baseState),
+          phase: "Saving config",
+          message: "Saving current channel, model, and credential settings before testing.",
+        },
+      }));
+      await persistChannelConfig();
+      await saveConfiguredAgents(snapshot.configuredAgents);
+      setAgentTestResults((current) => ({
+        ...current,
+        [agentId]: {
+          ...(current[agentId] ?? baseState),
+          phase: "Running test",
+          message: `Starting ${agentLabel(agent?.runtimeAgentId ?? "codex")} with ${baseState.providerLabel}.`,
+        },
+      }));
+      const result = await window.multiAgentChat.testConfiguredAgent(agentId);
+      setAgentTestResults((current) => ({
+        ...current,
+        [agentId]: {
+          ...(current[agentId] ?? baseState),
+          agentId: result.agentId,
+          state: result.ok ? "passed" : "failed",
+          phase: result.ok ? "Completed" : "Failed",
+          message: result.message,
+          startedAt,
+          testedAt: result.testedAt,
+          elapsedMs: result.elapsedMs,
+          runtimeAgentId: result.runtimeAgentId,
+          channelId: result.channelId,
+          modelId: result.modelId,
+          providerLabel: baseState.providerLabel,
+          ...(result.output ? { output: result.output } : {}),
+        },
+      }));
+      setConfigStatus(result.ok ? "Agent test passed" : "Agent test failed");
+    } catch (error) {
+      setAgentTestResults((current) => ({
+        ...current,
+        [agentId]: {
+          ...(current[agentId] ?? baseState),
+          state: "failed",
+          phase: "Failed",
+          message: error instanceof Error ? error.message : String(error),
+          elapsedMs: Date.now() - startedAt,
+        },
+      }));
+      setConfigStatus("Agent test failed");
+    } finally {
+      setTestingAgentId(undefined);
+    }
   }
 
   function updateProviderKey(presetId: string, value: string): void {
@@ -3335,6 +3555,7 @@ export function App() {
             modelId={workflowModelId}
             runtimes={snapshot.runtimes}
             channels={snapshot.channels}
+            configuredAgents={snapshot.configuredAgents}
             workDir={snapshot.workDir}
             running={workflowRunning}
             runProgress={workflowRunProgress}
@@ -3372,6 +3593,9 @@ export function App() {
             pluginCatalogStatus={pluginCatalogStatus}
             generatedConfigs={generatedConfigs}
             importedConfigs={importedConfigs}
+            agentTestResults={agentTestResults}
+            testingAgentId={testingAgentId}
+            agentTestTick={agentTestTick}
             onUpdateChannel={updateConfigChannel}
             onAddModel={addConfigModel}
             onUpdateModel={updateConfigModel}
@@ -3387,6 +3611,7 @@ export function App() {
             onUpdateProviderKey={updateProviderKey}
             onUpdateConfiguredAgent={updateConfiguredAgent}
             onRemoveConfiguredAgent={removeConfiguredAgent}
+            onTestConfiguredAgent={testConfiguredAgent}
           />
         ) : activeChat ? (
           <>
@@ -4931,6 +5156,7 @@ interface WorkflowPageProps {
   modelId: string;
   runtimes: AgentRuntime[];
   channels: AgentChannel[];
+  configuredAgents?: ConfiguredAgent[];
   workDir: string;
   running: boolean;
   runProgress?: WorkflowRunProgressItem[];
@@ -4968,6 +5194,7 @@ export function WorkflowPage({
   modelId,
   runtimes,
   channels,
+  configuredAgents = [],
   workDir,
   running,
   runProgress = [],
@@ -5263,6 +5490,11 @@ export function WorkflowPage({
                       const modelOptions = modelsForChannel(agentId, channelId, channels);
                       const modelId = modelOptions.some((model) => model.id === node.modelId) ? node.modelId! : DEFAULT_MODEL_ID;
                       const runtime = runtimeMap.get(agentId) ?? fallbackRuntime(agentId);
+                      const configuredAgentOptions = configuredAgents.filter((agent) => channels.some((channel) => channel.id === agent.channelId));
+                      const selectedConfiguredAgent =
+                        configuredAgentOptions.find((agent) => agent.channelId === channelId) ??
+                        configuredAgentOptions.find((agent) => agent.runtimeAgentId === agentId) ??
+                        configuredAgentOptions[0];
                       const nodeEditingDisabled = running;
                       return (
                         <article className={`workflow-graph-card is-${node.kind} ${nodeRunProgress ? `run-${nodeRunProgress.status}` : ""}`} key={node.id}>
@@ -5283,7 +5515,7 @@ export function WorkflowPage({
                             <>
                               <p className="workflow-node-prompt-preview">{node.prompt}</p>
                               <div className="workflow-node-meta-row">
-                                <span>{agentLabel(agentId)}</span>
+                                <span>{selectedConfiguredAgent?.name || agentLabel(agentId)}</span>
                                 <span>{modelOptions.find((model) => model.id === modelId)?.label ?? modelId}</span>
                               </div>
                               <textarea
@@ -5294,43 +5526,71 @@ export function WorkflowPage({
                                 rows={4}
                               />
                               <div className="workflow-node-config-grid">
-                                <label>
-                                  <span>Agent</span>
-                                  <select
-                                    aria-label={`Node ${node.id} agent`}
-                                    value={agentId}
-                                    disabled={nodeEditingDisabled}
-                                    onChange={(event) => {
-                                      const nextAgentId = event.currentTarget.value as AgentId;
-                                      onUpdateNode(node.id, {
-                                        agentId: nextAgentId,
-                                        channelId: defaultChannelForAgent(nextAgentId, channels),
-                                        modelId: DEFAULT_MODEL_ID,
-                                      });
-                                    }}
-                                  >
-                                    {AGENTS.map((item) => (
-                                      <option key={item} value={item}>
-                                        {agentLabel(item)}
-                                      </option>
-                                    ))}
-                                  </select>
-                                </label>
-                                <label>
-                                  <span>Channel</span>
-                                  <select
-                                    aria-label={`Node ${node.id} channel`}
-                                    value={channelId}
-                                    disabled={nodeEditingDisabled}
-                                    onChange={(event) => onUpdateNode(node.id, { channelId: event.currentTarget.value, modelId: DEFAULT_MODEL_ID })}
-                                  >
-                                    {channelOptions.map((channel) => (
-                                      <option key={channel.id} value={channel.id}>
-                                        {channel.label}
-                                      </option>
-                                    ))}
-                                  </select>
-                                </label>
+                                {configuredAgentOptions.length > 0 ? (
+                                  <label>
+                                    <span>Agent</span>
+                                    <select
+                                      aria-label={`Node ${node.id} configured agent`}
+                                      value={selectedConfiguredAgent?.id ?? ""}
+                                      disabled={nodeEditingDisabled}
+                                      onChange={(event) => {
+                                        const selectedAgent = configuredAgentOptions.find((agent) => agent.id === event.currentTarget.value);
+                                        if (!selectedAgent) return;
+                                        onUpdateNode(node.id, {
+                                          agentId: selectedAgent.runtimeAgentId,
+                                          channelId: selectedAgent.channelId,
+                                          modelId: selectedAgent.modelId || DEFAULT_MODEL_ID,
+                                        });
+                                      }}
+                                    >
+                                      {configuredAgentOptions.map((agent) => (
+                                        <option key={agent.id} value={agent.id}>
+                                          {agent.name || agent.id}
+                                        </option>
+                                      ))}
+                                    </select>
+                                  </label>
+                                ) : (
+                                  <>
+                                    <label>
+                                      <span>Runtime</span>
+                                      <select
+                                        aria-label={`Node ${node.id} runtime`}
+                                        value={agentId}
+                                        disabled={nodeEditingDisabled}
+                                        onChange={(event) => {
+                                          const nextAgentId = event.currentTarget.value as AgentId;
+                                          onUpdateNode(node.id, {
+                                            agentId: nextAgentId,
+                                            channelId: defaultChannelForAgent(nextAgentId, channels),
+                                            modelId: DEFAULT_MODEL_ID,
+                                          });
+                                        }}
+                                      >
+                                        {AGENTS.map((item) => (
+                                          <option key={item} value={item}>
+                                            {agentLabel(item)}
+                                          </option>
+                                        ))}
+                                      </select>
+                                    </label>
+                                    <label>
+                                      <span>Provider</span>
+                                      <select
+                                        aria-label={`Node ${node.id} provider`}
+                                        value={channelId}
+                                        disabled={nodeEditingDisabled}
+                                        onChange={(event) => onUpdateNode(node.id, { channelId: event.currentTarget.value, modelId: DEFAULT_MODEL_ID })}
+                                      >
+                                        {channelOptions.map((channel) => (
+                                          <option key={channel.id} value={channel.id}>
+                                            {channel.label}
+                                          </option>
+                                        ))}
+                                      </select>
+                                    </label>
+                                  </>
+                                )}
                                 <label>
                                   <span>Model</span>
                                   <select
@@ -5462,6 +5722,9 @@ interface ConfigPageProps {
   pluginCatalogStatus: string;
   generatedConfigs: GeneratedConfigFile[];
   importedConfigs: ImportedCodexConfig[];
+  agentTestResults: Record<string, AgentTestUiState>;
+  testingAgentId: string | undefined;
+  agentTestTick: number;
   onUpdateChannel: (channelId: string, updater: (channel: AgentChannel) => AgentChannel) => void;
   onAddModel: (channelId: string) => void;
   onUpdateModel: (channelId: string, modelIndex: number, updater: (model: AgentModelOption) => AgentModelOption) => void;
@@ -5477,6 +5740,7 @@ interface ConfigPageProps {
   onUpdateProviderKey: (presetId: string, value: string) => void;
   onUpdateConfiguredAgent: (agentId: string, updater: (agent: ConfiguredAgent) => ConfiguredAgent) => void;
   onRemoveConfiguredAgent: (agentId: string) => void;
+  onTestConfiguredAgent: (agentId: string) => Promise<void>;
 }
 
 export function SettingsPage({
@@ -5532,6 +5796,9 @@ export function ConfigPage({
   pluginCatalogStatus,
   generatedConfigs,
   importedConfigs,
+  agentTestResults,
+  testingAgentId,
+  agentTestTick,
   onUpdateChannel,
   onAddModel,
   onUpdateModel,
@@ -5547,6 +5814,7 @@ export function ConfigPage({
   onUpdateProviderKey,
   onUpdateConfiguredAgent,
   onRemoveConfiguredAgent,
+  onTestConfiguredAgent,
 }: ConfigPageProps) {
   const configText = UI_TEXT[language].config;
   const selectedConfiguredAgent =
@@ -5573,6 +5841,16 @@ export function ConfigPage({
       )?.id ?? "custom")
     : undefined;
   const selectedAgentPreset = selectedAgentPresetId ? AGENT_PROVIDER_PRESETS.find((preset) => preset.id === selectedAgentPresetId) : undefined;
+  const selectedAgentModelId =
+    selectedConfiguredAgent && selectedAgentModels.some((model) => model.id === selectedConfiguredAgent.modelId)
+      ? selectedConfiguredAgent.modelId
+      : DEFAULT_MODEL_ID;
+  const selectedAgentTestResult = selectedConfiguredAgent ? agentTestResults[selectedConfiguredAgent.id] : undefined;
+  const selectedAgentTesting = Boolean(selectedConfiguredAgent && testingAgentId === selectedConfiguredAgent.id);
+  const selectedAgentTestElapsedMs =
+    selectedAgentTestResult?.state === "running"
+      ? Date.now() - selectedAgentTestResult.startedAt + agentTestTick * 0
+      : (selectedAgentTestResult?.elapsedMs ?? 0);
   const applySelectedAgentPreset = (preset: AgentProviderPreset): void => {
     if (!selectedConfiguredAgent || !selectedAgentChannelRecord) return;
     updateSelectedAgentChannel((channel) => applyProviderPresetToChannel(channel, preset, providerKeys[preset.id] ?? ""));
@@ -5586,6 +5864,12 @@ export function ConfigPage({
     if (!selectedAgentPreset) return;
     onUpdateProviderKey(selectedAgentPreset.id, value);
     updateSelectedAgentChannel((channel) => applyProviderPresetToChannel(channel, selectedAgentPreset, value));
+  };
+  const updateSelectedProviderModelId = (value: string): void => {
+    if (!selectedConfiguredAgent || !selectedAgentChannelRecord) return;
+    const result = applyProviderModelIdToAgentConfig(selectedConfiguredAgent, selectedAgentChannelRecord, value);
+    onUpdateChannel(selectedAgentChannelRecord.id, () => result.channel);
+    onUpdateConfiguredAgent(selectedConfiguredAgent.id, () => result.agent);
   };
 
   return (
@@ -5642,6 +5926,15 @@ export function ConfigPage({
                         <span>{selectedConfiguredAgent.id}</span>
                       </div>
                       <div className="configured-agent-editor-actions">
+                        <button
+                          type="button"
+                          className="control-btn compact secondary"
+                          onClick={() => void onTestConfiguredAgent(selectedConfiguredAgent.id)}
+                          disabled={selectedAgentTesting}
+                        >
+                          <RefreshCw size={13} />
+                          <span>{selectedAgentTesting ? "Testing" : "Test"}</span>
+                        </button>
                         <details className="agent-template-menu inline">
                           <summary>
                             <FileInput size={13} />
@@ -5663,6 +5956,51 @@ export function ConfigPage({
                         </details>
                       </div>
                     </div>
+
+                    {selectedAgentTestResult ? (
+                      <section className={`agent-test-result ${selectedAgentTestResult.state}`}>
+                        <div className="agent-test-result-head">
+                          <div>
+                            <strong>
+                              {selectedAgentTestResult.state === "running"
+                                ? "Testing agent"
+                                : selectedAgentTestResult.state === "passed"
+                                  ? "Test passed"
+                                  : "Test failed"}
+                            </strong>
+                            <span>{selectedAgentTestResult.phase}</span>
+                          </div>
+                          <span>{formatDuration(selectedAgentTestElapsedMs)}</span>
+                        </div>
+                        {selectedAgentTestResult.state === "running" ? <div className="agent-test-progress" aria-hidden="true" /> : null}
+                        <dl className="agent-test-meta">
+                          <div>
+                            <dt>Runtime</dt>
+                            <dd>{agentLabel(selectedAgentTestResult.runtimeAgentId)}</dd>
+                          </div>
+                          <div>
+                            <dt>Provider</dt>
+                            <dd>{selectedAgentTestResult.providerLabel}</dd>
+                          </div>
+                          <div>
+                            <dt>Model</dt>
+                            <dd>{selectedAgentTestResult.modelId}</dd>
+                          </div>
+                        </dl>
+                        <p>{selectedAgentTestResult.message}</p>
+                        {selectedAgentTestResult.transcript.length > 0 ? (
+                          <div className="agent-test-transcript" aria-label="Agent test interaction">
+                            {selectedAgentTestResult.transcript.map((item) => (
+                              <div key={item.id} className={`agent-test-transcript-row ${item.type}`}>
+                                <span>{agentTestEventLabel(item.type)}</span>
+                                <pre>{item.content}</pre>
+                              </div>
+                            ))}
+                          </div>
+                        ) : null}
+                        {selectedAgentTestResult.output ? <pre>{selectedAgentTestResult.output}</pre> : null}
+                      </section>
+                    ) : null}
 
                     <section className="agent-provider-presets">
                       <div className="agent-provider-presets-head">
@@ -5713,6 +6051,17 @@ export function ConfigPage({
                           />
                         </label>
                       ) : null}
+                      {selectedAgentPreset?.configurableModelId ? (
+                        <label className="agent-provider-key-field">
+                          <span>{selectedAgentPreset.configurableModelLabel ?? "Model ID"}</span>
+                          <input
+                            aria-label="Provider endpoint or model id"
+                            value={selectedAgentModelId === DEFAULT_MODEL_ID ? "" : selectedAgentModelId}
+                            placeholder={selectedAgentPreset.configurableModelPlaceholder ?? "model-or-endpoint-id"}
+                            onChange={(event) => updateSelectedProviderModelId(event.currentTarget.value)}
+                          />
+                        </label>
+                      ) : null}
                     </section>
 
                     <div className="config-field-grid">
@@ -5744,7 +6093,7 @@ export function ConfigPage({
                         <span>{configText.model}</span>
                         <select
                           aria-label="Agent model"
-                          value={selectedAgentModels.some((model) => model.id === selectedConfiguredAgent.modelId) ? selectedConfiguredAgent.modelId : DEFAULT_MODEL_ID}
+                          value={selectedAgentModelId}
                           onChange={(event) =>
                             onUpdateConfiguredAgent(selectedConfiguredAgent.id, (item) => ({ ...item, modelId: event.currentTarget.value }))
                           }

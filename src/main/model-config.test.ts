@@ -3,7 +3,8 @@ import os from "node:os";
 import path from "node:path";
 import { describe, expect, test } from "vitest";
 import type { AgentChannel } from "../shared/types";
-import { codexAppServerConfigArgs, generateCodexConfigs, importCodexConfigs, parseCodexModelCatalog, parseCodexProfileConfig } from "./model-config";
+import { setCodexChatRouterBaseUrl } from "./codex-chat-router";
+import { codexAppServerConfigArgs, generateCodexConfigs, importCodexConfigs, normalizeChannels, parseCodexModelCatalog, parseCodexProfileConfig } from "./model-config";
 
 describe("model channel config", () => {
   test("parses visible Codex models from the debug catalog", () => {
@@ -20,6 +21,30 @@ describe("model channel config", () => {
     expect(models).toEqual([
       { id: "gpt-5.5", label: "GPT-5.5" },
       { id: "gpt-5.4-mini", label: "GPT-5.4 Mini" },
+    ]);
+  });
+
+  test("migrates DeepSeek Claude Code channels to Claude model names", () => {
+    const [channel] = normalizeChannels([
+      {
+        id: "claude-code-deepseek",
+        agentId: "claude",
+        label: "Claude Code DeepSeek",
+        providerName: "DeepSeek",
+        modelProvider: "deepseek-anthropic",
+        baseUrl: "https://api.deepseek.com/anthropic",
+        models: [
+          { id: "default", label: "Default" },
+          { id: "deepseek-v4-pro[1m]", label: "DeepSeek V4 Pro 1M" },
+          { id: "deepseek-v4-flash", label: "DeepSeek V4 Flash" },
+        ],
+      },
+    ]);
+
+    expect(channel?.models).toEqual([
+      { id: "default", label: "Default (DeepSeek Flash)" },
+      { id: "claude-haiku-4-5", label: "DeepSeek V4 Flash" },
+      { id: "claude-opus-4-8", label: "DeepSeek V4 Pro" },
     ]);
   });
 
@@ -140,6 +165,10 @@ describe("model channel config", () => {
       "-c",
       'model_providers.bridge.wire_api="responses"',
       "-c",
+      "model_providers.bridge.requires_openai_auth=true",
+      "-c",
+      'model_providers.bridge.env_key="OPENAI_API_KEY"',
+      "-c",
       'model_providers.bridge.http_headers={ "Authorization" = "Bearer $TOKEN" }',
     ]);
   });
@@ -190,10 +219,58 @@ describe("model channel config", () => {
       "-c",
       'model_providers.deepseek.wire_api="responses"',
       "-c",
+      "model_providers.deepseek.requires_openai_auth=true",
+      "-c",
+      'model_providers.deepseek.env_key="OPENAI_API_KEY"',
+      "-c",
       'model_providers.deepseek.http_headers={ "Authorization" = "Bearer $DEEPSEEK_API_KEY" }',
     ]);
     expect(deepseekArgs.join("\n")).not.toContain('model_provider="openai"');
     expect(deepseekArgs.join("\n")).not.toContain("gpt-5.5");
+  });
+
+  test("routes custom Codex providers through the local chat router when available", () => {
+    const previousRouterUrl = process.env.MULTI_AGENT_CHAT_CODEX_ROUTER_BASE_URL;
+    setCodexChatRouterBaseUrl("http://127.0.0.1:15721/v1");
+    const channel: AgentChannel = {
+      id: "codex-deepseek",
+      agentId: "codex",
+      label: "Codex DeepSeek",
+      modelProvider: "deepseek",
+      providerName: "DeepSeek",
+      baseUrl: "https://api.deepseek.com",
+      wireApi: "responses",
+      httpHeaders: { Authorization: "Bearer $DEEPSEEK_API_KEY" },
+      models: [
+        { id: "default", label: "Default" },
+        { id: "deepseek-v4-flash", label: "DeepSeek V4 Flash" },
+      ],
+    };
+
+    try {
+      expect(codexAppServerConfigArgs(channel, "deepseek-v4-flash")).toEqual([
+        "-c",
+        'model_provider="deepseek"',
+        "-c",
+        'model="deepseek-v4-flash"',
+        "-c",
+        'model_providers.deepseek.name="DeepSeek"',
+        "-c",
+        'model_providers.deepseek.base_url="http://127.0.0.1:15721/v1/codex-deepseek"',
+        "-c",
+        'model_providers.deepseek.wire_api="responses"',
+        "-c",
+        "model_providers.deepseek.requires_openai_auth=true",
+        "-c",
+        'model_providers.deepseek.env_key="OPENAI_API_KEY"',
+      ]);
+    } finally {
+      if (previousRouterUrl === undefined) {
+        delete process.env.MULTI_AGENT_CHAT_CODEX_ROUTER_BASE_URL;
+      } else {
+        process.env.MULTI_AGENT_CHAT_CODEX_ROUTER_BASE_URL = previousRouterUrl;
+      }
+    }
   });
 
   test("parses an existing Codex profile into an importable channel", () => {

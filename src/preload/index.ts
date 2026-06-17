@@ -2,6 +2,8 @@ import { contextBridge, ipcRenderer } from "electron";
 import type {
   AgentChannel,
   AgentId,
+  AgentTestEvent,
+  AgentTestResult,
   AppSnapshot,
   CodexPluginCatalogItem,
   ConfiguredAgent,
@@ -31,6 +33,12 @@ const api = {
   setChatModel: (chatId: string, modelId: string): Promise<AppSnapshot> => ipcRenderer.invoke("chat:set-model", chatId, modelId),
   saveModelChannels: (channels: AgentChannel[]): Promise<AppSnapshot> => ipcRenderer.invoke("model-channels:save", channels),
   saveConfiguredAgents: (agents: ConfiguredAgent[]): Promise<AppSnapshot> => ipcRenderer.invoke("configured-agents:save", agents),
+  testConfiguredAgent: (agentId: string): Promise<AgentTestResult> => ipcRenderer.invoke("configured-agents:test", agentId),
+  onAgentTestEvent: (callback: (event: AgentTestEvent) => void): (() => void) => {
+    const listener = (_event: Electron.IpcRendererEvent, event: AgentTestEvent) => callback(event);
+    ipcRenderer.on("configured-agents:test-event", listener);
+    return () => ipcRenderer.removeListener("configured-agents:test-event", listener);
+  },
   generateCodexConfigs: (): Promise<GeneratedConfigFile[]> => ipcRenderer.invoke("model-channels:generate"),
   importCodexConfigs: (): Promise<ImportedCodexConfig[]> => ipcRenderer.invoke("model-channels:import-codex"),
   listCodexPlugins: (): Promise<CodexPluginCatalogItem[]> => ipcRenderer.invoke("codex:plugins:list"),

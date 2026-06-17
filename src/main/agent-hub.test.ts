@@ -174,6 +174,35 @@ rl.on("line", (line) => {
   return { executable, callsPath };
 }
 
+async function writeCodexExecFake(dir: string): Promise<{ executable: string; callsPath: string; sessionId: string }> {
+  const executable = path.join(dir, "codex-exec-fake");
+  const callsPath = path.join(dir, "exec-calls.jsonl");
+  const sessionId = "019ed5a0-0000-7000-8000-000000000123";
+  const script = `#!/usr/bin/env node
+const fs = require("fs");
+
+const callsPath = ${JSON.stringify(callsPath)};
+const sessionId = ${JSON.stringify(sessionId)};
+const args = process.argv.slice(2);
+fs.appendFileSync(callsPath, JSON.stringify({ args }) + "\\n");
+
+if (args[0] === "archive") {
+  process.exit(args[1] === sessionId ? 0 : 3);
+}
+
+if (args[0] !== "exec") {
+  console.error("expected exec");
+  process.exit(2);
+}
+
+process.stdout.write(JSON.stringify({ session_id: sessionId }) + "\\n");
+process.stdout.write(JSON.stringify({ type: "item.completed", item: { type: "agent_message", text: "OK" } }) + "\\n");
+`;
+  await writeFile(executable, script, "utf8");
+  await chmod(executable, 0o755);
+  return { executable, callsPath, sessionId };
+}
+
 async function waitFor<T>(read: () => T, predicate: (value: T) => boolean): Promise<T> {
   const startedAt = Date.now();
   let value = read();
@@ -278,6 +307,53 @@ describe("AgentHub chat sessions", () => {
       expect.objectContaining({ role: "user", content: "Hello" }),
       expect.objectContaining({ role: "assistant", content: "executor response" }),
     ]);
+  });
+
+  test("archives Codex sessions created while testing configured agents", async () => {
+    const dir = await mkdtemp(path.join(os.tmpdir(), "multi-agent-chat-codex-test-"));
+    const fake = await writeCodexExecFake(dir);
+    const hub = new AgentHub({ codex: fake.executable, claude: "missing-claude-for-test" });
+
+    await hub.loadModelChannels(path.join(dir, "model-channels.json"));
+    await hub.saveModelChannels([
+      {
+        id: "codex-volcengine",
+        agentId: "codex",
+        label: "Codex Volcengine",
+        providerName: "Volcengine",
+        modelProvider: "volcengine",
+        baseUrl: "https://ark.cn-beijing.volces.com/api/v3",
+        wireApi: "responses",
+        models: [
+          { id: DEFAULT_MODEL_ID, label: "Default" },
+          { id: "ep-m-user-owned-endpoint", label: "User endpoint" },
+        ],
+      },
+    ]);
+    hub.updateConfiguredAgents([
+      {
+        id: "doubao-agent",
+        name: "Doubao Agent",
+        description: "",
+        runtimeAgentId: "codex",
+        channelId: "codex-volcengine",
+        modelId: "ep-m-user-owned-endpoint",
+        prompt: "",
+        tags: [],
+        createdAt: 1710000000000,
+        updatedAt: 1710000000000,
+      },
+    ]);
+
+    const result = await hub.testConfiguredAgent("doubao-agent");
+
+    expect(result.ok).toBe(true);
+    const calls = (await readFile(fake.callsPath, "utf8"))
+      .trim()
+      .split(/\n/)
+      .map((line) => JSON.parse(line) as { args: string[] });
+    expect(calls.some((call) => call.args[0] === "exec" && call.args.some((arg) => arg.includes("ep-m-user-owned-endpoint")))).toBe(true);
+    expect(calls).toContainEqual({ args: ["archive", fake.sessionId] });
   });
 
   test("starts with one codex chat selected", () => {

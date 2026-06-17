@@ -11,6 +11,7 @@ import {
   applyAgentTemplate,
   applyProviderPresetToChannel,
   applyProviderPresetToConfiguredAgent,
+  applyProviderModelIdToAgentConfig,
   shouldSendComposerKey,
   SlashCommandSuggestions,
   slashCommandSuggestionsFor,
@@ -35,6 +36,7 @@ import {
   workflowRunProgressSummary,
   workflowStoragePlanDocument,
   workflowTaskLiveDetail,
+  AGENT_PROVIDER_PRESETS,
 } from "./App";
 import { DEFAULT_MODEL_ID } from "../../shared/models";
 import { AGENT_TEMPLATES } from "../../shared/agent-templates";
@@ -505,6 +507,9 @@ describe("ConfigPage", () => {
         pluginCatalogStatus="Loaded 2 plugins"
         generatedConfigs={[]}
         importedConfigs={[]}
+        agentTestResults={{}}
+        testingAgentId={undefined}
+        agentTestTick={0}
         onUpdateChannel={() => undefined}
         onAddModel={() => undefined}
         onUpdateModel={() => undefined}
@@ -520,6 +525,7 @@ describe("ConfigPage", () => {
         onUpdateProviderKey={() => undefined}
         onUpdateConfiguredAgent={() => undefined}
         onRemoveConfiguredAgent={() => undefined}
+        onTestConfiguredAgent={async () => undefined}
       />,
     );
 
@@ -541,6 +547,7 @@ describe("ConfigPage", () => {
     expect(html).toContain("Code Review Agent");
     expect(html).toContain("Repo Reviewer");
     expect(html).toContain("aria-label=\"Agent prompt\"");
+    expect(html).toContain("Test");
   });
 
   test("renders language controls without a duplicate settings sidebar", () => {
@@ -576,7 +583,7 @@ describe("ConfigPage", () => {
       runtimeAgentId: "api" as const,
       providerName: "DeepSeek",
       modelProvider: "deepseek-api",
-      baseUrl: "https://api.deepseek.com/v1",
+      baseUrl: "https://api.deepseek.com",
       usesApiKey: true,
       models: [
         { id: DEFAULT_MODEL_ID, label: "Default" },
@@ -600,11 +607,53 @@ describe("ConfigPage", () => {
     expect(nextChannel.agentId).toBe("api");
     expect(nextChannel.providerName).toBe("DeepSeek");
     expect(nextChannel.modelProvider).toBe("deepseek-api");
-    expect(nextChannel.baseUrl).toBe("https://api.deepseek.com/v1");
+    expect(nextChannel.baseUrl).toBe("https://api.deepseek.com");
     expect(nextChannel.httpHeaders?.Authorization).toBe("Bearer test-token");
     expect(nextAgent.channelId).toBe("codex-openai");
     expect(nextAgent.runtimeAgentId).toBe("api");
     expect(nextAgent.modelId).toBe(DEFAULT_MODEL_ID);
+  });
+
+  test("offers Doubao Seed Lite in the Volcengine API and Codex presets", () => {
+    const apiPreset = AGENT_PROVIDER_PRESETS.find((preset) => preset.id === "api-volcengine");
+    const codexPreset = AGENT_PROVIDER_PRESETS.find((preset) => preset.id === "codex-volcengine");
+    const volcengineModels = [...(apiPreset?.models ?? []), ...(codexPreset?.models ?? [])];
+
+    expect(apiPreset?.baseUrl).toBe("https://ark.cn-beijing.volces.com/api/v3");
+    expect(codexPreset?.baseUrl).toBe("https://ark.cn-beijing.volces.com/api/v3");
+    expect(apiPreset?.models).toContainEqual({ id: "doubao-seed-1-6-lite-251015", label: "Doubao Seed 1.6 Lite" });
+    expect(apiPreset?.models).toContainEqual({ id: "doubao-seed-2-0-lite-260428", label: "Doubao Seed 2.0 Lite" });
+    expect(codexPreset?.models).toContainEqual({ id: "doubao-seed-1-6-lite-251015", label: "Doubao Seed 1.6 Lite" });
+    expect(codexPreset?.models).toContainEqual({ id: "doubao-seed-2-0-lite-260428", label: "Doubao Seed 2.0 Lite" });
+    expect(volcengineModels.every((model) => !model.id.startsWith("ep-m-"))).toBe(true);
+  });
+
+  test("lets Volcengine agents use a user-configured endpoint model id", () => {
+    const preset = AGENT_PROVIDER_PRESETS.find((item) => item.id === "api-volcengine")!;
+    const channel = applyProviderPresetToChannel(channels[0]!, preset, "test-token");
+    const agent = applyProviderPresetToConfiguredAgent(configuredAgents[0]!, channel, preset);
+
+    const result = applyProviderModelIdToAgentConfig(agent, channel, "ep-m-user-owned-endpoint");
+
+    expect(result.agent.modelId).toBe("ep-m-user-owned-endpoint");
+    expect(result.channel.models).toContainEqual({
+      id: "ep-m-user-owned-endpoint",
+      label: "ep-m-user-owned-endpoint",
+    });
+  });
+
+  test("keeps a user-configured Volcengine endpoint when credentials are updated", () => {
+    const preset = AGENT_PROVIDER_PRESETS.find((item) => item.id === "api-volcengine")!;
+    const initialChannel = applyProviderPresetToChannel(channels[0]!, preset, "first-token");
+    const { channel } = applyProviderModelIdToAgentConfig(configuredAgents[0]!, initialChannel, "ep-m-user-owned-endpoint");
+
+    const updatedChannel = applyProviderPresetToChannel(channel, preset, "second-token");
+
+    expect(updatedChannel.httpHeaders?.Authorization).toBe("Bearer second-token");
+    expect(updatedChannel.models).toContainEqual({
+      id: "ep-m-user-owned-endpoint",
+      label: "ep-m-user-owned-endpoint",
+    });
   });
 });
 
@@ -1661,7 +1710,8 @@ workflowGraph.upsert({
     expect(html).toContain("Clarify &amp; Plan");
     expect(html).toContain("Review");
     expect(html).toContain("Done");
-    expect(html).toContain("aria-label=\"Node plan agent\"");
+    expect(html).toContain("aria-label=\"Node plan runtime\"");
+    expect(html).toContain("aria-label=\"Node plan provider\"");
     expect(html).toContain("aria-label=\"Node plan model\"");
     expect(html).toContain("aria-label=\"Expand workflow graph board\"");
     expect(html).toContain("Run Graph");
@@ -1669,6 +1719,42 @@ workflowGraph.upsert({
     expect(html).toContain("Ask the workflow agent to modify the graph");
     expect(html).toContain("Send");
     expect(html).not.toContain("Generate Graph");
+  });
+
+  test("renders configured agents instead of raw channels in workflow node cards", () => {
+    const html = renderToStaticMarkup(
+      <WorkflowPage
+        graph={graph}
+        graphReady
+        objective="Review payment release"
+        messages={[{ id: "m-1", role: "assistant", content: "信息足够了，已经生成 DAG。" }]}
+        reply=""
+        error={undefined}
+        agentId="codex"
+        channelId="codex-openai"
+        modelId="gpt-5.5"
+        runtimes={runtimes}
+        channels={channels}
+        configuredAgents={configuredAgents}
+        workDir="/tmp/workspace"
+        running={false}
+        onObjectiveChange={() => undefined}
+        onSelectAgent={() => undefined}
+        onSelectChannel={() => undefined}
+        onSelectModel={() => undefined}
+        onDraftGraph={() => undefined}
+        onReplyChange={() => undefined}
+        onSendReply={() => undefined}
+        onUpdateNode={() => undefined}
+        onRunGraph={async () => undefined}
+        onResetSession={() => undefined}
+      />,
+    );
+
+    expect(html).toContain("aria-label=\"Node plan configured agent\"");
+    expect(html).toContain("Repo Reviewer");
+    expect(html).not.toContain("aria-label=\"Node plan channel\"");
+    expect(html).not.toContain(">Channel</span>");
   });
 
   test("renders workflow run feedback while execution is in progress", () => {
@@ -1760,6 +1846,8 @@ workflowGraph.upsert({
     expect(html).toContain("Payment release is ready with one follow-up risk.");
     expect(html).toContain("Workflow transcript");
     expect(html).toContain("Main agent report ready");
+    expect(styles.indexOf(".workflow-result-card .workflow-final-report")).toBeLessThan(styles.indexOf(".workflow-result-card .workflow-graph-board"));
+    expect(styles).toContain(".workflow-result-card .workflow-final-report {\n  order: 1;");
   });
 
   test("shows validation errors and disables execution for cyclic graphs", () => {

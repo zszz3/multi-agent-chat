@@ -15,6 +15,13 @@ describe("MCP server tools", () => {
   test("exposes the first-version workflow tool set", () => {
     expect(mcpToolDefinitions().map((tool) => tool.name)).toEqual([
       "agent_templates_list",
+      "agents_list",
+      "agents_create",
+      "agents_update",
+      "agents_delete",
+      "agents_test",
+      "channels_list",
+      "models_list",
       "workflow_create",
       "workflow_list",
       "workflow_get",
@@ -42,11 +49,11 @@ describe("MCP server tools", () => {
       json: async () => ({ ok: true, workflowId: "wf_1" }),
     } as Response);
 
-    const result = await callMcpTool("workflow_create", { title: "T", objective: "O", graph: { title: "T", objective: "O", nodes: [], edges: [] } });
+    const result = await callMcpTool("agents_create", { id: "reviewer", name: "Reviewer" });
 
     expect(result).toEqual({ ok: true, workflowId: "wf_1" });
     expect(fetchMock).toHaveBeenCalledWith(
-      "http://127.0.0.1:48123/mcp/workflow/create",
+      "http://127.0.0.1:48123/mcp/agents/create",
       expect.objectContaining({
         method: "POST",
         headers: expect.objectContaining({ authorization: "Bearer secret" }),

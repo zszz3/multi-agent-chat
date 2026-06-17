@@ -5,10 +5,16 @@ import path from "node:path";
 import { promisify } from "node:util";
 import { DEFAULT_MODEL_ID, FALLBACK_MODEL_OPTIONS, runtimeModelId } from "../shared/models";
 import type { AgentChannel, AgentId, AgentModelOption, AgentPluginConfig, GeneratedConfigFile, ImportedCodexConfig } from "../shared/types";
+import { codexChannelNeedsChatRouting, codexChatRouterUrlForChannel } from "./codex-chat-router";
 
 const execFileAsync = promisify(execFile);
 const CONFIG_VERSION = 1;
 const BUILT_IN_CODEX_PROVIDER_IDS = new Set(["openai"]);
+const DEEPSEEK_CLAUDE_MODELS: AgentModelOption[] = [
+  { id: DEFAULT_MODEL_ID, label: "Default (DeepSeek Flash)" },
+  { id: "claude-haiku-4-5", label: "DeepSeek V4 Flash" },
+  { id: "claude-opus-4-8", label: "DeepSeek V4 Pro" },
+];
 
 interface ModelChannelsFile {
   version: typeof CONFIG_VERSION;
@@ -233,6 +239,7 @@ function normalizeChannel(raw: unknown): AgentChannel | null {
   if (profileName) channel.profileName = profileName;
   const modelProvider = asString(record.modelProvider);
   if (modelProvider) channel.modelProvider = modelProvider;
+  if (channel.agentId === "claude" && modelProvider === "deepseek-anthropic") channel.models = DEEPSEEK_CLAUDE_MODELS;
   const providerName = asString(record.providerName);
   if (providerName) channel.providerName = providerName;
   const baseUrl = asString(record.baseUrl);
@@ -390,10 +397,16 @@ export function codexAppServerConfigArgs(channel: AgentChannel | undefined, mode
 
   if (channel.modelProvider && !BUILT_IN_CODEX_PROVIDER_IDS.has(channel.modelProvider)) {
     const prefix = `model_providers.${channel.modelProvider}`;
+    const routedBaseUrl = codexChatRouterUrlForChannel(channel);
+    const baseUrl = routedBaseUrl ?? channel.baseUrl;
     if (channel.providerName) pushConfigOverride(args, `${prefix}.name`, channel.providerName);
-    if (channel.baseUrl) pushConfigOverride(args, `${prefix}.base_url`, channel.baseUrl);
+    if (baseUrl) pushConfigOverride(args, `${prefix}.base_url`, baseUrl);
     if (channel.wireApi) pushConfigOverride(args, `${prefix}.wire_api`, channel.wireApi);
-    if (channel.httpHeaders && Object.keys(channel.httpHeaders).length > 0) {
+    if (channel.httpHeaders?.Authorization || codexChannelNeedsChatRouting(channel)) {
+      pushBooleanConfigOverride(args, `${prefix}.requires_openai_auth`, true);
+      pushConfigOverride(args, `${prefix}.env_key`, "OPENAI_API_KEY");
+    }
+    if (!routedBaseUrl && channel.httpHeaders && Object.keys(channel.httpHeaders).length > 0) {
       const headers = Object.entries(channel.httpHeaders)
         .map(([key, value]) => `${quoteInlineTableKey(key)} = ${quoteToml(value)}`)
         .join(", ");
