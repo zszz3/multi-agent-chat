@@ -56,8 +56,6 @@ import type {
   ChatSession,
   CodexPluginCatalogItem,
   ConfiguredAgent,
-  GeneratedConfigFile,
-  ImportedCodexConfig,
   LocalFilePreview,
   TeamRun,
   TaskProgress,
@@ -107,11 +105,8 @@ const UI_TEXT = {
     config: {
       title: "Agent 设置",
       description: "选择 Provider 预设，然后只调整这个 Agent 需要的配置。",
-      importCodex: "导入 Codex",
-      importCodexAria: "导入 Codex 配置",
       advancedJson: "高级 JSON",
       save: "保存",
-      generate: "生成",
       language: "界面语言",
       zh: "统一中文",
       en: "English",
@@ -136,10 +131,6 @@ const UI_TEXT = {
       models: "模型",
       addModel: "添加模型",
       emptyAgent: "新建 Agent 后可绑定 Channel、模型和 Prompt。",
-      importedProfiles: "导入的配置",
-      generatedProfiles: "生成的配置",
-      noImportedProfiles: "暂无导入配置",
-      noGeneratedProfiles: "暂无生成配置",
     },
     workflow: {
       newWorkflow: "新建工作流会话",
@@ -201,11 +192,8 @@ const UI_TEXT = {
     config: {
       title: "Agents",
       description: "Pick a provider preset, then adjust only what this agent needs.",
-      importCodex: "Import Codex",
-      importCodexAria: "Import Codex profiles",
       advancedJson: "Advanced JSON",
       save: "Save",
-      generate: "Generate",
       language: "Language",
       zh: "统一中文",
       en: "English",
@@ -230,10 +218,6 @@ const UI_TEXT = {
       models: "Models",
       addModel: "Add model",
       emptyAgent: "Create an agent to bind a channel, model, and prompt.",
-      importedProfiles: "Imported Profiles",
-      generatedProfiles: "Generated Profiles",
-      noImportedProfiles: "No imported profiles",
-      noGeneratedProfiles: "No generated profiles",
     },
     workflow: {
       newWorkflow: "New workflow session",
@@ -1261,12 +1245,6 @@ function addPluginToChannel(channel: AgentChannel, pluginId: string): AgentChann
   return { ...channel, plugins: [...plugins, { id, enabled: true }] };
 }
 
-function mergeImportedChannels(channels: AgentChannel[], imported: ImportedCodexConfig[]): AgentChannel[] {
-  const merged = new Map(channels.map((channel) => [channel.id, channel]));
-  for (const item of imported) merged.set(item.channel.id, item.channel);
-  return [...merged.values()];
-}
-
 function initialWorkflowMessages(): WorkflowGrillMessage[] {
   return [];
 }
@@ -1754,8 +1732,6 @@ export function App() {
   const [configDraft, setConfigDraft] = useState("[]");
   const [configDirty, setConfigDirty] = useState(false);
   const [configStatus, setConfigStatus] = useState("");
-  const [generatedConfigs, setGeneratedConfigs] = useState<GeneratedConfigFile[]>([]);
-  const [importedConfigs, setImportedConfigs] = useState<ImportedCodexConfig[]>([]);
   const [codexPluginCatalog, setCodexPluginCatalog] = useState<CodexPluginCatalogItem[]>([]);
   const [pluginCatalogStatus, setPluginCatalogStatus] = useState("");
   const [theme, setTheme] = useState<Theme>(() => loadStoredTheme(window.localStorage));
@@ -2410,23 +2386,6 @@ export function App() {
     });
   }
 
-  async function importCodexConfigs(): Promise<void> {
-    try {
-      const imported = await window.multiAgentChat.importCodexConfigs();
-      setImportedConfigs(imported);
-      if (imported.length === 0) {
-        setConfigStatus("No Codex profiles found");
-        return;
-      }
-      const merged = mergeImportedChannels(configChannels, imported);
-      updateConfigChannels(merged);
-      setSelectedConfigChannelId(imported[0]?.channel.id ?? merged[0]?.id ?? "");
-      setConfigStatus(`Imported ${imported.length} Codex profiles`);
-    } catch (error) {
-      setConfigStatus(error instanceof Error ? error.message : String(error));
-    }
-  }
-
   async function loadCodexPluginCatalog(): Promise<void> {
     setPluginCatalogStatus("Loading plugins...");
     try {
@@ -2471,19 +2430,6 @@ export function App() {
       ...channel,
       models: channel.models.filter((_model, index) => index !== modelIndex),
     }));
-  }
-
-  async function generateChannelConfigs(): Promise<void> {
-    try {
-      if (configDirty) {
-        await persistChannelConfig();
-      }
-      const generated = await window.multiAgentChat.generateCodexConfigs();
-      setGeneratedConfigs(generated);
-      setConfigStatus(`Generated ${generated.length} Codex profiles`);
-    } catch (error) {
-      setConfigStatus(error instanceof Error ? error.message : String(error));
-    }
   }
 
   async function chooseWorkDir(): Promise<void> {
@@ -3591,8 +3537,6 @@ export function App() {
             status={configStatus}
             codexPluginCatalog={codexPluginCatalog}
             pluginCatalogStatus={pluginCatalogStatus}
-            generatedConfigs={generatedConfigs}
-            importedConfigs={importedConfigs}
             agentTestResults={agentTestResults}
             testingAgentId={testingAgentId}
             agentTestTick={agentTestTick}
@@ -3603,8 +3547,6 @@ export function App() {
             onDraftChange={updateConfigDraft}
             onToggleAdvanced={setAdvancedMode}
             onSave={saveChannelConfig}
-            onGenerate={generateChannelConfigs}
-            onImportCodex={importCodexConfigs}
             onLoadCodexPluginCatalog={loadCodexPluginCatalog}
             onAddConfiguredAgent={addConfiguredAgent}
             onSelectConfiguredAgent={setSelectedConfiguredAgentId}
@@ -5720,8 +5662,6 @@ interface ConfigPageProps {
   status: string;
   codexPluginCatalog: CodexPluginCatalogItem[];
   pluginCatalogStatus: string;
-  generatedConfigs: GeneratedConfigFile[];
-  importedConfigs: ImportedCodexConfig[];
   agentTestResults: Record<string, AgentTestUiState>;
   testingAgentId: string | undefined;
   agentTestTick: number;
@@ -5732,8 +5672,6 @@ interface ConfigPageProps {
   onDraftChange: (value: string) => void;
   onToggleAdvanced: (enabled: boolean) => void;
   onSave: () => Promise<void>;
-  onGenerate: () => Promise<void>;
-  onImportCodex: () => Promise<void>;
   onLoadCodexPluginCatalog: () => Promise<void>;
   onAddConfiguredAgent: () => MaybePromise;
   onSelectConfiguredAgent: (agentId: string) => void;
@@ -5794,8 +5732,6 @@ export function ConfigPage({
   status,
   codexPluginCatalog,
   pluginCatalogStatus,
-  generatedConfigs,
-  importedConfigs,
   agentTestResults,
   testingAgentId,
   agentTestTick,
@@ -5806,8 +5742,6 @@ export function ConfigPage({
   onDraftChange,
   onToggleAdvanced,
   onSave,
-  onGenerate,
-  onImportCodex,
   onLoadCodexPluginCatalog,
   onAddConfiguredAgent,
   onSelectConfiguredAgent,
@@ -5880,10 +5814,6 @@ export function ConfigPage({
           <p>{configText.description}</p>
         </div>
         <div className="config-actions">
-          <button className="control-btn compact secondary" onClick={() => void onImportCodex()} aria-label={configText.importCodexAria}>
-            <FileInput size={14} />
-            <span>{configText.importCodex}</span>
-          </button>
           <button
             className={`control-btn compact secondary ${advancedMode ? "is-active" : ""}`}
             onClick={() => onToggleAdvanced(!advancedMode)}
@@ -5895,10 +5825,6 @@ export function ConfigPage({
           <button className="control-btn compact" onClick={() => void onSave()}>
             <Save size={14} />
             <span>{configText.save}</span>
-          </button>
-          <button className="control-btn compact secondary" onClick={() => void onGenerate()}>
-            <Wand2 size={14} />
-            <span>{configText.generate}</span>
           </button>
         </div>
       </header>
@@ -6345,39 +6271,6 @@ export function ConfigPage({
           </section>
         )}
 
-        <section className="config-summary-panel">
-          <div className="config-summary-block">
-            <h3>{configText.importedProfiles}</h3>
-            {importedConfigs.length > 0 ? (
-              <div className="generated-config-list">
-                {importedConfigs.map((config) => (
-                  <div key={config.sourcePath} className="generated-config-row">
-                    <strong>{config.channel.label}</strong>
-                    <span>{config.sourcePath}</span>
-                  </div>
-                ))}
-              </div>
-            ) : (
-              <div className="empty-state config-empty">{configText.noImportedProfiles}</div>
-            )}
-          </div>
-
-          <div className="config-summary-block">
-            <h3>{configText.generatedProfiles}</h3>
-            {generatedConfigs.length > 0 ? (
-              <div className="generated-config-list">
-                {generatedConfigs.map((config) => (
-                  <div key={`${config.channelId}:${config.modelId}`} className="generated-config-row">
-                    <strong>{config.profileName}</strong>
-                    <span>{config.path}</span>
-                  </div>
-                ))}
-              </div>
-            ) : (
-              <div className="empty-state config-empty">{configText.noGeneratedProfiles}</div>
-            )}
-          </div>
-        </section>
       </div>
     </section>
   );

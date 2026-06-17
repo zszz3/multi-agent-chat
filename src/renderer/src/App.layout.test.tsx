@@ -505,8 +505,6 @@ describe("ConfigPage", () => {
         status=""
         codexPluginCatalog={codexPluginCatalog}
         pluginCatalogStatus="Loaded 2 plugins"
-        generatedConfigs={[]}
-        importedConfigs={[]}
         agentTestResults={{}}
         testingAgentId={undefined}
         agentTestTick={0}
@@ -517,8 +515,6 @@ describe("ConfigPage", () => {
         onDraftChange={() => undefined}
         onToggleAdvanced={() => undefined}
         onSave={async () => undefined}
-        onGenerate={async () => undefined}
-        onImportCodex={async () => undefined}
         onLoadCodexPluginCatalog={async () => undefined}
         onAddConfiguredAgent={() => undefined}
         onSelectConfiguredAgent={() => undefined}
@@ -530,7 +526,11 @@ describe("ConfigPage", () => {
     );
 
     expect(html).toContain("config-form");
-    expect(html).toContain("aria-label=\"Import Codex profiles\"");
+    expect(html).not.toContain("aria-label=\"Import Codex profiles\"");
+    expect(html).not.toContain(">Import Codex<");
+    expect(html).not.toContain(">Generate<");
+    expect(html).not.toContain("Imported profiles");
+    expect(html).not.toContain("Generated Profiles");
     expect(html).toContain("aria-label=\"Agent model id\"");
     expect(html).toContain("Plugins");
     expect(html).toContain("documents@openai-primary-runtime");
