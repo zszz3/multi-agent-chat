@@ -594,6 +594,66 @@ describe("ConfigPage", () => {
     expect(html).toContain("value=\"saved-key\"");
   });
 
+  test("collapses successful agent tests into a green deployment summary", () => {
+    const html = renderToStaticMarkup(
+      <ConfigPage
+        language="zh"
+        channels={channels}
+        configuredAgents={configuredAgents}
+        selectedConfiguredAgentId="repo-reviewer"
+        providerKeys={{}}
+        status=""
+        codexPluginCatalog={codexPluginCatalog}
+        pluginCatalogStatus=""
+        agentTestResults={{
+          "repo-reviewer": {
+            agentId: "repo-reviewer",
+            state: "passed",
+            phase: "Completed",
+            message: "OK",
+            startedAt: 1710000000000,
+            testedAt: 1710000001000,
+            elapsedMs: 1000,
+            runtimeAgentId: "codex",
+            channelId: "codex-openai",
+            modelId: "gpt-5.5",
+            providerLabel: "OpenAI",
+            output: "verbose passing output should stay collapsed",
+            transcript: [
+              {
+                id: "event-1",
+                type: "assistant",
+                content: "verbose transcript should stay collapsed",
+                timestamp: 1710000000500,
+              },
+            ],
+          },
+        }}
+        testingAgentId={undefined}
+        agentTestTick={0}
+        onUpdateChannel={() => undefined}
+        onAddModel={() => undefined}
+        onUpdateModel={() => undefined}
+        onRemoveModel={() => undefined}
+        onSave={async () => undefined}
+        onLoadCodexPluginCatalog={async () => undefined}
+        onAddConfiguredAgent={() => undefined}
+        onSelectConfiguredAgent={() => undefined}
+        onUpdateProviderKey={() => undefined}
+        onUpdateConfiguredAgent={() => undefined}
+        onRemoveConfiguredAgent={() => undefined}
+        onTestConfiguredAgent={async () => undefined}
+      />,
+    );
+
+    expect(html).toContain("agent-test-result passed collapsed");
+    expect(html).toContain("Agent 部署成功");
+    expect(html).toContain("OpenAI · GPT-5.5");
+    expect(html).not.toContain("verbose passing output should stay collapsed");
+    expect(html).not.toContain("verbose transcript should stay collapsed");
+    expect(html).not.toContain("agent-test-transcript");
+  });
+
   test("keeps agent templates in Chinese without separate localized fields", () => {
     const codeReviewer = AGENT_TEMPLATES.find((template) => template.id === "code-reviewer");
 

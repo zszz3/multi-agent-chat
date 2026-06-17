@@ -3984,7 +3984,49 @@ textarea:focus-visible {
 }
 
 .agent-test-result.passed {
-  border-color: color-mix(in srgb, var(--accent) 42%, var(--line));
+  border-color: color-mix(in srgb, var(--ok) 48%, var(--line));
+}
+
+.agent-test-result.passed.collapsed {
+  grid-template-columns: auto minmax(0, 1fr) auto;
+  align-items: center;
+  gap: 10px;
+  padding: 9px 10px;
+  border-color: color-mix(in srgb, var(--ok) 58%, var(--line));
+  background: color-mix(in srgb, var(--ok-tint) 88%, var(--panel));
+}
+
+.agent-test-success-icon {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: 26px;
+  height: 26px;
+  border-radius: 999px;
+  background: color-mix(in srgb, var(--ok) 14%, transparent);
+  color: var(--ok-strong);
+}
+
+.agent-test-success-copy {
+  display: grid;
+  gap: 2px;
+  min-width: 0;
+}
+
+.agent-test-success-copy strong {
+  color: var(--ok-strong);
+}
+
+.agent-test-success-copy span {
+  overflow: hidden;
+  color: color-mix(in srgb, var(--ok-strong) 68%, var(--muted));
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.agent-test-success-duration {
+  color: color-mix(in srgb, var(--ok-strong) 70%, var(--muted));
+  font-weight: 700;
 }
 
 .agent-test-result.failed {

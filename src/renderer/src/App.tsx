@@ -1,6 +1,7 @@
 import { useEffect, useMemo, useRef, useState, type DragEvent, type KeyboardEvent, type MouseEvent } from "react";
 import {
   Bot,
+  CheckCircle2,
   CircleStop,
   ClipboardList,
   FileInput,
@@ -130,6 +131,7 @@ const UI_TEXT = {
       models: "模型",
       addModel: "添加模型",
       emptyAgent: "新建 Agent 后可绑定 Channel、模型和 Prompt。",
+      agentDeployed: "Agent 部署成功",
     },
     workflow: {
       newWorkflow: "新建工作流会话",
@@ -216,6 +218,7 @@ const UI_TEXT = {
       models: "Models",
       addModel: "Add model",
       emptyAgent: "Create an agent to bind a channel, model, and prompt.",
+      agentDeployed: "Agent deployed",
     },
     workflow: {
       newWorkflow: "New workflow session",
@@ -5770,6 +5773,9 @@ export function ConfigPage({
     selectedAgentTestResult?.state === "running"
       ? Date.now() - selectedAgentTestResult.startedAt + agentTestTick * 0
       : (selectedAgentTestResult?.elapsedMs ?? 0);
+  const selectedAgentTestModelLabel = selectedAgentTestResult
+    ? (selectedAgentModels.find((model) => model.id === selectedAgentTestResult.modelId)?.label ?? selectedAgentTestResult.modelId)
+    : "";
   const applySelectedAgentPreset = (preset: AgentProviderPreset): void => {
     if (!selectedConfiguredAgent || !selectedAgentChannelRecord) return;
     updateSelectedAgentChannel((channel) =>
@@ -5832,48 +5838,55 @@ export function ConfigPage({
                     {status ? <div className="config-status">{status}</div> : null}
 
                     {selectedAgentTestResult ? (
-                      <section className={`agent-test-result ${selectedAgentTestResult.state}`}>
-                        <div className="agent-test-result-head">
-                          <div>
-                            <strong>
-                              {selectedAgentTestResult.state === "running"
-                                ? "Testing agent"
-                                : selectedAgentTestResult.state === "passed"
-                                  ? "Test passed"
-                                  : "Test failed"}
-                            </strong>
-                            <span>{selectedAgentTestResult.phase}</span>
+                      selectedAgentTestResult.state === "passed" ? (
+                        <section className="agent-test-result passed collapsed">
+                          <div className="agent-test-success-icon" aria-hidden="true">
+                            <CheckCircle2 size={16} />
                           </div>
-                          <span>{formatDuration(selectedAgentTestElapsedMs)}</span>
-                        </div>
-                        {selectedAgentTestResult.state === "running" ? <div className="agent-test-progress" aria-hidden="true" /> : null}
-                        <dl className="agent-test-meta">
-                          <div>
-                            <dt>Runtime</dt>
-                            <dd>{agentLabel(selectedAgentTestResult.runtimeAgentId)}</dd>
+                          <div className="agent-test-success-copy">
+                            <strong>{configText.agentDeployed}</strong>
+                            <span>{`${selectedAgentTestResult.providerLabel} · ${selectedAgentTestModelLabel}`}</span>
                           </div>
-                          <div>
-                            <dt>Provider</dt>
-                            <dd>{selectedAgentTestResult.providerLabel}</dd>
+                          <span className="agent-test-success-duration">{formatDuration(selectedAgentTestElapsedMs)}</span>
+                        </section>
+                      ) : (
+                        <section className={`agent-test-result ${selectedAgentTestResult.state}`}>
+                          <div className="agent-test-result-head">
+                            <div>
+                              <strong>{selectedAgentTestResult.state === "running" ? "Testing agent" : "Test failed"}</strong>
+                              <span>{selectedAgentTestResult.phase}</span>
+                            </div>
+                            <span>{formatDuration(selectedAgentTestElapsedMs)}</span>
                           </div>
-                          <div>
-                            <dt>Model</dt>
-                            <dd>{selectedAgentTestResult.modelId}</dd>
-                          </div>
-                        </dl>
-                        <p>{selectedAgentTestResult.message}</p>
-                        {selectedAgentTestResult.transcript.length > 0 ? (
-                          <div className="agent-test-transcript" aria-label="Agent test interaction">
-                            {selectedAgentTestResult.transcript.map((item) => (
-                              <div key={item.id} className={`agent-test-transcript-row ${item.type}`}>
-                                <span>{agentTestEventLabel(item.type)}</span>
-                                <pre>{item.content}</pre>
-                              </div>
-                            ))}
-                          </div>
-                        ) : null}
-                        {selectedAgentTestResult.output ? <pre>{selectedAgentTestResult.output}</pre> : null}
-                      </section>
+                          {selectedAgentTestResult.state === "running" ? <div className="agent-test-progress" aria-hidden="true" /> : null}
+                          <dl className="agent-test-meta">
+                            <div>
+                              <dt>Runtime</dt>
+                              <dd>{agentLabel(selectedAgentTestResult.runtimeAgentId)}</dd>
+                            </div>
+                            <div>
+                              <dt>Provider</dt>
+                              <dd>{selectedAgentTestResult.providerLabel}</dd>
+                            </div>
+                            <div>
+                              <dt>Model</dt>
+                              <dd>{selectedAgentTestResult.modelId}</dd>
+                            </div>
+                          </dl>
+                          <p>{selectedAgentTestResult.message}</p>
+                          {selectedAgentTestResult.transcript.length > 0 ? (
+                            <div className="agent-test-transcript" aria-label="Agent test interaction">
+                              {selectedAgentTestResult.transcript.map((item) => (
+                                <div key={item.id} className={`agent-test-transcript-row ${item.type}`}>
+                                  <span>{agentTestEventLabel(item.type)}</span>
+                                  <pre>{item.content}</pre>
+                                </div>
+                              ))}
+                            </div>
+                          ) : null}
+                          {selectedAgentTestResult.output ? <pre>{selectedAgentTestResult.output}</pre> : null}
+                        </section>
+                      )
                     ) : null}
 
                     <section className="agent-provider-presets">
