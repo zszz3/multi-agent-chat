@@ -493,15 +493,13 @@ describe("ChatControls", () => {
 });
 
 describe("ConfigPage", () => {
-  test("renders agent controls, plugins, templates, and advanced json editor", () => {
+  test("renders agent controls, plugins, templates, and inline save action", () => {
     const html = renderToStaticMarkup(
       <ConfigPage
         channels={channels}
         configuredAgents={configuredAgents}
         selectedConfiguredAgentId="repo-reviewer"
         providerKeys={{}}
-        advancedMode={false}
-        draft="[]"
         status=""
         codexPluginCatalog={codexPluginCatalog}
         pluginCatalogStatus="Loaded 2 plugins"
@@ -512,8 +510,6 @@ describe("ConfigPage", () => {
         onAddModel={() => undefined}
         onUpdateModel={() => undefined}
         onRemoveModel={() => undefined}
-        onDraftChange={() => undefined}
-        onToggleAdvanced={() => undefined}
         onSave={async () => undefined}
         onLoadCodexPluginCatalog={async () => undefined}
         onAddConfiguredAgent={() => undefined}
@@ -538,16 +534,98 @@ describe("ConfigPage", () => {
     expect(html).toContain("aria-label=\"Codex plugin catalog\"");
     expect(html).toContain("github@openai-curated");
     expect(html).toContain("Loaded 2 plugins");
-    expect(html).toContain("Advanced JSON");
+    expect(html).not.toContain("Advanced JSON");
+    expect(html).not.toContain("config-editor-panel");
     expect(html).toContain("Agents");
     expect(html).not.toContain("aria-label=\"Language\"");
     expect(html).not.toContain("统一中文");
     expect(html).toContain("Agent templates");
     expect(html).not.toContain("<h3>Channels</h3>");
-    expect(html).toContain("Code Review Agent");
+    expect(html).toContain("代码审查 Agent");
     expect(html).toContain("Repo Reviewer");
     expect(html).toContain("aria-label=\"Agent prompt\"");
     expect(html).toContain("Test");
+    expect(html).toContain("configured-agent-editor-actions");
+    expect(html).toContain(">Save<");
+  });
+
+  test("shows saved provider api keys from channel headers", () => {
+    const savedKeyChannels: AgentChannel[] = [
+      {
+        ...channels[0]!,
+        providerName: "DeepSeek",
+        modelProvider: "deepseek",
+        baseUrl: "https://api.deepseek.com",
+        httpHeaders: { Authorization: "Bearer saved-key" },
+      },
+      channels[1]!,
+    ];
+
+    const html = renderToStaticMarkup(
+      <ConfigPage
+        channels={savedKeyChannels}
+        configuredAgents={configuredAgents}
+        selectedConfiguredAgentId="repo-reviewer"
+        providerKeys={{}}
+        status=""
+        codexPluginCatalog={codexPluginCatalog}
+        pluginCatalogStatus=""
+        agentTestResults={{}}
+        testingAgentId={undefined}
+        agentTestTick={0}
+        onUpdateChannel={() => undefined}
+        onAddModel={() => undefined}
+        onUpdateModel={() => undefined}
+        onRemoveModel={() => undefined}
+        onSave={async () => undefined}
+        onLoadCodexPluginCatalog={async () => undefined}
+        onAddConfiguredAgent={() => undefined}
+        onSelectConfiguredAgent={() => undefined}
+        onUpdateProviderKey={() => undefined}
+        onUpdateConfiguredAgent={() => undefined}
+        onRemoveConfiguredAgent={() => undefined}
+        onTestConfiguredAgent={async () => undefined}
+      />,
+    );
+
+    expect(html).toContain("aria-label=\"Provider API key\"");
+    expect(html).toContain("value=\"saved-key\"");
+  });
+
+  test("renders agent templates in Chinese without separate localized fields", () => {
+    const html = renderToStaticMarkup(
+      <ConfigPage
+        language="zh"
+        channels={channels}
+        configuredAgents={configuredAgents}
+        selectedConfiguredAgentId="repo-reviewer"
+        providerKeys={{}}
+        status=""
+        codexPluginCatalog={codexPluginCatalog}
+        pluginCatalogStatus=""
+        agentTestResults={{}}
+        testingAgentId={undefined}
+        agentTestTick={0}
+        onUpdateChannel={() => undefined}
+        onAddModel={() => undefined}
+        onUpdateModel={() => undefined}
+        onRemoveModel={() => undefined}
+        onSave={async () => undefined}
+        onLoadCodexPluginCatalog={async () => undefined}
+        onAddConfiguredAgent={() => undefined}
+        onSelectConfiguredAgent={() => undefined}
+        onUpdateProviderKey={() => undefined}
+        onUpdateConfiguredAgent={() => undefined}
+        onRemoveConfiguredAgent={() => undefined}
+        onTestConfiguredAgent={async () => undefined}
+      />,
+    );
+
+    expect(html).toContain("代码审查 Agent");
+    expect(html).toContain("检查代码缺陷");
+    expect(html).not.toContain("Code Review Agent");
+    expect(html).not.toContain("Reviews code for bugs");
+    expect(AGENT_TEMPLATES.some((template) => "nameZh" in template || "descriptionZh" in template || "promptZh" in template)).toBe(false);
   });
 
   test("renders language controls without a duplicate settings sidebar", () => {
@@ -567,9 +645,9 @@ describe("ConfigPage", () => {
 
     const nextAgent = applyAgentTemplate(agent, template);
 
-    expect(nextAgent.name).toBe("Bug Diagnosis Agent");
-    expect(nextAgent.description).toBe(template.description);
-    expect(nextAgent.prompt).toBe(template.prompt);
+    expect(nextAgent.name).toBe("问题诊断 Agent");
+    expect(nextAgent.description).toBe("按根因优先流程排查失败和异常。");
+    expect(nextAgent.prompt).toContain("系统地诊断");
     expect(nextAgent.tags).toEqual(template.tags);
     expect(nextAgent.runtimeAgentId).toBe(agent.runtimeAgentId);
     expect(nextAgent.channelId).toBe(agent.channelId);

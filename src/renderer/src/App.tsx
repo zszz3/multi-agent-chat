@@ -105,7 +105,6 @@ const UI_TEXT = {
     config: {
       title: "Agent 设置",
       description: "选择 Provider 预设，然后只调整这个 Agent 需要的配置。",
-      advancedJson: "高级 JSON",
       save: "保存",
       language: "界面语言",
       zh: "统一中文",
@@ -192,7 +191,6 @@ const UI_TEXT = {
     config: {
       title: "Agents",
       description: "Pick a provider preset, then adjust only what this agent needs.",
-      advancedJson: "Advanced JSON",
       save: "Save",
       language: "Language",
       zh: "统一中文",
@@ -1119,6 +1117,26 @@ export function applyProviderPresetToChannel(channel: AgentChannel, preset: Agen
   return next;
 }
 
+function headerValue(headers: Record<string, string> | undefined, headerName: string): string {
+  if (!headers) return "";
+  const target = headerName.toLowerCase();
+  const match = Object.entries(headers).find(([key]) => key.toLowerCase() === target);
+  return match?.[1] ?? "";
+}
+
+function apiKeyFromChannelHeaders(channel: AgentChannel | undefined, preset: AgentProviderPreset | undefined): string {
+  if (!channel || !preset?.usesApiKey) return "";
+  const rawValue = headerValue(channel.httpHeaders, preset.apiKeyHeaderName ?? "Authorization").trim();
+  const prefix = preset.apiKeyPrefix ?? "Bearer ";
+  if (!rawValue || !prefix) return rawValue;
+  return rawValue.toLowerCase().startsWith(prefix.toLowerCase()) ? rawValue.slice(prefix.length).trim() : rawValue;
+}
+
+function providerKeyValue(providerKeys: Record<string, string>, preset: AgentProviderPreset | undefined, channel: AgentChannel | undefined): string {
+  if (!preset) return "";
+  return providerKeys[preset.id] ?? apiKeyFromChannelHeaders(channel, preset);
+}
+
 export function applyProviderModelIdToAgentConfig(
   agent: ConfiguredAgent,
   channel: AgentChannel,
@@ -1728,8 +1746,6 @@ export function App() {
   const [configChannels, setConfigChannels] = useState<AgentChannel[]>([]);
   const [selectedConfigChannelId, setSelectedConfigChannelId] = useState("");
   const [selectedConfiguredAgentId, setSelectedConfiguredAgentId] = useState("");
-  const [advancedMode, setAdvancedMode] = useState(false);
-  const [configDraft, setConfigDraft] = useState("[]");
   const [configDirty, setConfigDirty] = useState(false);
   const [configStatus, setConfigStatus] = useState("");
   const [codexPluginCatalog, setCodexPluginCatalog] = useState<CodexPluginCatalogItem[]>([]);
@@ -1946,7 +1962,6 @@ export function App() {
   useEffect(() => {
     if (configDirty) return;
     setConfigChannels(snapshot.channels);
-    setConfigDraft(JSON.stringify(snapshot.channels, null, 2));
     setSelectedConfigChannelId((current) => {
       if (current && snapshot.channels.some((channel) => channel.id === current)) return current;
       return snapshot.channels[0]?.id ?? "";
@@ -2199,15 +2214,8 @@ export function App() {
     setWorkflowModelId(modelId);
   }
 
-  function updateConfigDraft(value: string): void {
-    setConfigDraft(value);
-    setConfigDirty(true);
-    setConfigStatus("");
-  }
-
   function updateConfigChannels(next: AgentChannel[]): void {
     setConfigChannels(next);
-    setConfigDraft(JSON.stringify(next, null, 2));
     setConfigDirty(true);
     setConfigStatus("");
     setSelectedConfigChannelId((current) => {
@@ -2216,20 +2224,9 @@ export function App() {
     });
   }
 
-  function parseConfigDraft(): AgentChannel[] {
-    const parsed = JSON.parse(configDraft) as unknown;
-    if (Array.isArray(parsed)) return parsed as AgentChannel[];
-    if (parsed && typeof parsed === "object" && Array.isArray((parsed as { channels?: unknown }).channels)) {
-      return (parsed as { channels: AgentChannel[] }).channels;
-    }
-    throw new Error("Config must be a channel array or an object with channels");
-  }
-
   async function persistChannelConfig(): Promise<AppSnapshot> {
-    const channels = advancedMode ? parseConfigDraft() : configChannels;
-    const next = await window.multiAgentChat.saveModelChannels(channels);
+    const next = await window.multiAgentChat.saveModelChannels(configChannels);
     setConfigChannels(next.channels);
-    setConfigDraft(JSON.stringify(next.channels, null, 2));
     setConfigDirty(false);
     setSelectedConfigChannelId((current) => {
       if (current && next.channels.some((channel) => channel.id === current)) return current;
@@ -2274,7 +2271,6 @@ export function App() {
     const nextChannels = [...configChannels, nextChannel];
     const channelSnapshot = await window.multiAgentChat.saveModelChannels(nextChannels);
     setConfigChannels(channelSnapshot.channels);
-    setConfigDraft(JSON.stringify(channelSnapshot.channels, null, 2));
     setConfigDirty(false);
     setSelectedConfigChannelId(nextChannel.id);
     const agentSnapshot = await window.multiAgentChat.saveConfiguredAgents([nextAgent, ...snapshot.configuredAgents]);
@@ -3532,8 +3528,6 @@ export function App() {
             configuredAgents={snapshot.configuredAgents}
             selectedConfiguredAgentId={selectedConfiguredAgentId}
             providerKeys={providerKeys}
-            advancedMode={advancedMode}
-            draft={configDraft}
             status={configStatus}
             codexPluginCatalog={codexPluginCatalog}
             pluginCatalogStatus={pluginCatalogStatus}
@@ -3544,8 +3538,6 @@ export function App() {
             onAddModel={addConfigModel}
             onUpdateModel={updateConfigModel}
             onRemoveModel={removeConfigModel}
-            onDraftChange={updateConfigDraft}
-            onToggleAdvanced={setAdvancedMode}
             onSave={saveChannelConfig}
             onLoadCodexPluginCatalog={loadCodexPluginCatalog}
             onAddConfiguredAgent={addConfiguredAgent}
@@ -5657,8 +5649,6 @@ interface ConfigPageProps {
   configuredAgents: ConfiguredAgent[];
   selectedConfiguredAgentId: string;
   providerKeys: Record<string, string>;
-  advancedMode: boolean;
-  draft: string;
   status: string;
   codexPluginCatalog: CodexPluginCatalogItem[];
   pluginCatalogStatus: string;
@@ -5669,8 +5659,6 @@ interface ConfigPageProps {
   onAddModel: (channelId: string) => void;
   onUpdateModel: (channelId: string, modelIndex: number, updater: (model: AgentModelOption) => AgentModelOption) => void;
   onRemoveModel: (channelId: string, modelIndex: number) => void;
-  onDraftChange: (value: string) => void;
-  onToggleAdvanced: (enabled: boolean) => void;
   onSave: () => Promise<void>;
   onLoadCodexPluginCatalog: () => Promise<void>;
   onAddConfiguredAgent: () => MaybePromise;
@@ -5727,8 +5715,6 @@ export function ConfigPage({
   configuredAgents,
   selectedConfiguredAgentId,
   providerKeys,
-  advancedMode,
-  draft,
   status,
   codexPluginCatalog,
   pluginCatalogStatus,
@@ -5739,8 +5725,6 @@ export function ConfigPage({
   onAddModel,
   onUpdateModel,
   onRemoveModel,
-  onDraftChange,
-  onToggleAdvanced,
   onSave,
   onLoadCodexPluginCatalog,
   onAddConfiguredAgent,
@@ -5775,6 +5759,7 @@ export function ConfigPage({
       )?.id ?? "custom")
     : undefined;
   const selectedAgentPreset = selectedAgentPresetId ? AGENT_PROVIDER_PRESETS.find((preset) => preset.id === selectedAgentPresetId) : undefined;
+  const selectedProviderKey = providerKeyValue(providerKeys, selectedAgentPreset, selectedAgentChannelRecord);
   const selectedAgentModelId =
     selectedConfiguredAgent && selectedAgentModels.some((model) => model.id === selectedConfiguredAgent.modelId)
       ? selectedConfiguredAgent.modelId
@@ -5787,7 +5772,9 @@ export function ConfigPage({
       : (selectedAgentTestResult?.elapsedMs ?? 0);
   const applySelectedAgentPreset = (preset: AgentProviderPreset): void => {
     if (!selectedConfiguredAgent || !selectedAgentChannelRecord) return;
-    updateSelectedAgentChannel((channel) => applyProviderPresetToChannel(channel, preset, providerKeys[preset.id] ?? ""));
+    updateSelectedAgentChannel((channel) =>
+      applyProviderPresetToChannel(channel, preset, providerKeys[preset.id] ?? (preset.id === selectedAgentPresetId ? apiKeyFromChannelHeaders(channel, preset) : "")),
+    );
     onUpdateConfiguredAgent(selectedConfiguredAgent.id, (item) => applyProviderPresetToConfiguredAgent(item, selectedAgentChannelRecord, preset));
   };
   const selectAgentRuntime = (runtimeAgentId: AgentId): void => {
@@ -5813,35 +5800,10 @@ export function ConfigPage({
           <h2>{configText.title}</h2>
           <p>{configText.description}</p>
         </div>
-        <div className="config-actions">
-          <button
-            className={`control-btn compact secondary ${advancedMode ? "is-active" : ""}`}
-            onClick={() => onToggleAdvanced(!advancedMode)}
-            aria-pressed={advancedMode}
-          >
-            <Settings size={14} />
-            <span>{configText.advancedJson}</span>
-          </button>
-          <button className="control-btn compact" onClick={() => void onSave()}>
-            <Save size={14} />
-            <span>{configText.save}</span>
-          </button>
-        </div>
       </header>
 
       <div className="config-grid">
-        {advancedMode ? (
-          <section className="config-editor-panel">
-            <textarea
-              className="config-editor"
-              spellCheck={false}
-              value={draft}
-              onChange={(event) => onDraftChange(event.currentTarget.value)}
-            />
-            {status ? <div className="config-status">{status}</div> : null}
-          </section>
-        ) : (
-          <section className="config-form">
+        <section className="config-form">
             <section className="configured-agent-panel">
               <section className="configured-agent-editor">
                 {selectedConfiguredAgent ? (
@@ -5852,6 +5814,10 @@ export function ConfigPage({
                         <span>{selectedConfiguredAgent.id}</span>
                       </div>
                       <div className="configured-agent-editor-actions">
+                        <button className="control-btn compact" onClick={() => void onSave()}>
+                          <Save size={13} />
+                          <span>{configText.save}</span>
+                        </button>
                         <button
                           type="button"
                           className="control-btn compact secondary"
@@ -5882,6 +5848,7 @@ export function ConfigPage({
                         </details>
                       </div>
                     </div>
+                    {status ? <div className="config-status">{status}</div> : null}
 
                     {selectedAgentTestResult ? (
                       <section className={`agent-test-result ${selectedAgentTestResult.state}`}>
@@ -5971,7 +5938,7 @@ export function ConfigPage({
                           <input
                             aria-label="Provider API key"
                             type="password"
-                            value={providerKeys[selectedAgentPreset.id] ?? ""}
+                            value={selectedProviderKey}
                             placeholder={`${configText.usedByAll} ${selectedAgentPreset.label} agents`}
                             onChange={(event) => updateSelectedProviderKey(event.currentTarget.value)}
                           />
@@ -6267,9 +6234,7 @@ export function ConfigPage({
                 )}
               </section>
             </section>
-
           </section>
-        )}
 
       </div>
     </section>

@@ -3824,7 +3824,7 @@ textarea:focus-visible {
 
 .config-grid {
   display: grid;
-  grid-template-columns: minmax(0, 1.45fr) minmax(280px, 0.55fr);
+  grid-template-columns: minmax(0, 1fr);
   gap: 14px;
   min-height: 0;
   flex: 1;
