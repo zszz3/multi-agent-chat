@@ -121,6 +121,8 @@ Volcengine 的 endpoint / model id 是用户自己的配置，不会硬编码仓
 - 最终输出或错误。
 - 耗时。
 
+测试通过后，配置页会收敛成绿色成功摘要，显示 `Agent 部署成功`、Provider、Model 和耗时；运行中和失败时仍保留详细过程，方便排查。
+
 ### Test session 清理
 
 为了避免本地 session 被测试刷屏：
