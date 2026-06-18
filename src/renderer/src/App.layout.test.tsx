@@ -17,7 +17,7 @@ import {
   applyProviderPresetToConfiguredAgent,
   applyProviderModelIdToAgentConfig,
   rememberProviderKeyFromChannel,
-  shouldAutoQueryBalance,
+  shouldRefreshBalances,
   onlineSkillTreeUrl,
   parseSkillMarkdown,
   missingAppCapabilityMessage,
@@ -1077,37 +1077,67 @@ describe("ConfigPage", () => {
     expect(html).toContain("刷新余额");
   });
 
-  test("auto-queries balance when opening a saved execution config without cached balance", () => {
+  test("refreshes balances on app start and interval without depending on selected config", () => {
     expect(
-      shouldAutoQueryBalance({
-        activeFeature: "runtimes",
-        selectedChannelId: "deepseek-api",
+      shouldRefreshBalances({
+        channels,
         configDirty: false,
-        balanceLoadingChannelId: undefined,
-        balanceResults: {},
-        alreadyRequested: false,
+        refreshInFlight: false,
+        lastRefreshAt: undefined,
+        now: 1710000000000,
+        intervalMs: 300000,
       }),
     ).toBe(true);
     expect(
-      shouldAutoQueryBalance({
-        activeFeature: "runtimes",
-        selectedChannelId: "deepseek-api",
+      shouldRefreshBalances({
+        channels,
         configDirty: true,
-        balanceLoadingChannelId: undefined,
-        balanceResults: {},
-        alreadyRequested: false,
+        refreshInFlight: false,
+        lastRefreshAt: undefined,
+        now: 1710000000000,
+        intervalMs: 300000,
       }),
     ).toBe(false);
     expect(
-      shouldAutoQueryBalance({
-        activeFeature: "chat",
-        selectedChannelId: "deepseek-api",
+      shouldRefreshBalances({
+        channels,
         configDirty: false,
-        balanceLoadingChannelId: undefined,
-        balanceResults: {},
-        alreadyRequested: false,
+        refreshInFlight: true,
+        lastRefreshAt: undefined,
+        now: 1710000000000,
+        intervalMs: 300000,
       }),
     ).toBe(false);
+    expect(
+      shouldRefreshBalances({
+        channels: [],
+        configDirty: false,
+        refreshInFlight: false,
+        lastRefreshAt: undefined,
+        now: 1710000000000,
+        intervalMs: 300000,
+      }),
+    ).toBe(false);
+    expect(
+      shouldRefreshBalances({
+        channels,
+        configDirty: false,
+        refreshInFlight: false,
+        lastRefreshAt: 1710000000000,
+        now: 1710000060000,
+        intervalMs: 300000,
+      }),
+    ).toBe(false);
+    expect(
+      shouldRefreshBalances({
+        channels,
+        configDirty: false,
+        refreshInFlight: false,
+        lastRefreshAt: 1710000000000,
+        now: 1710000300000,
+        intervalMs: 300000,
+      }),
+    ).toBe(true);
   });
 
   test("keeps skill templates named from SKILL.md frontmatter without separate localized fields", () => {

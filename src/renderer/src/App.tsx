@@ -81,6 +81,7 @@ const AGENTS: AgentId[] = ["codex", "claude", "api"];
 const THEME_STORAGE_KEY = "multi-agent-chat-theme";
 const PROVIDER_KEYS_STORAGE_KEY = "multi-agent-chat-provider-keys";
 const LANGUAGE_STORAGE_KEY = "multi-agent-chat-language";
+const BALANCE_REFRESH_INTERVAL_MS = 5 * 60_000;
 
 export type Language = "zh" | "en";
 
@@ -1207,22 +1208,20 @@ export function workflowDraftShouldPersist(input: WorkflowDraftPersistInput): bo
   return hasContent || input.activeWorkflowId === input.workflowId || input.workflowIds.includes(input.workflowId);
 }
 
-interface AutoBalanceQueryInput {
-  activeFeature: ActiveFeature;
-  selectedChannelId: string;
+interface BalanceRefreshInput {
+  channels: AgentChannel[];
   configDirty: boolean;
-  balanceLoadingChannelId: string | undefined;
-  balanceResults: Record<string, ProviderBalanceResult>;
-  alreadyRequested: boolean;
+  refreshInFlight: boolean;
+  lastRefreshAt: number | undefined;
+  now: number;
+  intervalMs: number;
 }
 
-export function shouldAutoQueryBalance(input: AutoBalanceQueryInput): boolean {
-  if (input.activeFeature !== "runtimes") return false;
-  if (!input.selectedChannelId) return false;
+export function shouldRefreshBalances(input: BalanceRefreshInput): boolean {
+  if (input.channels.length === 0) return false;
   if (input.configDirty) return false;
-  if (input.balanceLoadingChannelId) return false;
-  if (input.alreadyRequested) return false;
-  return !input.balanceResults[input.selectedChannelId];
+  if (input.refreshInFlight) return false;
+  return input.lastRefreshAt === undefined || input.now - input.lastRefreshAt >= input.intervalMs;
 }
 
 function extractWorkflowSection(content: string, headings: string[]): string | undefined {
@@ -1607,7 +1606,10 @@ export function App() {
   const [agentTestTick, setAgentTestTick] = useState(0);
   const [balanceResults, setBalanceResults] = useState<Record<string, ProviderBalanceResult>>({});
   const [balanceLoadingChannelId, setBalanceLoadingChannelId] = useState<string | undefined>();
-  const autoBalanceRequestedRef = useRef<Set<string>>(new Set());
+  const balanceRefreshInFlightRef = useRef(false);
+  const lastBalanceRefreshAtRef = useRef<number | undefined>(undefined);
+  const configChannelsRef = useRef<AgentChannel[]>([]);
+  const configDirtyRef = useRef(false);
   const [paletteOpen, setPaletteOpen] = useState(false);
   const [agentContextMenu, setAgentContextMenu] = useState<{ agentId: string; x: number; y: number } | undefined>();
   const [chatContextMenu, setChatContextMenu] = useState<{ chatId: string; x: number; y: number } | undefined>();
@@ -1617,6 +1619,9 @@ export function App() {
   const transcriptRef = useRef<HTMLElement>(null);
   const stickToBottomRef = useRef(true);
   const gChordRef = useRef(0);
+
+  configChannelsRef.current = configChannels;
+  configDirtyRef.current = configDirty;
 
   useEffect(() => {
     document.documentElement.dataset.theme = theme;
@@ -1870,21 +1875,15 @@ export function App() {
   }, [activeFeature, codexPluginCatalog.length, pluginCatalogStatus]);
 
   useEffect(() => {
-    if (
-      !shouldAutoQueryBalance({
-        activeFeature,
-        selectedChannelId: selectedConfigChannelId,
-        configDirty,
-        balanceLoadingChannelId,
-        balanceResults,
-        alreadyRequested: autoBalanceRequestedRef.current.has(selectedConfigChannelId),
-      })
-    ) {
-      return;
-    }
-    autoBalanceRequestedRef.current.add(selectedConfigChannelId);
-    void queryRuntimeChannelBalance(selectedConfigChannelId, { persistBeforeQuery: false, quiet: true });
-  }, [activeFeature, selectedConfigChannelId, configDirty, balanceLoadingChannelId, balanceResults]);
+    void refreshRuntimeChannelBalancesIfDue();
+  }, [configChannels, configDirty]);
+
+  useEffect(() => {
+    const timer = window.setInterval(() => {
+      void refreshRuntimeChannelBalancesIfDue();
+    }, BALANCE_REFRESH_INTERVAL_MS);
+    return () => window.clearInterval(timer);
+  }, []);
 
   useEffect(() => {
     if (activeFeature !== "tasks") setSelectedTaskDetailId(undefined);
@@ -2118,7 +2117,6 @@ export function App() {
 
   function deleteConfigChannel(channelId: string): void {
     setConfigContextMenu(undefined);
-    autoBalanceRequestedRef.current.delete(channelId);
     const referencedAgent = snapshot.configuredAgents.find((agent) => agent.channelId === channelId);
     if (referencedAgent) {
       setConfigStatus(`Config is used by ${referencedAgent.name || referencedAgent.id}`);
@@ -2418,6 +2416,36 @@ export function App() {
     }
   }
 
+  async function refreshRuntimeChannelBalances(channelIds: string[]): Promise<void> {
+    for (const channelId of channelIds) {
+      await queryRuntimeChannelBalance(channelId, { persistBeforeQuery: false, quiet: true });
+    }
+  }
+
+  async function refreshRuntimeChannelBalancesIfDue(): Promise<void> {
+    const channels = selectConfigChannelsForDisplay(configChannelsRef.current);
+    if (
+      !shouldRefreshBalances({
+        channels,
+        configDirty: configDirtyRef.current,
+        refreshInFlight: balanceRefreshInFlightRef.current,
+        lastRefreshAt: lastBalanceRefreshAtRef.current,
+        now: Date.now(),
+        intervalMs: BALANCE_REFRESH_INTERVAL_MS,
+      })
+    ) {
+      return;
+    }
+
+    balanceRefreshInFlightRef.current = true;
+    try {
+      await refreshRuntimeChannelBalances(channels.map((channel) => channel.id));
+      lastBalanceRefreshAtRef.current = Date.now();
+    } finally {
+      balanceRefreshInFlightRef.current = false;
+    }
+  }
+
   function updateProviderKey(presetId: string, value: string): void {
     setProviderKeys((current) => {
       const next = { ...current };
@@ -2440,7 +2468,6 @@ export function App() {
   }
 
   function updateConfigChannel(channelId: string, updater: (channel: AgentChannel) => AgentChannel): void {
-    autoBalanceRequestedRef.current.delete(channelId);
     setBalanceResults((current) => {
       if (!(channelId in current)) return current;
       const next = { ...current };
