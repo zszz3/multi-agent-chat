@@ -4,6 +4,7 @@ import {
   CheckCircle2,
   CircleStop,
   ClipboardList,
+  Cpu,
   FileInput,
   FolderOpen,
   GitBranch,
@@ -28,8 +29,10 @@ import {
 } from "lucide-react";
 import { CommandPalette, buildPaletteCommands, type Theme } from "./CommandPalette";
 import { Markdown } from "./Markdown";
-import { DEFAULT_MODEL_ID, FALLBACK_MODEL_OPTIONS, defaultChannelForAgent, modelsForChannel } from "../../shared/models";
-import { AGENT_TEMPLATES } from "../../shared/agent-templates";
+import { configChannelForSelection, selectConfigChannelsForDisplay } from "../../shared/config-channels";
+import { DEFAULT_MODEL_ID, defaultChannelForAgent, modelsForChannel } from "../../shared/models";
+import { AGENT_PROVIDER_PRESETS, type AgentProviderPreset } from "../../shared/provider-presets";
+import { SKILL_TEMPLATES } from "../../shared/skill-templates";
 import { buildWorkflowAgentPrompt, WORKFLOW_TOTAL_QUESTION_COUNT } from "../../shared/workflow-agent";
 import {
   createWorkflowGraphFromObjective,
@@ -45,7 +48,7 @@ import type {
   AgentPluginConfig,
   AgentRuntime,
   AgentTestEvent,
-  AgentTemplate,
+  SkillTemplate,
   AgentTeam,
   AgentTeamMember,
   AgentTeamMode,
@@ -57,7 +60,10 @@ import type {
   ChatSession,
   CodexPluginCatalogItem,
   ConfiguredAgent,
+  InstalledSkillResult,
   LocalFilePreview,
+  ProviderBalanceResult,
+  SkillInstallTarget,
   TeamRun,
   TaskProgress,
   TaskRun,
@@ -68,6 +74,7 @@ import type {
   WorkflowRunNodeStatus,
   WorkflowRunProgressItem,
   WorkflowStatus,
+  UninstalledSkillResult,
 } from "../../shared/types";
 
 const AGENTS: AgentId[] = ["codex", "claude", "api"];
@@ -85,7 +92,8 @@ const UI_TEXT = {
       teams: "团队",
       workflow: "工作流",
       skills: "技能",
-      configs: "配置",
+      runtimes: "配置",
+      configs: "Agent 组装",
       settings: "设置",
       configuration: "设置",
     },
@@ -94,13 +102,11 @@ const UI_TEXT = {
       search: "搜索或执行命令...",
       newChat: "新建对话",
       newAgent: "新建 Agent",
-      importTemplate: "导入模板",
-      configuredAgents: "Agent",
+      configuredAgents: "Agent 组装",
       noConfiguredAgents: "暂无配置的 Agent",
       noChats: "新建对话后开始。",
       skillLibrary: "技能库",
       noSkills: "暂无技能",
-      createAgentFromSkill: "用此技能创建 Agent",
       darkTheme: "深色主题",
       lightTheme: "浅色主题",
       toggleTheme: "切换主题",
@@ -108,8 +114,8 @@ const UI_TEXT = {
       openSettings: "打开设置",
     },
     config: {
-      title: "Agent 设置",
-      description: "选择 Provider 预设，然后只调整这个 Agent 需要的配置。",
+      title: "Agent 组装",
+      description: "组装 Agent 的名称、描述、Prompt 和标签。",
       save: "保存",
       language: "界面语言",
       zh: "统一中文",
@@ -119,12 +125,13 @@ const UI_TEXT = {
       apiKey: "API Key / Token",
       usedByAll: "同一 Provider 的 Agent 共用",
       name: "名称",
+      config: "配置",
       model: "模型",
       tags: "标签",
       descriptionField: "描述",
       prompt: "Prompt",
       advancedProvider: "高级 Provider 设置",
-      plugins: "插件",
+      plugins: "Codex 插件",
       loadCatalog: "加载目录",
       manual: "手动添加",
       catalog: "目录",
@@ -134,7 +141,7 @@ const UI_TEXT = {
       enabled: "启用",
       models: "模型",
       addModel: "添加模型",
-      emptyAgent: "新建 Agent 后可绑定 Channel、模型和 Prompt。",
+      emptyAgent: "新建 Agent 后可编辑名称、描述、Prompt 和标签。",
       agentDeployed: "Agent 部署成功",
     },
     workflow: {
@@ -176,7 +183,8 @@ const UI_TEXT = {
       teams: "Teams",
       workflow: "Workflow",
       skills: "Skills",
-      configs: "Configs",
+      runtimes: "Config",
+      configs: "Agent Assembly",
       settings: "Settings",
       configuration: "Configuration",
     },
@@ -185,13 +193,11 @@ const UI_TEXT = {
       search: "Search or run command...",
       newChat: "New chat",
       newAgent: "New agent",
-      importTemplate: "Import template",
-      configuredAgents: "Agents",
+      configuredAgents: "Agent Assembly",
       noConfiguredAgents: "No configured agents",
       noChats: "Create a chat to start.",
       skillLibrary: "Skill library",
       noSkills: "No skills",
-      createAgentFromSkill: "Create agent from skill",
       darkTheme: "Dark theme",
       lightTheme: "Light theme",
       toggleTheme: "Toggle theme",
@@ -199,8 +205,8 @@ const UI_TEXT = {
       openSettings: "Open settings",
     },
     config: {
-      title: "Agents",
-      description: "Pick a provider preset, then adjust only what this agent needs.",
+      title: "Agent Assembly",
+      description: "Assemble agent profiles, prompts, and tags.",
       save: "Save",
       language: "Language",
       zh: "统一中文",
@@ -210,12 +216,13 @@ const UI_TEXT = {
       apiKey: "API Key / Token",
       usedByAll: "Used by all",
       name: "Name",
+      config: "Config",
       model: "Model",
       tags: "Tags",
       descriptionField: "Description",
       prompt: "Prompt",
       advancedProvider: "Advanced provider settings",
-      plugins: "Plugins",
+      plugins: "Codex Plugins",
       loadCatalog: "Load catalog",
       manual: "Manual",
       catalog: "Catalog",
@@ -225,7 +232,7 @@ const UI_TEXT = {
       enabled: "Enabled",
       models: "Models",
       addModel: "Add model",
-      emptyAgent: "Create an agent to bind a channel, model, and prompt.",
+      emptyAgent: "Create an agent to edit its profile, prompt, and tags.",
       agentDeployed: "Agent deployed",
     },
     workflow: {
@@ -262,25 +269,6 @@ const UI_TEXT = {
   },
 } as const;
 
-export interface AgentProviderPreset {
-  id: string;
-  label: string;
-  runtimeAgentId: AgentId;
-  providerName?: string;
-  modelProvider?: string;
-  baseUrl?: string;
-  wireApi?: string;
-  modelReasoningEffort?: string;
-  models: AgentModelOption[];
-  usesApiKey?: boolean;
-  apiKeyHeaderName?: string;
-  apiKeyPrefix?: string;
-  extraHeaders?: Record<string, string>;
-  configurableModelId?: boolean;
-  configurableModelLabel?: string;
-  configurableModelPlaceholder?: string;
-}
-
 interface AgentTestUiState {
   agentId: string;
   state: "running" | "passed" | "failed";
@@ -315,7 +303,7 @@ export interface OnlineSkillSource {
   maxFetch?: number;
 }
 
-export interface OnlineSkillResult extends AgentTemplate {
+export interface OnlineSkillResult extends SkillTemplate {
   sourceId: string;
   sourceLabel: string;
   path: string;
@@ -345,6 +333,12 @@ export const ONLINE_SKILL_SOURCES: OnlineSkillSource[] = [
   },
 ];
 
+const SKILL_INSTALL_TARGETS: Array<{ id: SkillInstallTarget; label: string; path: string }> = [
+  { id: "codex", label: "Codex", path: "~/.codex/skills" },
+  { id: "claude", label: "Claude", path: "~/.claude/skills" },
+  { id: "trae", label: "Trae", path: "~/.trae/skills" },
+];
+
 interface ParsedSkillMarkdown {
   name: string;
   description: string;
@@ -371,6 +365,58 @@ function stripYamlQuotes(value: string): string {
     return trimmed.slice(1, -1);
   }
   return trimmed;
+}
+
+export function skillFrontmatterValue(markdown: string, key: string): string | undefined {
+  const normalized = markdown.replace(/\r\n/g, "\n");
+  if (!normalized.startsWith("---\n")) return undefined;
+  const end = normalized.indexOf("\n---", 4);
+  if (end < 0) return undefined;
+  const frontmatter = normalized.slice(4, end).split("\n");
+  const normalizedKey = key.toLowerCase();
+  for (const line of frontmatter) {
+    if (/^\s/.test(line)) continue;
+    const match = line.match(/^([A-Za-z0-9_-]+):\s*(.*)$/);
+    if (match?.[1]?.toLowerCase() === normalizedKey) return stripYamlQuotes(match[2] ?? "");
+  }
+  return undefined;
+}
+
+function skillDisplayName(skill: Pick<SkillTemplate, "name" | "prompt">): string {
+  return skillFrontmatterValue(skill.prompt, "name") || skill.name;
+}
+
+function skillDisplayDescription(skill: Pick<SkillTemplate, "description" | "prompt">): string {
+  return skillFrontmatterValue(skill.prompt, "description") || skill.description;
+}
+
+function sourceUrlLabel(url: string): string {
+  try {
+    const parsed = new URL(url);
+    if (parsed.hostname === "github.com" || parsed.hostname === "www.github.com") {
+      const [owner, repo] = parsed.pathname.split("/").filter(Boolean);
+      if (owner && repo) return `GitHub: ${owner}/${repo}`;
+    }
+    return parsed.hostname.replace(/^www\./, "");
+  } catch {
+    return url;
+  }
+}
+
+function targetLabel(target: SkillInstallTarget): string {
+  return SKILL_INSTALL_TARGETS.find((item) => item.id === target)?.label ?? target;
+}
+
+function MarkdownDocument({ text, className = "" }: { text: string; className?: string }) {
+  return (
+    <div className={`markdown-document ${className}`.trim()}>
+      <Markdown text={text} />
+    </div>
+  );
+}
+
+function isMarkdownFilePath(path: string): boolean {
+  return /\.(md|markdown)$/i.test(path.split(/[?#]/)[0] ?? "");
 }
 
 function skillNameFromPath(path: string): string {
@@ -402,7 +448,7 @@ export function parseSkillMarkdown(markdown: string, path: string): ParsedSkillM
   return {
     name,
     description,
-    prompt: body,
+    prompt: normalized.trim(),
     tags: [name],
     path,
   };
@@ -454,407 +500,6 @@ async function fetchOnlineSkills(query: string, sources: OnlineSkillSource[] = O
   return results.flat().slice(0, 60);
 }
 
-export const AGENT_PROVIDER_PRESETS: AgentProviderPreset[] = [
-  {
-    id: "codex-openai",
-    label: "Codex OpenAI",
-    runtimeAgentId: "codex",
-    providerName: "OpenAI",
-    modelProvider: "openai",
-    models: FALLBACK_MODEL_OPTIONS.codex,
-  },
-  {
-    id: "claude-code",
-    label: "Claude Code",
-    runtimeAgentId: "claude",
-    models: FALLBACK_MODEL_OPTIONS.claude,
-  },
-  {
-    id: "claude-code-volcengine",
-    label: "Volcengine",
-    runtimeAgentId: "claude",
-    providerName: "Volcengine",
-    modelProvider: "volcengine-anthropic",
-    baseUrl: "https://ark.cn-beijing.volces.com/api/compatible",
-    usesApiKey: true,
-    configurableModelId: true,
-    configurableModelLabel: "Endpoint / model ID",
-    configurableModelPlaceholder: "ep-m-... or doubao-seed-...",
-    models: [
-      { id: DEFAULT_MODEL_ID, label: "Default" },
-      { id: "doubao-seed-2-0-code-preview-latest", label: "Doubao Seed Code" },
-    ],
-  },
-  {
-    id: "deepseek",
-    label: "DeepSeek",
-    runtimeAgentId: "codex",
-    providerName: "DeepSeek",
-    modelProvider: "deepseek",
-    baseUrl: "https://api.deepseek.com",
-    wireApi: "responses",
-    modelReasoningEffort: "high",
-    usesApiKey: true,
-    models: [
-      { id: DEFAULT_MODEL_ID, label: "Default" },
-      { id: "deepseek-v4-flash", label: "DeepSeek V4 Flash" },
-      { id: "deepseek-v4-pro", label: "DeepSeek V4 Pro" },
-    ],
-  },
-  {
-    id: "glm",
-    label: "GLM",
-    runtimeAgentId: "codex",
-    providerName: "Zhipu GLM",
-    modelProvider: "zhipu-glm",
-    baseUrl: "https://open.bigmodel.cn/api/paas/v4",
-    wireApi: "responses",
-    modelReasoningEffort: "high",
-    usesApiKey: true,
-    models: [
-      { id: DEFAULT_MODEL_ID, label: "Default" },
-      { id: "glm-5.1", label: "GLM-5.1" },
-    ],
-  },
-  {
-    id: "kimi",
-    label: "Kimi",
-    runtimeAgentId: "codex",
-    providerName: "Kimi",
-    modelProvider: "kimi",
-    baseUrl: "https://api.moonshot.cn/v1",
-    wireApi: "responses",
-    modelReasoningEffort: "high",
-    usesApiKey: true,
-    models: [
-      { id: DEFAULT_MODEL_ID, label: "Default" },
-      { id: "kimi-k2.6", label: "Kimi K2.6" },
-    ],
-  },
-  {
-    id: "longcat",
-    label: "LongCat",
-    runtimeAgentId: "codex",
-    providerName: "LongCat",
-    modelProvider: "longcat",
-    baseUrl: "https://api.longcat.chat/openai/v1",
-    wireApi: "responses",
-    modelReasoningEffort: "high",
-    usesApiKey: true,
-    models: [
-      { id: DEFAULT_MODEL_ID, label: "Default" },
-      { id: "LongCat-Flash-Chat", label: "LongCat Flash Chat" },
-    ],
-  },
-  {
-    id: "mimo",
-    label: "MiMo",
-    runtimeAgentId: "codex",
-    providerName: "MiMo",
-    modelProvider: "xiaomi-mimo",
-    baseUrl: "https://api.xiaomimimo.com/v1",
-    wireApi: "responses",
-    modelReasoningEffort: "high",
-    usesApiKey: true,
-    models: [
-      { id: DEFAULT_MODEL_ID, label: "Default" },
-      { id: "mimo-v2.5-pro", label: "MiMo V2.5 Pro" },
-    ],
-  },
-  {
-    id: "codex-volcengine",
-    label: "Volcengine",
-    runtimeAgentId: "codex",
-    providerName: "Volcengine",
-    modelProvider: "volcengine",
-    baseUrl: "https://ark.cn-beijing.volces.com/api/v3",
-    wireApi: "responses",
-    modelReasoningEffort: "high",
-    usesApiKey: true,
-    configurableModelId: true,
-    configurableModelLabel: "Endpoint / model ID",
-    configurableModelPlaceholder: "ep-m-... or doubao-seed-...",
-    models: [
-      { id: DEFAULT_MODEL_ID, label: "Default" },
-      { id: "doubao-seed-1-6-lite-251015", label: "Doubao Seed 1.6 Lite" },
-      { id: "doubao-seed-2-0-lite-260428", label: "Doubao Seed 2.0 Lite" },
-      { id: "doubao-seed-1-6", label: "Doubao Seed 1.6" },
-      { id: "doubao-seed-2-0-code-preview-latest", label: "Doubao Seed Code" },
-    ],
-  },
-  {
-    id: "custom",
-    label: "Custom",
-    runtimeAgentId: "codex",
-    providerName: "Custom",
-    modelProvider: "custom",
-    wireApi: "responses",
-    usesApiKey: true,
-    models: [{ id: DEFAULT_MODEL_ID, label: "Default" }],
-  },
-  {
-    id: "api-openai",
-    label: "OpenAI API",
-    runtimeAgentId: "api",
-    providerName: "OpenAI",
-    modelProvider: "openai-api",
-    baseUrl: "https://api.openai.com/v1",
-    usesApiKey: true,
-    models: [
-      { id: DEFAULT_MODEL_ID, label: "Default" },
-      { id: "gpt-4o", label: "GPT-4o" },
-      { id: "gpt-4o-mini", label: "GPT-4o Mini" },
-    ],
-  },
-  {
-    id: "api-anthropic",
-    label: "Anthropic API",
-    runtimeAgentId: "api",
-    providerName: "Anthropic",
-    modelProvider: "anthropic-api",
-    baseUrl: "https://api.anthropic.com/v1",
-    usesApiKey: true,
-    apiKeyHeaderName: "x-api-key",
-    apiKeyPrefix: "",
-    extraHeaders: { "anthropic-version": "2023-06-01" },
-    models: [
-      { id: DEFAULT_MODEL_ID, label: "Default" },
-      { id: "claude-sonnet-4-6", label: "Claude Sonnet" },
-      { id: "claude-opus-4-6", label: "Claude Opus" },
-    ],
-  },
-  {
-    id: "api-deepseek",
-    label: "DeepSeek API",
-    runtimeAgentId: "api",
-    providerName: "DeepSeek",
-    modelProvider: "deepseek-api",
-    baseUrl: "https://api.deepseek.com/v1",
-    usesApiKey: true,
-    models: [
-      { id: DEFAULT_MODEL_ID, label: "Default" },
-      { id: "deepseek-v4-flash", label: "DeepSeek V4 Flash" },
-      { id: "deepseek-v4-pro", label: "DeepSeek V4 Pro" },
-    ],
-  },
-  {
-    id: "api-glm",
-    label: "GLM API",
-    runtimeAgentId: "api",
-    providerName: "Zhipu GLM",
-    modelProvider: "glm-api",
-    baseUrl: "https://open.bigmodel.cn/api/paas/v4",
-    usesApiKey: true,
-    models: [
-      { id: DEFAULT_MODEL_ID, label: "Default" },
-      { id: "glm-5.1", label: "GLM-5.1" },
-    ],
-  },
-  {
-    id: "api-kimi",
-    label: "Kimi API",
-    runtimeAgentId: "api",
-    providerName: "Kimi",
-    modelProvider: "kimi-api",
-    baseUrl: "https://api.moonshot.cn/v1",
-    usesApiKey: true,
-    models: [
-      { id: DEFAULT_MODEL_ID, label: "Default" },
-      { id: "kimi-k2.6", label: "Kimi K2.6" },
-    ],
-  },
-  {
-    id: "api-longcat",
-    label: "LongCat API",
-    runtimeAgentId: "api",
-    providerName: "LongCat",
-    modelProvider: "longcat-api",
-    baseUrl: "https://api.longcat.chat/openai/v1",
-    usesApiKey: true,
-    models: [
-      { id: DEFAULT_MODEL_ID, label: "Default" },
-      { id: "LongCat-Flash-Chat", label: "LongCat Flash Chat" },
-    ],
-  },
-  {
-    id: "api-mimo",
-    label: "MiMo API",
-    runtimeAgentId: "api",
-    providerName: "MiMo",
-    modelProvider: "mimo-api",
-    baseUrl: "https://api.xiaomimimo.com/v1",
-    usesApiKey: true,
-    models: [
-      { id: DEFAULT_MODEL_ID, label: "Default" },
-      { id: "mimo-v2.5-pro", label: "MiMo V2.5 Pro" },
-    ],
-  },
-  {
-    id: "api-openrouter",
-    label: "OpenRouter",
-    runtimeAgentId: "api",
-    providerName: "OpenRouter",
-    modelProvider: "openrouter-api",
-    baseUrl: "https://openrouter.ai/api/v1",
-    usesApiKey: true,
-    models: [
-      { id: DEFAULT_MODEL_ID, label: "Default" },
-      { id: "openai/gpt-4o", label: "OpenAI GPT-4o" },
-      { id: "anthropic/claude-sonnet-4.5", label: "Claude Sonnet" },
-      { id: "deepseek/deepseek-chat", label: "DeepSeek Chat" },
-    ],
-  },
-  {
-    id: "api-github-models",
-    label: "GitHub Models",
-    runtimeAgentId: "api",
-    providerName: "GitHub Models",
-    modelProvider: "github-models-api",
-    baseUrl: "https://models.github.ai/inference/v1",
-    usesApiKey: true,
-    models: [
-      { id: DEFAULT_MODEL_ID, label: "Default" },
-      { id: "openai/gpt-4o", label: "GPT-4o" },
-      { id: "xai/grok-3-mini", label: "Grok 3 Mini" },
-    ],
-  },
-  {
-    id: "api-together",
-    label: "Together",
-    runtimeAgentId: "api",
-    providerName: "Together",
-    modelProvider: "together-api",
-    baseUrl: "https://api.together.xyz/v1",
-    usesApiKey: true,
-    models: [
-      { id: DEFAULT_MODEL_ID, label: "Default" },
-      { id: "deepseek-ai/DeepSeek-V3.2", label: "DeepSeek V3.2" },
-    ],
-  },
-  {
-    id: "api-novita",
-    label: "Novita",
-    runtimeAgentId: "api",
-    providerName: "Novita",
-    modelProvider: "novita-api",
-    baseUrl: "https://api.novita.ai/v3/openai",
-    usesApiKey: true,
-    models: [
-      { id: DEFAULT_MODEL_ID, label: "Default" },
-      { id: "zai-org/glm-5.1", label: "GLM-5.1" },
-      { id: "moonshotai/kimi-k2.5", label: "Kimi K2.5" },
-    ],
-  },
-  {
-    id: "api-nvidia",
-    label: "NVIDIA",
-    runtimeAgentId: "api",
-    providerName: "NVIDIA",
-    modelProvider: "nvidia-api",
-    baseUrl: "https://integrate.api.nvidia.com/v1",
-    usesApiKey: true,
-    models: [
-      { id: DEFAULT_MODEL_ID, label: "Default" },
-      { id: "moonshotai/kimi-k2.5", label: "Kimi K2.5" },
-    ],
-  },
-  {
-    id: "api-siliconflow",
-    label: "SiliconFlow",
-    runtimeAgentId: "api",
-    providerName: "SiliconFlow",
-    modelProvider: "siliconflow-api",
-    baseUrl: "https://api.siliconflow.cn/v1",
-    usesApiKey: true,
-    models: [
-      { id: DEFAULT_MODEL_ID, label: "Default" },
-      { id: "deepseek-ai/DeepSeek-V3.2", label: "DeepSeek V3.2" },
-      { id: "zai-org/GLM-4.5", label: "GLM-4.5" },
-    ],
-  },
-  {
-    id: "api-alibaba-bailian",
-    label: "Bailian",
-    runtimeAgentId: "api",
-    providerName: "Alibaba Bailian",
-    modelProvider: "bailian-api",
-    baseUrl: "https://dashscope.aliyuncs.com/compatible-mode/v1",
-    usesApiKey: true,
-    models: [
-      { id: DEFAULT_MODEL_ID, label: "Default" },
-      { id: "qwen3-coder-plus", label: "Qwen3 Coder Plus" },
-      { id: "qwen-max", label: "Qwen Max" },
-    ],
-  },
-  {
-    id: "api-volcengine",
-    label: "Volcengine",
-    runtimeAgentId: "api",
-    providerName: "Volcengine",
-    modelProvider: "volcengine-api",
-    baseUrl: "https://ark.cn-beijing.volces.com/api/v3",
-    usesApiKey: true,
-    configurableModelId: true,
-    configurableModelLabel: "Endpoint / model ID",
-    configurableModelPlaceholder: "ep-m-... or doubao-seed-...",
-    models: [
-      { id: DEFAULT_MODEL_ID, label: "Default" },
-      { id: "doubao-seed-1-6-lite-251015", label: "Doubao Seed 1.6 Lite" },
-      { id: "doubao-seed-2-0-lite-260428", label: "Doubao Seed 2.0 Lite" },
-      { id: "doubao-seed-1-6", label: "Doubao Seed 1.6" },
-    ],
-  },
-  {
-    id: "api-tencent-hunyuan",
-    label: "Hunyuan",
-    runtimeAgentId: "api",
-    providerName: "Tencent Hunyuan",
-    modelProvider: "hunyuan-api",
-    baseUrl: "https://api.hunyuan.cloud.tencent.com/v1",
-    usesApiKey: true,
-    models: [
-      { id: DEFAULT_MODEL_ID, label: "Default" },
-      { id: "hunyuan-turbos-latest", label: "Hunyuan Turbos" },
-    ],
-  },
-  {
-    id: "api-minimax",
-    label: "MiniMax",
-    runtimeAgentId: "api",
-    providerName: "MiniMax",
-    modelProvider: "minimax-api",
-    baseUrl: "https://api.minimax.chat/v1",
-    usesApiKey: true,
-    models: [
-      { id: DEFAULT_MODEL_ID, label: "Default" },
-      { id: "MiniMax-M2", label: "MiniMax M2" },
-    ],
-  },
-  {
-    id: "api-azure-openai",
-    label: "Azure OpenAI",
-    runtimeAgentId: "api",
-    providerName: "Azure OpenAI",
-    modelProvider: "azure-openai-api",
-    baseUrl: "https://YOUR_RESOURCE_NAME.openai.azure.com/openai/deployments/YOUR_DEPLOYMENT",
-    usesApiKey: true,
-    models: [
-      { id: DEFAULT_MODEL_ID, label: "Default" },
-      { id: "gpt-4o", label: "GPT-4o" },
-    ],
-  },
-  {
-    id: "api-custom",
-    label: "Custom API",
-    runtimeAgentId: "api",
-    providerName: "Custom API",
-    modelProvider: "custom-api",
-    baseUrl: "https://example.com/v1",
-    usesApiKey: true,
-    models: [{ id: DEFAULT_MODEL_ID, label: "Default" }],
-  },
-];
-
 export function loadStoredTheme(storage: Pick<Storage, "getItem">): Theme {
   return storage.getItem(THEME_STORAGE_KEY) === "dark" ? "dark" : "light";
 }
@@ -879,7 +524,7 @@ function loadStoredLanguage(storage: Pick<Storage, "getItem">): Language {
   return storage.getItem(LANGUAGE_STORAGE_KEY) === "en" ? "en" : "zh";
 }
 
-export type ActiveFeature = "chat" | "tasks" | "teams" | "workflow" | "skills" | "configs" | "settings";
+export type ActiveFeature = "chat" | "tasks" | "teams" | "workflow" | "skills" | "runtimes" | "configs" | "settings";
 type MaybePromise = void | Promise<void>;
 export type TaskStatusFilterValue = "all" | TaskProgress;
 const WORKFLOW_THINKING_MESSAGE = "Agent is thinking...";
@@ -931,7 +576,13 @@ const SLASH_COMMANDS: SlashCommandSuggestion[] = [
 ];
 
 export function appShellClass(activeFeature: ActiveFeature): string {
-  return activeFeature === "tasks" || activeFeature === "teams" || activeFeature === "workflow" ? `shell ${activeFeature}-shell` : "shell";
+  return activeFeature === "tasks" || activeFeature === "teams" || activeFeature === "workflow" || activeFeature === "skills" || activeFeature === "runtimes"
+    ? `shell ${activeFeature}-shell`
+    : "shell";
+}
+
+export function missingAppCapabilityMessage(action: string): string {
+  return `${action} needs a full app restart to load the updated Electron API.`;
 }
 
 export function taskDetailIdFor(
@@ -1001,6 +652,23 @@ function formatTime(value: number): string {
 function formatDuration(value: number): string {
   if (value < 1000) return `${Math.max(0, Math.round(value))}ms`;
   return `${Math.max(0, value / 1000).toFixed(1)}s`;
+}
+
+function formatBalanceNumber(value: number): string {
+  return new Intl.NumberFormat("en-US", { maximumFractionDigits: 4 }).format(value);
+}
+
+function formatBalanceValue(item: ProviderBalanceResult["items"][number]): string {
+  if (typeof item.remaining !== "number") return item.invalidMessage ?? "Unavailable";
+  return `${formatBalanceNumber(item.remaining)}${item.unit ? ` ${item.unit}` : ""}`;
+}
+
+function formatBalanceDetail(item: ProviderBalanceResult["items"][number], language: Language): string {
+  const detailParts: string[] = [];
+  if (typeof item.total === "number") detailParts.push(`${language === "zh" ? "总额" : "Total"} ${formatBalanceNumber(item.total)}`);
+  if (typeof item.used === "number") detailParts.push(`${language === "zh" ? "已用" : "Used"} ${formatBalanceNumber(item.used)}`);
+  if (item.invalidMessage) detailParts.push(item.invalidMessage);
+  return detailParts.join(" · ");
 }
 
 function agentTestEventLabel(type: AgentTestTranscriptItem["type"]): string {
@@ -1213,21 +881,12 @@ function uniqueId(base: string, existingIds: string[]): string {
 }
 
 function createChannel(agentId: AgentId, existingIds: string[]): AgentChannel {
-  const id = uniqueId(`${agentId}-channel`, existingIds);
+  const id = uniqueId(`${agentId}-config`, existingIds);
   return {
     id,
     agentId,
-    label: agentId === "codex" ? "New Codex Channel" : agentId === "claude" ? "New Claude Channel" : "New API Channel",
+    label: agentId === "codex" ? "New Codex Config" : agentId === "claude" ? "New Claude Config" : "New API Config",
     models: [{ id: DEFAULT_MODEL_ID, label: "Default" }],
-  };
-}
-
-function createAgentChannel(agentId: AgentId, agentName: string, existingIds: string[]): AgentChannel {
-  const id = uniqueId(`${agentName.toLowerCase().replace(/[^a-z0-9]+/g, "-").replace(/^-|-$/g, "") || "agent"}-channel`, existingIds);
-  return {
-    ...createChannel(agentId, existingIds),
-    id,
-    label: agentName,
   };
 }
 
@@ -1295,7 +954,18 @@ function apiKeyFromChannelHeaders(channel: AgentChannel | undefined, preset: Age
 
 function providerKeyValue(providerKeys: Record<string, string>, preset: AgentProviderPreset | undefined, channel: AgentChannel | undefined): string {
   if (!preset) return "";
-  return providerKeys[preset.id] ?? apiKeyFromChannelHeaders(channel, preset);
+  return apiKeyFromChannelHeaders(channel, preset) || providerKeys[preset.id] || "";
+}
+
+export function rememberProviderKeyFromChannel(
+  providerKeys: Record<string, string>,
+  preset: AgentProviderPreset | undefined,
+  channel: AgentChannel | undefined,
+): Record<string, string> {
+  if (!preset?.usesApiKey) return providerKeys;
+  const apiKey = apiKeyFromChannelHeaders(channel, preset);
+  if (!apiKey || providerKeys[preset.id] === apiKey) return providerKeys;
+  return { ...providerKeys, [preset.id]: apiKey };
 }
 
 export function applyProviderModelIdToAgentConfig(
@@ -1339,11 +1009,11 @@ function createConfiguredAgent(channels: AgentChannel[], existingIds: string[]):
   };
 }
 
-export function applyAgentTemplate(agent: ConfiguredAgent, template: AgentTemplate): ConfiguredAgent {
+export function applySkillTemplate(agent: ConfiguredAgent, template: SkillTemplate): ConfiguredAgent {
   return {
     ...agent,
-    name: template.name,
-    description: template.description,
+    name: skillDisplayName(template),
+    description: skillDisplayDescription(template),
     prompt: template.prompt,
     tags: [...template.tags],
   };
@@ -1917,8 +1587,14 @@ export function App() {
   const [agentTestResults, setAgentTestResults] = useState<Record<string, AgentTestUiState>>({});
   const [testingAgentId, setTestingAgentId] = useState<string | undefined>();
   const [agentTestTick, setAgentTestTick] = useState(0);
+  const [balanceResults, setBalanceResults] = useState<Record<string, ProviderBalanceResult>>({});
+  const [balanceLoadingChannelId, setBalanceLoadingChannelId] = useState<string | undefined>();
   const [paletteOpen, setPaletteOpen] = useState(false);
   const [agentContextMenu, setAgentContextMenu] = useState<{ agentId: string; x: number; y: number } | undefined>();
+  const [chatContextMenu, setChatContextMenu] = useState<{ chatId: string; x: number; y: number } | undefined>();
+  const [workflowContextMenu, setWorkflowContextMenu] = useState<{ workflowId: string; x: number; y: number } | undefined>();
+  const [configContextMenu, setConfigContextMenu] = useState<{ channelId: string; x: number; y: number } | undefined>();
+  const [workflowRenameDraft, setWorkflowRenameDraft] = useState<{ workflowId: string; title: string } | undefined>();
   const transcriptRef = useRef<HTMLElement>(null);
   const stickToBottomRef = useRef(true);
   const gChordRef = useRef(0);
@@ -1974,8 +1650,13 @@ export function App() {
   }, [snapshot.configuredAgents, selectedConfiguredAgentId]);
 
   useEffect(() => {
-    if (!agentContextMenu) return;
-    const close = (): void => setAgentContextMenu(undefined);
+    if (!agentContextMenu && !chatContextMenu && !workflowContextMenu && !configContextMenu) return;
+    const close = (): void => {
+      setAgentContextMenu(undefined);
+      setChatContextMenu(undefined);
+      setWorkflowContextMenu(undefined);
+      setConfigContextMenu(undefined);
+    };
     const handleKeyDown = (event: globalThis.KeyboardEvent): void => {
       if (event.key === "Escape") close();
     };
@@ -1987,7 +1668,7 @@ export function App() {
       window.removeEventListener("scroll", close, true);
       window.removeEventListener("keydown", handleKeyDown);
     };
-  }, [agentContextMenu]);
+  }, [agentContextMenu, chatContextMenu, workflowContextMenu, configContextMenu]);
 
   function applyPersistedWorkflowDraft(draft: WorkflowDraftState): void {
     workflowDraftHydratingRef.current = true;
@@ -2124,8 +1805,7 @@ export function App() {
     if (configDirty) return;
     setConfigChannels(snapshot.channels);
     setSelectedConfigChannelId((current) => {
-      if (current && snapshot.channels.some((channel) => channel.id === current)) return current;
-      return snapshot.channels[0]?.id ?? "";
+      return configChannelForSelection(snapshot.channels, current)?.id ?? "";
     });
   }, [configDirty, snapshot.channels]);
 
@@ -2166,7 +1846,7 @@ export function App() {
   }, [snapshot.channels, workflowAgentId, workflowChannelId]);
 
   useEffect(() => {
-    if (activeFeature !== "configs" || pluginCatalogStatus || codexPluginCatalog.length > 0) return;
+    if (activeFeature !== "runtimes" || pluginCatalogStatus || codexPluginCatalog.length > 0) return;
     void loadCodexPluginCatalog();
   }, [activeFeature, codexPluginCatalog.length, pluginCatalogStatus]);
 
@@ -2268,7 +1948,7 @@ export function App() {
         return;
       }
       if (Date.now() - gChordRef.current < 900) {
-        const navMap: Record<string, ActiveFeature> = { c: "chat", t: "tasks", w: "teams", f: "workflow", s: "configs" };
+        const navMap: Record<string, ActiveFeature> = { c: "chat", t: "tasks", w: "teams", f: "workflow", r: "runtimes", s: "configs" };
         const feature = navMap[event.key.toLowerCase()];
         if (feature) {
           event.preventDefault();
@@ -2380,9 +2060,48 @@ export function App() {
     setConfigDirty(true);
     setConfigStatus("");
     setSelectedConfigChannelId((current) => {
-      if (current && next.some((channel) => channel.id === current)) return current;
-      return next[0]?.id ?? "";
+      return configChannelForSelection(next, current)?.id ?? "";
     });
+  }
+
+  function addConfigChannel(): void {
+    const next = [...configChannels, createChannel("codex", configChannels.map((channel) => channel.id))];
+    updateConfigChannels(next);
+    setSelectedConfigChannelId(next[next.length - 1]?.id ?? "");
+  }
+
+  function openConfigContextMenu(event: MouseEvent, channelId: string): void {
+    event.preventDefault();
+    event.stopPropagation();
+    setAgentContextMenu(undefined);
+    setChatContextMenu(undefined);
+    setWorkflowContextMenu(undefined);
+    setSelectedConfigChannelId(channelId);
+    setConfigContextMenu({ channelId, x: event.clientX, y: event.clientY });
+  }
+
+  function deleteConfigChannel(channelId: string): void {
+    setConfigContextMenu(undefined);
+    const referencedAgent = snapshot.configuredAgents.find((agent) => agent.channelId === channelId);
+    if (referencedAgent) {
+      setConfigStatus(`Config is used by ${referencedAgent.name || referencedAgent.id}`);
+      return;
+    }
+    if (configChannels.length <= 1) {
+      setConfigStatus("Keep at least one config");
+      return;
+    }
+    const next = configChannels.filter((channel) => channel.id !== channelId);
+    setConfigChannels(next);
+    setConfigDirty(true);
+    setConfigStatus("");
+    setBalanceResults((current) => {
+      if (!(channelId in current)) return current;
+      const nextResults = { ...current };
+      delete nextResults[channelId];
+      return nextResults;
+    });
+    setSelectedConfigChannelId((current) => (current === channelId ? (next[0]?.id ?? "") : (configChannelForSelection(next, current)?.id ?? next[0]?.id ?? "")));
   }
 
   async function persistChannelConfig(): Promise<AppSnapshot> {
@@ -2390,8 +2109,7 @@ export function App() {
     setConfigChannels(next.channels);
     setConfigDirty(false);
     setSelectedConfigChannelId((current) => {
-      if (current && next.channels.some((channel) => channel.id === current)) return current;
-      return next.channels[0]?.id ?? "";
+      return configChannelForSelection(next.channels, current)?.id ?? "";
     });
     setSnapshot(next);
     return next;
@@ -2411,29 +2129,44 @@ export function App() {
     setSnapshot(next);
   }
 
-  async function addConfiguredAgent(template?: AgentTemplate): Promise<void> {
+  async function addConfiguredAgent(template?: SkillTemplate): Promise<void> {
     const existingAgentIds = snapshot.configuredAgents.map((agent) => agent.id);
     let nextAgent = createConfiguredAgent(configChannels, existingAgentIds);
     if (template) {
       nextAgent = {
-        ...applyAgentTemplate(nextAgent, template),
+        ...applySkillTemplate(nextAgent, template),
         id: uniqueId(template.id, existingAgentIds),
       };
     }
+    let availableChannels = configChannels;
+    if (configDirty) {
+      const channelSnapshot = await persistChannelConfig();
+      availableChannels = channelSnapshot.channels;
+    }
     const defaultPreset = AGENT_PROVIDER_PRESETS[0]!;
-    const nextChannel = applyProviderPresetToChannel(
-      createAgentChannel(defaultPreset.runtimeAgentId, nextAgent.name, configChannels.map((channel) => channel.id)),
-      defaultPreset,
-      providerKeys[defaultPreset.id] ?? "",
-    );
-    nextAgent.channelId = nextChannel.id;
-    nextAgent.runtimeAgentId = nextChannel.agentId;
+    const defaultChannel =
+      availableChannels.find((channel) => channel.id === defaultChannelForAgent(defaultPreset.runtimeAgentId, availableChannels) && channel.agentId === defaultPreset.runtimeAgentId) ??
+      availableChannels.find((channel) => channel.agentId === defaultPreset.runtimeAgentId);
+    if (defaultChannel) {
+      nextAgent.channelId = defaultChannel.id;
+      nextAgent.runtimeAgentId = defaultChannel.agentId;
+      nextAgent.modelId = DEFAULT_MODEL_ID;
+      setSelectedConfigChannelId(defaultChannel.id);
+    } else {
+      const nextChannel = applyProviderPresetToChannel(
+        createChannel(defaultPreset.runtimeAgentId, availableChannels.map((channel) => channel.id)),
+        defaultPreset,
+        providerKeys[defaultPreset.id] ?? "",
+      );
+      nextAgent.channelId = nextChannel.id;
+      nextAgent.runtimeAgentId = nextChannel.agentId;
+      nextAgent.modelId = DEFAULT_MODEL_ID;
+      const channelSnapshot = await window.multiAgentChat.saveModelChannels([...availableChannels, nextChannel]);
+      setConfigChannels(channelSnapshot.channels);
+      setConfigDirty(false);
+      setSelectedConfigChannelId(nextChannel.id);
+    }
     setSelectedConfiguredAgentId(nextAgent.id);
-    const nextChannels = [...configChannels, nextChannel];
-    const channelSnapshot = await window.multiAgentChat.saveModelChannels(nextChannels);
-    setConfigChannels(channelSnapshot.channels);
-    setConfigDirty(false);
-    setSelectedConfigChannelId(nextChannel.id);
     const agentSnapshot = await window.multiAgentChat.saveConfiguredAgents([nextAgent, ...snapshot.configuredAgents]);
     setSnapshot(agentSnapshot);
   }
@@ -2446,8 +2179,103 @@ export function App() {
   function openAgentContextMenu(event: MouseEvent, agentId: string): void {
     event.preventDefault();
     event.stopPropagation();
+    setChatContextMenu(undefined);
+    setWorkflowContextMenu(undefined);
+    setConfigContextMenu(undefined);
     setSelectedConfiguredAgentId(agentId);
     setAgentContextMenu({ agentId, x: event.clientX, y: event.clientY });
+  }
+
+  function openChatContextMenu(event: MouseEvent, chatId: string): void {
+    event.preventDefault();
+    event.stopPropagation();
+    setAgentContextMenu(undefined);
+    setWorkflowContextMenu(undefined);
+    setConfigContextMenu(undefined);
+    setChatContextMenu({ chatId, x: event.clientX, y: event.clientY });
+  }
+
+  async function deleteChat(chatId: string): Promise<void> {
+    setChatContextMenu(undefined);
+    if (typeof window.multiAgentChat.deleteChat !== "function") {
+      window.alert?.(missingAppCapabilityMessage("Delete chat"));
+      return;
+    }
+    const next = await window.multiAgentChat.deleteChat(chatId);
+    setSnapshot(next);
+    if (activeChat?.id === chatId) setPrompt("");
+  }
+
+  function openWorkflowContextMenu(event: MouseEvent, workflowId: string): void {
+    event.preventDefault();
+    event.stopPropagation();
+    setAgentContextMenu(undefined);
+    setChatContextMenu(undefined);
+    setConfigContextMenu(undefined);
+    setWorkflowContextMenu({ workflowId, x: event.clientX, y: event.clientY });
+  }
+
+  function resetWorkflowLocalDraft(): void {
+    abandonWorkflowGrillRequest();
+    setWorkflowRunning(false);
+    setWorkflowObjective("");
+    setWorkflowReply("");
+    setWorkflowError(undefined);
+    setWorkflowMessages(initialWorkflowMessages());
+    setWorkflowGraph(createWorkflowGraphFromObjective(""));
+    setWorkflowGraphReady(false);
+    setWorkflowRunProgress([]);
+    setWorkflowRunContextDocument("");
+    setWorkflowContextDocument("");
+    setWorkflowFinalReport("");
+    setWorkflowRunIds([]);
+    setWorkflowAgentSessionId(undefined);
+    setWorkflowId(createWorkflowId());
+    setWorkflowTitle("Untitled workflow");
+    setWorkflowStatus("draft");
+    setWorkflowRevision(1);
+    setWorkflowCreatedAt(Date.now());
+  }
+
+  function startWorkflowRename(workflowId: string): void {
+    const workflow = snapshot.workflowStore.workflows.find((item) => item.workflowId === workflowId);
+    if (!workflow) return;
+    setWorkflowContextMenu(undefined);
+    setWorkflowRenameDraft({ workflowId, title: workflow.title });
+  }
+
+  async function confirmWorkflowRename(): Promise<void> {
+    if (!workflowRenameDraft) return;
+    const title = workflowRenameDraft.title.trim();
+    if (!title) return;
+    if (typeof window.multiAgentChat.renameWorkflow !== "function") {
+      window.alert?.(missingAppCapabilityMessage("Rename workflow"));
+      return;
+    }
+    const next = await window.multiAgentChat.renameWorkflow(workflowRenameDraft.workflowId, title);
+    setWorkflowRenameDraft(undefined);
+    setSnapshot(next);
+    if (next.workflowDraft) applyPersistedWorkflowDraft(next.workflowDraft);
+  }
+
+  async function deleteWorkflow(targetWorkflowId: string): Promise<void> {
+    setWorkflowContextMenu(undefined);
+    if (workflowRunning && targetWorkflowId === workflowId) return;
+    if (typeof window.multiAgentChat.deleteWorkflow !== "function") {
+      window.alert?.(missingAppCapabilityMessage("Delete workflow"));
+      return;
+    }
+    const workflow = snapshot.workflowStore.workflows.find((item) => item.workflowId === targetWorkflowId);
+    const confirmed =
+      typeof window.confirm === "function" ? window.confirm(`Delete workflow "${workflow?.title ?? targetWorkflowId}" and its run data?`) : true;
+    if (!confirmed) return;
+    const next = await window.multiAgentChat.deleteWorkflow(targetWorkflowId);
+    setSnapshot(next);
+    if (next.workflowDraft) {
+      applyPersistedWorkflowDraft(next.workflowDraft);
+    } else if (targetWorkflowId === workflowId) {
+      resetWorkflowLocalDraft();
+    }
   }
 
   function updateConfiguredAgent(agentId: string, updater: (agent: ConfiguredAgent) => ConfiguredAgent): void {
@@ -2455,52 +2283,50 @@ export function App() {
     void saveConfiguredAgents(snapshot.configuredAgents.map((agent) => (agent.id === agentId ? { ...updater(agent), updatedAt: now } : agent)));
   }
 
-  async function testConfiguredAgent(agentId: string): Promise<void> {
-    const agent = snapshot.configuredAgents.find((item) => item.id === agentId);
-    const channel = agent ? configChannels.find((item) => item.id === agent.channelId) : undefined;
+  async function testRuntimeChannel(channelId: string): Promise<void> {
+    const channel = configChannels.find((item) => item.id === channelId);
     const startedAt = Date.now();
     const baseState: AgentTestUiState = {
-      agentId,
+      agentId: channelId,
       state: "running",
       phase: "Preparing",
-      message: "Preparing agent test...",
+      message: "Preparing execution config test...",
       startedAt,
       testedAt: startedAt,
       elapsedMs: 0,
-      runtimeAgentId: agent?.runtimeAgentId ?? "codex",
-      channelId: agent?.channelId ?? "",
-      modelId: agent?.modelId ?? DEFAULT_MODEL_ID,
+      runtimeAgentId: channel?.agentId ?? "codex",
+      channelId,
+      modelId: DEFAULT_MODEL_ID,
       providerLabel: channel?.providerName ?? channel?.label ?? "Provider",
       transcript: [],
     };
-    setTestingAgentId(agentId);
+    setTestingAgentId(channelId);
     setAgentTestTick((value) => value + 1);
-    setAgentTestResults((current) => ({ ...current, [agentId]: baseState }));
+    setAgentTestResults((current) => ({ ...current, [channelId]: baseState }));
     setConfigStatus("");
     try {
       setAgentTestResults((current) => ({
         ...current,
-        [agentId]: {
-          ...(current[agentId] ?? baseState),
+        [channelId]: {
+          ...(current[channelId] ?? baseState),
           phase: "Saving config",
-          message: "Saving current channel, model, and credential settings before testing.",
+          message: "Saving current provider, model, plugin, and credential settings before testing.",
         },
       }));
       await persistChannelConfig();
-      await saveConfiguredAgents(snapshot.configuredAgents);
       setAgentTestResults((current) => ({
         ...current,
-        [agentId]: {
-          ...(current[agentId] ?? baseState),
+        [channelId]: {
+          ...(current[channelId] ?? baseState),
           phase: "Running test",
-          message: `Starting ${agentLabel(agent?.runtimeAgentId ?? "codex")} with ${baseState.providerLabel}.`,
+          message: `Starting ${agentLabel(channel?.agentId ?? "codex")} with ${baseState.providerLabel}.`,
         },
       }));
-      const result = await window.multiAgentChat.testConfiguredAgent(agentId);
+      const result = await window.multiAgentChat.testRuntimeChannel(channelId);
       setAgentTestResults((current) => ({
         ...current,
-        [agentId]: {
-          ...(current[agentId] ?? baseState),
+        [channelId]: {
+          ...(current[channelId] ?? baseState),
           agentId: result.agentId,
           state: result.ok ? "passed" : "failed",
           phase: result.ok ? "Completed" : "Failed",
@@ -2515,21 +2341,43 @@ export function App() {
           ...(result.output ? { output: result.output } : {}),
         },
       }));
-      setConfigStatus(result.ok ? "Agent test passed" : "Agent test failed");
+      setConfigStatus(result.ok ? "Config test passed" : "Config test failed");
     } catch (error) {
       setAgentTestResults((current) => ({
         ...current,
-        [agentId]: {
-          ...(current[agentId] ?? baseState),
+        [channelId]: {
+          ...(current[channelId] ?? baseState),
           state: "failed",
           phase: "Failed",
           message: error instanceof Error ? error.message : String(error),
           elapsedMs: Date.now() - startedAt,
         },
       }));
-      setConfigStatus("Agent test failed");
+      setConfigStatus("Config test failed");
     } finally {
       setTestingAgentId(undefined);
+    }
+  }
+
+  async function queryRuntimeChannelBalance(channelId: string): Promise<void> {
+    const api = window.multiAgentChat as typeof window.multiAgentChat & {
+      queryRuntimeChannelBalance?: (targetChannelId: string) => Promise<ProviderBalanceResult>;
+    };
+    if (typeof api.queryRuntimeChannelBalance !== "function") {
+      setConfigStatus(missingAppCapabilityMessage("Provider balance query"));
+      return;
+    }
+    setBalanceLoadingChannelId(channelId);
+    setConfigStatus("");
+    try {
+      await persistChannelConfig();
+      const result = await api.queryRuntimeChannelBalance(channelId);
+      setBalanceResults((current) => ({ ...current, [channelId]: result }));
+      setConfigStatus(result.status === "success" ? "Balance updated" : result.message);
+    } catch (error) {
+      setConfigStatus(error instanceof Error ? error.message : String(error));
+    } finally {
+      setBalanceLoadingChannelId(undefined);
     }
   }
 
@@ -2554,17 +2402,13 @@ export function App() {
     }
   }
 
-  function addConfigChannel(agentId: AgentId): void {
-    const next = [...configChannels, createChannel(agentId, configChannels.map((channel) => channel.id))];
-    updateConfigChannels(next);
-    setSelectedConfigChannelId(next[next.length - 1]?.id ?? "");
-  }
-
-  function removeConfigChannel(channelId: string): void {
-    updateConfigChannels(configChannels.filter((channel) => channel.id !== channelId));
-  }
-
   function updateConfigChannel(channelId: string, updater: (channel: AgentChannel) => AgentChannel): void {
+    setBalanceResults((current) => {
+      if (!(channelId in current)) return current;
+      const next = { ...current };
+      delete next[channelId];
+      return next;
+    });
     updateConfigChannels(configChannels.map((channel) => (channel.id === channelId ? updater(channel) : channel)));
   }
 
@@ -2600,6 +2444,22 @@ export function App() {
     };
     if (!api.readLocalFile) throw new Error("文件预览能力需要重启应用后生效。");
     return api.readLocalFile(filePath);
+  }
+
+  async function installSkill(templateId: string, target: SkillInstallTarget): Promise<InstalledSkillResult> {
+    const api = window.multiAgentChat as typeof window.multiAgentChat & {
+      installSkill?: (request: { templateId: string; target: SkillInstallTarget }) => Promise<InstalledSkillResult>;
+    };
+    if (!api.installSkill) throw new Error("技能安装能力需要重启应用后生效。");
+    return api.installSkill({ templateId, target });
+  }
+
+  async function uninstallSkill(templateId: string, target: SkillInstallTarget): Promise<UninstalledSkillResult> {
+    const api = window.multiAgentChat as typeof window.multiAgentChat & {
+      uninstallSkill?: (request: { templateId: string; target: SkillInstallTarget }) => Promise<UninstalledSkillResult>;
+    };
+    if (!api.uninstallSkill) throw new Error("技能卸载能力需要重启应用后生效。");
+    return api.uninstallSkill({ templateId, target });
   }
 
   async function clearHistory(): Promise<void> {
@@ -3402,6 +3262,13 @@ export function App() {
             <span>{text.nav.skills}</span>
           </button>
           <button
+            className={`feature-nav-item ${activeFeature === "runtimes" ? "is-active" : ""}`}
+            onClick={() => setActiveFeature("runtimes")}
+          >
+            <Cpu size={15} />
+            <span>{text.nav.runtimes}</span>
+          </button>
+          <button
             className={`feature-nav-item ${activeFeature === "configs" ? "is-active" : ""}`}
             onClick={() => setActiveFeature("configs")}
           >
@@ -3439,9 +3306,11 @@ export function App() {
                       ? text.nav.workflow
                       : activeFeature === "skills"
                         ? text.nav.skills
-                        : activeFeature === "settings"
-                          ? text.nav.settings
-                          : text.nav.configuration}
+                        : activeFeature === "runtimes"
+                          ? text.nav.runtimes
+                          : activeFeature === "settings"
+                            ? text.nav.settings
+                            : text.nav.configuration}
             </p>
           </div>
         </div>
@@ -3453,32 +3322,17 @@ export function App() {
         </button>
 
         {activeFeature === "chat" ? (
-          <section className="resource-panel chat-list-panel">
-            <div className="panel-header">
-              <span>Chats</span>
-              <SquarePen size={14} />
-            </div>
-            <div className="new-chat-menu-wrap">
-              <button className="new-chat-compact-btn" onClick={() => void createChat()}>
-                <Plus size={13} />
-              <span>{text.chrome.newChat}</span>
-              </button>
-            </div>
-            <div className="chat-list">
-              {snapshot.chats.map((chat) => (
-                <button
-                  key={chat.id}
-                  className={`chat-row ${chat.id === activeChat?.id ? "is-active" : ""}`}
-                  onClick={() => void selectChat(chat.id)}
-                  title={chat.title}
-                >
-                  <span className={`runtime-dot ${agentAccent(chat.agentId)} ${chat.running ? "is-pulsing" : ""}`} />
-                  <strong>{chat.title}</strong>
-                  <span>{chat.running ? "运行中" : formatTime(chat.updatedAt)}</span>
-                </button>
-              ))}
-            </div>
-          </section>
+          <ChatHistoryPanel
+            chats={snapshot.chats}
+            activeChatId={activeChat?.id}
+            contextMenu={chatContextMenu}
+            newChatLabel={text.chrome.newChat}
+            runningLabel={language === "zh" ? "运行中" : "Running"}
+            onCreateChat={createChat}
+            onSelectChat={selectChat}
+            onOpenContextMenu={openChatContextMenu}
+            onDeleteChat={deleteChat}
+          />
         ) : activeFeature === "tasks" ? (
           <section className="resource-panel task-list-panel">
             <div className="panel-header">
@@ -3512,8 +3366,16 @@ export function App() {
             workflows={snapshot.workflowStore.workflows}
             activeWorkflowId={snapshot.workflowStore.activeWorkflowId}
             running={workflowRunning}
+            contextMenu={workflowContextMenu}
+            renameDraft={workflowRenameDraft}
             onNewWorkflow={createNewWorkflow}
             onSelectWorkflow={selectWorkflow}
+            onOpenContextMenu={openWorkflowContextMenu}
+            onStartRename={startWorkflowRename}
+            onRenameDraftChange={(title) => setWorkflowRenameDraft((current) => (current ? { ...current, title } : current))}
+            onConfirmRename={confirmWorkflowRename}
+            onCancelRename={() => setWorkflowRenameDraft(undefined)}
+            onDeleteWorkflow={deleteWorkflow}
           />
         ) : activeFeature === "skills" ? (
           <section className="resource-panel skills-nav-panel">
@@ -3522,10 +3384,10 @@ export function App() {
               <Wand2 size={14} />
             </div>
             <div className="skills-nav-list">
-              {AGENT_TEMPLATES.length === 0 ? (
+              {SKILL_TEMPLATES.length === 0 ? (
                 <div className="empty-state config-empty">{text.chrome.noSkills}</div>
               ) : (
-                AGENT_TEMPLATES.map((template) => (
+                SKILL_TEMPLATES.map((template) => (
                   <div key={template.id} className="skills-nav-row">
                     <strong>{template.name}</strong>
                     <span>{template.tags.join(", ")}</span>
@@ -3556,20 +3418,6 @@ export function App() {
                 <Plus size={13} />
                 <span>{text.chrome.newAgent}</span>
               </button>
-              <details className="agent-template-menu">
-                <summary>
-                  <FileInput size={13} />
-                  <span>{text.chrome.importTemplate}</span>
-                </summary>
-                <div className="agent-template-menu-list" aria-label="Agent templates">
-                  {AGENT_TEMPLATES.map((template) => (
-                    <button key={template.id} type="button" className="agent-template-menu-item" onClick={() => void addConfiguredAgent(template)}>
-                      <strong>{template.name}</strong>
-                      <span>{template.description}</span>
-                    </button>
-                  ))}
-                </div>
-              </details>
             </div>
             <div className="config-nav-list">
               {snapshot.configuredAgents.length === 0 ? (
@@ -3621,9 +3469,11 @@ export function App() {
                     ? "workflow-content"
                     : activeFeature === "skills"
                       ? "skills-content"
-                      : activeFeature === "settings"
-                        ? "settings-content"
-                        : "config-content"
+                      : activeFeature === "runtimes"
+                        ? "runtime-content"
+                        : activeFeature === "settings"
+                          ? "settings-content"
+                          : "config-content"
         }`}
       >
         {activeFeature === "tasks" ? (
@@ -3711,13 +3561,34 @@ export function App() {
             language={language}
           />
         ) : activeFeature === "skills" ? (
-          <SkillsPage
+          <SkillsPage language={language} templates={SKILL_TEMPLATES} onInstallSkill={installSkill} onUninstallSkill={uninstallSkill} />
+        ) : activeFeature === "runtimes" ? (
+          <RuntimePage
             language={language}
-            templates={AGENT_TEMPLATES}
-            onCreateAgent={(template) => {
-              setActiveFeature("configs");
-              return addConfiguredAgent(template);
-            }}
+            channels={configChannels}
+            selectedChannelId={selectedConfigChannelId}
+            providerKeys={providerKeys}
+            codexPluginCatalog={codexPluginCatalog}
+            pluginCatalogStatus={pluginCatalogStatus}
+            agentTestResults={agentTestResults}
+            testingAgentId={testingAgentId}
+            agentTestTick={agentTestTick}
+            balanceResults={balanceResults}
+            balanceLoadingChannelId={balanceLoadingChannelId}
+            contextMenu={configContextMenu}
+            onUpdateChannel={updateConfigChannel}
+            onAddModel={addConfigModel}
+            onUpdateModel={updateConfigModel}
+            onRemoveModel={removeConfigModel}
+            onSave={saveChannelConfig}
+            onLoadCodexPluginCatalog={loadCodexPluginCatalog}
+            onSelectChannel={setSelectedConfigChannelId}
+            onAddConfig={addConfigChannel}
+            onOpenContextMenu={openConfigContextMenu}
+            onDeleteConfig={deleteConfigChannel}
+            onTestChannel={testRuntimeChannel}
+            onQueryBalance={queryRuntimeChannelBalance}
+            onUpdateProviderKey={updateProviderKey}
           />
         ) : activeFeature === "settings" ? (
           <SettingsPage language={language} onLanguageChange={setLanguage} />
@@ -3727,25 +3598,11 @@ export function App() {
             channels={configChannels}
             configuredAgents={snapshot.configuredAgents}
             selectedConfiguredAgentId={selectedConfiguredAgentId}
-            providerKeys={providerKeys}
             status={configStatus}
-            codexPluginCatalog={codexPluginCatalog}
-            pluginCatalogStatus={pluginCatalogStatus}
-            agentTestResults={agentTestResults}
-            testingAgentId={testingAgentId}
-            agentTestTick={agentTestTick}
-            onUpdateChannel={updateConfigChannel}
-            onAddModel={addConfigModel}
-            onUpdateModel={updateConfigModel}
-            onRemoveModel={removeConfigModel}
             onSave={saveChannelConfig}
-            onLoadCodexPluginCatalog={loadCodexPluginCatalog}
             onAddConfiguredAgent={addConfiguredAgent}
             onSelectConfiguredAgent={setSelectedConfiguredAgentId}
-            onUpdateProviderKey={updateProviderKey}
             onUpdateConfiguredAgent={updateConfiguredAgent}
-            onRemoveConfiguredAgent={removeConfiguredAgent}
-            onTestConfiguredAgent={testConfiguredAgent}
           />
         ) : activeChat ? (
           <>
@@ -4719,7 +4576,7 @@ function TeamRunDetail({
         <span>Prompt</span>
         <i />
       </div>
-      <pre className="team-run-prompt">{run.prompt}</pre>
+      <MarkdownDocument className="team-run-prompt" text={run.prompt} />
 
       <div className="task-section-divider">
         <span>Target</span>
@@ -4731,7 +4588,7 @@ function TeamRunDetail({
         <span>Shared Context Snapshot</span>
         <i />
       </div>
-      <pre className="team-run-context">{run.sharedContextSnapshot || "No shared context snapshot."}</pre>
+      <MarkdownDocument className="team-run-shared-context" text={run.sharedContextSnapshot || "No shared context snapshot."} />
 
       <div className="task-section-divider">
         <span>Workflow Trace</span>
@@ -4783,7 +4640,7 @@ function TeamRunDetail({
                 <span>{channel?.label ?? step.channelId}</span>
                 <span>{model?.label ?? step.modelId}</span>
               </div>
-              {step.artifact ? <pre>{step.artifact}</pre> : <p>{step.lastError ?? "Waiting for artifact."}</p>}
+              {step.artifact ? <MarkdownDocument className="team-run-step-artifact" text={step.artifact} /> : <p>{step.lastError ?? "Waiting for artifact."}</p>}
             </article>
           );
         })}
@@ -4972,7 +4829,7 @@ export function TaskPage({
               <i />
             </div>
             <div className="task-prompt-block">
-              <pre>{activeTask.prompt}</pre>
+              <MarkdownDocument text={activeTask.prompt} />
             </div>
             <div className="task-detail-actions">
               <label className="task-progress-select-wrap">
@@ -5212,7 +5069,7 @@ function TaskTimelineMessage({ message, agentId }: { message: ChatMessage; agent
           </div>
         ) : null}
         {message.content ? (
-          message.role === "assistant" ? (
+          message.role === "assistant" || message.role === "user" ? (
             <div className="cli-markdown">
               <Markdown text={message.content} />
             </div>
@@ -5225,20 +5082,106 @@ function TaskTimelineMessage({ message, agentId }: { message: ChatMessage; agent
   );
 }
 
+interface ChatHistoryPanelProps {
+  chats: ChatSession[];
+  activeChatId?: string | undefined;
+  contextMenu?: { chatId: string; x: number; y: number } | undefined;
+  newChatLabel?: string;
+  runningLabel?: string;
+  onCreateChat: () => MaybePromise;
+  onSelectChat: (chatId: string) => MaybePromise;
+  onOpenContextMenu: (event: MouseEvent, chatId: string) => void;
+  onDeleteChat: (chatId: string) => MaybePromise;
+}
+
+export function ChatHistoryPanel({
+  chats,
+  activeChatId,
+  contextMenu,
+  newChatLabel = "New chat",
+  runningLabel = "Running",
+  onCreateChat,
+  onSelectChat,
+  onOpenContextMenu,
+  onDeleteChat,
+}: ChatHistoryPanelProps) {
+  return (
+    <section className="resource-panel chat-list-panel">
+      <div className="panel-header">
+        <span>Chats</span>
+        <SquarePen size={14} />
+      </div>
+      <div className="new-chat-menu-wrap">
+        <button className="new-chat-compact-btn" onClick={() => void onCreateChat()}>
+          <Plus size={13} />
+          <span>{newChatLabel}</span>
+        </button>
+      </div>
+      <div className="chat-list">
+        {chats.map((chat) => (
+          <button
+            key={chat.id}
+            className={`chat-row ${chat.id === activeChatId ? "is-active" : ""}`}
+            onClick={() => void onSelectChat(chat.id)}
+            onContextMenu={(event) => onOpenContextMenu(event, chat.id)}
+            title={chat.title}
+          >
+            <span className={`runtime-dot ${agentAccent(chat.agentId)} ${chat.running ? "is-pulsing" : ""}`} />
+            <strong>{chat.title}</strong>
+            <span>{chat.running ? runningLabel : formatTime(chat.updatedAt)}</span>
+          </button>
+        ))}
+      </div>
+      {contextMenu ? (
+        <div
+          className="agent-context-menu chat-context-menu"
+          style={{ left: contextMenu.x, top: contextMenu.y }}
+          onClick={(event) => event.stopPropagation()}
+          onContextMenu={(event) => event.preventDefault()}
+        >
+          <button type="button" className="agent-context-menu-item danger is-stacked" onClick={() => void onDeleteChat(contextMenu.chatId)}>
+            <Trash2 size={13} />
+            <div>
+              <strong>Delete chat</strong>
+              <small>Delete session and data</small>
+            </div>
+          </button>
+        </div>
+      ) : null}
+    </section>
+  );
+}
+
 interface WorkflowHistoryPanelProps {
   workflows: WorkflowDraftState[];
   activeWorkflowId?: string | undefined;
   running?: boolean;
+  contextMenu?: { workflowId: string; x: number; y: number } | undefined;
+  renameDraft?: { workflowId: string; title: string } | undefined;
   onNewWorkflow: () => MaybePromise;
   onSelectWorkflow: (workflowId: string) => MaybePromise;
+  onOpenContextMenu?: (event: MouseEvent, workflowId: string) => void;
+  onStartRename?: (workflowId: string) => MaybePromise;
+  onRenameDraftChange?: (title: string) => void;
+  onConfirmRename?: () => MaybePromise;
+  onCancelRename?: () => void;
+  onDeleteWorkflow?: (workflowId: string) => MaybePromise;
 }
 
 export function WorkflowHistoryPanel({
   workflows,
   activeWorkflowId,
   running = false,
+  contextMenu,
+  renameDraft,
   onNewWorkflow,
   onSelectWorkflow,
+  onOpenContextMenu,
+  onStartRename,
+  onRenameDraftChange,
+  onConfirmRename,
+  onCancelRename,
+  onDeleteWorkflow,
 }: WorkflowHistoryPanelProps) {
   return (
     <section className="resource-panel workflow-list-panel">
@@ -5259,6 +5202,7 @@ export function WorkflowHistoryPanel({
             key={workflow.workflowId}
             className={`workflow-history-card ${workflow.workflowId === activeWorkflowId ? "is-active" : ""}`}
             onClick={() => void onSelectWorkflow(workflow.workflowId)}
+            onContextMenu={(event) => onOpenContextMenu?.(event, workflow.workflowId)}
           >
             <strong>{workflow.title}</strong>
             <span>{`${workflow.status} · ${workflow.graph.nodes.length} nodes · rev ${workflow.revision}`}</span>
@@ -5271,6 +5215,61 @@ export function WorkflowHistoryPanel({
           </button>
         ))}
       </div>
+      {contextMenu ? (
+        <div
+          className="agent-context-menu workflow-context-menu"
+          style={{ left: contextMenu.x, top: contextMenu.y }}
+          onClick={(event) => event.stopPropagation()}
+          onContextMenu={(event) => event.preventDefault()}
+        >
+          <button type="button" className="agent-context-menu-item" onClick={() => void onStartRename?.(contextMenu.workflowId)}>
+            <SquarePen size={13} />
+            <span>Rename workflow</span>
+          </button>
+          <button
+            type="button"
+            className="agent-context-menu-item danger"
+            disabled={running}
+            onClick={() => void onDeleteWorkflow?.(contextMenu.workflowId)}
+          >
+            <Trash2 size={13} />
+            <span>Delete workflow</span>
+          </button>
+        </div>
+      ) : null}
+      {renameDraft ? (
+        <section className="workflow-rename-overlay" role="dialog" aria-modal="true" aria-label="Rename workflow" onClick={onCancelRename}>
+          <form
+            className="workflow-rename-modal"
+            onSubmit={(event) => {
+              event.preventDefault();
+              void onConfirmRename?.();
+            }}
+            onClick={(event) => event.stopPropagation()}
+          >
+            <header>
+              <strong>Rename workflow</strong>
+              <button type="button" className="icon-btn" onClick={onCancelRename} aria-label="Close rename workflow">
+                <X size={14} />
+              </button>
+            </header>
+            <input
+              value={renameDraft.title}
+              onChange={(event) => onRenameDraftChange?.(event.currentTarget.value)}
+              aria-label="Workflow name"
+              autoFocus
+            />
+            <footer>
+              <button type="button" className="control-btn compact" onClick={onCancelRename}>
+                <span>Cancel</span>
+              </button>
+              <button type="submit" className="send-btn compact" disabled={!renameDraft.title.trim()}>
+                <span>Save</span>
+              </button>
+            </footer>
+          </form>
+        </section>
+      ) : null}
     </section>
   );
 }
@@ -5505,7 +5504,9 @@ export function WorkflowPage({
                 <span>{message.role === "assistant" ? "Workflow agent" : "You"}</span>
               </div>
               {message.role === "user" ? (
-                <pre>{message.content}</pre>
+                <div className="cli-markdown">
+                  <Markdown text={message.content} />
+                </div>
               ) : (
                 <div className={`cli-markdown ${running && message.content === WORKFLOW_THINKING_MESSAGE ? "is-streaming" : ""}`}>
                   <Markdown text={workflowAssistantDisplayContent(message.content)} />
@@ -5776,7 +5777,7 @@ export function WorkflowPage({
               </button>
             </header>
             {filePreview.truncated ? <div className="workflow-file-preview-note">{workflowText.largeFile}</div> : null}
-            <pre>{filePreview.content}</pre>
+            {isMarkdownFilePath(filePreview.path) ? <MarkdownDocument className="workflow-file-preview-body" text={filePreview.content} /> : <pre>{filePreview.content}</pre>}
           </article>
         </section>
       ) : null}
@@ -5848,58 +5849,100 @@ interface ConfigPageProps {
   channels: AgentChannel[];
   configuredAgents: ConfiguredAgent[];
   selectedConfiguredAgentId: string;
-  providerKeys: Record<string, string>;
   status: string;
+  onSave: () => Promise<void>;
+  onAddConfiguredAgent: () => MaybePromise;
+  onSelectConfiguredAgent: (agentId: string) => void;
+  onUpdateConfiguredAgent: (agentId: string, updater: (agent: ConfiguredAgent) => ConfiguredAgent) => void;
+}
+
+interface RuntimePageProps {
+  language?: Language;
+  channels: AgentChannel[];
+  selectedChannelId: string;
+  providerKeys: Record<string, string>;
   codexPluginCatalog: CodexPluginCatalogItem[];
   pluginCatalogStatus: string;
   agentTestResults: Record<string, AgentTestUiState>;
   testingAgentId: string | undefined;
   agentTestTick: number;
+  balanceResults?: Record<string, ProviderBalanceResult>;
+  balanceLoadingChannelId?: string | undefined;
+  contextMenu?: { channelId: string; x: number; y: number } | undefined;
   onUpdateChannel: (channelId: string, updater: (channel: AgentChannel) => AgentChannel) => void;
   onAddModel: (channelId: string) => void;
   onUpdateModel: (channelId: string, modelIndex: number, updater: (model: AgentModelOption) => AgentModelOption) => void;
   onRemoveModel: (channelId: string, modelIndex: number) => void;
   onSave: () => Promise<void>;
   onLoadCodexPluginCatalog: () => Promise<void>;
-  onAddConfiguredAgent: () => MaybePromise;
-  onSelectConfiguredAgent: (agentId: string) => void;
+  onSelectChannel: (channelId: string) => void;
+  onAddConfig: () => void;
+  onOpenContextMenu: (event: MouseEvent, channelId: string) => void;
+  onDeleteConfig: (channelId: string) => void;
+  onTestChannel: (channelId: string) => Promise<void>;
+  onQueryBalance?: (channelId: string) => Promise<void>;
   onUpdateProviderKey: (presetId: string, value: string) => void;
-  onUpdateConfiguredAgent: (agentId: string, updater: (agent: ConfiguredAgent) => ConfiguredAgent) => void;
-  onRemoveConfiguredAgent: (agentId: string) => void;
-  onTestConfiguredAgent: (agentId: string) => Promise<void>;
 }
 
 export function SkillsPage({
   language,
   templates,
-  onCreateAgent,
+  onInstallSkill,
+  onUninstallSkill,
 }: {
   language: Language;
-  templates: AgentTemplate[];
-  onCreateAgent: (template: AgentTemplate) => MaybePromise;
+  templates: SkillTemplate[];
+  onInstallSkill?: (templateId: string, target: SkillInstallTarget) => Promise<InstalledSkillResult>;
+  onUninstallSkill?: (templateId: string, target: SkillInstallTarget) => Promise<UninstalledSkillResult>;
 }) {
   const text = UI_TEXT[language].chrome;
   const title = text.skillLibrary;
   const description =
     language === "zh"
-      ? `${templates.length} 个本地模板，可继续搜索 GitHub 上的公开 Skills`
-      : `${templates.length} local templates, plus online GitHub skill search`;
-  const promptLabel = language === "zh" ? "Prompt" : "Prompt";
+      ? `${templates.length} 个内置技能，随应用开箱即用，也可搜索 GitHub 上的公开 Skills`
+      : `${templates.length} bundled skills, ready to use, plus online GitHub skill search`;
   const onlineTitle = language === "zh" ? "搜索网上 Skills" : "Search online skills";
   const onlineDescription =
     language === "zh"
       ? "从公开 GitHub skill 仓库读取 SKILL.md 元数据。第三方 skill 只当作未审查内容展示。"
       : "Read SKILL.md metadata from public GitHub skill repositories. Treat third-party skills as untrusted content.";
-  const localTitle = language === "zh" ? "本地技能模板" : "Local skill templates";
+  const localTitle = language === "zh" ? "内置技能" : "Bundled skills";
   const searchPlaceholder = language === "zh" ? "搜索 code review、testing、pdf、docs..." : "Search code review, testing, pdf, docs...";
   const searchButton = language === "zh" ? "搜索" : "Search";
   const searchingText = language === "zh" ? "搜索中..." : "Searching...";
   const noOnlineResults = language === "zh" ? "没有找到在线 Skills。" : "No online skills found.";
   const openSource = language === "zh" ? "打开来源" : "Open source";
+  const localInstall = language === "zh" ? "本地安装" : "Local install";
+  const installLinks = language === "zh" ? "安装/更新链接" : "Install/update links";
+  const removeLinks = language === "zh" ? "删除本地链接" : "Remove local links";
+  const translateToZh = language === "zh" ? "查看中文" : "View Chinese";
+  const showOriginal = language === "zh" ? "查看原文" : "Show original";
+  const sourceTitle = language === "zh" ? "出处" : "Source";
   const [query, setQuery] = useState("");
   const [onlineResults, setOnlineResults] = useState<OnlineSkillResult[]>([]);
   const [onlineStatus, setOnlineStatus] = useState("");
   const [onlineSearching, setOnlineSearching] = useState(false);
+  const [selectedSkillKey, setSelectedSkillKey] = useState<string | undefined>();
+  const [installingTarget, setInstallingTarget] = useState<SkillInstallTarget | undefined>();
+  const [installAction, setInstallAction] = useState<"install" | "uninstall" | undefined>();
+  const [installDialogOpen, setInstallDialogOpen] = useState(false);
+  const [selectedInstallTargets, setSelectedInstallTargets] = useState<SkillInstallTarget[]>(["codex"]);
+  const [installStatus, setInstallStatus] = useState("");
+  const [installStatusTone, setInstallStatusTone] = useState<"success" | "error" | undefined>();
+  const [translationStatus, setTranslationStatus] = useState("");
+  const [showTranslatedSkill, setShowTranslatedSkill] = useState(false);
+  const localSkillItems = useMemo(
+    () => templates.map((template) => ({ ...template, itemKey: `local:${template.id}`, kind: "local" as const })),
+    [templates],
+  );
+  const onlineSkillItems = useMemo(
+    () => onlineResults.map((skill) => ({ ...skill, itemKey: `online:${skill.id}`, kind: "online" as const })),
+    [onlineResults],
+  );
+  const skillItems = useMemo(() => [...localSkillItems, ...onlineSkillItems], [localSkillItems, onlineSkillItems]);
+  const selectedSkill = skillItems.find((skill) => skill.itemKey === selectedSkillKey) ?? skillItems[0];
+  const selectedSkillSourceUrl = selectedSkill ? (selectedSkill.kind === "online" ? selectedSkill.url : selectedSkill.sourceUrl) : undefined;
+  const selectedSkillSourcePath = selectedSkill ? (selectedSkill.kind === "online" ? selectedSkill.path : selectedSkill.sourcePath) : undefined;
 
   async function runOnlineSearch(): Promise<void> {
     setOnlineSearching(true);
@@ -5908,12 +5951,71 @@ export function SkillsPage({
       const results = await fetchOnlineSkills(query);
       setOnlineResults(results);
       setOnlineStatus(results.length === 0 ? noOnlineResults : `${results.length} skills`);
+      if (results.length > 0) setSelectedSkillKey(`online:${results[0]!.id}`);
     } catch (error) {
       setOnlineStatus(error instanceof Error ? error.message : String(error));
       setOnlineResults([]);
     } finally {
       setOnlineSearching(false);
     }
+  }
+
+  function toggleInstallTarget(target: SkillInstallTarget): void {
+    setSelectedInstallTargets((current) => (current.includes(target) ? current.filter((item) => item !== target) : [...current, target]));
+  }
+
+  async function applyInstallSelection(action: "install" | "uninstall"): Promise<void> {
+    if (!selectedSkill || selectedSkill.kind !== "local" || !onInstallSkill) return;
+    const targets = selectedInstallTargets;
+    if (targets.length === 0) return;
+    setInstallAction(action);
+    setInstallStatus("");
+    setInstallStatusTone(undefined);
+    try {
+      const results: string[] = [];
+      for (const target of targets) {
+        setInstallingTarget(target);
+        if (action === "install") {
+          const result = await onInstallSkill(selectedSkill.id, target);
+          results.push(`${targetLabel(target)}: ${result.path}`);
+        } else {
+          if (!onUninstallSkill) throw new Error("技能卸载能力需要重启应用后生效。");
+          const result = await onUninstallSkill(selectedSkill.id, target);
+          results.push(`${targetLabel(target)}: ${result.removed ? result.path : "not installed"}`);
+        }
+      }
+      setInstallStatus(
+        language === "zh"
+          ? `${action === "install" ? "已安装/更新" : "已删除链接"}：${results.join("；")}`
+          : `${action === "install" ? "Installed/updated" : "Removed links"}: ${results.join("; ")}`,
+      );
+      setInstallStatusTone("success");
+    } catch (error) {
+      setInstallStatus(error instanceof Error ? error.message : String(error));
+      setInstallStatusTone("error");
+    } finally {
+      setInstallingTarget(undefined);
+      setInstallAction(undefined);
+    }
+  }
+
+  function translateSelectedSkill(): void {
+    if (!selectedSkill) return;
+    if (showTranslatedSkill) {
+      setShowTranslatedSkill(false);
+      setTranslationStatus("");
+      return;
+    }
+    if (!selectedSkill.translationZh) {
+      setTranslationStatus(language === "zh" ? "当前技能暂无内置中文阅读版。" : "This skill does not have a bundled Chinese reading view.");
+      return;
+    }
+    setShowTranslatedSkill(true);
+    setTranslationStatus(
+      language === "zh"
+        ? "中文阅读版随应用内置，只用于理解；本地安装的 SKILL.md 仍保持原文。"
+        : "Bundled Chinese reading view only; local SKILL.md stays original.",
+    );
   }
 
   return (
@@ -5925,11 +6027,14 @@ export function SkillsPage({
         </div>
       </header>
 
-      <section className="online-skills-panel">
-        <div className="online-skills-head">
-          <div>
-            <h3>{onlineTitle}</h3>
-            <p>{onlineDescription}</p>
+      <div className="skills-browser">
+        <aside className="skill-list-panel">
+          <div className="skill-list-head">
+            <div>
+              <h3>{localTitle}</h3>
+              <p>{onlineDescription}</p>
+            </div>
+            <span>{skillItems.length}</span>
           </div>
           <div className="online-skill-sources" aria-label="Online skill sources">
             {ONLINE_SKILL_SOURCES.map((source) => (
@@ -5938,81 +6043,171 @@ export function SkillsPage({
               </a>
             ))}
           </div>
-        </div>
-        <div className="online-skills-search">
-          <Search size={14} />
-          <input value={query} placeholder={searchPlaceholder} onChange={(event) => setQuery(event.currentTarget.value)} aria-label={onlineTitle} />
-          <button className="control-btn compact" type="button" onClick={() => void runOnlineSearch()} disabled={onlineSearching}>
-            <span>{onlineSearching ? searchingText : searchButton}</span>
-          </button>
-        </div>
-        {onlineStatus ? <div className="online-skills-status">{onlineStatus}</div> : null}
-        {onlineResults.length > 0 ? (
-          <div className="online-skills-results" aria-label="Online skill results">
-            {onlineResults.map((skill) => (
-              <article key={skill.id} className="skill-card online">
-                <div className="skill-card-head">
-                  <div>
-                    <h3>{skill.name}</h3>
-                    <p>{skill.description}</p>
-                  </div>
-                  <button className="control-btn compact" type="button" onClick={() => void onCreateAgent(skill)}>
-                    <Plus size={13} />
-                    <span>{text.createAgentFromSkill}</span>
-                  </button>
-                </div>
-                <div className="skill-card-source">
-                  <span>{skill.sourceLabel}</span>
-                  <a href={skill.url} target="_blank" rel="noreferrer">
-                    {openSource}
-                  </a>
-                </div>
-                <div className="skill-tags" aria-label="Skill tags">
-                  {skill.tags.map((tag) => (
-                    <span key={tag}>{tag}</span>
-                  ))}
-                </div>
-                <div className="skill-prompt">
-                  <span>{promptLabel}</span>
-                  <pre>{skill.prompt}</pre>
-                </div>
-              </article>
-            ))}
+          <div className="online-skills-search">
+            <Search size={14} />
+            <input value={query} placeholder={searchPlaceholder} onChange={(event) => setQuery(event.currentTarget.value)} aria-label={onlineTitle} />
+            <button className="control-btn compact" type="button" onClick={() => void runOnlineSearch()} disabled={onlineSearching}>
+              <span>{onlineSearching ? searchingText : searchButton}</span>
+            </button>
           </div>
-        ) : null}
-      </section>
-
-      <div className="skills-section-title">
-        <h3>{localTitle}</h3>
-      </div>
-      <div className="skills-grid" aria-label={localTitle}>
-        {templates.length === 0 ? (
-          <div className="empty-state config-empty">{text.noSkills}</div>
-        ) : (
-          templates.map((template) => (
-            <article key={template.id} className="skill-card">
-              <div className="skill-card-head">
-                <div>
-                  <h3>{template.name}</h3>
-                  <p>{template.description}</p>
-                </div>
-                <button className="control-btn compact" type="button" onClick={() => void onCreateAgent(template)}>
-                  <Plus size={13} />
-                  <span>{text.createAgentFromSkill}</span>
-                </button>
+          {onlineStatus ? <div className="online-skills-status">{onlineStatus}</div> : null}
+          <div className="skill-list-scroll" aria-label="Skill list">
+            {localSkillItems.length === 0 ? (
+              <div className="empty-state config-empty">{text.noSkills}</div>
+            ) : (
+              <div className="skill-list-group">
+                <span>{localTitle}</span>
+                {localSkillItems.map((skill) => (
+                  <button
+                    key={skill.itemKey}
+                    className={`skill-list-item ${selectedSkill?.itemKey === skill.itemKey ? "is-active" : ""}`}
+                    type="button"
+                    onClick={() => {
+                      setSelectedSkillKey(skill.itemKey);
+                      setInstallStatus("");
+                      setInstallStatusTone(undefined);
+                      setTranslationStatus("");
+                      setShowTranslatedSkill(false);
+                    }}
+                  >
+                    <strong>{skillDisplayName(skill)}</strong>
+                    <small>{skillDisplayDescription(skill)}</small>
+                    <span>{skill.tags.join(", ")}</span>
+                  </button>
+                ))}
               </div>
+            )}
+            {onlineSkillItems.length > 0 ? (
+              <div className="skill-list-group">
+                <span>{onlineTitle}</span>
+                {onlineSkillItems.map((skill) => (
+                  <button
+                    key={skill.itemKey}
+                    className={`skill-list-item ${selectedSkill?.itemKey === skill.itemKey ? "is-active" : ""}`}
+                    type="button"
+                    onClick={() => {
+                      setSelectedSkillKey(skill.itemKey);
+                      setInstallStatus("");
+                      setInstallStatusTone(undefined);
+                      setTranslationStatus("");
+                      setShowTranslatedSkill(false);
+                    }}
+                  >
+                    <strong>{skillDisplayName(skill)}</strong>
+                    <small>{skillDisplayDescription(skill)}</small>
+                    <span>{skill.sourceLabel}</span>
+                  </button>
+                ))}
+              </div>
+            ) : null}
+          </div>
+        </aside>
+
+        <section className="skill-detail-panel">
+          {selectedSkill ? (
+            <>
+              <header className="skill-detail-head">
+                <div>
+                  <span>{selectedSkill.sourceLabel ?? (selectedSkill.kind === "online" ? selectedSkill.sourceLabel : localTitle)}</span>
+                  <h3>{skillDisplayName(selectedSkill)}</h3>
+                  <p>{skillDisplayDescription(selectedSkill)}</p>
+                </div>
+              </header>
               <div className="skill-tags" aria-label="Skill tags">
-                {template.tags.map((tag) => (
+                {selectedSkill.tags.map((tag) => (
                   <span key={tag}>{tag}</span>
                 ))}
               </div>
-              <div className="skill-prompt">
-                <span>{promptLabel}</span>
-                <pre>{template.prompt}</pre>
+              <div className="skill-detail-source">
+                <span>{sourceTitle}</span>
+                <div className="skill-source-pills">
+                  <span className="skill-source-pill strong">{selectedSkill.sourceLabel ?? (selectedSkill.kind === "online" ? selectedSkill.sourceLabel : localTitle)}</span>
+                  {selectedSkillSourcePath ? <span className="skill-source-pill muted">{selectedSkillSourcePath}</span> : null}
+                  {selectedSkillSourceUrl ? (
+                    <a className="skill-source-pill link" href={selectedSkillSourceUrl} target="_blank" rel="noreferrer">
+                      {sourceUrlLabel(selectedSkillSourceUrl)}
+                    </a>
+                  ) : null}
+                  {!selectedSkillSourcePath && !selectedSkillSourceUrl ? <span className="skill-source-pill muted">{localTitle}</span> : null}
+                </div>
               </div>
-            </article>
-          ))
-        )}
+              <div className="skill-detail-body-head">
+                <span>SKILL.md</span>
+                <div>
+                  <button
+                    className="control-btn compact secondary"
+                    type="button"
+                    onClick={translateSelectedSkill}
+                  >
+                    <span>{showTranslatedSkill ? showOriginal : translateToZh}</span>
+                  </button>
+                  {selectedSkillSourceUrl ? (
+                    <a href={selectedSkillSourceUrl} target="_blank" rel="noreferrer">
+                      {openSource}
+                    </a>
+                  ) : null}
+                </div>
+              </div>
+              {selectedSkill.kind === "local" && onInstallSkill ? (
+                <div className="skill-install-actions" aria-label="Install bundled skill">
+                  <button className="control-btn compact" type="button" onClick={() => setInstallDialogOpen(true)} disabled={Boolean(installingTarget)}>
+                    <Save size={13} />
+                    <span>{localInstall}</span>
+                  </button>
+                </div>
+              ) : null}
+              {installStatus ? <div className={`skill-install-feedback ${installStatusTone ?? ""}`}>{installStatus}</div> : null}
+              {translationStatus ? <div className="skill-translation-note">{translationStatus}</div> : null}
+              <MarkdownDocument className="skill-detail-body" text={showTranslatedSkill && selectedSkill.translationZh ? selectedSkill.translationZh : selectedSkill.prompt} />
+              {installDialogOpen && selectedSkill.kind === "local" ? (
+                <div className="skill-install-modal-backdrop" role="presentation" onClick={() => setInstallDialogOpen(false)}>
+                  <section className="skill-install-modal" role="dialog" aria-modal="true" aria-label={localInstall} onClick={(event) => event.stopPropagation()}>
+                    <header>
+                      <div>
+                        <strong>{localInstall}</strong>
+                        <span>{skillDisplayName(selectedSkill)}</span>
+                      </div>
+                      <button className="icon-btn" type="button" onClick={() => setInstallDialogOpen(false)} aria-label="Close">
+                        <X size={14} />
+                      </button>
+                    </header>
+                    <div className="skill-install-targets">
+                      {SKILL_INSTALL_TARGETS.map((target) => (
+                        <label key={target.id} className="skill-install-target">
+                          <input
+                            type="checkbox"
+                            checked={selectedInstallTargets.includes(target.id)}
+                            onChange={() => toggleInstallTarget(target.id)}
+                          />
+                          <span>{target.label}</span>
+                          <small>{target.path}</small>
+                        </label>
+                      ))}
+                    </div>
+                    {installStatus ? <div className={`skill-install-feedback ${installStatusTone ?? ""}`}>{installStatus}</div> : null}
+                    <footer>
+                      <button className="control-btn compact" type="button" onClick={() => void applyInstallSelection("install")} disabled={selectedInstallTargets.length === 0 || Boolean(installAction)}>
+                        <Save size={13} />
+                        <span>{installAction === "install" ? searchingText : installLinks}</span>
+                      </button>
+                      <button
+                        className="control-btn compact secondary"
+                        type="button"
+                        onClick={() => void applyInstallSelection("uninstall")}
+                        disabled={selectedInstallTargets.length === 0 || Boolean(installAction)}
+                      >
+                        <Trash2 size={13} />
+                        <span>{installAction === "uninstall" ? searchingText : removeLinks}</span>
+                      </button>
+                    </footer>
+                  </section>
+                </div>
+              ) : null}
+            </>
+          ) : (
+            <div className="empty-state config-empty">{text.noSkills}</div>
+          )}
+        </section>
       </div>
     </section>
   );
@@ -6058,92 +6253,575 @@ export function SettingsPage({
   );
 }
 
-export function ConfigPage({
+export function RuntimePage({
   language = "en",
   channels,
-  configuredAgents,
-  selectedConfiguredAgentId,
+  selectedChannelId,
   providerKeys,
-  status,
   codexPluginCatalog,
   pluginCatalogStatus,
   agentTestResults,
   testingAgentId,
   agentTestTick,
+  balanceResults = {},
+  balanceLoadingChannelId,
+  contextMenu,
   onUpdateChannel,
   onAddModel,
   onUpdateModel,
   onRemoveModel,
   onSave,
   onLoadCodexPluginCatalog,
+  onSelectChannel,
+  onAddConfig,
+  onOpenContextMenu,
+  onDeleteConfig,
+  onTestChannel,
+  onQueryBalance,
+  onUpdateProviderKey,
+}: RuntimePageProps) {
+  const configText = UI_TEXT[language].config;
+  const runtimeTitle = language === "zh" ? "配置" : "Config";
+  const runtimeDescription =
+    language === "zh"
+      ? "管理 Codex / Claude / API 执行器、Provider、API Key、插件和模型。Agent 组装页只保留人格和 Prompt。"
+      : "Manage Codex / Claude / API executors, providers, API keys, plugins, and models separately from Agent Assembly.";
+  const channelTitle = language === "zh" ? "配置项" : "Configs";
+  const addConfigText = language === "zh" ? "新增配置" : "Add config";
+  const deleteConfigText = language === "zh" ? "删除配置" : "Delete config";
+  const runtimeConfigReady = language === "zh" ? "配置可用" : "Config works";
+  const runtimeConfigTesting = language === "zh" ? "测试中" : "Testing";
+  const runtimeConfigTest = language === "zh" ? "测试" : "Test";
+  const runtimeConfigTestFailed = language === "zh" ? "测试失败" : "Test failed";
+  const runtimeConfigTestRunning = language === "zh" ? "正在测试配置" : "Testing config";
+  const runtimeExecutorLabel = language === "zh" ? "执行器" : "Executor";
+  const balanceTitle = language === "zh" ? "余额" : "Balance";
+  const refreshBalanceText = language === "zh" ? "刷新余额" : "Refresh balance";
+  const balanceRefreshingText = language === "zh" ? "查询中" : "Checking";
+  const balanceIdleText = language === "zh" ? "点击刷新查询当前 Provider 余额。" : "Refresh to query the current provider balance.";
+  const balanceNoDataText = language === "zh" ? "Provider 没有返回余额明细。" : "The provider did not return balance details.";
+  const visibleRuntimeChannels = useMemo(() => selectConfigChannelsForDisplay(channels), [channels]);
+  const selectedRuntimeChannelRecord = useMemo(() => configChannelForSelection(channels, selectedChannelId), [channels, selectedChannelId]);
+  const selectedRuntimeChannelId = selectedRuntimeChannelRecord?.id ?? "";
+  const configuredPluginIds = useMemo(() => new Set((selectedRuntimeChannelRecord?.plugins ?? []).map((plugin) => plugin.id)), [selectedRuntimeChannelRecord]);
+  const availableCodexPlugins = useMemo(() => codexPluginCatalog.filter((plugin) => !configuredPluginIds.has(plugin.id)), [codexPluginCatalog, configuredPluginIds]);
+  const selectedRuntime = selectedRuntimeChannelRecord?.agentId ?? "codex";
+  const runtimeProviderPresets = useMemo(() => AGENT_PROVIDER_PRESETS.filter((preset) => preset.runtimeAgentId === selectedRuntime), [selectedRuntime]);
+  const updateSelectedRuntimeChannel = (updater: (channel: AgentChannel) => AgentChannel): void => {
+    if (!selectedRuntimeChannelRecord) return;
+    onUpdateChannel(selectedRuntimeChannelRecord.id, updater);
+  };
+  const selectedRuntimePresetId = selectedRuntimeChannelRecord
+    ? (runtimeProviderPresets.find(
+        (preset) =>
+          preset.runtimeAgentId === selectedRuntime &&
+          (preset.modelProvider ?? "") === (selectedRuntimeChannelRecord.modelProvider ?? "") &&
+          (preset.baseUrl ?? "") === (selectedRuntimeChannelRecord.baseUrl ?? ""),
+      )?.id ?? (selectedRuntime === "codex" ? "custom" : undefined))
+    : undefined;
+  const selectedRuntimePreset = useMemo(
+    () => (selectedRuntimePresetId ? AGENT_PROVIDER_PRESETS.find((preset) => preset.id === selectedRuntimePresetId) : undefined),
+    [selectedRuntimePresetId],
+  );
+  const selectedProviderKey = providerKeyValue(providerKeys, selectedRuntimePreset, selectedRuntimeChannelRecord);
+  const presetModelIds = useMemo(() => new Set(selectedRuntimePreset?.models.map((model) => model.id) ?? []), [selectedRuntimePreset]);
+  const selectedRuntimeCustomModelId =
+    selectedRuntimeChannelRecord?.models.filter((model) => model.id !== DEFAULT_MODEL_ID && !presetModelIds.has(model.id)).at(-1)?.id ?? "";
+  const selectedChannelTestResult = selectedRuntimeChannelRecord ? agentTestResults[selectedRuntimeChannelRecord.id] : undefined;
+  const selectedChannelTesting = Boolean(selectedRuntimeChannelRecord && testingAgentId === selectedRuntimeChannelRecord.id);
+  const selectedBalanceResult = selectedRuntimeChannelRecord ? balanceResults[selectedRuntimeChannelRecord.id] : undefined;
+  const selectedBalanceLoading = Boolean(selectedRuntimeChannelRecord && balanceLoadingChannelId === selectedRuntimeChannelRecord.id);
+  const selectedChannelTestElapsedMs =
+    selectedChannelTestResult?.state === "running"
+      ? Date.now() - selectedChannelTestResult.startedAt + agentTestTick * 0
+      : (selectedChannelTestResult?.elapsedMs ?? 0);
+  const selectedChannelTestModelLabel = selectedChannelTestResult
+    ? (selectedRuntimeChannelRecord?.models.find((model) => model.id === selectedChannelTestResult.modelId)?.label ?? selectedChannelTestResult.modelId)
+    : "";
+
+  const applyRuntimePreset = (preset: AgentProviderPreset): void => {
+    if (!selectedRuntimeChannelRecord) return;
+    const cachedProviderKeys = rememberProviderKeyFromChannel(providerKeys, selectedRuntimePreset, selectedRuntimeChannelRecord);
+    const cachedSelectedProviderKey = selectedRuntimePreset ? cachedProviderKeys[selectedRuntimePreset.id] : undefined;
+    if (selectedRuntimePreset?.usesApiKey && cachedSelectedProviderKey && cachedSelectedProviderKey !== providerKeys[selectedRuntimePreset.id]) {
+      onUpdateProviderKey(selectedRuntimePreset.id, cachedSelectedProviderKey);
+    }
+    const apiKey = cachedProviderKeys[preset.id] ?? (preset.id === selectedRuntimePresetId ? apiKeyFromChannelHeaders(selectedRuntimeChannelRecord, preset) : "");
+    updateSelectedRuntimeChannel((channel) => applyProviderPresetToChannel(channel, preset, apiKey));
+  };
+  const selectRuntime = (runtimeAgentId: AgentId): void => {
+    const nextChannel = visibleRuntimeChannels.find((channel) => channel.agentId === runtimeAgentId);
+    if (nextChannel) onSelectChannel(nextChannel.id);
+  };
+  const updateSelectedProviderKey = (value: string): void => {
+    if (!selectedRuntimePreset) return;
+    onUpdateProviderKey(selectedRuntimePreset.id, value);
+    updateSelectedRuntimeChannel((channel) => applyProviderPresetToChannel(channel, selectedRuntimePreset, value));
+  };
+  const updateSelectedProviderModelId = (value: string): void => {
+    const modelId = value.trim();
+    const previousModelId = selectedRuntimeCustomModelId;
+    updateSelectedRuntimeChannel((channel) => ({
+      ...channel,
+      models: modelId
+        ? channel.models.some((model) => model.id === previousModelId)
+          ? channel.models
+              .map((model) => (model.id === previousModelId ? { id: modelId, label: modelId } : model))
+              .filter((model, index, models) => models.findIndex((item) => item.id === model.id) === index)
+          : channel.models.some((model) => model.id === modelId)
+            ? channel.models.map((model) => (model.id === modelId ? { ...model, label: model.label || modelId } : model))
+            : [...channel.models, { id: modelId, label: modelId }]
+        : channel.models.filter((model) => model.id !== previousModelId),
+    }));
+  };
+
+  return (
+    <section className="runtime-page">
+      <header className="config-header runtime-header">
+        <div>
+          <h2>{runtimeTitle}</h2>
+          <p>{runtimeDescription}</p>
+        </div>
+        <button className="control-btn compact" type="button" onClick={() => void onSave()}>
+          <Save size={13} />
+          <span>{configText.save}</span>
+        </button>
+      </header>
+
+      <div className="runtime-layout">
+        <aside className="runtime-channel-panel">
+          <div className="panel-header">
+            <span>{channelTitle}</span>
+            <Cpu size={14} />
+          </div>
+          <button className="control-btn compact secondary runtime-add-config-btn" type="button" onClick={onAddConfig}>
+            <Plus size={13} />
+            <span>{addConfigText}</span>
+          </button>
+          <div className="runtime-channel-list" aria-label="Config channels">
+            {visibleRuntimeChannels.length === 0 ? (
+              <div className="empty-state config-empty">No channels</div>
+            ) : (
+              visibleRuntimeChannels.map((channel) => (
+                <button
+                  key={channel.id}
+                  className={`runtime-channel-row ${channel.id === selectedRuntimeChannelId ? "is-active" : ""}`}
+                  type="button"
+                  onClick={() => onSelectChannel(channel.id)}
+                  onContextMenu={(event) => onOpenContextMenu(event, channel.id)}
+                >
+                  <span className={`agent-badge mini ${agentAccent(channel.agentId)}`}>{agentLabel(channel.agentId)}</span>
+                  <strong>{channel.label || channel.id}</strong>
+                  <span>{channel.providerName ?? channel.modelProvider ?? channel.id}</span>
+                </button>
+              ))
+            )}
+          </div>
+          {contextMenu ? (
+            <div
+              className="agent-context-menu runtime-config-context-menu"
+              style={{ left: contextMenu.x, top: contextMenu.y }}
+              onClick={(event) => event.stopPropagation()}
+              onContextMenu={(event) => event.preventDefault()}
+            >
+              <button
+                type="button"
+                className="agent-context-menu-item danger"
+                disabled={visibleRuntimeChannels.length <= 1}
+                onClick={() => onDeleteConfig(contextMenu.channelId)}
+              >
+                <Trash2 size={13} />
+                <span>{deleteConfigText}</span>
+              </button>
+            </div>
+          ) : null}
+        </aside>
+
+        <section className="config-form runtime-editor">
+          {selectedRuntimeChannelRecord ? (
+            <>
+              <div className="runtime-editor-actions">
+                <div>
+                  <span className={`agent-badge mini ${agentAccent(selectedRuntime)}`}>{agentLabel(selectedRuntime)}</span>
+                  <strong>{selectedRuntimeChannelRecord.label || selectedRuntimeChannelRecord.id}</strong>
+                </div>
+                <button
+                  type="button"
+                  className="control-btn compact secondary"
+                  onClick={() => void onTestChannel(selectedRuntimeChannelRecord.id)}
+                  disabled={selectedChannelTesting}
+                >
+                  <RefreshCw size={13} />
+                  <span>{selectedChannelTesting ? runtimeConfigTesting : runtimeConfigTest}</span>
+                </button>
+              </div>
+              {selectedChannelTestResult ? (
+                selectedChannelTestResult.state === "passed" ? (
+                  <section className="agent-test-result passed collapsed">
+                    <div className="agent-test-success-icon" aria-hidden="true">
+                      <CheckCircle2 size={16} />
+                    </div>
+                    <div className="agent-test-success-copy">
+                      <strong>{runtimeConfigReady}</strong>
+                      <span>{`${selectedChannelTestResult.providerLabel} · ${selectedChannelTestModelLabel}`}</span>
+                    </div>
+                    <span className="agent-test-success-duration">{formatDuration(selectedChannelTestElapsedMs)}</span>
+                  </section>
+                ) : (
+                  <section className={`agent-test-result ${selectedChannelTestResult.state}`}>
+                    <div className="agent-test-result-head">
+                      <div>
+                        <strong>{selectedChannelTestResult.state === "running" ? runtimeConfigTestRunning : runtimeConfigTestFailed}</strong>
+                        <span>{selectedChannelTestResult.phase}</span>
+                      </div>
+                      <span>{formatDuration(selectedChannelTestElapsedMs)}</span>
+                    </div>
+                    {selectedChannelTestResult.state === "running" ? <div className="agent-test-progress" aria-hidden="true" /> : null}
+                    <dl className="agent-test-meta">
+                      <div>
+                        <dt>{runtimeExecutorLabel}</dt>
+                        <dd>{agentLabel(selectedChannelTestResult.runtimeAgentId)}</dd>
+                      </div>
+                      <div>
+                        <dt>Provider</dt>
+                        <dd>{selectedChannelTestResult.providerLabel}</dd>
+                      </div>
+                      <div>
+                        <dt>Model</dt>
+                        <dd>{selectedChannelTestResult.modelId}</dd>
+                      </div>
+                    </dl>
+                    <p>{selectedChannelTestResult.message}</p>
+                    {selectedChannelTestResult.transcript.length > 0 ? (
+                      <div className="agent-test-transcript" aria-label="Config test interaction">
+                        {selectedChannelTestResult.transcript.map((item) => (
+                          <div key={item.id} className={`agent-test-transcript-row ${item.type}`}>
+                            <span>{agentTestEventLabel(item.type)}</span>
+                            <pre>{item.content}</pre>
+                          </div>
+                        ))}
+                      </div>
+                    ) : null}
+                    {selectedChannelTestResult.output ? <pre>{selectedChannelTestResult.output}</pre> : null}
+                  </section>
+                )
+              ) : null}
+              <section className={`provider-balance-panel ${selectedBalanceResult?.status ?? "idle"}`}>
+                <div className="provider-balance-head">
+                  <div>
+                    <h3>{balanceTitle}</h3>
+                    <span>{selectedBalanceResult?.providerName ?? selectedRuntimeChannelRecord.providerName ?? selectedRuntimeChannelRecord.label}</span>
+                  </div>
+                  <button
+                    type="button"
+                    className="control-btn compact secondary"
+                    onClick={() => void onQueryBalance?.(selectedRuntimeChannelRecord.id)}
+                    disabled={selectedBalanceLoading || !onQueryBalance}
+                  >
+                    <RefreshCw size={13} />
+                    <span>{selectedBalanceLoading ? balanceRefreshingText : refreshBalanceText}</span>
+                  </button>
+                </div>
+                {selectedBalanceResult ? (
+                  <div className="provider-balance-body">
+                    {selectedBalanceResult.items.length > 0 ? (
+                      selectedBalanceResult.items.map((item, index) => {
+                        const detail = formatBalanceDetail(item, language);
+                        return (
+                          <div key={`${item.label ?? "balance"}:${index}`} className={`provider-balance-item ${item.isValid === false ? "is-invalid" : ""}`}>
+                            <span>{item.label ?? selectedBalanceResult.providerName ?? balanceTitle}</span>
+                            <strong>{formatBalanceValue(item)}</strong>
+                            {detail ? <small>{detail}</small> : null}
+                          </div>
+                        );
+                      })
+                    ) : (
+                      <p>{selectedBalanceResult.status === "success" ? balanceNoDataText : selectedBalanceResult.message}</p>
+                    )}
+                  </div>
+                ) : (
+                  <p className="provider-balance-idle">{selectedBalanceLoading ? balanceRefreshingText : balanceIdleText}</p>
+                )}
+              </section>
+              <section className="agent-provider-presets">
+                <div className="agent-provider-presets-head">
+                  <h3>CLI</h3>
+                  <span>{configText.cliHelp}</span>
+                </div>
+                <div className="agent-provider-preset-list">
+                  {AGENTS.map((agentId) => (
+                    <button
+                      type="button"
+                      key={agentId}
+                      className={`agent-provider-preset ${selectedRuntime === agentId ? "is-active" : ""}`}
+                      onClick={() => selectRuntime(agentId)}
+                    >
+                      <span className={`agent-badge mini ${agentAccent(agentId)}`}>{agentLabel(agentId)}</span>
+                      <strong>{agentLabel(agentId)}</strong>
+                    </button>
+                  ))}
+                </div>
+              </section>
+
+              <section className="agent-provider-presets">
+                <div className="agent-provider-presets-head">
+                  <h3>Provider</h3>
+                  <span>{`${configText.providerHelp} ${agentLabel(selectedRuntime)}.`}</span>
+                </div>
+                <div className="agent-provider-preset-list">
+                  {runtimeProviderPresets.map((preset) => (
+                    <button
+                      type="button"
+                      key={preset.id}
+                      className={`agent-provider-preset ${selectedRuntimePresetId === preset.id ? "is-active" : ""}`}
+                      onClick={() => applyRuntimePreset(preset)}
+                    >
+                      <strong>{preset.label}</strong>
+                    </button>
+                  ))}
+                </div>
+                {selectedRuntimePreset?.usesApiKey ? (
+                  <label className="agent-provider-key-field">
+                    <span>{configText.apiKey}</span>
+                    <input
+                      aria-label="Provider API key"
+                      type="password"
+                      value={selectedProviderKey}
+                      placeholder={`${configText.usedByAll} ${selectedRuntimePreset.label} agents`}
+                      onChange={(event) => updateSelectedProviderKey(event.currentTarget.value)}
+                    />
+                  </label>
+                ) : null}
+                {selectedRuntimePreset?.configurableModelId ? (
+                  <label className="agent-provider-key-field">
+                    <span>{selectedRuntimePreset.configurableModelLabel ?? "Model ID"}</span>
+                    <input
+                      aria-label="Provider endpoint or model id"
+                      value={selectedRuntimeCustomModelId}
+                      placeholder={selectedRuntimePreset.configurableModelPlaceholder ?? "model-or-endpoint-id"}
+                      onChange={(event) => updateSelectedProviderModelId(event.currentTarget.value)}
+                    />
+                  </label>
+                ) : null}
+              </section>
+
+              <details className="agent-advanced-panel">
+                <summary>{configText.advancedProvider}</summary>
+                <div className="config-field-grid">
+                  <label className="config-field">
+                    <span>Channel ID</span>
+                    <div className="configured-agent-runtime-readonly">
+                      <span className={`agent-badge mini ${agentAccent(selectedRuntime)}`}>{agentLabel(selectedRuntime)}</span>
+                      <strong>{selectedRuntimeChannelRecord.id}</strong>
+                    </div>
+                  </label>
+                  <label className="config-field">
+                    <span>Label</span>
+                    <input
+                      value={selectedRuntimeChannelRecord.label}
+                      onChange={(event) => updateSelectedRuntimeChannel((channel) => ({ ...channel, label: event.currentTarget.value }))}
+                    />
+                  </label>
+                  <label className="config-field">
+                    <span>Model Provider</span>
+                    <input
+                      value={selectedRuntimeChannelRecord.modelProvider ?? ""}
+                      onChange={(event) => updateSelectedRuntimeChannel((channel) => withOptionalString(channel, "modelProvider", event.currentTarget.value))}
+                    />
+                  </label>
+                  <label className="config-field">
+                    <span>Provider Name</span>
+                    <input
+                      value={selectedRuntimeChannelRecord.providerName ?? ""}
+                      onChange={(event) => updateSelectedRuntimeChannel((channel) => withOptionalString(channel, "providerName", event.currentTarget.value))}
+                    />
+                  </label>
+                  <label className="config-field">
+                    <span>Wire API</span>
+                    <input
+                      value={selectedRuntimeChannelRecord.wireApi ?? ""}
+                      onChange={(event) => updateSelectedRuntimeChannel((channel) => withOptionalString(channel, "wireApi", event.currentTarget.value))}
+                    />
+                  </label>
+                  <label className="config-field config-field-wide">
+                    <span>Base URL</span>
+                    <input
+                      value={selectedRuntimeChannelRecord.baseUrl ?? ""}
+                      onChange={(event) => updateSelectedRuntimeChannel((channel) => withOptionalString(channel, "baseUrl", event.currentTarget.value))}
+                    />
+                  </label>
+                  <label className="config-field">
+                    <span>Reasoning</span>
+                    <input
+                      value={selectedRuntimeChannelRecord.modelReasoningEffort ?? ""}
+                      onChange={(event) =>
+                        updateSelectedRuntimeChannel((channel) => withOptionalString(channel, "modelReasoningEffort", event.currentTarget.value))
+                      }
+                    />
+                  </label>
+                  <label className="config-field config-field-wide">
+                    <span>Catalog JSON</span>
+                    <input
+                      value={selectedRuntimeChannelRecord.modelCatalogJson ?? ""}
+                      onChange={(event) => updateSelectedRuntimeChannel((channel) => withOptionalString(channel, "modelCatalogJson", event.currentTarget.value))}
+                    />
+                  </label>
+                  <label className="config-field config-field-wide">
+                    <span>Headers</span>
+                    <textarea
+                      value={headersToText(selectedRuntimeChannelRecord.httpHeaders)}
+                      onChange={(event) => updateSelectedRuntimeChannel((channel) => withOptionalHeaders(channel, event.currentTarget.value))}
+                    />
+                  </label>
+                </div>
+              </details>
+
+              {selectedRuntime === "codex" ? (
+                <section className="agent-channel-models">
+                  <div className="config-models-header">
+                    <h3>{configText.plugins}</h3>
+                    <div className="config-plugin-actions">
+                      <button
+                        className="control-btn compact secondary"
+                        type="button"
+                        onClick={() => void onLoadCodexPluginCatalog()}
+                        aria-label="Load Codex plugin catalog"
+                      >
+                        <RefreshCw size={13} />
+                        <span>{configText.loadCatalog}</span>
+                      </button>
+                      <button
+                        className="control-btn compact secondary"
+                        type="button"
+                        onClick={() =>
+                          updateSelectedRuntimeChannel((channel) => ({
+                            ...channel,
+                            plugins: [...(channel.plugins ?? []), { id: "plugin@marketplace", enabled: true }],
+                          }))
+                        }
+                        aria-label="Add manual plugin"
+                      >
+                        <Plus size={13} />
+                        <span>{configText.manual}</span>
+                      </button>
+                    </div>
+                  </div>
+                  <label className="config-field config-plugin-catalog">
+                    <span>{configText.catalog}</span>
+                    <select
+                      aria-label="Codex plugin catalog"
+                      value=""
+                      onChange={(event) => {
+                        const pluginId = event.currentTarget.value;
+                        if (!pluginId) return;
+                        updateSelectedRuntimeChannel((channel) => addPluginToChannel(channel, pluginId));
+                      }}
+                      disabled={availableCodexPlugins.length === 0}
+                    >
+                      <option value="">{availableCodexPlugins.length > 0 ? configText.selectPlugin : configText.noPluginsAvailable}</option>
+                      {availableCodexPlugins.map((plugin) => {
+                        const state = plugin.enabled ? "enabled" : plugin.installed ? "installed" : "available";
+                        return (
+                          <option key={plugin.id} value={plugin.id}>
+                            {`${plugin.id} (${state})`}
+                          </option>
+                        );
+                      })}
+                    </select>
+                  </label>
+                  {pluginCatalogStatus ? <div className="config-plugin-catalog-status">{pluginCatalogStatus}</div> : null}
+                  <div className="config-plugin-list">
+                    {(selectedRuntimeChannelRecord.plugins ?? []).length === 0 ? (
+                      <div className="empty-state config-empty">{configText.noPluginsConfigured}</div>
+                    ) : (
+                      (selectedRuntimeChannelRecord.plugins ?? []).map((plugin, index) => (
+                        <div key={`${plugin.id}:${index}`} className="config-plugin-row">
+                          <input
+                            aria-label="Plugin id"
+                            value={plugin.id}
+                            onChange={(event) =>
+                              updateSelectedRuntimeChannel((channel) => updatePluginAt(channel, index, (item) => ({ ...item, id: event.currentTarget.value })))
+                            }
+                          />
+                          <label className="config-plugin-toggle">
+                            <input
+                              type="checkbox"
+                              checked={plugin.enabled}
+                              onChange={(event) =>
+                                updateSelectedRuntimeChannel((channel) =>
+                                  updatePluginAt(channel, index, (item) => ({ ...item, enabled: event.currentTarget.checked })),
+                                )
+                              }
+                            />
+                            <span>{configText.enabled}</span>
+                          </label>
+                          <button className="icon-btn danger" type="button" onClick={() => updateSelectedRuntimeChannel((channel) => removePluginAt(channel, index))}>
+                            <Trash2 size={13} />
+                          </button>
+                        </div>
+                      ))
+                    )}
+                  </div>
+                </section>
+              ) : null}
+
+              <section className="agent-channel-models">
+                <div className="config-models-header">
+                  <h3>{configText.models}</h3>
+                  <button className="control-btn compact secondary" onClick={() => onAddModel(selectedRuntimeChannelRecord.id)}>
+                    <Plus size={13} />
+                    <span>{configText.addModel}</span>
+                  </button>
+                </div>
+                <div className="config-model-list">
+                  {selectedRuntimeChannelRecord.models.map((model, index) => (
+                    <div key={`${model.id}:${index}`} className="config-model-row">
+                      <input
+                        aria-label="Agent model id"
+                        value={model.id}
+                        onChange={(event) => onUpdateModel(selectedRuntimeChannelRecord.id, index, (item) => ({ ...item, id: event.currentTarget.value }))}
+                      />
+                      <input
+                        aria-label="Agent model label"
+                        value={model.label}
+                        onChange={(event) => onUpdateModel(selectedRuntimeChannelRecord.id, index, (item) => ({ ...item, label: event.currentTarget.value }))}
+                      />
+                      <button
+                        className="icon-btn danger"
+                        onClick={() => onRemoveModel(selectedRuntimeChannelRecord.id, index)}
+                        disabled={model.id === DEFAULT_MODEL_ID}
+                      >
+                        <Trash2 size={13} />
+                      </button>
+                    </div>
+                  ))}
+                </div>
+              </section>
+            </>
+          ) : (
+            <div className="empty-state config-empty">No config channels</div>
+          )}
+        </section>
+      </div>
+    </section>
+  );
+}
+
+export function ConfigPage({
+  language = "en",
+  channels,
+  configuredAgents,
+  selectedConfiguredAgentId,
+  status,
+  onSave,
   onAddConfiguredAgent,
   onSelectConfiguredAgent,
-  onUpdateProviderKey,
   onUpdateConfiguredAgent,
-  onRemoveConfiguredAgent,
-  onTestConfiguredAgent,
 }: ConfigPageProps) {
   const configText = UI_TEXT[language].config;
   const selectedConfiguredAgent =
     configuredAgents.find((agent) => agent.id === selectedConfiguredAgentId) ?? configuredAgents[0];
-  const selectedAgentChannelRecord = resolveConfiguredAgentChannel(selectedConfiguredAgent, channels);
-  const configuredPluginIds = new Set((selectedAgentChannelRecord?.plugins ?? []).map((plugin) => plugin.id));
-  const availableCodexPlugins = codexPluginCatalog.filter((plugin) => !configuredPluginIds.has(plugin.id));
-  const selectedAgentChannel = selectedAgentChannelRecord?.id ?? channels[0]?.id ?? "";
-  const selectedAgentRuntime = selectedAgentChannelRecord?.agentId ?? selectedConfiguredAgent?.runtimeAgentId ?? "codex";
-  const selectedAgentModels = selectedConfiguredAgent
-    ? modelsForChannel(selectedAgentRuntime, selectedAgentChannel, channels)
-    : [];
-  const runtimeProviderPresets = AGENT_PROVIDER_PRESETS.filter((preset) => preset.runtimeAgentId === selectedAgentRuntime);
-  const updateSelectedAgentChannel = (updater: (channel: AgentChannel) => AgentChannel): void => {
-    if (!selectedAgentChannelRecord) return;
-    onUpdateChannel(selectedAgentChannelRecord.id, updater);
-  };
-  const selectedAgentPresetId = selectedAgentChannelRecord
-    ? (AGENT_PROVIDER_PRESETS.find(
-        (preset) =>
-          preset.runtimeAgentId === selectedAgentRuntime &&
-          (preset.modelProvider ?? "") === (selectedAgentChannelRecord.modelProvider ?? "") &&
-          (preset.baseUrl ?? "") === (selectedAgentChannelRecord.baseUrl ?? ""),
-      )?.id ?? "custom")
-    : undefined;
-  const selectedAgentPreset = selectedAgentPresetId ? AGENT_PROVIDER_PRESETS.find((preset) => preset.id === selectedAgentPresetId) : undefined;
-  const selectedProviderKey = providerKeyValue(providerKeys, selectedAgentPreset, selectedAgentChannelRecord);
-  const selectedAgentModelId =
-    selectedConfiguredAgent && selectedAgentModels.some((model) => model.id === selectedConfiguredAgent.modelId)
-      ? selectedConfiguredAgent.modelId
-      : DEFAULT_MODEL_ID;
-  const selectedAgentTestResult = selectedConfiguredAgent ? agentTestResults[selectedConfiguredAgent.id] : undefined;
-  const selectedAgentTesting = Boolean(selectedConfiguredAgent && testingAgentId === selectedConfiguredAgent.id);
-  const selectedAgentTestElapsedMs =
-    selectedAgentTestResult?.state === "running"
-      ? Date.now() - selectedAgentTestResult.startedAt + agentTestTick * 0
-      : (selectedAgentTestResult?.elapsedMs ?? 0);
-  const selectedAgentTestModelLabel = selectedAgentTestResult
-    ? (selectedAgentModels.find((model) => model.id === selectedAgentTestResult.modelId)?.label ?? selectedAgentTestResult.modelId)
-    : "";
-  const applySelectedAgentPreset = (preset: AgentProviderPreset): void => {
-    if (!selectedConfiguredAgent || !selectedAgentChannelRecord) return;
-    updateSelectedAgentChannel((channel) =>
-      applyProviderPresetToChannel(channel, preset, providerKeys[preset.id] ?? (preset.id === selectedAgentPresetId ? apiKeyFromChannelHeaders(channel, preset) : "")),
-    );
-    onUpdateConfiguredAgent(selectedConfiguredAgent.id, (item) => applyProviderPresetToConfiguredAgent(item, selectedAgentChannelRecord, preset));
-  };
-  const selectAgentRuntime = (runtimeAgentId: AgentId): void => {
-    const preset = AGENT_PROVIDER_PRESETS.find((item) => item.runtimeAgentId === runtimeAgentId) ?? AGENT_PROVIDER_PRESETS[0]!;
-    applySelectedAgentPreset(preset);
-  };
-  const updateSelectedProviderKey = (value: string): void => {
-    if (!selectedAgentPreset) return;
-    onUpdateProviderKey(selectedAgentPreset.id, value);
-    updateSelectedAgentChannel((channel) => applyProviderPresetToChannel(channel, selectedAgentPreset, value));
-  };
-  const updateSelectedProviderModelId = (value: string): void => {
-    if (!selectedConfiguredAgent || !selectedAgentChannelRecord) return;
-    const result = applyProviderModelIdToAgentConfig(selectedConfiguredAgent, selectedAgentChannelRecord, value);
-    onUpdateChannel(selectedAgentChannelRecord.id, () => result.channel);
-    onUpdateConfiguredAgent(selectedConfiguredAgent.id, () => result.agent);
-  };
+  const selectedAgentChannel = selectedConfiguredAgent ? resolveConfiguredAgentChannel(selectedConfiguredAgent, channels) : undefined;
 
   return (
     <section className="config-page">
@@ -6170,132 +6848,9 @@ export function ConfigPage({
                           <Save size={13} />
                           <span>{configText.save}</span>
                         </button>
-                        <button
-                          type="button"
-                          className="control-btn compact secondary"
-                          onClick={() => void onTestConfiguredAgent(selectedConfiguredAgent.id)}
-                          disabled={selectedAgentTesting}
-                        >
-                          <RefreshCw size={13} />
-                          <span>{selectedAgentTesting ? "Testing" : "Test"}</span>
-                        </button>
                       </div>
                     </div>
                     {status ? <div className="config-status">{status}</div> : null}
-
-                    {selectedAgentTestResult ? (
-                      selectedAgentTestResult.state === "passed" ? (
-                        <section className="agent-test-result passed collapsed">
-                          <div className="agent-test-success-icon" aria-hidden="true">
-                            <CheckCircle2 size={16} />
-                          </div>
-                          <div className="agent-test-success-copy">
-                            <strong>{configText.agentDeployed}</strong>
-                            <span>{`${selectedAgentTestResult.providerLabel} · ${selectedAgentTestModelLabel}`}</span>
-                          </div>
-                          <span className="agent-test-success-duration">{formatDuration(selectedAgentTestElapsedMs)}</span>
-                        </section>
-                      ) : (
-                        <section className={`agent-test-result ${selectedAgentTestResult.state}`}>
-                          <div className="agent-test-result-head">
-                            <div>
-                              <strong>{selectedAgentTestResult.state === "running" ? "Testing agent" : "Test failed"}</strong>
-                              <span>{selectedAgentTestResult.phase}</span>
-                            </div>
-                            <span>{formatDuration(selectedAgentTestElapsedMs)}</span>
-                          </div>
-                          {selectedAgentTestResult.state === "running" ? <div className="agent-test-progress" aria-hidden="true" /> : null}
-                          <dl className="agent-test-meta">
-                            <div>
-                              <dt>Runtime</dt>
-                              <dd>{agentLabel(selectedAgentTestResult.runtimeAgentId)}</dd>
-                            </div>
-                            <div>
-                              <dt>Provider</dt>
-                              <dd>{selectedAgentTestResult.providerLabel}</dd>
-                            </div>
-                            <div>
-                              <dt>Model</dt>
-                              <dd>{selectedAgentTestResult.modelId}</dd>
-                            </div>
-                          </dl>
-                          <p>{selectedAgentTestResult.message}</p>
-                          {selectedAgentTestResult.transcript.length > 0 ? (
-                            <div className="agent-test-transcript" aria-label="Agent test interaction">
-                              {selectedAgentTestResult.transcript.map((item) => (
-                                <div key={item.id} className={`agent-test-transcript-row ${item.type}`}>
-                                  <span>{agentTestEventLabel(item.type)}</span>
-                                  <pre>{item.content}</pre>
-                                </div>
-                              ))}
-                            </div>
-                          ) : null}
-                          {selectedAgentTestResult.output ? <pre>{selectedAgentTestResult.output}</pre> : null}
-                        </section>
-                      )
-                    ) : null}
-
-                    <section className="agent-provider-presets">
-                      <div className="agent-provider-presets-head">
-                        <h3>CLI</h3>
-                        <span>{configText.cliHelp}</span>
-                      </div>
-                      <div className="agent-provider-preset-list">
-                        {AGENTS.map((agentId) => (
-                          <button
-                            type="button"
-                            key={agentId}
-                            className={`agent-provider-preset ${selectedAgentRuntime === agentId ? "is-active" : ""}`}
-                            onClick={() => selectAgentRuntime(agentId)}
-                          >
-                            <span className={`agent-badge mini ${agentAccent(agentId)}`}>{agentLabel(agentId)}</span>
-                            <strong>{agentLabel(agentId)}</strong>
-                          </button>
-                        ))}
-                      </div>
-                    </section>
-
-                    <section className="agent-provider-presets">
-                      <div className="agent-provider-presets-head">
-                        <h3>Provider</h3>
-                        <span>{`${configText.providerHelp} ${agentLabel(selectedAgentRuntime)}.`}</span>
-                      </div>
-                      <div className="agent-provider-preset-list">
-                        {runtimeProviderPresets.map((preset) => (
-                          <button
-                            type="button"
-                            key={preset.id}
-                            className={`agent-provider-preset ${selectedAgentPresetId === preset.id ? "is-active" : ""}`}
-                            onClick={() => applySelectedAgentPreset(preset)}
-                          >
-                            <strong>{preset.label}</strong>
-                          </button>
-                        ))}
-                      </div>
-                      {selectedAgentPreset?.usesApiKey ? (
-                        <label className="agent-provider-key-field">
-                          <span>{configText.apiKey}</span>
-                          <input
-                            aria-label="Provider API key"
-                            type="password"
-                            value={selectedProviderKey}
-                            placeholder={`${configText.usedByAll} ${selectedAgentPreset.label} agents`}
-                            onChange={(event) => updateSelectedProviderKey(event.currentTarget.value)}
-                          />
-                        </label>
-                      ) : null}
-                      {selectedAgentPreset?.configurableModelId ? (
-                        <label className="agent-provider-key-field">
-                          <span>{selectedAgentPreset.configurableModelLabel ?? "Model ID"}</span>
-                          <input
-                            aria-label="Provider endpoint or model id"
-                            value={selectedAgentModelId === DEFAULT_MODEL_ID ? "" : selectedAgentModelId}
-                            placeholder={selectedAgentPreset.configurableModelPlaceholder ?? "model-or-endpoint-id"}
-                            onChange={(event) => updateSelectedProviderModelId(event.currentTarget.value)}
-                          />
-                        </label>
-                      ) : null}
-                    </section>
 
                     <div className="config-field-grid">
                       <label className="config-field">
@@ -6306,7 +6861,6 @@ export function ConfigPage({
                           onChange={(event) => {
                             const nextName = event.currentTarget.value;
                             onUpdateConfiguredAgent(selectedConfiguredAgent.id, (item) => ({ ...item, name: nextName }));
-                            updateSelectedAgentChannel((channel) => ({ ...channel, label: nextName || channel.label }));
                           }}
                         />
                       </label>
@@ -6323,17 +6877,24 @@ export function ConfigPage({
                         />
                       </label>
                       <label className="config-field">
-                        <span>{configText.model}</span>
+                        <span>{configText.config}</span>
                         <select
-                          aria-label="Agent model"
-                          value={selectedAgentModelId}
-                          onChange={(event) =>
-                            onUpdateConfiguredAgent(selectedConfiguredAgent.id, (item) => ({ ...item, modelId: event.currentTarget.value }))
-                          }
+                          aria-label="Agent execution config"
+                          value={selectedAgentChannel?.id ?? ""}
+                          onChange={(event) => {
+                            const channel = channels.find((item) => item.id === event.currentTarget.value);
+                            if (!channel) return;
+                            onUpdateConfiguredAgent(selectedConfiguredAgent.id, (item) => ({
+                              ...item,
+                              runtimeAgentId: channel.agentId,
+                              channelId: channel.id,
+                              modelId: DEFAULT_MODEL_ID,
+                            }));
+                          }}
                         >
-                          {selectedAgentModels.map((model) => (
-                            <option key={model.id} value={model.id}>
-                              {model.label}
+                          {channels.map((channel) => (
+                            <option key={channel.id} value={channel.id}>
+                              {`${channel.label || channel.id} · ${agentLabel(channel.agentId)}`}
                             </option>
                           ))}
                         </select>
@@ -6375,193 +6936,6 @@ export function ConfigPage({
                         />
                       </label>
                     </div>
-                    {selectedAgentChannelRecord ? (
-                      <details className="agent-advanced-panel">
-                        <summary>{configText.advancedProvider}</summary>
-                        <div className="config-field-grid">
-                          <label className="config-field">
-                            <span>Channel ID</span>
-                            <div className="configured-agent-runtime-readonly">
-                              <span className={`agent-badge mini ${agentAccent(selectedAgentRuntime)}`}>{agentLabel(selectedAgentRuntime)}</span>
-                              <strong>{selectedAgentChannelRecord.id}</strong>
-                            </div>
-                          </label>
-                          <label className="config-field">
-                            <span>Model Provider</span>
-                            <input
-                              value={selectedAgentChannelRecord.modelProvider ?? ""}
-                              onChange={(event) => updateSelectedAgentChannel((channel) => withOptionalString(channel, "modelProvider", event.currentTarget.value))}
-                            />
-                          </label>
-                          <label className="config-field">
-                            <span>Provider Name</span>
-                            <input
-                              value={selectedAgentChannelRecord.providerName ?? ""}
-                              onChange={(event) => updateSelectedAgentChannel((channel) => withOptionalString(channel, "providerName", event.currentTarget.value))}
-                            />
-                          </label>
-                          <label className="config-field">
-                            <span>Wire API</span>
-                            <input
-                              value={selectedAgentChannelRecord.wireApi ?? ""}
-                              onChange={(event) => updateSelectedAgentChannel((channel) => withOptionalString(channel, "wireApi", event.currentTarget.value))}
-                            />
-                          </label>
-                          <label className="config-field config-field-wide">
-                            <span>Base URL</span>
-                            <input
-                              value={selectedAgentChannelRecord.baseUrl ?? ""}
-                              onChange={(event) => updateSelectedAgentChannel((channel) => withOptionalString(channel, "baseUrl", event.currentTarget.value))}
-                            />
-                          </label>
-                          <label className="config-field">
-                            <span>Reasoning</span>
-                            <input
-                              value={selectedAgentChannelRecord.modelReasoningEffort ?? ""}
-                              onChange={(event) =>
-                                updateSelectedAgentChannel((channel) => withOptionalString(channel, "modelReasoningEffort", event.currentTarget.value))
-                              }
-                            />
-                          </label>
-                          <label className="config-field config-field-wide">
-                            <span>Catalog JSON</span>
-                            <input
-                              value={selectedAgentChannelRecord.modelCatalogJson ?? ""}
-                              onChange={(event) => updateSelectedAgentChannel((channel) => withOptionalString(channel, "modelCatalogJson", event.currentTarget.value))}
-                            />
-                          </label>
-                          <label className="config-field config-field-wide">
-                            <span>Headers</span>
-                            <textarea
-                              value={headersToText(selectedAgentChannelRecord.httpHeaders)}
-                              onChange={(event) => updateSelectedAgentChannel((channel) => withOptionalHeaders(channel, event.currentTarget.value))}
-                            />
-                          </label>
-                        </div>
-                      </details>
-                    ) : null}
-                    {selectedAgentChannelRecord && selectedAgentRuntime === "codex" ? (
-                      <section className="agent-channel-models">
-                        <div className="config-models-header">
-                          <h3>{configText.plugins}</h3>
-                          <div className="config-plugin-actions">
-                            <button
-                              className="control-btn compact secondary"
-                              type="button"
-                              onClick={() => void onLoadCodexPluginCatalog()}
-                              aria-label="Load Codex plugin catalog"
-                            >
-                              <RefreshCw size={13} />
-                              <span>{configText.loadCatalog}</span>
-                            </button>
-                            <button
-                              className="control-btn compact secondary"
-                              type="button"
-                              onClick={() =>
-                                updateSelectedAgentChannel((channel) => ({
-                                  ...channel,
-                                  plugins: [...(channel.plugins ?? []), { id: "plugin@marketplace", enabled: true }],
-                                }))
-                              }
-                              aria-label="Add manual plugin"
-                            >
-                              <Plus size={13} />
-                              <span>{configText.manual}</span>
-                            </button>
-                          </div>
-                        </div>
-                        <label className="config-field config-plugin-catalog">
-                          <span>{configText.catalog}</span>
-                          <select
-                            aria-label="Codex plugin catalog"
-                            value=""
-                            onChange={(event) => {
-                              const pluginId = event.currentTarget.value;
-                              if (!pluginId) return;
-                              updateSelectedAgentChannel((channel) => addPluginToChannel(channel, pluginId));
-                            }}
-                            disabled={availableCodexPlugins.length === 0}
-                          >
-                            <option value="">{availableCodexPlugins.length > 0 ? configText.selectPlugin : configText.noPluginsAvailable}</option>
-                            {availableCodexPlugins.map((plugin) => {
-                              const state = plugin.enabled ? "enabled" : plugin.installed ? "installed" : "available";
-                              return (
-                                <option key={plugin.id} value={plugin.id}>
-                                  {`${plugin.id} (${state})`}
-                                </option>
-                              );
-                            })}
-                          </select>
-                        </label>
-                        {pluginCatalogStatus ? <div className="config-plugin-catalog-status">{pluginCatalogStatus}</div> : null}
-                        <div className="config-plugin-list">
-                          {(selectedAgentChannelRecord.plugins ?? []).length === 0 ? (
-                            <div className="empty-state config-empty">{configText.noPluginsConfigured}</div>
-                          ) : (
-                            (selectedAgentChannelRecord.plugins ?? []).map((plugin, index) => (
-                              <div key={`${plugin.id}:${index}`} className="config-plugin-row">
-                                <input
-                                  aria-label="Plugin id"
-                                  value={plugin.id}
-                                  onChange={(event) =>
-                                    updateSelectedAgentChannel((channel) => updatePluginAt(channel, index, (item) => ({ ...item, id: event.currentTarget.value })))
-                                  }
-                                />
-                                <label className="config-plugin-toggle">
-                                  <input
-                                    type="checkbox"
-                                    checked={plugin.enabled}
-                                    onChange={(event) =>
-                                      updateSelectedAgentChannel((channel) =>
-                                        updatePluginAt(channel, index, (item) => ({ ...item, enabled: event.currentTarget.checked })),
-                                      )
-                                    }
-                                  />
-                                  <span>{configText.enabled}</span>
-                                </label>
-                                <button className="icon-btn danger" type="button" onClick={() => updateSelectedAgentChannel((channel) => removePluginAt(channel, index))}>
-                                  <Trash2 size={13} />
-                                </button>
-                              </div>
-                            ))
-                          )}
-                        </div>
-                      </section>
-                    ) : null}
-                    {selectedAgentChannelRecord ? (
-                      <section className="agent-channel-models">
-                        <div className="config-models-header">
-                          <h3>{configText.models}</h3>
-                          <button className="control-btn compact secondary" onClick={() => onAddModel(selectedAgentChannelRecord.id)}>
-                            <Plus size={13} />
-                            <span>{configText.addModel}</span>
-                          </button>
-                        </div>
-                        <div className="config-model-list">
-                          {selectedAgentChannelRecord.models.map((model, index) => (
-                            <div key={`${model.id}:${index}`} className="config-model-row">
-                              <input
-                                aria-label="Agent model id"
-                                value={model.id}
-                                onChange={(event) => onUpdateModel(selectedAgentChannelRecord.id, index, (item) => ({ ...item, id: event.currentTarget.value }))}
-                              />
-                              <input
-                                aria-label="Agent model label"
-                                value={model.label}
-                                onChange={(event) => onUpdateModel(selectedAgentChannelRecord.id, index, (item) => ({ ...item, label: event.currentTarget.value }))}
-                              />
-                              <button
-                                className="icon-btn danger"
-                                onClick={() => onRemoveModel(selectedAgentChannelRecord.id, index)}
-                                disabled={model.id === DEFAULT_MODEL_ID}
-                              >
-                                <Trash2 size={13} />
-                              </button>
-                            </div>
-                          ))}
-                        </div>
-                      </section>
-                    ) : null}
                   </>
                 ) : (
                   <div className="empty-state config-empty configured-agent-empty">
@@ -6589,7 +6963,9 @@ function CliMessage({ message, agentId, streaming = false }: { message: ChatMess
         <div className="cli-agent-line">
           <span>{`You · ${formatTime(message.timestamp)}`}</span>
         </div>
-        <pre>{message.content}</pre>
+        <div className="cli-markdown">
+          <Markdown text={message.content} />
+        </div>
       </div>
     );
   }

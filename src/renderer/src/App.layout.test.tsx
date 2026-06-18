@@ -1,20 +1,25 @@
 import { readFileSync } from "node:fs";
 import { renderToStaticMarkup } from "react-dom/server";
 import { describe, expect, test } from "vitest";
+import { Markdown } from "./Markdown";
 import {
   App,
   appShellClass,
+  ChatHistoryPanel,
   chatConfigLocked,
   ChatControls,
   ConfigPage,
+  RuntimePage,
   SettingsPage,
   SkillsPage,
-  applyAgentTemplate,
+  applySkillTemplate,
   applyProviderPresetToChannel,
   applyProviderPresetToConfiguredAgent,
   applyProviderModelIdToAgentConfig,
+  rememberProviderKeyFromChannel,
   onlineSkillTreeUrl,
   parseSkillMarkdown,
+  missingAppCapabilityMessage,
   shouldSendComposerKey,
   SlashCommandSuggestions,
   slashCommandSuggestionsFor,
@@ -39,12 +44,25 @@ import {
   workflowRunProgressSummary,
   workflowStoragePlanDocument,
   workflowTaskLiveDetail,
-  AGENT_PROVIDER_PRESETS,
 } from "./App";
 import { DEFAULT_MODEL_ID } from "../../shared/models";
-import { AGENT_TEMPLATES } from "../../shared/agent-templates";
+import { generatedConfigChannels, normalizeConfigChannelsForStorage, selectConfigChannelsForDisplay } from "../../shared/config-channels";
+import { AGENT_PROVIDER_PRESETS } from "../../shared/provider-presets";
+import { SKILL_TEMPLATES } from "../../shared/skill-templates";
 import { firstWorkflowQuestionForObjective } from "../../shared/workflow-agent";
-import type { AgentChannel, AgentRuntime, AgentTeam, AppSnapshot, CodexPluginCatalogItem, ConfiguredAgent, TaskRun, TeamRun, WorkflowGraph } from "../../shared/types";
+import type {
+  AgentChannel,
+  AgentRuntime,
+  AgentTeam,
+  AppSnapshot,
+  ChatSession,
+  CodexPluginCatalogItem,
+  ConfiguredAgent,
+  InstalledSkillResult,
+  TaskRun,
+  TeamRun,
+  WorkflowGraph,
+} from "../../shared/types";
 
 const runtimes: AgentRuntime[] = [
   {
@@ -335,10 +353,23 @@ const teamRuns: TeamRun[] = [
 
 const styles = readFileSync(new URL("./styles.css", import.meta.url), "utf8");
 
+function cssSelectorsForDeclaration(declaration: RegExp): string[] {
+  return Array.from(styles.matchAll(/([^{}]+)\{([^{}]*)\}/g)).flatMap((match) => {
+    const selector = match[1] ?? "";
+    const body = match[2] ?? "";
+    if (!declaration.test(body)) return [];
+    return selector
+      .split(",")
+      .map((item) => item.trim())
+      .filter(Boolean);
+  });
+}
+
 describe("ChatControls", () => {
   test("uses a full-width shell when tasks are shown", () => {
     expect(appShellClass("tasks")).toBe("shell tasks-shell");
-    expect(appShellClass("skills")).toBe("shell");
+    expect(appShellClass("skills")).toBe("shell skills-shell");
+    expect(appShellClass("runtimes")).toBe("shell runtimes-shell");
     expect(appShellClass("chat")).toBe("shell");
   });
 
@@ -370,7 +401,18 @@ describe("ChatControls", () => {
 
   test("keeps the workflow history sidebar visible", () => {
     expect(appShellClass("workflow")).toBe("shell workflow-shell");
-    expect(styles).not.toContain(".shell.workflow-shell .resource-sidebar {\n  display: none");
+    expect(cssSelectorsForDeclaration(/display:\s*none\s*;?/)).not.toContain(".shell.workflow-shell .resource-sidebar");
+    expect(cssSelectorsForDeclaration(/grid-template-columns:\s*(?:62|74|76)px\s+minmax\(0,\s*1fr\)\s*;?/)).not.toContain(".shell.workflow-shell");
+  });
+
+  test("keeps sidebar history actions outside Electron drag regions", () => {
+    expect(styles).toContain(".resource-sidebar button {\n  -webkit-app-region: no-drag");
+    expect(styles).toContain(".agent-context-menu {\n  -webkit-app-region: no-drag");
+  });
+
+  test("explains when a newly added Electron API requires app restart", () => {
+    expect(missingAppCapabilityMessage("Delete chat")).toContain("Delete chat");
+    expect(missingAppCapabilityMessage("Delete chat")).toContain("restart");
   });
 
   test("uses compact segmented controls for workflow mode", () => {
@@ -496,32 +538,131 @@ describe("ChatControls", () => {
   });
 });
 
+describe("Markdown", () => {
+  test("renders headings and GitHub links as markdown instead of plain text", () => {
+    const html = renderToStaticMarkup(<Markdown text={"# Source\n\nSee [TradingAgents](https://github.com/TauricResearch/TradingAgents)."} />);
+
+    expect(html).toContain("<h1>Source</h1>");
+    expect(html).toContain('href="https://github.com/TauricResearch/TradingAgents"');
+    expect(html).toContain(">TradingAgents</a>");
+    expect(html).not.toContain("[TradingAgents]");
+  });
+});
+
+describe("Sidebar history panels", () => {
+  const workflowPanelGraph: WorkflowGraph = {
+    title: "Review payment release",
+    objective: "Review payment release",
+    nodes: [
+      { id: "start", kind: "start", title: "Start", prompt: "" },
+      { id: "plan", kind: "agent", title: "Plan", prompt: "Plan release.", agentId: "codex", channelId: "codex-openai", modelId: DEFAULT_MODEL_ID },
+      { id: "review", kind: "agent", title: "Review", prompt: "Review release.", agentId: "claude", channelId: "claude-code", modelId: DEFAULT_MODEL_ID },
+      { id: "end", kind: "end", title: "Done", prompt: "" },
+    ],
+    edges: [
+      { id: "start->plan", fromNodeId: "start", toNodeId: "plan" },
+      { id: "plan->review", fromNodeId: "plan", toNodeId: "review" },
+      { id: "review->end", fromNodeId: "review", toNodeId: "end" },
+    ],
+  };
+
+  test("renders a chat context menu for deleting the selected session", () => {
+    const chat: ChatSession = {
+      id: "chat-1",
+      title: "Payment review",
+      agentId: "codex",
+      channelId: "codex-openai",
+      modelId: DEFAULT_MODEL_ID,
+      sessionId: "019e9143-2451-7612-a62d-e65389574d7d",
+      running: false,
+      messages: [],
+      pendingAssistantMessageId: undefined,
+      lastError: undefined,
+      createdAt: 1710000000000,
+      updatedAt: 1710000000000,
+    };
+
+    const html = renderToStaticMarkup(
+      <ChatHistoryPanel
+        chats={[chat]}
+        activeChatId="chat-1"
+        contextMenu={{ chatId: "chat-1", x: 24, y: 32 }}
+        onCreateChat={() => undefined}
+        onSelectChat={() => undefined}
+        onOpenContextMenu={() => undefined}
+        onDeleteChat={() => undefined}
+      />,
+    );
+
+    expect(html).toContain("Chats");
+    expect(html).toContain("Payment review");
+    expect(html).toContain("chat-context-menu");
+    expect(html).toContain("Delete chat");
+    expect(html).toContain("Delete session and data");
+  });
+
+  test("renders workflow context menu actions and rename dialog", () => {
+    const html = renderToStaticMarkup(
+      <WorkflowHistoryPanel
+        workflows={[
+          {
+            workflowId: "wf_review",
+            title: "Review payment release",
+            objective: "Review payment release",
+            status: "draft",
+            revision: 2,
+            graph: workflowPanelGraph,
+            graphReady: true,
+            messages: [],
+            reply: "",
+            error: undefined,
+            runProgress: [],
+            runContextDocument: "",
+            contextDocument: "",
+            runIds: [],
+            agentId: "codex",
+            channelId: "codex-openai",
+            modelId: "gpt-5.5",
+            agentSessionId: undefined,
+            createdAt: 1710000000000,
+            updatedAt: 1710000000000,
+          },
+        ]}
+        activeWorkflowId="wf_review"
+        contextMenu={{ workflowId: "wf_review", x: 18, y: 42 }}
+        renameDraft={{ workflowId: "wf_review", title: "Review payment release" }}
+        onSelectWorkflow={() => undefined}
+        onNewWorkflow={() => undefined}
+        onOpenContextMenu={() => undefined}
+        onStartRename={() => undefined}
+        onRenameDraftChange={() => undefined}
+        onConfirmRename={() => undefined}
+        onCancelRename={() => undefined}
+        onDeleteWorkflow={() => undefined}
+      />,
+    );
+
+    expect(html).toContain("workflow-context-menu");
+    expect(html).toContain("Rename workflow");
+    expect(html).toContain("Delete workflow");
+    expect(html).toContain("workflow-rename-overlay");
+    expect(html).toContain("aria-label=\"Rename workflow\"");
+    expect(html).toContain("value=\"Review payment release\"");
+  });
+});
+
 describe("ConfigPage", () => {
-  test("renders agent controls, plugins, templates, and inline save action", () => {
+  test("renders agent profile controls without runtime provider settings", () => {
     const html = renderToStaticMarkup(
       <ConfigPage
         channels={channels}
         configuredAgents={configuredAgents}
         selectedConfiguredAgentId="repo-reviewer"
-        providerKeys={{}}
         status=""
-        codexPluginCatalog={codexPluginCatalog}
-        pluginCatalogStatus="Loaded 2 plugins"
-        agentTestResults={{}}
-        testingAgentId={undefined}
-        agentTestTick={0}
-        onUpdateChannel={() => undefined}
-        onAddModel={() => undefined}
-        onUpdateModel={() => undefined}
-        onRemoveModel={() => undefined}
         onSave={async () => undefined}
-        onLoadCodexPluginCatalog={async () => undefined}
         onAddConfiguredAgent={() => undefined}
         onSelectConfiguredAgent={() => undefined}
-        onUpdateProviderKey={() => undefined}
         onUpdateConfiguredAgent={() => undefined}
-        onRemoveConfiguredAgent={() => undefined}
-        onTestConfiguredAgent={async () => undefined}
       />,
     );
 
@@ -531,16 +672,19 @@ describe("ConfigPage", () => {
     expect(html).not.toContain(">Generate<");
     expect(html).not.toContain("Imported profiles");
     expect(html).not.toContain("Generated Profiles");
-    expect(html).toContain("aria-label=\"Agent model id\"");
-    expect(html).toContain("Plugins");
-    expect(html).toContain("documents@openai-primary-runtime");
-    expect(html).toContain("browser-use@openai-bundled");
-    expect(html).toContain("aria-label=\"Codex plugin catalog\"");
-    expect(html).toContain("github@openai-curated");
-    expect(html).toContain("Loaded 2 plugins");
+    expect(html).not.toContain("aria-label=\"Agent model id\"");
+    expect(html).not.toContain("Plugins");
+    expect(html).not.toContain("documents@openai-primary-runtime");
+    expect(html).not.toContain("browser-use@openai-bundled");
+    expect(html).not.toContain("aria-label=\"Codex plugin catalog\"");
+    expect(html).not.toContain("github@openai-curated");
+    expect(html).not.toContain("Loaded 2 plugins");
+    expect(html).not.toContain("CLI");
+    expect(html).not.toContain("Provider");
+    expect(html).not.toContain("aria-label=\"Provider API key\"");
     expect(html).not.toContain("Advanced JSON");
     expect(html).not.toContain("config-editor-panel");
-    expect(html).toContain("Agents");
+    expect(html).toContain("Agent Assembly");
     expect(html).not.toContain("aria-label=\"Language\"");
     expect(html).not.toContain("统一中文");
     expect(html).not.toContain("Agent templates");
@@ -549,13 +693,15 @@ describe("ConfigPage", () => {
     expect(html).not.toContain(">Import template<");
     expect(html).not.toContain(">导入模板<");
     expect(html).toContain("Repo Reviewer");
+    expect(html).toContain("aria-label=\"Agent execution config\"");
+    expect(html).toContain("Codex OpenAI · Codex");
     expect(html).toContain("aria-label=\"Agent prompt\"");
-    expect(html).toContain("Test");
+    expect(html).not.toContain(">Test<");
     expect(html).toContain("configured-agent-editor-actions");
     expect(html).toContain(">Save<");
   });
 
-  test("shows saved provider api keys from channel headers", () => {
+  test("renders runtime provider settings separately from agent profile settings", () => {
     const savedKeyChannels: AgentChannel[] = [
       {
         ...channels[0]!,
@@ -568,12 +714,64 @@ describe("ConfigPage", () => {
     ];
 
     const html = renderToStaticMarkup(
-      <ConfigPage
+      <RuntimePage
+        language="en"
         channels={savedKeyChannels}
-        configuredAgents={configuredAgents}
-        selectedConfiguredAgentId="repo-reviewer"
+        selectedChannelId="codex-openai"
         providerKeys={{}}
-        status=""
+        codexPluginCatalog={codexPluginCatalog}
+        pluginCatalogStatus="Loaded 2 plugins"
+        agentTestResults={{}}
+        testingAgentId={undefined}
+        agentTestTick={0}
+        onUpdateChannel={() => undefined}
+        onAddModel={() => undefined}
+        onUpdateModel={() => undefined}
+        onRemoveModel={() => undefined}
+        onSave={async () => undefined}
+        onLoadCodexPluginCatalog={async () => undefined}
+        onSelectChannel={() => undefined}
+        onAddConfig={() => undefined}
+        onOpenContextMenu={() => undefined}
+        onDeleteConfig={() => undefined}
+        onTestChannel={async () => undefined}
+        onUpdateProviderKey={() => undefined}
+      />,
+    );
+
+    expect(html).toContain("runtime-page");
+    expect(html).toContain("Config");
+    expect(html).toContain("CLI");
+    expect(html).toContain("Provider");
+    expect(html).toContain("aria-label=\"Provider API key\"");
+    expect(html).toContain("value=\"saved-key\"");
+    expect(html).toContain("aria-label=\"Agent model id\"");
+    expect(html).toContain("Plugins");
+    expect(html).toContain("documents@openai-primary-runtime");
+    expect(html).toContain("browser-use@openai-bundled");
+    expect(html).toContain("aria-label=\"Codex plugin catalog\"");
+    expect(html).toContain("github@openai-curated");
+    expect(html).toContain("Loaded 2 plugins");
+    expect(html).not.toContain("aria-label=\"Agent prompt\"");
+  });
+
+  test("shows the stored channel key ahead of stale provider key cache", () => {
+    const savedKeyChannels: AgentChannel[] = [
+      {
+        ...channels[0]!,
+        providerName: "DeepSeek",
+        modelProvider: "deepseek",
+        baseUrl: "https://api.deepseek.com",
+        httpHeaders: { Authorization: "Bearer saved-key" },
+      },
+    ];
+
+    const html = renderToStaticMarkup(
+      <RuntimePage
+        language="en"
+        channels={savedKeyChannels}
+        selectedChannelId="codex-openai"
+        providerKeys={{ deepseek: "stale-key" }}
         codexPluginCatalog={codexPluginCatalog}
         pluginCatalogStatus=""
         agentTestResults={{}}
@@ -585,33 +783,207 @@ describe("ConfigPage", () => {
         onRemoveModel={() => undefined}
         onSave={async () => undefined}
         onLoadCodexPluginCatalog={async () => undefined}
-        onAddConfiguredAgent={() => undefined}
-        onSelectConfiguredAgent={() => undefined}
+        onSelectChannel={() => undefined}
+        onAddConfig={() => undefined}
+        onOpenContextMenu={() => undefined}
+        onDeleteConfig={() => undefined}
+        onTestChannel={async () => undefined}
         onUpdateProviderKey={() => undefined}
-        onUpdateConfiguredAgent={() => undefined}
-        onRemoveConfiguredAgent={() => undefined}
-        onTestConfiguredAgent={async () => undefined}
       />,
     );
 
-    expect(html).toContain("aria-label=\"Provider API key\"");
     expect(html).toContain("value=\"saved-key\"");
+    expect(html).not.toContain("value=\"stale-key\"");
   });
 
-  test("collapses successful agent tests into a green deployment summary", () => {
+  test("renders all stored execution configs without legacy cleanup controls", () => {
+    const noisyChannels: AgentChannel[] = [
+      channels[0]!,
+      {
+        ...channels[0]!,
+        id: "codex-deepseek",
+        label: "Codex DeepSeek",
+        providerName: "DeepSeek",
+        modelProvider: "deepseek",
+        baseUrl: "https://api.deepseek.com",
+      },
+      {
+        ...channels[0]!,
+        id: "repo-reviewer-channel",
+        label: "Repo Reviewer Runtime",
+      },
+      {
+        ...channels[0]!,
+        id: "payment-writer-channel",
+        label: "Payment Writer Runtime",
+      },
+      channels[1]!,
+      {
+        ...channels[0]!,
+        id: "codex-multi-agent-repo-reviewer-default",
+        label: "Codex multi-agent-repo-reviewer-default",
+      },
+      {
+        id: "api-openai",
+        agentId: "api",
+        label: "OpenAI API",
+        providerName: "OpenAI",
+        modelProvider: "openai-api",
+        models: [{ id: DEFAULT_MODEL_ID, label: "Default" }],
+      },
+    ];
+
     const html = renderToStaticMarkup(
-      <ConfigPage
+      <RuntimePage
+        language="en"
+        channels={noisyChannels}
+        selectedChannelId="repo-reviewer-channel"
+        providerKeys={{}}
+        codexPluginCatalog={[]}
+        pluginCatalogStatus=""
+        agentTestResults={{}}
+        testingAgentId={undefined}
+        agentTestTick={0}
+        contextMenu={{ channelId: "codex-deepseek", x: 16, y: 24 }}
+        onUpdateChannel={() => undefined}
+        onAddModel={() => undefined}
+        onUpdateModel={() => undefined}
+        onRemoveModel={() => undefined}
+        onSave={async () => undefined}
+        onLoadCodexPluginCatalog={async () => undefined}
+        onSelectChannel={() => undefined}
+        onAddConfig={() => undefined}
+        onOpenContextMenu={() => undefined}
+        onDeleteConfig={() => undefined}
+        onTestChannel={async () => undefined}
+        onUpdateProviderKey={() => undefined}
+      />,
+    );
+
+    expect(html.match(/runtime-channel-row/g)).toHaveLength(7);
+    expect(html).toContain("Configs");
+    expect(html).toContain("OpenAI API");
+    expect(html).toContain("Codex DeepSeek");
+    expect(html).toContain("DeepSeek");
+    expect(html).toContain("Repo Reviewer Runtime");
+    expect(html).toContain("Payment Writer Runtime");
+    expect(html).toContain("Codex multi-agent-repo-reviewer-default");
+    expect(html).toContain("Add config");
+    expect(html).toContain("runtime-config-context-menu");
+    expect(html).toContain("Delete config");
+    expect(html).not.toContain("Add Codex");
+    expect(html).not.toContain("Add Claude");
+    expect(html).not.toContain("Add API");
+    expect(html).not.toContain("runtime-channel-actions");
+    expect(html).not.toContain("legacy");
+    expect(html).not.toContain("automatic internal channels");
+    expect(html).not.toContain("not additional runtimes");
+    expect(html).not.toContain("Organize history");
+    expect(html).not.toContain("generated");
+    expect(html).not.toContain("aria-label=\"Delete runtime channel\"");
+    expect(html).not.toContain("aria-label=\"Agent prompt\"");
+  });
+
+  test("keeps config cleanup focused on generated channel records", () => {
+    const noisyChannels: AgentChannel[] = [
+      channels[0]!,
+      {
+        ...channels[0]!,
+        id: "repo-reviewer-channel",
+        label: "Repo Reviewer Runtime",
+      },
+      {
+        ...channels[0]!,
+        id: "codex-multi-agent-repo-reviewer-default",
+        label: "Codex multi-agent-repo-reviewer-default",
+      },
+      channels[1]!,
+      {
+        id: "deepseek-api-agent-channel",
+        agentId: "api",
+        label: "DeepSeek API Agent",
+        providerName: "DeepSeek",
+        modelProvider: "deepseek",
+        baseUrl: "https://api.deepseek.com",
+        httpHeaders: { Authorization: "Bearer test-token" },
+        models: [{ id: DEFAULT_MODEL_ID, label: "Default" }],
+      },
+      {
+        id: "api-openai",
+        agentId: "api",
+        label: "OpenAI API",
+        providerName: "OpenAI",
+        modelProvider: "openai-api",
+        models: [{ id: DEFAULT_MODEL_ID, label: "Default" }],
+      },
+    ];
+
+    expect(selectConfigChannelsForDisplay(noisyChannels).map((channel) => channel.id)).toEqual([
+      "codex-openai",
+      "repo-reviewer-channel",
+      "codex-multi-agent-repo-reviewer-default",
+      "claude-code",
+      "deepseek-api-agent-channel",
+      "api-openai",
+    ]);
+    expect(generatedConfigChannels(noisyChannels).map((channel) => channel.id)).toEqual(["repo-reviewer-channel", "codex-multi-agent-repo-reviewer-default"]);
+    expect(normalizeConfigChannelsForStorage(noisyChannels).map((channel) => channel.id)).toEqual([
+      "codex-openai",
+      "claude-code",
+      "deepseek-api-agent-channel",
+      "api-openai",
+    ]);
+  });
+
+  test("offers ccswitch-style Claude Code provider presets", () => {
+    const html = renderToStaticMarkup(
+      <RuntimePage
+        language="en"
+        channels={channels}
+        selectedChannelId="claude-code"
+        providerKeys={{}}
+        codexPluginCatalog={[]}
+        pluginCatalogStatus=""
+        agentTestResults={{}}
+        testingAgentId={undefined}
+        agentTestTick={0}
+        onUpdateChannel={() => undefined}
+        onAddModel={() => undefined}
+        onUpdateModel={() => undefined}
+        onRemoveModel={() => undefined}
+        onSave={async () => undefined}
+        onLoadCodexPluginCatalog={async () => undefined}
+        onSelectChannel={() => undefined}
+        onAddConfig={() => undefined}
+        onOpenContextMenu={() => undefined}
+        onDeleteConfig={() => undefined}
+        onTestChannel={async () => undefined}
+        onUpdateProviderKey={() => undefined}
+      />,
+    );
+
+    expect(html).toContain("Claude Code");
+    expect(html).toContain(">DeepSeek<");
+    expect(html).toContain(">GLM<");
+    expect(html).toContain(">Kimi<");
+    expect(html).toContain(">SiliconFlow<");
+    expect(html).toContain(">Bailian<");
+    expect(html).toContain(">Volcengine<");
+    expect(html).toContain(">Custom<");
+  });
+
+  test("collapses successful execution config tests into a green deployment summary", () => {
+    const html = renderToStaticMarkup(
+      <RuntimePage
         language="zh"
         channels={channels}
-        configuredAgents={configuredAgents}
-        selectedConfiguredAgentId="repo-reviewer"
+        selectedChannelId="codex-openai"
         providerKeys={{}}
-        status=""
         codexPluginCatalog={codexPluginCatalog}
         pluginCatalogStatus=""
         agentTestResults={{
-          "repo-reviewer": {
-            agentId: "repo-reviewer",
+          "codex-openai": {
+            agentId: "codex-openai",
             state: "passed",
             phase: "Completed",
             message: "OK",
@@ -641,64 +1013,148 @@ describe("ConfigPage", () => {
         onRemoveModel={() => undefined}
         onSave={async () => undefined}
         onLoadCodexPluginCatalog={async () => undefined}
-        onAddConfiguredAgent={() => undefined}
-        onSelectConfiguredAgent={() => undefined}
+        onSelectChannel={() => undefined}
+        onAddConfig={() => undefined}
+        onOpenContextMenu={() => undefined}
+        onDeleteConfig={() => undefined}
+        onTestChannel={async () => undefined}
         onUpdateProviderKey={() => undefined}
-        onUpdateConfiguredAgent={() => undefined}
-        onRemoveConfiguredAgent={() => undefined}
-        onTestConfiguredAgent={async () => undefined}
       />,
     );
 
     expect(html).toContain("agent-test-result passed collapsed");
-    expect(html).toContain("Agent 部署成功");
+    expect(html).toContain("配置可用");
     expect(html).toContain("OpenAI · GPT-5.5");
     expect(html).not.toContain("verbose passing output should stay collapsed");
     expect(html).not.toContain("verbose transcript should stay collapsed");
     expect(html).not.toContain("agent-test-transcript");
   });
 
-  test("keeps agent templates in Chinese without separate localized fields", () => {
-    const codeReviewer = AGENT_TEMPLATES.find((template) => template.id === "code-reviewer");
+  test("renders provider balance status on the execution config page", () => {
+    const html = renderToStaticMarkup(
+      <RuntimePage
+        language="zh"
+        channels={channels}
+        selectedChannelId="codex-openai"
+        providerKeys={{}}
+        codexPluginCatalog={[]}
+        pluginCatalogStatus=""
+        agentTestResults={{}}
+        testingAgentId={undefined}
+        agentTestTick={0}
+        balanceResults={{
+          "codex-openai": {
+            channelId: "codex-openai",
+            providerName: "DeepSeek",
+            supported: true,
+            status: "success",
+            message: "Balance query succeeded.",
+            queriedAt: 1710000000000,
+            items: [{ label: "CNY", remaining: 12.34, unit: "CNY", isValid: true }],
+          },
+        }}
+        balanceLoadingChannelId={undefined}
+        onUpdateChannel={() => undefined}
+        onAddModel={() => undefined}
+        onUpdateModel={() => undefined}
+        onRemoveModel={() => undefined}
+        onSave={async () => undefined}
+        onLoadCodexPluginCatalog={async () => undefined}
+        onSelectChannel={() => undefined}
+        onAddConfig={() => undefined}
+        onOpenContextMenu={() => undefined}
+        onDeleteConfig={() => undefined}
+        onTestChannel={async () => undefined}
+        onQueryBalance={async () => undefined}
+        onUpdateProviderKey={() => undefined}
+      />,
+    );
+
+    expect(html).toContain("余额");
+    expect(html).toContain("DeepSeek");
+    expect(html).toContain("12.34 CNY");
+    expect(html).toContain("刷新余额");
+  });
+
+  test("keeps skill templates named from SKILL.md frontmatter without separate localized fields", () => {
+    const codeReviewer = SKILL_TEMPLATES.find((template) => template.id === "refactor-review-knowledge");
 
     expect(codeReviewer).toMatchObject({
-      name: "代码审查 Agent",
-      description: expect.stringContaining("检查代码缺陷"),
-      prompt: expect.stringContaining("作为资深代码审查者"),
+      name: "refactor-review-knowledge",
+      description: expect.stringContaining("conducting thorough code reviews"),
+      prompt: expect.stringContaining("name: refactor-review-knowledge"),
     });
-    expect(AGENT_TEMPLATES.some((template) => "nameZh" in template || "descriptionZh" in template || "promptZh" in template)).toBe(false);
+    expect(SKILL_TEMPLATES.some((template) => "nameZh" in template || "descriptionZh" in template || "promptZh" in template)).toBe(false);
   });
 
   test("includes the requested built-in skill templates first", () => {
-    expect(AGENT_TEMPLATES.slice(0, 5).map((template) => template.id)).toEqual([
-      "brainstorm-facilitator",
-      "personal-finance-planner",
-      "resume-writer",
-      "paper-writing-agent",
-      "code-reviewer",
+    expect(SKILL_TEMPLATES.map((template) => template.id)).toEqual([
+      "brainstorming",
+      "systematic-debugging",
+      "personal-finance-planning",
+      "resume-optimization",
+      "paper-writing",
+      "refactor-review-knowledge",
+      "code-review-and-quality",
     ]);
-    expect(AGENT_TEMPLATES.map((template) => template.name)).toEqual(
-      expect.arrayContaining(["头脑风暴 Agent", "理财规划 Agent", "简历写作 Agent", "论文写作 Agent", "代码审查 Agent"]),
+    expect(SKILL_TEMPLATES.map((template) => template.name)).toEqual(
+      expect.arrayContaining([
+        "brainstorming",
+        "systematic-debugging",
+        "personal-finance-planning",
+        "resume-optimization",
+        "paper-writing",
+        "refactor-review-knowledge",
+        "code-review-and-quality",
+      ]),
     );
   });
 
-  test("uses detailed prompts for the requested built-in skill templates", () => {
-    const expectedPromptSections = [
-      ["brainstorm-facilitator", ["工作方式", "输出格式", "质量标准"]],
-      ["personal-finance-planner", ["工作方式", "输出格式", "边界"]],
-      ["resume-writer", ["工作方式", "输出格式", "禁止"]],
-      ["paper-writing-agent", ["工作方式", "输出格式", "学术诚信"]],
-      ["code-reviewer", ["审查流程", "输出格式", "不要"]],
+  test("stores the requested built-in skill templates as raw SKILL.md content", () => {
+    const expectedSkillContent = [
+      ["brainstorming", ["---", "name: brainstorming", "# Brainstorming Ideas Into Designs", "<HARD-GATE>", "Offer the visual companion just-in-time"]],
+      ["systematic-debugging", ["---", "name: systematic-debugging", "# Systematic Debugging", "NO FIXES WITHOUT ROOT CAUSE INVESTIGATION FIRST"]],
+      ["personal-finance-planning", ["---", "name: personal-finance-planning", "# 理财规划", "## 边界"]],
+      ["resume-optimization", ["---", "name: resume-optimization", "argument-hint:", "allowed-tools:", "## ATS Optimization"]],
+      ["paper-writing", ["---", "name: paper-writing", "# 论文写作", "## 学术诚信"]],
+      ["refactor-review-knowledge", ["---", "name: refactor-review-knowledge", "required_tools:", "user-invocable: false", "DO NOT fix issues"]],
+      ["code-review-and-quality", ["---", "name: code-review-and-quality", "# Code Review and Quality", "## The Five-Axis Review", "## Change Sizing"]],
     ] as const;
 
-    for (const [templateId, expectedSections] of expectedPromptSections) {
-      const template = AGENT_TEMPLATES.find((item) => item.id === templateId);
+    for (const [templateId, expectedSections] of expectedSkillContent) {
+      const template = SKILL_TEMPLATES.find((item) => item.id === templateId);
 
       expect(template?.prompt.length).toBeGreaterThan(500);
+      expect(template?.prompt.startsWith("---\n")).toBe(true);
       for (const section of expectedSections) {
         expect(template?.prompt).toContain(section);
       }
     }
+    expect(SKILL_TEMPLATES.every((template) => template.sourceLabel && template.sourcePath)).toBe(true);
+    expect(SKILL_TEMPLATES.every((template) => template.sourceUrl?.startsWith("https://github.com/"))).toBe(true);
+    expect(SKILL_TEMPLATES.every((template) => template.sourcePath?.startsWith("src/shared/bundled-skills/"))).toBe(true);
+    expect(SKILL_TEMPLATES.every((template) => template.sourcePath?.endsWith("/SKILL.md"))).toBe(true);
+    expect(SKILL_TEMPLATES.find((template) => template.id === "brainstorming")?.prompt).not.toContain("## 工作方式");
+    expect(SKILL_TEMPLATES.find((template) => template.id === "personal-finance-planning")?.sourceUrl).toBe(
+      "https://github.com/TauricResearch/TradingAgents",
+    );
+  });
+
+  test("ships bundled Chinese reading views without replacing original skill prompts", () => {
+    for (const template of SKILL_TEMPLATES) {
+      expect(template.translationZh?.startsWith("---\n")).toBe(true);
+      expect(template.translationZh?.length).toBeGreaterThan(300);
+    }
+
+    const brainstorming = SKILL_TEMPLATES.find((template) => template.id === "brainstorming");
+    const resume = SKILL_TEMPLATES.find((template) => template.id === "resume-optimization");
+
+    expect(brainstorming?.prompt).toContain("# Brainstorming Ideas Into Designs");
+    expect(brainstorming?.translationZh).toContain("# 将头脑风暴转化为设计");
+    expect(resume?.prompt).toContain("# Resume Optimization");
+    expect(resume?.translationZh).toContain("# 简历优化");
+    expect(SKILL_TEMPLATES.find((template) => template.id === "systematic-debugging")?.translationZh).toContain("# 系统化调试");
+    expect(SKILL_TEMPLATES.find((template) => template.id === "code-review-and-quality")?.translationZh).toContain("# 代码评审与质量");
   });
 
   test("renders language controls without a duplicate settings sidebar", () => {
@@ -712,15 +1168,15 @@ describe("ConfigPage", () => {
     expect(html).toContain("English");
   });
 
-  test("applies agent templates without changing runtime or provider selection", () => {
-    const template = AGENT_TEMPLATES.find((item) => item.id === "bug-diagnoser")!;
+  test("applies skill templates without changing runtime or provider selection", () => {
+    const template = SKILL_TEMPLATES.find((item) => item.id === "personal-finance-planning")!;
     const agent = configuredAgents[0]!;
 
-    const nextAgent = applyAgentTemplate(agent, template);
+    const nextAgent = applySkillTemplate(agent, template);
 
-    expect(nextAgent.name).toBe("问题诊断 Agent");
-    expect(nextAgent.description).toBe("按根因优先流程排查失败和异常。");
-    expect(nextAgent.prompt).toContain("系统地诊断");
+    expect(nextAgent.name).toBe("personal-finance-planning");
+    expect(nextAgent.description).toBe("整理财务目标、预算、风险偏好和长期规划。");
+    expect(nextAgent.prompt).toContain("name: personal-finance-planning");
     expect(nextAgent.tags).toEqual(template.tags);
     expect(nextAgent.runtimeAgentId).toBe(agent.runtimeAgentId);
     expect(nextAgent.channelId).toBe(agent.channelId);
@@ -806,26 +1262,70 @@ describe("ConfigPage", () => {
       label: "ep-m-user-owned-endpoint",
     });
   });
+
+  test("remembers the current provider key before switching presets", () => {
+    const deepseekPreset = AGENT_PROVIDER_PRESETS.find((item) => item.id === "deepseek")!;
+    const glmPreset = AGENT_PROVIDER_PRESETS.find((item) => item.id === "glm")!;
+    const deepseekChannel = applyProviderPresetToChannel(channels[0]!, deepseekPreset, "dpsk-key");
+
+    const cachedKeys = rememberProviderKeyFromChannel({}, deepseekPreset, deepseekChannel);
+    const glmChannel = applyProviderPresetToChannel(deepseekChannel, glmPreset, cachedKeys[glmPreset.id] ?? "");
+    const restoredDeepseekChannel = applyProviderPresetToChannel(glmChannel, deepseekPreset, cachedKeys[deepseekPreset.id] ?? "");
+
+    expect(cachedKeys.deepseek).toBe("dpsk-key");
+    expect(glmChannel.httpHeaders?.Authorization).toBeUndefined();
+    expect(restoredDeepseekChannel.httpHeaders?.Authorization).toBe("Bearer dpsk-key");
+  });
 });
 
 describe("SkillsPage", () => {
-  test("renders the built-in skill library with create actions", () => {
-    const html = renderToStaticMarkup(<SkillsPage language="zh" templates={AGENT_TEMPLATES} onCreateAgent={() => undefined} />);
+  test("renders the built-in skill library as a sourced reader", () => {
+    const installResult: InstalledSkillResult = {
+      templateId: "brainstorming",
+      target: "codex",
+      path: "/Users/example/.codex/skills/brainstorming/SKILL.md",
+      sourcePath: "/Users/example/Library/Application Support/Multi Agent Chat/bundled-skills/brainstorming/SKILL.md",
+      existed: false,
+    };
+    const html = renderToStaticMarkup(<SkillsPage language="zh" templates={SKILL_TEMPLATES} onInstallSkill={async () => installResult} />);
 
     expect(html).toContain("skills-page");
+    expect(html).toContain("skills-browser");
+    expect(html).toContain("skill-list-panel");
+    expect(html).toContain("skill-detail-panel");
     expect(html).toContain("技能库");
+    expect(html).toContain("内置技能");
     expect(html).toContain("搜索网上 Skills");
     expect(html).toContain("OpenAI Skills");
     expect(html).toContain("Anthropic Skills");
-    expect(html).toContain("头脑风暴 Agent");
-    expect(html).toContain("理财规划 Agent");
-    expect(html).toContain("简历写作 Agent");
-    expect(html).toContain("论文写作 Agent");
-    expect(html).toContain("代码审查 Agent");
-    expect(html).toContain("检查代码缺陷");
+    expect(html).toContain("brainstorming");
+    expect(html).toContain("personal-finance-planning");
+    expect(html).toContain("resume-optimization");
+    expect(html).toContain("paper-writing");
+    expect(html).toContain("refactor-review-knowledge");
+    expect(html).toContain("conducting thorough code reviews");
     expect(html).toContain("review");
-    expect(html).toContain("作为资深代码审查者");
-    expect(html).toContain("用此技能创建 Agent");
+    expect(html).toContain("出处");
+    expect(html).toContain("skill-source-pills");
+    expect(html).toContain("GitHub");
+    expect(html).toContain("bundled original skill");
+    expect(html).toContain("src/shared/bundled-skills/brainstorming/SKILL.md");
+    expect(html).not.toContain("src/shared/bundled-skill-prompts.ts");
+    expect(html).toContain("https://github.com/obra/superpowers/blob/main/skills/brainstorming/SKILL.md");
+    expect(html).toContain("SKILL.md");
+    expect(html).toContain("本地安装");
+    expect(html).toContain("查看中文");
+    expect(html).not.toContain("翻译成中文");
+    expect(html).not.toContain("安装到 Codex");
+    expect(html).not.toContain("安装到 Claude");
+    expect(html).toContain("md-body");
+    expect(html).toContain("<h1>Brainstorming Ideas Into Designs</h1>");
+    expect(html).toContain("name: brainstorming");
+    expect(html).not.toContain("<pre class=\"skill-detail-body\"");
+    expect(html).not.toContain("用此技能创建 Agent");
+    expect(html).not.toContain("skills-grid");
+    expect(html).not.toContain("头脑风暴 Agent");
+    expect(html).not.toContain("代码审查 Agent");
   });
 
   test("builds online skill source URLs and parses SKILL.md frontmatter", () => {
@@ -851,7 +1351,7 @@ describe("SkillsPage", () => {
     ).toMatchObject({
       name: "code-review",
       description: "Review code changes and identify defects.",
-      prompt: expect.stringContaining("Use this workflow"),
+      prompt: expect.stringContaining("name: code-review"),
       tags: ["code-review"],
       path: "skills/code-review/SKILL.md",
     });

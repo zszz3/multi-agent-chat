@@ -15,6 +15,7 @@ describe("MCP server tools", () => {
   test("exposes the first-version workflow tool set", () => {
     expect(mcpToolDefinitions().map((tool) => tool.name)).toEqual([
       "agent_templates_list",
+      "skill_templates_list",
       "agents_list",
       "agents_create",
       "agents_update",

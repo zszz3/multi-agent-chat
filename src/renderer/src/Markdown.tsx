@@ -24,6 +24,41 @@ function CodeBlock({ language, code }: { language: string | undefined; code: str
   );
 }
 
+function safeMarkdownHref(href: string): string | undefined {
+  const trimmed = href.trim();
+  if (/^(https?:|mailto:)/i.test(trimmed)) return trimmed;
+  if (/^(#|\/|\.\/|\.\.\/)/.test(trimmed)) return trimmed;
+  return undefined;
+}
+
+function renderLinkedText(text: string, keyPrefix: string): ReactNode[] {
+  const nodes: ReactNode[] = [];
+  const linkPattern = /\[([^\]\n]+)\]\(([^)\s]+)\)/g;
+  let lastIndex = 0;
+  let match: RegExpExecArray | null;
+  while ((match = linkPattern.exec(text)) !== null) {
+    if (match.index > lastIndex) {
+      nodes.push(<Fragment key={`${keyPrefix}-text-${lastIndex}`}>{text.slice(lastIndex, match.index)}</Fragment>);
+    }
+    const label = match[1] ?? "";
+    const href = safeMarkdownHref(match[2] ?? "");
+    if (href) {
+      nodes.push(
+        <a key={`${keyPrefix}-link-${match.index}`} href={href} target={href.startsWith("#") ? undefined : "_blank"} rel={href.startsWith("#") ? undefined : "noreferrer"}>
+          {label}
+        </a>,
+      );
+    } else {
+      nodes.push(<Fragment key={`${keyPrefix}-link-${match.index}`}>{match[0]}</Fragment>);
+    }
+    lastIndex = match.index + match[0].length;
+  }
+  if (lastIndex < text.length) {
+    nodes.push(<Fragment key={`${keyPrefix}-text-${lastIndex}`}>{text.slice(lastIndex)}</Fragment>);
+  }
+  return nodes;
+}
+
 function renderInline(text: string, keyPrefix: string): ReactNode[] {
   // tokenize inline code first so markdown inside backticks stays literal
   const nodes: ReactNode[] = [];
@@ -38,11 +73,11 @@ function renderInline(text: string, keyPrefix: string): ReactNode[] {
     parts.forEach((part, partIndex) => {
       const partKey = `${key}-${partIndex}`;
       if (part.startsWith("**") && part.endsWith("**") && part.length > 4) {
-        nodes.push(<strong key={partKey}>{part.slice(2, -2)}</strong>);
+        nodes.push(<strong key={partKey}>{renderLinkedText(part.slice(2, -2), partKey)}</strong>);
       } else if (part.startsWith("*") && part.endsWith("*") && part.length > 2) {
-        nodes.push(<em key={partKey}>{part.slice(1, -1)}</em>);
+        nodes.push(<em key={partKey}>{renderLinkedText(part.slice(1, -1), partKey)}</em>);
       } else if (part) {
-        nodes.push(<Fragment key={partKey}>{part}</Fragment>);
+        nodes.push(<Fragment key={partKey}>{renderLinkedText(part, partKey)}</Fragment>);
       }
     });
   });

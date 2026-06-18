@@ -5,7 +5,7 @@ import path from "node:path";
 import type { AddressInfo } from "node:net";
 import type { AgentHub } from "./agent-hub";
 import type { AgentChannel, AgentId, ConfiguredAgent, CreateWorkflowRequest, UpdateWorkflowRequest, WorkflowArtifactReference, WorkflowGraph, AppendWorkflowRunContextRequest } from "../shared/types";
-import { AGENT_TEMPLATES } from "../shared/agent-templates";
+import { SKILL_TEMPLATES } from "../shared/skill-templates";
 import { validateWorkflowGraph } from "../shared/workflow-graph";
 import { DEFAULT_MODEL_ID, defaultChannelForAgent, defaultModelForAgent, isModelForChannel } from "../shared/models";
 
@@ -137,16 +137,16 @@ function modelsListPayload(hub: AgentHub, record: Record<string, unknown>): unkn
   };
 }
 
-function agentTemplateListPayload(): unknown {
+function skillTemplateListPayload(): unknown {
   return {
     ok: true,
-    templates: AGENT_TEMPLATES.map((template) => ({ ...template, tags: [...template.tags] })),
+    templates: SKILL_TEMPLATES.map((template) => ({ ...template, tags: [...template.tags] })),
   };
 }
 
 function templatePatch(templateId: string | undefined): Partial<ConfiguredAgent> {
   if (!templateId) return {};
-  const template = AGENT_TEMPLATES.find((item) => item.id === templateId);
+  const template = SKILL_TEMPLATES.find((item) => item.id === templateId);
   if (!template) return {};
   return {
     name: template.name,
@@ -201,7 +201,7 @@ function upsertAgent(hub: AgentHub, agent: ConfiguredAgent, existingId?: string)
 
 async function routeWorkflowRequest(hub: AgentHub, route: string, body: unknown): Promise<unknown> {
   const record = asRecord(body);
-  if (route === "/mcp/agent-templates/list") return agentTemplateListPayload();
+  if (route === "/mcp/agent-templates/list" || route === "/mcp/skill-templates/list") return skillTemplateListPayload();
   if (route === "/mcp/agents/list") return agentListPayload(hub);
   if (route === "/mcp/channels/list") return channelsListPayload(hub, record);
   if (route === "/mcp/models/list") return modelsListPayload(hub, record);

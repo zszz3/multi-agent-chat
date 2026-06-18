@@ -7,7 +7,7 @@ Multi Agent Chat 是一个本地 Electron 桌面应用，用来把多种 Agent �
 ## 功能总览
 
 - 多会话 Chat：按工作目录、Runtime、Channel、模型运行 Codex / Claude / API Agent。
-- Skills 页面：集中查看内置 Agent 技能模板，也可以在线搜索 OpenAI / Anthropic 官方 GitHub skill 源，并基于技能创建 Agent。
+- Skills 页面：集中查看内置 Agent 技能模板，也可以在线搜索 OpenAI / Anthropic 官方 GitHub skill 源，并把内置技能安装到本机 Agent 目录。
 - 可复用 Agent 配置：为不同 Provider、模型、Prompt、插件和高级参数保存独立 Agent。
 - Provider Preset：内置 OpenAI、Anthropic、DeepSeek、GLM、Kimi、LongCat、MiMo、OpenRouter、GitHub Models、Together、Novita、NVIDIA、SiliconFlow、Bailian、Volcengine、Hunyuan、MiniMax、Azure OpenAI、Custom 等模板。
 - Volcengine / 豆包 endpoint 可配置：`ep-m-...` 这类用户自己的 endpoint 不写死在代码里，由用户在界面里配置。
@@ -42,21 +42,26 @@ Skills 页面用于集中管理 Agent 技能模板，并支持搜索公开 GitHu
 
 当前包含两类来源：
 
-- 本地模板：来自 `src/shared/agent-templates.ts`。
+- 内置技能：随应用仓库发布，放在 `src/shared/bundled-skills/<skill-id>/`。每个目录至少包含原始 `SKILL.md`，可选 `SKILL.zh.md` 中文阅读版、`metadata.json` 来源信息，以及该 skill 自带的 `scripts/`、`references/`、`assets/` 等文件。
 - 在线搜索：读取公开 GitHub 仓库里的 `SKILL.md` 元数据，目前内置 `openai/skills` 和 `anthropics/skills` 两个官方源。
 
-本地模板包含头脑风暴、理财规划、简历写作、论文写作、代码审查、问题诊断、测试编写、前端 UI、学习文档、工作流规划、PR 总结和通用助手等常用 Agent 技能。
+内置技能只保留 7 个常用技能：`brainstorming`、`systematic-debugging`、`personal-finance-planning`、`resume-optimization`、`paper-writing`、`refactor-review-knowledge`、`code-review-and-quality`。
+其中 `personal-finance-planning` 会显示 TradingAgents 的 GitHub 参考来源：`https://github.com/TauricResearch/TradingAgents`。
+`brainstorming`、`systematic-debugging`、`resume-optimization`、`refactor-review-knowledge`、`code-review-and-quality` 使用随仓库打包的原始 `SKILL.md`；`personal-finance-planning` 和 `paper-writing` 是本项目内置的 custom skill。
+用户可以在 Skills 页面把当前选中的内置技能软链接到自己的本机目录：Codex 使用 `~/.codex/skills/<skill-id>`，Claude 使用 `~/.claude/skills/<skill-id>`，Trae 使用 `~/.trae/skills/<skill-id>`。删除时只删除应用创建的软链接，不删除用户自己已有的真实目录。
+安装时应用会先把整个 skill 目录复制到自己的 managed 目录，再软链接到本机 Agent 目录；因此脚本、references、assets 会一起保留。安装到本地的 `SKILL.md` 保持原文；页面上的中文阅读版随应用内置，只用于理解，不会调用 API Agent，也不会改写本地 skill 文件。
+开发时新增外部 skill，可以把下载下来的目录放到 `src/shared/bundled-skills/<skill-id>/`，保留原始 `SKILL.md`，再按需补 `metadata.json` 和 `SKILL.zh.md`；重启 dev server 后会被 skill template 列表读取。
 
 每个技能包含：
 
 - 名称和描述。
 - 标签。
-- 默认 Prompt。
-- 基于该技能创建 Agent 的入口。
+- 出处。
+- `SKILL.md` 正文。
 
-从 Skills 页面创建 Agent 后，会跳转到配置页继续选择 Runtime、Provider、模型、API Key、插件和高级参数。技能只提供 Agent 人设和 Prompt，不绑定用户自己的 Provider 或 endpoint。
+Skills 页面只用于查看和搜索技能，不负责创建 Agent。需要配置 Agent 时继续使用配置页。
 
-在线技能来自第三方仓库时，只作为未审查内容展示；创建 Agent 前需要自行检查 Prompt 内容和来源链接。
+在线技能来自第三方仓库时，只作为未审查内容展示；使用前需要自行检查 `SKILL.md` 内容和来源链接。
 
 ## Agent 配置
 

@@ -1,6 +1,7 @@
 import { useEffect, useMemo, useRef, useState } from "react";
 import {
   ClipboardList,
+  Cpu,
   FolderOpen,
   MessageSquareText,
   Moon,
@@ -10,6 +11,7 @@ import {
   Settings,
   Sun,
   Users,
+  Wand2,
 } from "lucide-react";
 import type { ReactNode } from "react";
 
@@ -35,7 +37,7 @@ export interface PaletteContext {
   chats: Array<{ id: string; title: string; agentId: string }>;
   theme: Theme;
   language?: PaletteLanguage;
-  onNavigate: (feature: "chat" | "tasks" | "teams" | "workflow" | "configs" | "settings") => void;
+  onNavigate: (feature: "chat" | "tasks" | "teams" | "workflow" | "skills" | "runtimes" | "configs" | "settings") => void;
   onSelectChat: (chatId: string) => void;
   onNewChat: () => void;
   onToggleTheme: () => void;
@@ -55,7 +57,9 @@ export function buildPaletteCommands(context: PaletteContext): PaletteCommand[] 
           tasks: "任务",
           teams: "团队",
           workflow: "工作流",
-          configs: "配置",
+          skills: "技能",
+          runtimes: "配置",
+          configs: "Agent 组装",
           settings: "设置",
           newChat: "新建对话",
           lightTheme: "切换到浅色主题",
@@ -71,7 +75,9 @@ export function buildPaletteCommands(context: PaletteContext): PaletteCommand[] 
           tasks: "Tasks",
           teams: "Teams",
           workflow: "Workflow",
-          configs: "Configs",
+          skills: "Skills",
+          runtimes: "Config",
+          configs: "Agent Assembly",
           settings: "Settings",
           newChat: "New chat",
           lightTheme: "Switch to light theme",
@@ -84,6 +90,8 @@ export function buildPaletteCommands(context: PaletteContext): PaletteCommand[] 
     { id: "nav-tasks", section: label.jump, label: label.tasks, hint: "G T", icon: <ClipboardList size={14} />, run: () => context.onNavigate("tasks") },
     { id: "nav-teams", section: label.jump, label: label.teams, hint: "G W", icon: <Users size={14} />, run: () => context.onNavigate("teams") },
     { id: "nav-workflow", section: label.jump, label: label.workflow, hint: "G F", icon: <Users size={14} />, run: () => context.onNavigate("workflow") },
+    { id: "nav-skills", section: label.jump, label: label.skills, icon: <Wand2 size={14} />, run: () => context.onNavigate("skills") },
+    { id: "nav-runtimes", section: label.jump, label: label.runtimes, hint: "G R", icon: <Cpu size={14} />, run: () => context.onNavigate("runtimes") },
     { id: "nav-configs", section: label.jump, label: label.configs, hint: "G S", icon: <Settings size={14} />, run: () => context.onNavigate("configs") },
     { id: "nav-settings", section: label.jump, label: label.settings, icon: <Settings size={14} />, run: () => context.onNavigate("settings") },
   ];

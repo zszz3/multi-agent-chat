@@ -5,6 +5,7 @@ import { AgentHub } from "./agent-hub";
 import { setCodexChatRouterBaseUrl, startCodexChatRouter, type CodexChatRouterServer } from "./codex-chat-router";
 import { createLocalTextFilePreview } from "./local-file-preview";
 import { startMcpBridge, type McpBridgeServer } from "./mcp-bridge";
+import { installBundledSkill, uninstallBundledSkill } from "./skill-installer";
 import { centeredWindowBounds } from "./window-bounds";
 import type {
   AgentChannel,
@@ -12,10 +13,12 @@ import type {
   ConfiguredAgent,
   CreateAgentTeamRequest,
   FinishWorkflowRunRequest,
+  InstallSkillRequest,
   RunAgentTeamRequest,
   RunTaskRequest,
   StartWorkflowRunRequest,
   TaskProgress,
+  UninstallSkillRequest,
   UpdateAgentTeamRequest,
   WorkflowAgentRequest,
   WorkflowDraftState,
@@ -112,6 +115,7 @@ function registerIpcHandlers(): void {
     hub.selectChat(chatId);
     return hub.snapshot();
   });
+  ipcMain.handle("chat:delete", (_event, chatId: string) => hub.deleteChat(chatId));
   ipcMain.handle("chat:set-agent", (_event, chatId: string, agentId: AgentId) => {
     hub.setChatAgent(chatId, agentId);
     return hub.snapshot();
@@ -129,6 +133,10 @@ function registerIpcHandlers(): void {
   ipcMain.handle("configured-agents:test", async (event, agentId: string) =>
     hub.testConfiguredAgent(agentId, (agentEvent) => event.sender.send("configured-agents:test-event", agentEvent)),
   );
+  ipcMain.handle("runtime-channels:test", async (event, channelId: string) =>
+    hub.testRuntimeChannel(channelId, (agentEvent) => event.sender.send("configured-agents:test-event", agentEvent)),
+  );
+  ipcMain.handle("runtime-channels:balance", async (_event, channelId: string) => hub.queryRuntimeChannelBalance(channelId));
   ipcMain.handle("model-channels:generate", async () => hub.generateCodexConfigs());
   ipcMain.handle("model-channels:import-codex", async () => hub.importCodexConfigs());
   ipcMain.handle("codex:plugins:list", async () => hub.listCodexPluginCatalog());
@@ -151,6 +159,12 @@ function registerIpcHandlers(): void {
     return hub.snapshot();
   });
   ipcMain.handle("file:read-text", async (_event, filePath: string) => createLocalTextFilePreview(filePath, hub.getWorkDir(), app.getPath("home")));
+  ipcMain.handle("skills:install", async (_event, request: InstallSkillRequest) =>
+    installBundledSkill(request, app.getPath("home"), path.join(app.getPath("userData"), "bundled-skills")),
+  );
+  ipcMain.handle("skills:uninstall", async (_event, request: UninstallSkillRequest) =>
+    uninstallBundledSkill(request, app.getPath("home"), path.join(app.getPath("userData"), "bundled-skills")),
+  );
   ipcMain.handle("run:send", (_event, prompt: string, chatId?: string) => {
     void hub.sendPrompt(prompt, chatId);
     return hub.snapshot();
@@ -164,6 +178,8 @@ function registerIpcHandlers(): void {
   );
   ipcMain.handle("workflow:draft:update", (_event, draft?: WorkflowDraftState) => hub.updateWorkflowDraft(draft));
   ipcMain.handle("workflow:select", (_event, workflowId: string) => hub.selectWorkflow(workflowId));
+  ipcMain.handle("workflow:rename", (_event, workflowId: string, title: string) => hub.renameWorkflow(workflowId, title));
+  ipcMain.handle("workflow:delete", (_event, workflowId: string) => hub.deleteWorkflow(workflowId));
   ipcMain.handle("workflow-run:start", (_event, request: StartWorkflowRunRequest) => {
     hub.startWorkflowRun(request);
     return hub.snapshot();

@@ -33,6 +33,7 @@ import type {
   CreateAgentTeamRequest,
   GeneratedConfigFile,
   ImportedCodexConfig,
+  ProviderBalanceResult,
   RunAgentTeamRequest,
   RunTaskRequest,
   StartWorkflowRunRequest,
@@ -60,6 +61,7 @@ import type {
   WorkflowRunNodeStatus,
   WorkflowRunProgressItem,
 } from "../shared/types";
+import { normalizeConfigChannelsForStorage } from "../shared/config-channels";
 import { DEFAULT_MODEL_ID, defaultChannelForAgent, defaultModelForAgent, isModelForChannel, runtimeModelId } from "../shared/models";
 import { validateWorkflowGraph } from "../shared/workflow-graph";
 import { detectAgentRuntimes } from "./agents/detect";
@@ -69,12 +71,14 @@ import { claudeCliModelForChannel, claudeEnvironmentForChannel } from "./agents/
 import { ClaudeRunner } from "./agents/claude-runner";
 import { createClaudeStreamState, normalizeClaudeStreamEvent } from "./agents/claude-stream";
 import { RuntimeAgentExecutorFactory, type AgentExecutorFactory } from "./agent-executor";
+import { queryProviderBalance, type ProviderBalanceQueryOptions } from "./provider-balance";
 import {
   codexAppServerConfigArgs,
   createDefaultChannels,
   generateCodexConfigs as writeCodexConfigs,
   importCodexConfigs as readCodexConfigs,
   loadModelChannels as readModelChannels,
+  normalizeChannels,
   saveModelChannels as writeModelChannels,
 } from "./model-config";
 import { SqliteAppStore } from "./sqlite-store";
@@ -220,6 +224,7 @@ interface PersistedAppStateV2 {
   teamRuns?: PersistedTeamRunRecord[];
   workflowStore?: WorkflowStoreState;
   workflowDraft?: WorkflowDraftState;
+  channels?: AgentChannel[];
   configuredAgents?: ConfiguredAgent[];
 }
 
@@ -622,6 +627,25 @@ function agentLabel(agentId: AgentId): string {
   return "API";
 }
 
+function cloneAgentChannel(channel: AgentChannel): AgentChannel {
+  const cloned: AgentChannel = {
+    id: channel.id,
+    agentId: channel.agentId,
+    label: channel.label,
+    models: channel.models.map((model) => ({ ...model })),
+  };
+  if (channel.profileName !== undefined) cloned.profileName = channel.profileName;
+  if (channel.modelProvider !== undefined) cloned.modelProvider = channel.modelProvider;
+  if (channel.providerName !== undefined) cloned.providerName = channel.providerName;
+  if (channel.baseUrl !== undefined) cloned.baseUrl = channel.baseUrl;
+  if (channel.wireApi !== undefined) cloned.wireApi = channel.wireApi;
+  if (channel.modelCatalogJson !== undefined) cloned.modelCatalogJson = channel.modelCatalogJson;
+  if (channel.modelReasoningEffort !== undefined) cloned.modelReasoningEffort = channel.modelReasoningEffort;
+  if (channel.httpHeaders !== undefined) cloned.httpHeaders = { ...channel.httpHeaders };
+  if (channel.plugins !== undefined) cloned.plugins = channel.plugins.map((plugin) => ({ ...plugin }));
+  return cloned;
+}
+
 function cloneTeamMember(member: AgentTeamMember): AgentTeamMember {
   return {
     ...member,
@@ -993,18 +1017,22 @@ export class AgentHub {
       try {
         const persisted = await this.sqliteStore.load();
         if (persisted !== undefined) {
+          const hadChannels = Array.isArray(asRecord(persisted)?.channels);
           this.restorePersistedState(persisted);
+          if (!hadChannels) await this.persistState();
           return;
         }
       } catch (error) {
         console.warn(`Failed to load app state from SQLite ${storagePath}:`, error);
       }
+      let migratedLegacyState = false;
       if (legacyJsonPath) {
         try {
           const raw = await readFile(legacyJsonPath, "utf8");
           const parsed = JSON.parse(raw) as unknown;
           this.restorePersistedState(parsed);
           await this.persistState();
+          migratedLegacyState = true;
         } catch (error) {
           const code = error && typeof error === "object" ? (error as { code?: unknown }).code : undefined;
           if (code !== "ENOENT") {
@@ -1012,12 +1040,15 @@ export class AgentHub {
           }
         }
       }
+      if (!migratedLegacyState) await this.persistState();
       return;
     }
     try {
       const raw = await readFile(storagePath, "utf8");
       const parsed = JSON.parse(raw) as unknown;
+      const hadChannels = Array.isArray(asRecord(parsed)?.channels);
       this.restorePersistedState(parsed);
+      if (!hadChannels) await this.persistState();
     } catch (error) {
       const code = error && typeof error === "object" ? (error as { code?: unknown }).code : undefined;
       if (code !== "ENOENT") {
@@ -1035,12 +1066,18 @@ export class AgentHub {
   }
 
   async saveModelChannels(channels: AgentChannel[]): Promise<AppSnapshot> {
-    const targetPath = this.modelConfigPath;
-    if (!targetPath) throw new Error("Model channel config path is not initialized");
-    this.channels = await writeModelChannels(targetPath, channels);
+    const normalizedChannels = normalizeConfigChannelsForStorage(normalizeChannels(channels));
+    if (this.storagePath) {
+      this.channels = normalizedChannels;
+    } else {
+      const targetPath = this.modelConfigPath;
+      if (!targetPath) throw new Error("Model channel config path is not initialized");
+      this.channels = await writeModelChannels(targetPath, normalizedChannels);
+    }
     this.normalizeRunSelections();
     this.installRestoredConfiguredAgents(this.listConfiguredAgents());
     this.emit();
+    await this.flushPersistence();
     return this.snapshot();
   }
 
@@ -1130,6 +1167,61 @@ export class AgentHub {
     }
   }
 
+  async testRuntimeChannel(channelId: string, onEvent?: (event: AgentTestEvent) => void): Promise<AgentTestResult> {
+    const channel = this.channelById(channelId);
+    if (!channel) throw new Error(`Channel ${channelId} was not found.`);
+    const modelId = DEFAULT_MODEL_ID;
+    const startedAt = Date.now();
+    const base = {
+      agentId: channel.id,
+      runtimeAgentId: channel.agentId,
+      channelId: channel.id,
+      modelId,
+    };
+
+    const emit: AgentTestEmit = (event) => {
+      onEvent?.({ agentId: channel.id, timestamp: Date.now(), ...event } as AgentTestEvent);
+    };
+
+    try {
+      emit({ type: "phase", content: `Testing ${agentLabel(channel.agentId)} / ${channel.providerName ?? channel.label}.` });
+      emit({ type: "user", content: AGENT_TEST_PROMPT });
+      const output =
+        channel.agentId === "api"
+          ? await this.testApiAgent(channel, modelId, emit)
+          : channel.agentId === "codex"
+            ? await this.testCodexAgent(channel, modelId, emit)
+            : await this.testClaudeAgent(channel, modelId, emit);
+      const elapsedMs = Date.now() - startedAt;
+      return {
+        ...base,
+        ok: true,
+        status: "passed",
+        message: `${channel.label || channel.id} test passed in ${formatElapsed(elapsedMs)}.`,
+        output: output.trim().slice(0, 2000),
+        elapsedMs,
+        testedAt: Date.now(),
+      };
+    } catch (error) {
+      const elapsedMs = Date.now() - startedAt;
+      emit({ type: "error", content: sanitizeTestError(error) });
+      return {
+        ...base,
+        ok: false,
+        status: "failed",
+        message: sanitizeTestError(error),
+        elapsedMs,
+        testedAt: Date.now(),
+      };
+    }
+  }
+
+  async queryRuntimeChannelBalance(channelId: string, options: ProviderBalanceQueryOptions = {}): Promise<ProviderBalanceResult> {
+    const channel = this.channelById(channelId);
+    if (!channel) throw new Error(`Channel ${channelId} was not found.`);
+    return queryProviderBalance(channel, options);
+  }
+
   async flushPersistence(): Promise<void> {
     if (this.persistTimer) {
       clearTimeout(this.persistTimer);
@@ -1159,6 +1251,35 @@ export class AgentHub {
     if (!this.chats.has(chatId)) return;
     this.activeChatId = chatId;
     this.emit();
+  }
+
+  async deleteChat(chatId: string): Promise<AppSnapshot> {
+    const chat = this.chats.get(chatId);
+    if (!chat) return this.snapshot();
+
+    const stop = this.activeStops.get(chatId);
+    this.activeStops.delete(chatId);
+    this.chats.delete(chatId);
+    if (this.activeChatId === chatId) {
+      this.activeChatId = [...this.chats.values()].sort((left, right) => right.updatedAt - left.updatedAt)[0]?.id;
+    }
+    if (this.chats.size === 0) {
+      const replacement = this.createChatState(DEFAULT_AGENT);
+      this.chats.set(replacement.id, replacement);
+      this.activeChatId = replacement.id;
+    }
+    this.emit();
+
+    if (stop) {
+      try {
+        await stop();
+      } catch {
+        // The chat is already gone from app state; deletion should still succeed.
+      }
+    }
+    await this.deleteAgentSession(chat);
+
+    return this.snapshot();
   }
 
   setChatAgent(chatId: string, agentId: AgentId): void {
@@ -1275,6 +1396,33 @@ export class AgentHub {
       this.activeWorkflowId = workflowId;
       this.emit();
     }
+    return this.snapshot();
+  }
+
+  renameWorkflow(workflowId: string, title: string): AppSnapshot {
+    const workflow = this.workflows.get(workflowId);
+    const nextTitle = title.trim();
+    if (!workflow || !nextTitle) return this.snapshot();
+    this.workflows.set(workflowId, this.cloneWorkflowDraft({
+      ...workflow,
+      title: nextTitle,
+      revision: workflow.revision + 1,
+      updatedAt: Date.now(),
+    }));
+    this.emit();
+    return this.snapshot();
+  }
+
+  deleteWorkflow(workflowId: string): AppSnapshot {
+    if (!this.workflows.has(workflowId)) return this.snapshot();
+    this.workflows.delete(workflowId);
+    for (const run of [...this.workflowRuns.values()]) {
+      if (run.workflowId === workflowId) this.workflowRuns.delete(run.runId);
+    }
+    if (this.activeWorkflowId === workflowId || (this.activeWorkflowId && !this.workflows.has(this.activeWorkflowId))) {
+      this.activeWorkflowId = [...this.workflows.values()].sort((left, right) => right.updatedAt - left.updatedAt)[0]?.workflowId;
+    }
+    this.emit();
     return this.snapshot();
   }
 
@@ -1414,7 +1562,7 @@ export class AgentHub {
       activeTeamRunId: this.activeTeamRunId,
       workDir: this.workDir,
       runtimes: [...this.runtimes.values()],
-      channels: this.channels.map((channel) => ({ ...channel, models: channel.models.map((model) => ({ ...model })) })),
+      channels: this.channels.map((channel) => cloneAgentChannel(channel)),
       configuredAgents: this.listConfiguredAgents(),
       chats: [...this.chats.values()]
         .sort((left, right) => right.updatedAt - left.updatedAt)
@@ -1929,11 +2077,11 @@ export class AgentHub {
     return this.snapshot();
   }
 
-  private async deleteAgentSession(task: TaskState): Promise<void> {
-    if (!task.sessionId || task.agentId !== "codex") return;
+  private async deleteAgentSession(run: RunState): Promise<void> {
+    if (!run.sessionId || run.agentId !== "codex") return;
     const executable = this.executables.codex;
     try {
-      await execFileAsync(executable, ["archive", task.sessionId], {
+      await execFileAsync(executable, ["archive", run.sessionId], {
         cwd: process.cwd(),
         env: process.env,
         timeout: 10_000,
@@ -1941,7 +2089,7 @@ export class AgentHub {
         maxBuffer: 1024 * 64,
       });
     } catch (error) {
-      console.warn(`Failed to archive Codex session ${task.sessionId}:`, error);
+      console.warn(`Failed to archive Codex session ${run.sessionId}:`, error);
     }
   }
 
@@ -3022,6 +3170,9 @@ export class AgentHub {
   private restorePersistedState(raw: unknown): void {
     if (!raw || typeof raw !== "object") return;
     const record = raw as Record<string, unknown>;
+    if (Array.isArray(record.channels)) {
+      this.channels = normalizeConfigChannelsForStorage(normalizeChannels(record.channels));
+    }
     if (record.version === 2) {
       this.restorePersistedStateV2(record);
       return;
@@ -3729,6 +3880,7 @@ export class AgentHub {
       activeTeamId: this.activeTeamId ?? null,
       activeTeamRunId: this.activeTeamRunId ?? null,
       workDir: this.workDir,
+      channels: this.channels.map((channel) => cloneAgentChannel(channel)),
       sessions,
       messages,
       events,

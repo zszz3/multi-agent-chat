@@ -85,7 +85,12 @@ describe("MCP bridge", () => {
     const templates = (await (await bridgeRequest("/mcp/agent-templates/list", bridge.token, {})).json()) as any;
     expect(templates).toMatchObject({
       ok: true,
-      templates: expect.arrayContaining([expect.objectContaining({ id: "code-reviewer", name: "代码审查 Agent" })]),
+      templates: expect.arrayContaining([expect.objectContaining({ id: "refactor-review-knowledge", name: "refactor-review-knowledge" })]),
+    });
+    const skillTemplates = (await (await bridgeRequest("/mcp/skill-templates/list", bridge.token, {})).json()) as any;
+    expect(skillTemplates).toMatchObject({
+      ok: true,
+      templates: expect.arrayContaining([expect.objectContaining({ id: "brainstorming", sourcePath: "src/shared/bundled-skills/brainstorming/SKILL.md" })]),
     });
 
     const channels = (await (await bridgeRequest("/mcp/channels/list", bridge.token, { agentId: "codex" })).json()) as any;

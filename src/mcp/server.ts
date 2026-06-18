@@ -18,6 +18,7 @@ interface JsonRpcRequest {
 
 const TOOL_ROUTES: Record<string, string> = {
   agent_templates_list: "/mcp/agent-templates/list",
+  skill_templates_list: "/mcp/skill-templates/list",
   agents_list: "/mcp/agents/list",
   agents_create: "/mcp/agents/create",
   agents_update: "/mcp/agents/update",
@@ -69,7 +70,12 @@ export function mcpToolDefinitions(): McpToolDefinition[] {
   return [
     {
       name: "agent_templates_list",
-      description: "List built-in agent templates. Templates only contain agent persona fields: name, description, tags, and prompt. Runtime, provider, and model remain user configuration.",
+      description: "Compatibility alias for skill_templates_list.",
+      inputSchema: objectSchema({}),
+    },
+    {
+      name: "skill_templates_list",
+      description: "List built-in skill templates. Templates contain skill metadata, tags, source, and original SKILL.md prompt. Runtime, provider, and model remain user configuration.",
       inputSchema: objectSchema({}),
     },
     {
@@ -79,7 +85,7 @@ export function mcpToolDefinitions(): McpToolDefinition[] {
     },
     {
       name: "agents_create",
-      description: "Create a configured agent. Use agent_templates_list first when you want a reusable persona template.",
+      description: "Create a configured agent. Use skill_templates_list first when you want to seed an agent prompt from a skill.",
       inputSchema: objectSchema(
         {
           id: { type: "string" },

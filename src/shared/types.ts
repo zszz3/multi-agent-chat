@@ -57,12 +57,43 @@ export interface ConfiguredAgent {
   updatedAt: number;
 }
 
-export interface AgentTemplate {
+export interface SkillTemplate {
   id: string;
   name: string;
   description: string;
   prompt: string;
   tags: string[];
+  sourceLabel?: string;
+  sourcePath?: string;
+  sourceUrl?: string;
+  translationZh?: string;
+}
+
+export type SkillInstallTarget = "codex" | "claude" | "trae";
+
+export interface InstallSkillRequest {
+  templateId: string;
+  target: SkillInstallTarget;
+}
+
+export interface UninstallSkillRequest {
+  templateId: string;
+  target: SkillInstallTarget;
+}
+
+export interface InstalledSkillResult {
+  templateId: string;
+  target: SkillInstallTarget;
+  path: string;
+  sourcePath: string;
+  existed: boolean;
+}
+
+export interface UninstalledSkillResult {
+  templateId: string;
+  target: SkillInstallTarget;
+  path: string;
+  removed: boolean;
 }
 
 export interface AgentTestResult {
@@ -76,6 +107,28 @@ export interface AgentTestResult {
   runtimeAgentId: AgentId;
   channelId: string;
   modelId: string;
+}
+
+export type ProviderBalanceStatus = "success" | "unsupported" | "missing_key" | "error";
+
+export interface ProviderBalanceItem {
+  label?: string;
+  remaining?: number;
+  total?: number;
+  used?: number;
+  unit?: string;
+  isValid?: boolean;
+  invalidMessage?: string;
+}
+
+export interface ProviderBalanceResult {
+  channelId: string;
+  providerName?: string;
+  supported: boolean;
+  status: ProviderBalanceStatus;
+  message: string;
+  items: ProviderBalanceItem[];
+  queriedAt: number;
 }
 
 export type AgentTestEvent =

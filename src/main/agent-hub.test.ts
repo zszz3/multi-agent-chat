@@ -4,6 +4,7 @@ import path from "node:path";
 import { describe, expect, test, vi } from "vitest";
 import { AgentHub, createWorkflowAgentTimeout } from "./agent-hub";
 import { DEFAULT_MODEL_ID } from "../shared/models";
+import type { AgentChannel } from "../shared/types";
 
 async function writeCodexAppServerFake(dir: string): Promise<{ executable: string; callsPath: string }> {
   const executable = path.join(dir, "codex-fake");
@@ -356,6 +357,39 @@ describe("AgentHub chat sessions", () => {
     expect(calls).toContainEqual({ args: ["archive", fake.sessionId] });
   });
 
+  test("queries a runtime channel balance from the stored channel config", async () => {
+    const dir = await mkdtemp(path.join(os.tmpdir(), "multi-agent-chat-balance-"));
+    const hub = new AgentHub();
+    await hub.loadModelChannels(path.join(dir, "model-channels.json"));
+    await hub.saveModelChannels([
+      {
+        id: "deepseek-api",
+        agentId: "api",
+        label: "DeepSeek API",
+        providerName: "DeepSeek",
+        baseUrl: "https://api.deepseek.com/v1",
+        httpHeaders: { Authorization: "Bearer sk-deepseek" },
+        models: [{ id: DEFAULT_MODEL_ID, label: "Default" }],
+      },
+    ]);
+    const fetchImpl = vi.fn(async () =>
+      new Response(JSON.stringify({ is_available: true, balance_infos: [{ currency: "CNY", total_balance: "42" }] }), {
+        status: 200,
+        headers: { "content-type": "application/json" },
+      }),
+    );
+
+    const result = await hub.queryRuntimeChannelBalance("deepseek-api", { fetch: fetchImpl, now: () => 1710000000000 });
+
+    expect(result).toMatchObject({
+      channelId: "deepseek-api",
+      providerName: "DeepSeek",
+      supported: true,
+      status: "success",
+      items: [{ label: "CNY", remaining: 42, unit: "CNY" }],
+    });
+  });
+
   test("starts with one codex chat selected", () => {
     const hub = new AgentHub();
     const snapshot = hub.snapshot();
@@ -377,6 +411,39 @@ describe("AgentHub chat sessions", () => {
     expect(snapshot.chats).toHaveLength(2);
     expect(activeChat?.id).toBe(claudeChat.id);
     expect(activeChat?.agentId).toBe("claude");
+  });
+
+  test("deletes a chat session with its local messages and selects the next remaining chat", async () => {
+    const hub = new AgentHub({ codex: "missing-codex-for-test", claude: "missing-claude-for-test" });
+    const firstChatId = hub.snapshot().activeChatId!;
+    const secondChat = hub.createChat("claude");
+    const firstChat = (hub as any).chats.get(firstChatId);
+    firstChat.messages.push({ id: "m-1", role: "user", content: "Delete me", timestamp: 1710000000000 });
+    hub.selectChat(firstChatId);
+
+    const snapshot = await (hub as any).deleteChat(firstChatId);
+
+    expect(snapshot.chats.map((chat: any) => chat.id)).toEqual([secondChat.id]);
+    expect(snapshot.activeChatId).toBe(secondChat.id);
+    expect(snapshot.chats.some((chat: any) => chat.id === firstChatId || chat.messages.some((message: any) => message.content === "Delete me"))).toBe(false);
+  });
+
+  test("archives the Codex session when deleting a chat with a session id", async () => {
+    const dir = await mkdtemp(path.join(os.tmpdir(), "multi-agent-chat-codex-chat-archive-"));
+    const executable = path.join(dir, "codex-fake");
+    const argsPath = path.join(dir, "args.txt");
+    await writeFile(executable, `#!/bin/sh\nprintf '%s\\n' "$@" > '${argsPath}'\n`, "utf8");
+    await chmod(executable, 0o755);
+
+    const hub = new AgentHub({ codex: executable, claude: "missing-claude-for-test" });
+    const chatId = hub.snapshot().activeChatId!;
+    const chat = (hub as any).chats.get(chatId);
+    chat.sessionId = "019e9143-2451-7612-a62d-e65389574d7d";
+
+    const snapshot = await (hub as any).deleteChat(chatId);
+
+    expect(snapshot.chats.some((item: any) => item.id === chatId)).toBe(false);
+    expect(await readFile(argsPath, "utf8")).toBe("archive\n019e9143-2451-7612-a62d-e65389574d7d\n");
   });
 
   test("changes the active chat agent without affecting other chats", () => {
@@ -694,6 +761,155 @@ describe("AgentHub chat sessions", () => {
     ]);
   });
 
+  test("persists execution channel config in app state and restores it ahead of legacy channel file", async () => {
+    const dir = await mkdtemp(path.join(os.tmpdir(), "multi-agent-chat-channels-"));
+    const storagePath = path.join(dir, "app-chats.json");
+    const channelPath = path.join(dir, "model-channels.json");
+    const persistedChannels: AgentChannel[] = [
+      {
+        id: "codex-deepseek",
+        agentId: "codex",
+        label: "Codex DeepSeek",
+        providerName: "DeepSeek",
+        modelProvider: "deepseek",
+        baseUrl: "https://api.deepseek.com",
+        wireApi: "responses",
+        httpHeaders: { Authorization: "Bearer persisted-key" },
+        plugins: [{ id: "github@openai-curated", enabled: true }],
+        models: [
+          { id: DEFAULT_MODEL_ID, label: "Default" },
+          { id: "deepseek-chat", label: "DeepSeek Chat" },
+        ],
+      },
+    ];
+
+    const hub = new AgentHub();
+    await hub.loadModelChannels(channelPath);
+    await hub.loadPersistedState(storagePath);
+    await hub.saveModelChannels(persistedChannels);
+    await hub.flushPersistence();
+
+    const persisted = JSON.parse(await readFile(storagePath, "utf8")) as { channels?: AgentChannel[] };
+    expect(persisted.channels).toEqual([
+      expect.objectContaining({
+        id: "codex-deepseek",
+        providerName: "DeepSeek",
+        httpHeaders: { Authorization: "Bearer persisted-key" },
+        plugins: [{ id: "github@openai-curated", enabled: true }],
+      }),
+    ]);
+
+    const legacyHub = new AgentHub();
+    await legacyHub.loadModelChannels(channelPath);
+    await legacyHub.saveModelChannels([
+      {
+        id: "codex-openai",
+        agentId: "codex",
+        label: "Codex OpenAI",
+        providerName: "OpenAI",
+        modelProvider: "openai",
+        models: [{ id: DEFAULT_MODEL_ID, label: "Default" }],
+      },
+    ]);
+
+    const restored = new AgentHub();
+    await restored.loadModelChannels(channelPath);
+    await restored.loadPersistedState(storagePath);
+    const snapshot = restored.snapshot();
+
+    expect(snapshot.channels.map((channel) => channel.id)).toEqual(["codex-deepseek"]);
+    expect(snapshot.channels[0]).toMatchObject({
+      providerName: "DeepSeek",
+      httpHeaders: { Authorization: "Bearer persisted-key" },
+      plugins: [{ id: "github@openai-curated", enabled: true }],
+    });
+  });
+
+  test("stores execution channel config in app state without rewriting the legacy channel file", async () => {
+    const dir = await mkdtemp(path.join(os.tmpdir(), "multi-agent-chat-channel-db-"));
+    const dbPath = path.join(dir, "app.db");
+    const channelPath = path.join(dir, "model-channels.json");
+    const storedChannels: AgentChannel[] = [
+      {
+        id: "deepseek-api-agent-channel",
+        agentId: "api",
+        label: "DeepSeek API Agent",
+        providerName: "DeepSeek",
+        modelProvider: "deepseek",
+        baseUrl: "https://api.deepseek.com",
+        httpHeaders: { Authorization: "Bearer db-key" },
+        models: [{ id: DEFAULT_MODEL_ID, label: "Default" }],
+      },
+    ];
+
+    const hub = new AgentHub({ codex: "missing-codex-for-test" });
+    await hub.loadModelChannels(channelPath);
+    await hub.loadPersistedState(dbPath);
+    await hub.saveModelChannels(storedChannels);
+    await hub.flushPersistence();
+
+    await expect(readFile(channelPath, "utf8")).rejects.toMatchObject({ code: "ENOENT" });
+
+    const restored = new AgentHub({ codex: "missing-codex-for-test" });
+    await restored.loadModelChannels(channelPath);
+    await restored.loadPersistedState(dbPath);
+
+    expect(restored.snapshot().channels).toEqual([
+      expect.objectContaining({
+        id: "deepseek-api-agent-channel",
+        providerName: "DeepSeek",
+        httpHeaders: { Authorization: "Bearer db-key" },
+      }),
+    ]);
+  });
+
+  test("compacts generated execution channel records when restoring app state", async () => {
+    const dir = await mkdtemp(path.join(os.tmpdir(), "multi-agent-chat-generated-channels-"));
+    const storagePath = path.join(dir, "app-chats.json");
+    const realChannel: AgentChannel = {
+      id: "codex-deepseek",
+      agentId: "codex",
+      label: "Codex DeepSeek",
+      providerName: "DeepSeek",
+      modelProvider: "deepseek",
+      models: [{ id: DEFAULT_MODEL_ID, label: "Default" }],
+    };
+
+    await writeFile(
+      storagePath,
+      JSON.stringify({
+        version: 2,
+        channels: [
+          realChannel,
+          {
+            ...realChannel,
+            id: "repo-reviewer-channel",
+            label: "Repo Reviewer Runtime",
+          },
+          {
+            ...realChannel,
+            id: "codex-multi-agent-repo-reviewer-default",
+            label: "Codex multi-agent-repo-reviewer-default",
+          },
+        ],
+        sessions: [],
+        messages: [],
+        events: [],
+        tasks: [],
+        taskMessages: [],
+        taskEvents: [],
+        teams: [],
+        teamRuns: [],
+      }),
+      "utf8",
+    );
+
+    const restored = new AgentHub();
+    await restored.loadPersistedState(storagePath);
+
+    expect(restored.snapshot().channels.map((channel) => channel.id)).toEqual(["codex-deepseek"]);
+  });
+
   test("migrates legacy JSON history into SQLite storage", async () => {
     const dir = await mkdtemp(path.join(os.tmpdir(), "multi-agent-chat-sqlite-"));
     const legacyPath = path.join(dir, "app-chats.json");
@@ -819,6 +1035,85 @@ describe("AgentHub chat sessions", () => {
       runContextDocument: "# Workflow Context\n\n## Inventory (inventory)\nMapped repo.",
       contextDocument: expect.stringContaining("Architecture note."),
     });
+  });
+
+  test("renames a workflow draft without changing its graph", () => {
+    const hub = new AgentHub();
+    const created = (hub as any).createWorkflow({
+      title: "Original workflow",
+      objective: "Review sample repo",
+      graph: {
+        title: "Original workflow",
+        objective: "Review sample repo",
+        nodes: [
+          { id: "start", kind: "start", title: "Start", prompt: "" },
+          { id: "inventory", kind: "agent", title: "Inventory", prompt: "Map repo.", agentId: "codex", channelId: "codex-openai", modelId: DEFAULT_MODEL_ID },
+          { id: "end", kind: "end", title: "Done", prompt: "" },
+        ],
+        edges: [
+          { id: "start->inventory", fromNodeId: "start", toNodeId: "inventory" },
+          { id: "inventory->end", fromNodeId: "inventory", toNodeId: "end" },
+        ],
+      },
+    });
+
+    const snapshot = (hub as any).renameWorkflow(created.workflowId, "  Renamed workflow  ");
+    const workflow = snapshot.workflowStore.workflows.find((item: any) => item.workflowId === created.workflowId);
+
+    expect(workflow).toMatchObject({
+      title: "Renamed workflow",
+      objective: "Review sample repo",
+      revision: 2,
+      graph: { title: "Original workflow", objective: "Review sample repo" },
+    });
+    expect(snapshot.workflowDraft.title).toBe("Renamed workflow");
+  });
+
+  test("deletes a workflow draft with its runs and selects the next remaining workflow", () => {
+    const hub = new AgentHub();
+    const first = (hub as any).createWorkflow({
+      title: "First workflow",
+      objective: "Review sample repo",
+      graph: {
+        title: "First workflow",
+        objective: "Review sample repo",
+        nodes: [
+          { id: "start", kind: "start", title: "Start", prompt: "" },
+          { id: "inventory", kind: "agent", title: "Inventory", prompt: "Map repo.", agentId: "codex", channelId: "codex-openai", modelId: DEFAULT_MODEL_ID },
+          { id: "end", kind: "end", title: "Done", prompt: "" },
+        ],
+        edges: [
+          { id: "start->inventory", fromNodeId: "start", toNodeId: "inventory" },
+          { id: "inventory->end", fromNodeId: "inventory", toNodeId: "end" },
+        ],
+      },
+    });
+    const run = (hub as any).startWorkflowRun({ workflowId: first.workflowId, contextDocument: "# Run context" });
+    const second = (hub as any).createWorkflow({
+      title: "Second workflow",
+      objective: "Prepare release",
+      graph: {
+        title: "Second workflow",
+        objective: "Prepare release",
+        nodes: [
+          { id: "start", kind: "start", title: "Start", prompt: "" },
+          { id: "plan", kind: "agent", title: "Plan", prompt: "Plan release.", agentId: "codex", channelId: "codex-openai", modelId: DEFAULT_MODEL_ID },
+          { id: "end", kind: "end", title: "Done", prompt: "" },
+        ],
+        edges: [
+          { id: "start->plan", fromNodeId: "start", toNodeId: "plan" },
+          { id: "plan->end", fromNodeId: "plan", toNodeId: "end" },
+        ],
+      },
+    });
+    (hub as any).selectWorkflow(first.workflowId);
+
+    const snapshot = (hub as any).deleteWorkflow(first.workflowId);
+
+    expect(snapshot.workflowStore.workflows.map((workflow: any) => workflow.workflowId)).toEqual([second.workflowId]);
+    expect(snapshot.workflowStore.runs.some((item: any) => item.runId === run.runId || item.workflowId === first.workflowId)).toBe(false);
+    expect(snapshot.workflowStore.activeWorkflowId).toBe(second.workflowId);
+    expect(snapshot.workflowDraft.workflowId).toBe(second.workflowId);
   });
 
   test("rejects invalid workflow creation with validation reasons", () => {
