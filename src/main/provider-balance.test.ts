@@ -10,6 +10,49 @@ function jsonResponse(body: unknown, status = 200): Response {
 }
 
 describe("provider balance queries", () => {
+  test("queries Codex OpenAI subscription quota from OAuth auth data", async () => {
+    const codexUsageFetcher = vi.fn(async () => ({
+      plan_type: "plus",
+      rate_limit: {
+        primary_window: { used_percent: 25, reset_after_seconds: 3600 },
+        secondary_window: { percent_left: 80, reset_after_seconds: 86_400 },
+      },
+      code_review_rate_limit: {
+        primary_window: { remaining_percent: 90, reset_after_seconds: 7200 },
+      },
+    }));
+
+    const result = await queryProviderBalance(
+      {
+        id: "codex-openai",
+        agentId: "codex",
+        label: "Codex OpenAI",
+        providerName: "OpenAI",
+        modelProvider: "openai",
+        models: [],
+      },
+      {
+        now: () => 1710000000000,
+        codexAuth: { tokens: { access_token: "codex-token", account_id: "acct-1" } },
+        codexUsageFetcher,
+      },
+    );
+
+    expect(codexUsageFetcher).toHaveBeenCalledWith("codex-token", "acct-1");
+    expect(result).toMatchObject({
+      channelId: "codex-openai",
+      providerName: "Codex",
+      supported: true,
+      status: "success",
+      message: "Codex subscription quota loaded.",
+      items: [
+        { label: "Plus · 5h", remaining: 75, used: 25, total: 100, unit: "%", isValid: true },
+        { label: "Plus · 7d", remaining: 80, used: 20, total: 100, unit: "%", isValid: true },
+        { label: "Plus · Review", remaining: 90, used: 10, total: 100, unit: "%", isValid: true },
+      ],
+    });
+  });
+
   test("queries DeepSeek balance using the configured bearer token", async () => {
     const fetchImpl = vi.fn(async () =>
       jsonResponse({

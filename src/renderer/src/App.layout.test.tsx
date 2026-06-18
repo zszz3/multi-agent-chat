@@ -17,6 +17,7 @@ import {
   applyProviderPresetToConfiguredAgent,
   applyProviderModelIdToAgentConfig,
   rememberProviderKeyFromChannel,
+  shouldAutoQueryBalance,
   onlineSkillTreeUrl,
   parseSkillMarkdown,
   missingAppCapabilityMessage,
@@ -1074,6 +1075,39 @@ describe("ConfigPage", () => {
     expect(html).toContain("DeepSeek");
     expect(html).toContain("12.34 CNY");
     expect(html).toContain("刷新余额");
+  });
+
+  test("auto-queries balance when opening a saved execution config without cached balance", () => {
+    expect(
+      shouldAutoQueryBalance({
+        activeFeature: "runtimes",
+        selectedChannelId: "deepseek-api",
+        configDirty: false,
+        balanceLoadingChannelId: undefined,
+        balanceResults: {},
+        alreadyRequested: false,
+      }),
+    ).toBe(true);
+    expect(
+      shouldAutoQueryBalance({
+        activeFeature: "runtimes",
+        selectedChannelId: "deepseek-api",
+        configDirty: true,
+        balanceLoadingChannelId: undefined,
+        balanceResults: {},
+        alreadyRequested: false,
+      }),
+    ).toBe(false);
+    expect(
+      shouldAutoQueryBalance({
+        activeFeature: "chat",
+        selectedChannelId: "deepseek-api",
+        configDirty: false,
+        balanceLoadingChannelId: undefined,
+        balanceResults: {},
+        alreadyRequested: false,
+      }),
+    ).toBe(false);
   });
 
   test("keeps skill templates named from SKILL.md frontmatter without separate localized fields", () => {

@@ -1207,6 +1207,24 @@ export function workflowDraftShouldPersist(input: WorkflowDraftPersistInput): bo
   return hasContent || input.activeWorkflowId === input.workflowId || input.workflowIds.includes(input.workflowId);
 }
 
+interface AutoBalanceQueryInput {
+  activeFeature: ActiveFeature;
+  selectedChannelId: string;
+  configDirty: boolean;
+  balanceLoadingChannelId: string | undefined;
+  balanceResults: Record<string, ProviderBalanceResult>;
+  alreadyRequested: boolean;
+}
+
+export function shouldAutoQueryBalance(input: AutoBalanceQueryInput): boolean {
+  if (input.activeFeature !== "runtimes") return false;
+  if (!input.selectedChannelId) return false;
+  if (input.configDirty) return false;
+  if (input.balanceLoadingChannelId) return false;
+  if (input.alreadyRequested) return false;
+  return !input.balanceResults[input.selectedChannelId];
+}
+
 function extractWorkflowSection(content: string, headings: string[]): string | undefined {
   const headingSet = new Set(headings.map((heading) => heading.toLowerCase()));
   const lines = content.replace(/\r\n/g, "\n").split("\n");
@@ -1589,6 +1607,7 @@ export function App() {
   const [agentTestTick, setAgentTestTick] = useState(0);
   const [balanceResults, setBalanceResults] = useState<Record<string, ProviderBalanceResult>>({});
   const [balanceLoadingChannelId, setBalanceLoadingChannelId] = useState<string | undefined>();
+  const autoBalanceRequestedRef = useRef<Set<string>>(new Set());
   const [paletteOpen, setPaletteOpen] = useState(false);
   const [agentContextMenu, setAgentContextMenu] = useState<{ agentId: string; x: number; y: number } | undefined>();
   const [chatContextMenu, setChatContextMenu] = useState<{ chatId: string; x: number; y: number } | undefined>();
@@ -1851,6 +1870,23 @@ export function App() {
   }, [activeFeature, codexPluginCatalog.length, pluginCatalogStatus]);
 
   useEffect(() => {
+    if (
+      !shouldAutoQueryBalance({
+        activeFeature,
+        selectedChannelId: selectedConfigChannelId,
+        configDirty,
+        balanceLoadingChannelId,
+        balanceResults,
+        alreadyRequested: autoBalanceRequestedRef.current.has(selectedConfigChannelId),
+      })
+    ) {
+      return;
+    }
+    autoBalanceRequestedRef.current.add(selectedConfigChannelId);
+    void queryRuntimeChannelBalance(selectedConfigChannelId, { persistBeforeQuery: false, quiet: true });
+  }, [activeFeature, selectedConfigChannelId, configDirty, balanceLoadingChannelId, balanceResults]);
+
+  useEffect(() => {
     if (activeFeature !== "tasks") setSelectedTaskDetailId(undefined);
   }, [activeFeature]);
 
@@ -2082,6 +2118,7 @@ export function App() {
 
   function deleteConfigChannel(channelId: string): void {
     setConfigContextMenu(undefined);
+    autoBalanceRequestedRef.current.delete(channelId);
     const referencedAgent = snapshot.configuredAgents.find((agent) => agent.channelId === channelId);
     if (referencedAgent) {
       setConfigStatus(`Config is used by ${referencedAgent.name || referencedAgent.id}`);
@@ -2359,7 +2396,7 @@ export function App() {
     }
   }
 
-  async function queryRuntimeChannelBalance(channelId: string): Promise<void> {
+  async function queryRuntimeChannelBalance(channelId: string, options: { persistBeforeQuery?: boolean; quiet?: boolean } = {}): Promise<void> {
     const api = window.multiAgentChat as typeof window.multiAgentChat & {
       queryRuntimeChannelBalance?: (targetChannelId: string) => Promise<ProviderBalanceResult>;
     };
@@ -2368,14 +2405,14 @@ export function App() {
       return;
     }
     setBalanceLoadingChannelId(channelId);
-    setConfigStatus("");
+    if (!options.quiet) setConfigStatus("");
     try {
-      await persistChannelConfig();
+      if (options.persistBeforeQuery !== false) await persistChannelConfig();
       const result = await api.queryRuntimeChannelBalance(channelId);
       setBalanceResults((current) => ({ ...current, [channelId]: result }));
-      setConfigStatus(result.status === "success" ? "Balance updated" : result.message);
+      if (!options.quiet) setConfigStatus(result.status === "success" ? "Balance updated" : result.message);
     } catch (error) {
-      setConfigStatus(error instanceof Error ? error.message : String(error));
+      if (!options.quiet) setConfigStatus(error instanceof Error ? error.message : String(error));
     } finally {
       setBalanceLoadingChannelId(undefined);
     }
@@ -2403,6 +2440,7 @@ export function App() {
   }
 
   function updateConfigChannel(channelId: string, updater: (channel: AgentChannel) => AgentChannel): void {
+    autoBalanceRequestedRef.current.delete(channelId);
     setBalanceResults((current) => {
       if (!(channelId in current)) return current;
       const next = { ...current };
