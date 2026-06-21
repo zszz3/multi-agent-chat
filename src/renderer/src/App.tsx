@@ -6289,7 +6289,7 @@ function WorkflowFlowNodeCard({ data }: ReactFlowNodeProps<WorkflowFlowNode>) {
   const { graphNode, layerSize, renderNodeCard, runProgress } = data;
   return (
     <div
-      className={`workflow-canvas-node nodrag nopan nowheel is-${graphNode.kind} ${runProgress ? `run-${runProgress.status}` : ""}`}
+      className={`workflow-canvas-node nodrag is-${graphNode.kind} ${runProgress ? `run-${runProgress.status}` : ""}`}
       data-layer-size={layerSize}
     >
       <Handle type="target" position={Position.Left} className="workflow-canvas-handle" isConnectable={false} />
@@ -6325,7 +6325,7 @@ function workflowReactFlowElements({
         renderNodeCard,
         ...(runProgress ? { runProgress } : {}),
       },
-      draggable: true,
+      draggable: false,
       selectable: false,
       style: {
         width: layoutNode.width,
@@ -6414,6 +6414,7 @@ function WorkflowCanvasBoard({
           zoomOnPinch
           zoomOnDoubleClick={false}
           nodesConnectable={false}
+          nodesDraggable={false}
           nodesFocusable={false}
           edgesFocusable={false}
           elementsSelectable={false}
@@ -6447,12 +6448,7 @@ function WorkflowCanvasBoard({
     </div>
   );
 
-  if (expanded || !onExpand) return board;
-  return (
-    <div className="workflow-canvas-preview-trigger" role="button" tabIndex={0} aria-label="Expand workflow graph board" onClick={() => onExpand?.()}>
-      {board}
-    </div>
-  );
+  return board;
 }
 
 interface ConfigPageProps {

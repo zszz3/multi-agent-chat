@@ -9008,18 +9008,6 @@ textarea:focus-visible {
   cursor: zoom-in;
 }
 
-.workflow-canvas-preview-trigger {
-  display: block;
-  width: 100%;
-  color: inherit;
-  text-align: initial;
-  cursor: zoom-in;
-}
-
-.workflow-canvas-preview-trigger .workflow-canvas-board {
-  pointer-events: none;
-}
-
 .workflow-canvas-viewport,
 .workflow-react-flow-board {
   width: 100%;

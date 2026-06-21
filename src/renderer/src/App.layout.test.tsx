@@ -449,6 +449,7 @@ describe("ChatControls", () => {
     expect(styles).toContain("width: 224px;");
     expect(styles).toContain("font-size: 15px;");
     expect(styles).toContain("overflow: hidden;\n  padding: 0;");
+    expect(styles).not.toContain(".workflow-canvas-preview-trigger .workflow-canvas-board");
     expect(styles).not.toContain(".workflow-result-card .workflow-graph-board:not(.is-expanded) {\n  max-height: min(460px, 56vh);\n  justify-content: center;");
     expect(styles).toMatch(
       /\.workflow-graph-board:not\(\.is-expanded\) \.workflow-graph-card textarea,[\s\S]*?\.workflow-graph-board:not\(\.is-expanded\) \.workflow-node-config-grid,[\s\S]*?\{\n  display: none;\n\}/,
@@ -3073,6 +3074,7 @@ workflowGraph.upsert({
     expect(html).toContain("workflow-canvas-board");
     expect(html).toContain("workflow-react-flow-board");
     expect(html).toContain("react-flow__edges");
+    expect(html).not.toContain("workflow-canvas-preview-trigger");
     expect(html).not.toContain("workflow-preview-list");
     expect(html).not.toContain("aria-label=\"Node plan runtime\"");
     expect(html).not.toContain("aria-label=\"Node plan provider\"");
