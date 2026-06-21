@@ -1,21 +1,34 @@
-import { app, BrowserWindow, dialog, ipcMain, screen, type OpenDialogOptions } from "electron";
+import { app, BrowserWindow, dialog, ipcMain, powerSaveBlocker, screen, type OpenDialogOptions } from "electron";
+import { createHash } from "node:crypto";
+import { hostname, platform, userInfo } from "node:os";
 import path from "node:path";
 import { fileURLToPath } from "node:url";
 import { AgentHub } from "./agent-hub";
 import { setCodexChatRouterBaseUrl, startCodexChatRouter, type CodexChatRouterServer } from "./codex-chat-router";
 import { createLocalTextFilePreview } from "./local-file-preview";
 import { startMcpBridge, type McpBridgeServer } from "./mcp-bridge";
+import { ScheduledWorkflowCloudClient, type ScheduledWorkflowCloudEventConnection } from "./scheduled-workflow-cloud";
 import { installBundledSkill, uninstallBundledSkill } from "./skill-installer";
 import { centeredWindowBounds } from "./window-bounds";
+import { fetchOnlineSkills } from "../shared/online-skills";
+import { DEFAULT_SCHEDULED_WORKFLOW_CLOUD_BASE_URL } from "../shared/types";
 import type {
   AgentChannel,
   AgentId,
+  AckScheduledWorkflowEventRequest,
+  AppSnapshot,
   ConfiguredAgent,
+  CreateScheduledWorkflowScheduleRequest,
   CreateAgentTeamRequest,
   FinishWorkflowRunRequest,
   InstallSkillRequest,
   RunAgentTeamRequest,
   RunTaskRequest,
+  ScheduledWorkflowRun,
+  ScheduledWorkflowRunnerConfig,
+  ScheduledWorkflowRunnerStatus,
+  ScheduledWorkflowSchedule,
+  ScheduledWorkflowDueEvent,
   StartWorkflowRunRequest,
   TaskProgress,
   UninstallSkillRequest,
@@ -40,6 +53,9 @@ let mainWindow: BrowserWindow | null = null;
 let ipcRegistered = false;
 let mcpBridge: McpBridgeServer | undefined;
 let codexChatRouter: CodexChatRouterServer | undefined;
+let keepAwakeBlockerId: number | undefined;
+const scheduledWorkflowCloudClient = new ScheduledWorkflowCloudClient();
+let scheduledWorkflowEventConnection: ScheduledWorkflowCloudEventConnection | undefined;
 
 function createWindow(): BrowserWindow {
   const preloadPath = path.join(__dirname, "../preload/index.mjs");
@@ -79,6 +95,133 @@ function preferredWindowBounds(): { x: number; y: number; width: number; height:
   const cursorPoint = screen.getCursorScreenPoint();
   const { workArea } = screen.getDisplayNearestPoint(cursorPoint);
   return centeredWindowBounds(workArea, DEFAULT_WINDOW_WIDTH, DEFAULT_WINDOW_HEIGHT);
+}
+
+function setKeepAwake(enabled: boolean): boolean {
+  if (enabled) {
+    if (keepAwakeBlockerId !== undefined && powerSaveBlocker.isStarted(keepAwakeBlockerId)) return true;
+    keepAwakeBlockerId = powerSaveBlocker.start("prevent-app-suspension");
+    return powerSaveBlocker.isStarted(keepAwakeBlockerId);
+  }
+  if (keepAwakeBlockerId !== undefined && powerSaveBlocker.isStarted(keepAwakeBlockerId)) {
+    powerSaveBlocker.stop(keepAwakeBlockerId);
+  }
+  keepAwakeBlockerId = undefined;
+  return false;
+}
+
+function getKeepAwake(): boolean {
+  return keepAwakeBlockerId !== undefined && powerSaveBlocker.isStarted(keepAwakeBlockerId);
+}
+
+function localScheduledWorkflowIdentity(): Pick<ScheduledWorkflowRunnerConfig, "baseUrl" | "tenantId" | "userId" | "deviceName"> {
+  const userData = app.isReady() ? app.getPath("userData") : PRODUCT_NAME;
+  const username = (() => {
+    try {
+      return userInfo().username;
+    } catch {
+      return "local";
+    }
+  })();
+  const identityHash = createHash("sha256").update(`${userData}:${username}`).digest("hex").slice(0, 16);
+  const host = hostname() || "local";
+  return {
+    baseUrl: DEFAULT_SCHEDULED_WORKFLOW_CLOUD_BASE_URL,
+    tenantId: "multi-agent-chat",
+    userId: `local-${identityHash}`,
+    deviceName: `${host} (${platform()})`,
+  };
+}
+
+function scheduledWorkflowRunnerConfigWithDefaults(config = hub.snapshot().scheduledWorkflowStore.runnerConfig): ScheduledWorkflowRunnerConfig {
+  const identity = localScheduledWorkflowIdentity();
+  return {
+    ...config,
+    baseUrl: config.baseUrl?.trim() || identity.baseUrl,
+    tenantId: config.tenantId?.trim() || identity.tenantId,
+    userId: config.userId?.trim() || identity.userId,
+    deviceName: config.deviceName?.trim() || identity.deviceName,
+  };
+}
+
+function scheduledWorkflowCloudConfig(): Pick<ScheduledWorkflowRunnerConfig, "baseUrl" | "runnerToken"> {
+  const config = hub.snapshot().scheduledWorkflowStore.runnerConfig;
+  return {
+    baseUrl: config.baseUrl?.trim() || DEFAULT_SCHEDULED_WORKFLOW_CLOUD_BASE_URL,
+    runnerToken: config.runnerToken,
+  };
+}
+
+async function ensureScheduledWorkflowRunnerConfig(): Promise<ScheduledWorkflowRunnerConfig> {
+  const current = scheduledWorkflowRunnerConfigWithDefaults();
+  if (current.runnerToken?.trim()) {
+    const snapshotConfig = hub.snapshot().scheduledWorkflowStore.runnerConfig;
+    if (
+      snapshotConfig.baseUrl !== current.baseUrl ||
+      snapshotConfig.tenantId !== current.tenantId ||
+      snapshotConfig.userId !== current.userId ||
+      snapshotConfig.deviceName !== current.deviceName
+    ) {
+      hub.saveScheduledWorkflowRunnerConfig(current);
+    }
+    return current;
+  }
+
+  const registered = await scheduledWorkflowCloudClient.registerRunner(current);
+  hub.saveScheduledWorkflowRunnerConfig(registered);
+  return registered;
+}
+
+async function refreshScheduledWorkflowSchedulesFromCloud(): Promise<void> {
+  await ensureScheduledWorkflowRunnerConfig();
+  const schedules = await scheduledWorkflowCloudClient.listSchedules(scheduledWorkflowCloudConfig());
+  hub.replaceScheduledWorkflowSchedules(schedules);
+}
+
+function emitScheduledWorkflowEvent(event: ScheduledWorkflowDueEvent): void {
+  hub.updateScheduledWorkflowRunnerStatus({ connected: true, connecting: false, lastEventAt: Date.now(), lastError: undefined });
+  mainWindow?.webContents.send("scheduled-workflows:event", event);
+}
+
+async function connectScheduledWorkflowRunner(): Promise<AppSnapshot> {
+  scheduledWorkflowEventConnection?.close();
+  scheduledWorkflowEventConnection = undefined;
+  hub.updateScheduledWorkflowRunnerStatus({ connected: false, connecting: true, lastError: undefined });
+  try {
+    await ensureScheduledWorkflowRunnerConfig();
+    await refreshScheduledWorkflowSchedulesFromCloud();
+    scheduledWorkflowEventConnection = scheduledWorkflowCloudClient.connectEvents(scheduledWorkflowCloudConfig(), {
+      onEvent: emitScheduledWorkflowEvent,
+      onError: (error) => {
+        scheduledWorkflowEventConnection = undefined;
+        hub.updateScheduledWorkflowRunnerStatus({
+          connected: false,
+          connecting: false,
+          lastError: error.message,
+        });
+      },
+    });
+    hub.updateScheduledWorkflowRunnerStatus({
+      connected: true,
+      connecting: false,
+      lastConnectedAt: Date.now(),
+      lastError: undefined,
+    });
+  } catch (error) {
+    hub.updateScheduledWorkflowRunnerStatus({
+      connected: false,
+      connecting: false,
+      lastError: error instanceof Error ? error.message : String(error),
+    });
+  }
+  return hub.snapshot();
+}
+
+function disconnectScheduledWorkflowRunner(): AppSnapshot {
+  scheduledWorkflowEventConnection?.close();
+  scheduledWorkflowEventConnection = undefined;
+  hub.updateScheduledWorkflowRunnerStatus({ connected: false, connecting: false });
+  return hub.snapshot();
 }
 
 async function bootstrap(): Promise<void> {
@@ -159,6 +302,9 @@ function registerIpcHandlers(): void {
     return hub.snapshot();
   });
   ipcMain.handle("file:read-text", async (_event, filePath: string) => createLocalTextFilePreview(filePath, hub.getWorkDir(), app.getPath("home")));
+  ipcMain.handle("power:get-keep-awake", () => getKeepAwake());
+  ipcMain.handle("power:set-keep-awake", (_event, enabled: boolean) => setKeepAwake(Boolean(enabled)));
+  ipcMain.handle("skills:search-online", async (_event, query: string) => fetchOnlineSkills(String(query ?? "")));
   ipcMain.handle("skills:install", async (_event, request: InstallSkillRequest) =>
     installBundledSkill(request, app.getPath("home"), path.join(app.getPath("userData"), "bundled-skills")),
   );
@@ -188,6 +334,88 @@ function registerIpcHandlers(): void {
     hub.finishWorkflowRun(request);
     return hub.snapshot();
   });
+  ipcMain.handle("scheduled-workflows:runner-config:save", (_event, config: ScheduledWorkflowRunnerConfig) =>
+    hub.saveScheduledWorkflowRunnerConfig(config),
+  );
+  ipcMain.handle("scheduled-workflows:runner-status:update", (_event, status: Partial<ScheduledWorkflowRunnerStatus>) =>
+    hub.updateScheduledWorkflowRunnerStatus(status),
+  );
+  ipcMain.handle("scheduled-workflows:schedule:upsert", (_event, schedule: ScheduledWorkflowSchedule) =>
+    hub.upsertScheduledWorkflowSchedule(schedule),
+  );
+  ipcMain.handle("scheduled-workflows:schedule:replace-all", (_event, schedules: ScheduledWorkflowSchedule[]) =>
+    hub.replaceScheduledWorkflowSchedules(schedules),
+  );
+  ipcMain.handle("scheduled-workflows:schedule:select", (_event, scheduleId: string) => hub.selectScheduledWorkflow(scheduleId));
+  ipcMain.handle("scheduled-workflows:schedule:delete", (_event, scheduleId: string) => hub.deleteScheduledWorkflowSchedule(scheduleId));
+  ipcMain.handle("scheduled-workflows:run:record", (_event, run: ScheduledWorkflowRun) => hub.recordScheduledWorkflowRun(run));
+  ipcMain.handle(
+    "scheduled-workflows:run:finish",
+    (
+      _event,
+      runId: string,
+      input: {
+        status: "completed" | "failed" | "skipped";
+        workflowRunId?: string;
+        message?: string;
+        finishedAt?: number;
+      },
+    ) => hub.finishScheduledWorkflowRun(runId, input),
+  );
+  ipcMain.handle("scheduled-workflows:cloud:refresh", async () => {
+    try {
+      await refreshScheduledWorkflowSchedulesFromCloud();
+      hub.updateScheduledWorkflowRunnerStatus({ lastError: undefined });
+    } catch (error) {
+      hub.updateScheduledWorkflowRunnerStatus({ lastError: error instanceof Error ? error.message : String(error) });
+    }
+    return hub.snapshot();
+  });
+  ipcMain.handle("scheduled-workflows:cloud:create", async (_event, request: CreateScheduledWorkflowScheduleRequest) => {
+    try {
+      await ensureScheduledWorkflowRunnerConfig();
+      const schedule = await scheduledWorkflowCloudClient.createSchedule(scheduledWorkflowCloudConfig(), request);
+      hub.upsertScheduledWorkflowSchedule(schedule);
+      hub.updateScheduledWorkflowRunnerStatus({ lastError: undefined });
+    } catch (error) {
+      hub.updateScheduledWorkflowRunnerStatus({ lastError: error instanceof Error ? error.message : String(error) });
+    }
+    return hub.snapshot();
+  });
+  ipcMain.handle("scheduled-workflows:cloud:update", async (_event, scheduleId: string, request: Partial<CreateScheduledWorkflowScheduleRequest>) => {
+    try {
+      await ensureScheduledWorkflowRunnerConfig();
+      const schedule = await scheduledWorkflowCloudClient.updateSchedule(scheduledWorkflowCloudConfig(), scheduleId, request);
+      hub.upsertScheduledWorkflowSchedule(schedule);
+      hub.updateScheduledWorkflowRunnerStatus({ lastError: undefined });
+    } catch (error) {
+      hub.updateScheduledWorkflowRunnerStatus({ lastError: error instanceof Error ? error.message : String(error) });
+    }
+    return hub.snapshot();
+  });
+  ipcMain.handle("scheduled-workflows:cloud:delete", async (_event, scheduleId: string) => {
+    try {
+      await ensureScheduledWorkflowRunnerConfig();
+      await scheduledWorkflowCloudClient.deleteSchedule(scheduledWorkflowCloudConfig(), scheduleId);
+      hub.deleteScheduledWorkflowSchedule(scheduleId);
+      hub.updateScheduledWorkflowRunnerStatus({ lastError: undefined });
+    } catch (error) {
+      hub.updateScheduledWorkflowRunnerStatus({ lastError: error instanceof Error ? error.message : String(error) });
+    }
+    return hub.snapshot();
+  });
+  ipcMain.handle("scheduled-workflows:cloud:trigger", async (_event, scheduleId: string) => {
+    await ensureScheduledWorkflowRunnerConfig();
+    const event = await scheduledWorkflowCloudClient.triggerSchedule(scheduledWorkflowCloudConfig(), scheduleId);
+    emitScheduledWorkflowEvent(event);
+    return event;
+  });
+  ipcMain.handle("scheduled-workflows:cloud:ack", async (_event, eventId: string, request: AckScheduledWorkflowEventRequest) => {
+    await ensureScheduledWorkflowRunnerConfig();
+    return scheduledWorkflowCloudClient.ackEvent(scheduledWorkflowCloudConfig(), eventId, request);
+  });
+  ipcMain.handle("scheduled-workflows:runner:connect", async () => connectScheduledWorkflowRunner());
+  ipcMain.handle("scheduled-workflows:runner:disconnect", () => disconnectScheduledWorkflowRunner());
   ipcMain.handle("task:run", async (_event, request: RunTaskRequest) => hub.runTask(request));
   ipcMain.handle("task:select", (_event, taskId: string) => {
     hub.selectTask(taskId);
@@ -215,7 +443,9 @@ function registerIpcHandlers(): void {
 void bootstrap();
 
 app.on("before-quit", () => {
+  setKeepAwake(false);
   void hub.flushPersistence();
+  scheduledWorkflowEventConnection?.close();
   void codexChatRouter?.stop();
   void mcpBridge?.stop();
 });

@@ -1,12 +1,15 @@
 import { contextBridge, ipcRenderer } from "electron";
+import type { OnlineSkillResult } from "../shared/online-skills";
 import type {
   AgentChannel,
   AgentId,
   AgentTestEvent,
   AgentTestResult,
+  AckScheduledWorkflowEventRequest,
   AppSnapshot,
   CodexPluginCatalogItem,
   ConfiguredAgent,
+  CreateScheduledWorkflowScheduleRequest,
   CreateAgentTeamRequest,
   FinishWorkflowRunRequest,
   GeneratedConfigFile,
@@ -17,6 +20,12 @@ import type {
   ProviderBalanceResult,
   RunAgentTeamRequest,
   RunTaskRequest,
+  ScheduledWorkflowOperationResult,
+  ScheduledWorkflowRun,
+  ScheduledWorkflowRunnerConfig,
+  ScheduledWorkflowRunnerStatus,
+  ScheduledWorkflowSchedule,
+  ScheduledWorkflowDueEvent,
   StartWorkflowRunRequest,
   TaskProgress,
   UninstalledSkillResult,
@@ -53,6 +62,9 @@ const api = {
   setWorkDir: (workDir: string): Promise<AppSnapshot> => ipcRenderer.invoke("workdir:set", workDir),
   chooseWorkDir: (): Promise<AppSnapshot> => ipcRenderer.invoke("workdir:choose"),
   readLocalFile: (filePath: string): Promise<LocalFilePreview> => ipcRenderer.invoke("file:read-text", filePath),
+  getKeepAwake: (): Promise<boolean> => ipcRenderer.invoke("power:get-keep-awake"),
+  setKeepAwake: (enabled: boolean): Promise<boolean> => ipcRenderer.invoke("power:set-keep-awake", enabled),
+  searchOnlineSkills: (query: string): Promise<OnlineSkillResult[]> => ipcRenderer.invoke("skills:search-online", query),
   installSkill: (request: InstallSkillRequest): Promise<InstalledSkillResult> => ipcRenderer.invoke("skills:install", request),
   uninstallSkill: (request: UninstallSkillRequest): Promise<UninstalledSkillResult> => ipcRenderer.invoke("skills:uninstall", request),
   sendPrompt: (prompt: string, chatId?: string): Promise<AppSnapshot> => ipcRenderer.invoke("run:send", prompt, chatId),
@@ -64,6 +76,42 @@ const api = {
   deleteWorkflow: (workflowId: string): Promise<AppSnapshot> => ipcRenderer.invoke("workflow:delete", workflowId),
   startWorkflowRun: (request: StartWorkflowRunRequest): Promise<AppSnapshot> => ipcRenderer.invoke("workflow-run:start", request),
   finishWorkflowRun: (request: FinishWorkflowRunRequest): Promise<AppSnapshot> => ipcRenderer.invoke("workflow-run:finish", request),
+  saveScheduledWorkflowRunnerConfig: (config: ScheduledWorkflowRunnerConfig): Promise<AppSnapshot> =>
+    ipcRenderer.invoke("scheduled-workflows:runner-config:save", config),
+  updateScheduledWorkflowRunnerStatus: (status: Partial<ScheduledWorkflowRunnerStatus>): Promise<AppSnapshot> =>
+    ipcRenderer.invoke("scheduled-workflows:runner-status:update", status),
+  upsertScheduledWorkflowSchedule: (schedule: ScheduledWorkflowSchedule): Promise<ScheduledWorkflowOperationResult> =>
+    ipcRenderer.invoke("scheduled-workflows:schedule:upsert", schedule),
+  replaceScheduledWorkflowSchedules: (schedules: ScheduledWorkflowSchedule[]): Promise<AppSnapshot> =>
+    ipcRenderer.invoke("scheduled-workflows:schedule:replace-all", schedules),
+  selectScheduledWorkflowSchedule: (scheduleId: string): Promise<AppSnapshot> => ipcRenderer.invoke("scheduled-workflows:schedule:select", scheduleId),
+  deleteScheduledWorkflowSchedule: (scheduleId: string): Promise<AppSnapshot> => ipcRenderer.invoke("scheduled-workflows:schedule:delete", scheduleId),
+  recordScheduledWorkflowRun: (run: ScheduledWorkflowRun): Promise<AppSnapshot> => ipcRenderer.invoke("scheduled-workflows:run:record", run),
+  finishScheduledWorkflowRun: (
+    runId: string,
+    input: {
+      status: "completed" | "failed" | "skipped";
+      workflowRunId?: string;
+      message?: string;
+      finishedAt?: number;
+    },
+  ): Promise<AppSnapshot> => ipcRenderer.invoke("scheduled-workflows:run:finish", runId, input),
+  refreshScheduledWorkflowSchedules: (): Promise<AppSnapshot> => ipcRenderer.invoke("scheduled-workflows:cloud:refresh"),
+  createScheduledWorkflowSchedule: (request: CreateScheduledWorkflowScheduleRequest): Promise<AppSnapshot> =>
+    ipcRenderer.invoke("scheduled-workflows:cloud:create", request),
+  updateScheduledWorkflowSchedule: (scheduleId: string, request: Partial<CreateScheduledWorkflowScheduleRequest>): Promise<AppSnapshot> =>
+    ipcRenderer.invoke("scheduled-workflows:cloud:update", scheduleId, request),
+  triggerScheduledWorkflowSchedule: (scheduleId: string): Promise<ScheduledWorkflowDueEvent> =>
+    ipcRenderer.invoke("scheduled-workflows:cloud:trigger", scheduleId),
+  ackScheduledWorkflowEvent: (eventId: string, request: AckScheduledWorkflowEventRequest): Promise<void> =>
+    ipcRenderer.invoke("scheduled-workflows:cloud:ack", eventId, request),
+  connectScheduledWorkflowRunner: (): Promise<AppSnapshot> => ipcRenderer.invoke("scheduled-workflows:runner:connect"),
+  disconnectScheduledWorkflowRunner: (): Promise<AppSnapshot> => ipcRenderer.invoke("scheduled-workflows:runner:disconnect"),
+  onScheduledWorkflowEvent: (callback: (event: ScheduledWorkflowDueEvent) => void): (() => void) => {
+    const listener = (_event: Electron.IpcRendererEvent, event: ScheduledWorkflowDueEvent) => callback(event);
+    ipcRenderer.on("scheduled-workflows:event", listener);
+    return () => ipcRenderer.removeListener("scheduled-workflows:event", listener);
+  },
   onWorkflowAgentEvent: (callback: (event: WorkflowAgentEvent) => void): (() => void) => {
     const listener = (_event: Electron.IpcRendererEvent, event: WorkflowAgentEvent) => callback(event);
     ipcRenderer.on("workflow-agent:event", listener);

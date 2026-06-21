@@ -2,12 +2,12 @@
 
 Multi Agent Chat 是一个本地 Electron 桌面应用，用来把多种 Agent 运行方式统一到一个工作台里。它可以直接驱动本机的 Codex CLI、Claude Code CLI，也可以把任意 OpenAI-compatible / Anthropic-compatible 服务配置成纯 API Agent。
 
-应用重点不是做一个单一聊天窗口，而是把“聊天、可复用 Agent、任务、团队协作、Workflow、MCP 暴露能力”放在同一个本地工具里。
+应用重点不是做一个单一聊天窗口，而是把“聊天、可复用 Agent、任务、Workflow 编排、MCP 暴露能力”放在同一个本地工具里。
 
 ## 功能总览
 
 - 多会话 Chat：按工作目录、Runtime、Channel、模型运行 Codex / Claude / API Agent。
-- Skills 页面：集中查看内置 Agent 技能模板，也可以在线搜索 OpenAI / Anthropic 官方 GitHub skill 源，并把内置技能安装到本机 Agent 目录。
+- Skills 页面：集中查看内置 Agent 技能模板，也可以用 skills.sh find API 在线搜索公开 skill，并把内置技能安装到本机 Agent 目录。
 - 可复用 Agent 配置：为不同 Provider、模型、Prompt、插件和高级参数保存独立 Agent。
 - Provider Preset：内置 OpenAI、Anthropic、DeepSeek、GLM、Kimi、LongCat、MiMo、OpenRouter、GitHub Models、Together、Novita、NVIDIA、SiliconFlow、Bailian、Volcengine、Hunyuan、MiniMax、Azure OpenAI、Custom 等模板。
 - Volcengine / 豆包 endpoint 可配置：`ep-m-...` 这类用户自己的 endpoint 不写死在代码里，由用户在界面里配置。
@@ -15,8 +15,7 @@ Multi Agent Chat 是一个本地 Electron 桌面应用，用来把多种 Agent �
 - Test session 清理：Claude 测试会删除测试 session 文件；Codex 测试如果从 `codex exec --json` 输出中拿到测试 session id，会执行 `codex archive <sessionId>` 清理测试会话。
 - Codex 插件配置：可以加载 Codex plugin catalog，也可以手动给 Channel 添加插件。
 - Task 看板：把一次 Agent 执行作为任务管理，支持状态流转、日志查看、停止和删除。
-- Agent Teams：把多个 Agent 组成团队，以并行、流水线或主管模式协作。
-- Workflow：先对话澄清目标，再生成 DAG，运行节点，汇总结果，预览产出文档。
+- Workflow：先对话澄清目标，再生成 DAG；支持多个 Agent 节点并行、顺序和汇总执行，最终预览产出文档。
 - 本地 MCP：通过 `npm run mcp` 把配置好的 Agent / Workflow 能力暴露给其他 MCP 客户端。
 - 设置页：支持界面语言切换和本地偏好。
 
@@ -38,12 +37,12 @@ Chat 页面用于直接和 Agent 对话。
 
 ## Skills
 
-Skills 页面用于集中管理 Agent 技能模板，并支持搜索公开 GitHub skill 源。
+Skills 页面用于集中管理 Agent 技能模板，并支持通过 skills.sh find API 搜索公开 skill。
 
 当前包含两类来源：
 
 - 内置技能：随应用仓库发布，放在 `src/shared/bundled-skills/<skill-id>/`。每个目录至少包含原始 `SKILL.md`，可选 `SKILL.zh.md` 中文阅读版、`metadata.json` 来源信息，以及该 skill 自带的 `scripts/`、`references/`、`assets/` 等文件。
-- 在线搜索：读取公开 GitHub 仓库里的 `SKILL.md` 元数据，目前内置 `openai/skills` 和 `anthropics/skills` 两个官方源。
+- 在线搜索：默认读取 `https://skills.sh/api/search?q=<query>&limit=10`，展示来源仓库、安装命令和 skills.sh 页面链接；代码里仍保留公开 GitHub 仓库 `SKILL.md` 扫描能力作为后续扩展点。
 
 内置技能只保留 7 个常用技能：`brainstorming`、`systematic-debugging`、`personal-finance-planning`、`resume-optimization`、`paper-writing`、`refactor-review-knowledge`、`code-review-and-quality`。
 其中 `personal-finance-planning` 会显示 TradingAgents 的 GitHub 参考来源：`https://github.com/TauricResearch/TradingAgents`。
@@ -175,19 +174,6 @@ Task 页面适合把一次 Agent 执行作为可跟踪任务来管理。
 - 查看任务执行日志、工具事件和最终输出。
 - 删除任务，并清理关联的本地 Agent session。
 
-## Agent Teams
-
-Teams 页面用于把多个 Agent 组成团队处理同一个目标。
-
-支持：
-
-- 创建和编辑 Team。
-- 添加多个成员，每个成员配置独立 Agent、模型、Prompt。
-- 并行模式：多个 Agent 同时处理。
-- 流水线模式：上一个成员输出传给下一个成员。
-- 主管模式：由 lead / supervisor 组织其他成员。
-- 查看团队运行步骤、状态、输出和错误。
-
 ## Workflow
 
 Workflow 页面是“先澄清，再生成图，再执行”的工作流能力。
@@ -208,6 +194,8 @@ Workflow 支持：
 
 - 新建和切换多个 Workflow 会话。
 - DAG 校验。
+- 同一依赖层的多个 Agent 节点并行运行。
+- 顺序、并行、汇总等协作模式通过 DAG 表达，不再单独暴露 Teams 页面。
 - 节点运行状态展示。
 - 运行进度摘要。
 - 节点输出、handoff、artifact 汇总。

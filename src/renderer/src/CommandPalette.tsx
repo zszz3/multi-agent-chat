@@ -3,6 +3,7 @@ import {
   ClipboardList,
   Cpu,
   FolderOpen,
+  GitBranch,
   MessageSquareText,
   Moon,
   Plus,
@@ -10,7 +11,6 @@ import {
   Search,
   Settings,
   Sun,
-  Users,
   Wand2,
 } from "lucide-react";
 import type { ReactNode } from "react";
@@ -37,7 +37,7 @@ export interface PaletteContext {
   chats: Array<{ id: string; title: string; agentId: string }>;
   theme: Theme;
   language?: PaletteLanguage;
-  onNavigate: (feature: "chat" | "tasks" | "teams" | "workflow" | "skills" | "runtimes" | "configs" | "settings") => void;
+  onNavigate: (feature: "chat" | "tasks" | "workflow" | "skills" | "runtimes" | "configs" | "settings") => void;
   onSelectChat: (chatId: string) => void;
   onNewChat: () => void;
   onToggleTheme: () => void;
@@ -55,7 +55,6 @@ export function buildPaletteCommands(context: PaletteContext): PaletteCommand[] 
           chats: "对话",
           chat: "对话",
           tasks: "任务",
-          teams: "团队",
           workflow: "工作流",
           skills: "技能",
           runtimes: "配置",
@@ -73,7 +72,6 @@ export function buildPaletteCommands(context: PaletteContext): PaletteCommand[] 
           chats: "Chats",
           chat: "Chat",
           tasks: "Tasks",
-          teams: "Teams",
           workflow: "Workflow",
           skills: "Skills",
           runtimes: "Config",
@@ -88,8 +86,7 @@ export function buildPaletteCommands(context: PaletteContext): PaletteCommand[] 
   const navigation: PaletteCommand[] = [
     { id: "nav-chat", section: label.jump, label: label.chat, hint: "G C", icon: <MessageSquareText size={14} />, run: () => context.onNavigate("chat") },
     { id: "nav-tasks", section: label.jump, label: label.tasks, hint: "G T", icon: <ClipboardList size={14} />, run: () => context.onNavigate("tasks") },
-    { id: "nav-teams", section: label.jump, label: label.teams, hint: "G W", icon: <Users size={14} />, run: () => context.onNavigate("teams") },
-    { id: "nav-workflow", section: label.jump, label: label.workflow, hint: "G F", icon: <Users size={14} />, run: () => context.onNavigate("workflow") },
+    { id: "nav-workflow", section: label.jump, label: label.workflow, hint: "G F", icon: <GitBranch size={14} />, run: () => context.onNavigate("workflow") },
     { id: "nav-skills", section: label.jump, label: label.skills, icon: <Wand2 size={14} />, run: () => context.onNavigate("skills") },
     { id: "nav-runtimes", section: label.jump, label: label.runtimes, hint: "G R", icon: <Cpu size={14} />, run: () => context.onNavigate("runtimes") },
     { id: "nav-configs", section: label.jump, label: label.configs, hint: "G S", icon: <Settings size={14} />, run: () => context.onNavigate("configs") },

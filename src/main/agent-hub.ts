@@ -4,6 +4,10 @@ import { mkdir, readFile, rename, rm, writeFile } from "node:fs/promises";
 import os from "node:os";
 import path from "node:path";
 import { promisify } from "node:util";
+import {
+  DEFAULT_SCHEDULED_WORKFLOW_TIME_OF_DAY,
+  DEFAULT_SCHEDULED_WORKFLOW_TIMEZONE,
+} from "../shared/types";
 import type {
   AgentChannel,
   ConfiguredAgent,
@@ -36,6 +40,14 @@ import type {
   ProviderBalanceResult,
   RunAgentTeamRequest,
   RunTaskRequest,
+  ScheduledWorkflowFrequency,
+  ScheduledWorkflowOperationResult,
+  ScheduledWorkflowRun,
+  ScheduledWorkflowRunStatus,
+  ScheduledWorkflowRunnerConfig,
+  ScheduledWorkflowRunnerStatus,
+  ScheduledWorkflowSchedule,
+  ScheduledWorkflowStoreState,
   StartWorkflowRunRequest,
   TaskProgress,
   TaskRun,
@@ -224,6 +236,7 @@ interface PersistedAppStateV2 {
   teamRuns?: PersistedTeamRunRecord[];
   workflowStore?: WorkflowStoreState;
   workflowDraft?: WorkflowDraftState;
+  scheduledWorkflowStore?: ScheduledWorkflowStoreState;
   channels?: AgentChannel[];
   configuredAgents?: ConfiguredAgent[];
 }
@@ -303,6 +316,29 @@ function isWorkflowGrillMessageRole(value: unknown): value is WorkflowDraftState
 
 function isWorkflowRunNodeStatus(value: unknown): value is WorkflowRunNodeStatus {
   return value === "queued" || value === "running" || value === "completed" || value === "failed";
+}
+
+function isScheduledWorkflowRunStatus(value: unknown): value is ScheduledWorkflowRunStatus {
+  return value === "queued" || value === "running" || value === "completed" || value === "failed" || value === "skipped";
+}
+
+function normalizeScheduledWorkflowFrequency(value: unknown): ScheduledWorkflowFrequency {
+  return value === "weekly" || value === "monthly" ? value : "daily";
+}
+
+function normalizeScheduledWorkflowTimeOfDay(value: unknown): string {
+  const raw = asOptionalString(value)?.trim();
+  return raw && /^\d{2}:\d{2}$/.test(raw) ? raw : DEFAULT_SCHEDULED_WORKFLOW_TIME_OF_DAY;
+}
+
+function normalizeScheduledWorkflowWeekdays(value: unknown): number[] | undefined {
+  if (!Array.isArray(value)) return undefined;
+  const days = [...new Set(value.filter((day): day is number => Number.isInteger(day) && day >= 0 && day <= 6))];
+  return days.length > 0 ? days : undefined;
+}
+
+function normalizeScheduledWorkflowDayOfMonth(value: unknown): number | undefined {
+  return typeof value === "number" && Number.isInteger(value) ? Math.min(31, Math.max(1, value)) : undefined;
 }
 
 function isAgentWorkflowTarget(value: unknown): value is AgentWorkflowTarget {
@@ -962,8 +998,13 @@ export class AgentHub {
   private activeTeamRunId: string | undefined;
   private workflows = new Map<string, WorkflowDraftState>();
   private workflowRuns = new Map<string, WorkflowRunState>();
+  private scheduledWorkflowSchedules = new Map<string, ScheduledWorkflowSchedule>();
+  private scheduledWorkflowRuns = new Map<string, ScheduledWorkflowRun>();
   private configuredAgents = new Map<string, ConfiguredAgent>();
   private activeWorkflowId: string | undefined;
+  private activeScheduledWorkflowId: string | undefined;
+  private scheduledWorkflowRunnerConfig: ScheduledWorkflowRunnerConfig = { baseUrl: "" };
+  private scheduledWorkflowRunnerStatus: ScheduledWorkflowRunnerStatus = { connected: false, connecting: false };
   private activeStops = new Map<string, () => Promise<void> | void>();
   private listeners = new Set<Listener>();
   private workDir = process.cwd();
@@ -1331,7 +1372,10 @@ export class AgentHub {
     this.teamRuns.clear();
     this.workflows.clear();
     this.workflowRuns.clear();
+    this.scheduledWorkflowSchedules.clear();
+    this.scheduledWorkflowRuns.clear();
     this.activeWorkflowId = undefined;
+    this.activeScheduledWorkflowId = undefined;
     const chat = this.createChatState(DEFAULT_AGENT);
     this.chats.set(chat.id, chat);
     this.activeChatId = chat.id;
@@ -1549,6 +1593,119 @@ export class AgentHub {
     return { ok: true, workflowId: workflow.workflowId, runId: run.runId, revision: workflow.revision };
   }
 
+  saveScheduledWorkflowRunnerConfig(config: ScheduledWorkflowRunnerConfig): AppSnapshot {
+    this.scheduledWorkflowRunnerConfig = this.cloneScheduledWorkflowRunnerConfig(config);
+    this.emit();
+    return this.snapshot();
+  }
+
+  updateScheduledWorkflowRunnerStatus(status: Partial<ScheduledWorkflowRunnerStatus>): AppSnapshot {
+    this.scheduledWorkflowRunnerStatus = {
+      ...this.scheduledWorkflowRunnerStatus,
+      ...status,
+    };
+    this.emit();
+    return this.snapshot();
+  }
+
+  selectScheduledWorkflow(scheduleId: string): AppSnapshot {
+    if (this.scheduledWorkflowSchedules.has(scheduleId)) {
+      this.activeScheduledWorkflowId = scheduleId;
+      this.emit();
+    }
+    return this.snapshot();
+  }
+
+  upsertScheduledWorkflowSchedule(input: ScheduledWorkflowSchedule): ScheduledWorkflowOperationResult {
+    if (!this.workflows.has(input.workflowId)) return { ok: false, error: `Workflow ${input.workflowId} was not found.` };
+    const now = Date.now();
+    const current = this.scheduledWorkflowSchedules.get(input.scheduleId);
+    const schedule = this.cloneScheduledWorkflowSchedule({
+      ...input,
+      scheduleId: input.scheduleId || `sched_${randomUUID()}`,
+      title: input.title.trim() || this.workflows.get(input.workflowId)?.title || "Scheduled workflow",
+      intervalSeconds: Math.max(60, Math.floor(input.intervalSeconds || current?.intervalSeconds || 3600)),
+      frequency: input.frequency ?? current?.frequency ?? "daily",
+      timeOfDay: input.timeOfDay ?? current?.timeOfDay ?? DEFAULT_SCHEDULED_WORKFLOW_TIME_OF_DAY,
+      timezone: input.timezone ?? current?.timezone ?? DEFAULT_SCHEDULED_WORKFLOW_TIMEZONE,
+      ...(input.weekdays !== undefined || current?.weekdays !== undefined ? { weekdays: input.weekdays ?? current?.weekdays } : {}),
+      ...(input.dayOfMonth !== undefined || current?.dayOfMonth !== undefined ? { dayOfMonth: input.dayOfMonth ?? current?.dayOfMonth } : {}),
+      source: input.source ?? current?.source ?? "cloud",
+      createdAt: input.createdAt || current?.createdAt || now,
+      updatedAt: input.updatedAt || now,
+    });
+    this.scheduledWorkflowSchedules.set(schedule.scheduleId, schedule);
+    this.activeScheduledWorkflowId = schedule.scheduleId;
+    this.emit();
+    return { ok: true, scheduleId: schedule.scheduleId };
+  }
+
+  replaceScheduledWorkflowSchedules(schedules: ScheduledWorkflowSchedule[]): AppSnapshot {
+    const nextSchedules = new Map<string, ScheduledWorkflowSchedule>();
+    for (const schedule of schedules) {
+      if (!this.workflows.has(schedule.workflowId)) continue;
+      const normalized = this.cloneScheduledWorkflowSchedule(schedule);
+      nextSchedules.set(normalized.scheduleId, normalized);
+    }
+    this.scheduledWorkflowSchedules = nextSchedules;
+    if (this.activeScheduledWorkflowId && !this.scheduledWorkflowSchedules.has(this.activeScheduledWorkflowId)) {
+      this.activeScheduledWorkflowId = undefined;
+    }
+    this.activeScheduledWorkflowId ??= [...this.scheduledWorkflowSchedules.values()].sort((left, right) => right.createdAt - left.createdAt)[0]?.scheduleId;
+    this.emit();
+    return this.snapshot();
+  }
+
+  deleteScheduledWorkflowSchedule(scheduleId: string): AppSnapshot {
+    if (!this.scheduledWorkflowSchedules.has(scheduleId)) return this.snapshot();
+    this.scheduledWorkflowSchedules.delete(scheduleId);
+    if (this.activeScheduledWorkflowId === scheduleId || (this.activeScheduledWorkflowId && !this.scheduledWorkflowSchedules.has(this.activeScheduledWorkflowId))) {
+      this.activeScheduledWorkflowId = [...this.scheduledWorkflowSchedules.values()].sort((left, right) => right.createdAt - left.createdAt)[0]?.scheduleId;
+    }
+    this.emit();
+    return this.snapshot();
+  }
+
+  recordScheduledWorkflowRun(input: ScheduledWorkflowRun): AppSnapshot {
+    const now = Date.now();
+    const schedule = this.scheduledWorkflowSchedules.get(input.scheduleId);
+    if (!this.workflows.has(input.workflowId)) return this.snapshot();
+    const run = this.cloneScheduledWorkflowRun({
+      ...input,
+      runId: input.runId || `scheduled_run_${randomUUID()}`,
+      title: input.title.trim() || schedule?.title || this.workflows.get(input.workflowId)?.title || "Scheduled workflow",
+      status: input.status || "running",
+      startedAt: input.startedAt || now,
+      finishedAt: input.finishedAt,
+    });
+    this.scheduledWorkflowRuns.set(run.runId, run);
+    this.activeScheduledWorkflowId = run.scheduleId;
+    this.emit();
+    return this.snapshot();
+  }
+
+  finishScheduledWorkflowRun(
+    runId: string,
+    input: {
+      status: Exclude<ScheduledWorkflowRunStatus, "queued" | "running">;
+      workflowRunId?: string;
+      message?: string;
+      finishedAt?: number;
+    },
+  ): AppSnapshot {
+    const run = this.scheduledWorkflowRuns.get(runId);
+    if (!run) return this.snapshot();
+    this.scheduledWorkflowRuns.set(runId, this.cloneScheduledWorkflowRun({
+      ...run,
+      status: input.status,
+      ...(input.workflowRunId !== undefined ? { workflowRunId: input.workflowRunId } : {}),
+      ...(input.message !== undefined ? { message: input.message } : {}),
+      finishedAt: input.finishedAt ?? Date.now(),
+    }));
+    this.emit();
+    return this.snapshot();
+  }
+
   getWorkDir(): string {
     return this.workDir;
   }
@@ -1577,6 +1734,7 @@ export class AgentHub {
         .sort((left, right) => right.updatedAt - left.updatedAt)
         .map((run) => this.serializeTeamRun(run)),
       workflowStore: this.cloneWorkflowStore(),
+      scheduledWorkflowStore: this.cloneScheduledWorkflowStore(),
       workflowDraft: this.activeWorkflowDraft(),
     };
   }
@@ -2232,6 +2390,67 @@ export class AgentHub {
       startedAt: run.startedAt,
       finishedAt: run.finishedAt,
       lastError: run.lastError,
+    };
+  }
+
+  private cloneScheduledWorkflowStore(): ScheduledWorkflowStoreState {
+    return {
+      activeScheduleId: this.activeScheduledWorkflowId,
+      runnerConfig: this.cloneScheduledWorkflowRunnerConfig(this.scheduledWorkflowRunnerConfig),
+      runnerStatus: { ...this.scheduledWorkflowRunnerStatus },
+      schedules: [...this.scheduledWorkflowSchedules.values()]
+        .sort((left, right) => right.createdAt - left.createdAt)
+        .map((schedule) => this.cloneScheduledWorkflowSchedule(schedule)),
+      runs: [...this.scheduledWorkflowRuns.values()]
+        .sort((left, right) => right.startedAt - left.startedAt)
+        .map((run) => this.cloneScheduledWorkflowRun(run)),
+    };
+  }
+
+  private cloneScheduledWorkflowRunnerConfig(config: ScheduledWorkflowRunnerConfig): ScheduledWorkflowRunnerConfig {
+    return {
+      baseUrl: config.baseUrl?.trim() ?? "",
+      ...(config.tenantId !== undefined ? { tenantId: config.tenantId } : {}),
+      ...(config.userId !== undefined ? { userId: config.userId } : {}),
+      ...(config.deviceName !== undefined ? { deviceName: config.deviceName } : {}),
+      ...(config.deviceId !== undefined ? { deviceId: config.deviceId } : {}),
+      ...(config.runnerToken !== undefined ? { runnerToken: config.runnerToken } : {}),
+    };
+  }
+
+  private cloneScheduledWorkflowSchedule(schedule: ScheduledWorkflowSchedule): ScheduledWorkflowSchedule {
+    const now = Date.now();
+    return {
+      scheduleId: schedule.scheduleId || `sched_${randomUUID()}`,
+      workflowId: schedule.workflowId,
+      title: schedule.title || this.workflows.get(schedule.workflowId)?.title || "Scheduled workflow",
+      enabled: schedule.enabled !== false,
+      intervalSeconds: Math.max(60, Math.floor(schedule.intervalSeconds || 3600)),
+      frequency: normalizeScheduledWorkflowFrequency(schedule.frequency),
+      timeOfDay: normalizeScheduledWorkflowTimeOfDay(schedule.timeOfDay),
+      timezone: schedule.timezone?.trim() || DEFAULT_SCHEDULED_WORKFLOW_TIMEZONE,
+      ...(normalizeScheduledWorkflowWeekdays(schedule.weekdays) !== undefined ? { weekdays: normalizeScheduledWorkflowWeekdays(schedule.weekdays) } : {}),
+      ...(normalizeScheduledWorkflowDayOfMonth(schedule.dayOfMonth) !== undefined ? { dayOfMonth: normalizeScheduledWorkflowDayOfMonth(schedule.dayOfMonth) } : {}),
+      ...(schedule.nextRunAt !== undefined ? { nextRunAt: schedule.nextRunAt } : {}),
+      ...(schedule.lastRunAt !== undefined ? { lastRunAt: schedule.lastRunAt } : {}),
+      source: schedule.source === "local" ? "local" : "cloud",
+      createdAt: Number.isFinite(schedule.createdAt) ? schedule.createdAt : now,
+      updatedAt: Number.isFinite(schedule.updatedAt) ? schedule.updatedAt : now,
+    };
+  }
+
+  private cloneScheduledWorkflowRun(run: ScheduledWorkflowRun): ScheduledWorkflowRun {
+    return {
+      runId: run.runId || `scheduled_run_${randomUUID()}`,
+      scheduleId: run.scheduleId,
+      workflowId: run.workflowId,
+      ...(run.eventId !== undefined ? { eventId: run.eventId } : {}),
+      ...(run.workflowRunId !== undefined ? { workflowRunId: run.workflowRunId } : {}),
+      title: run.title || this.scheduledWorkflowSchedules.get(run.scheduleId)?.title || "Scheduled workflow",
+      status: isScheduledWorkflowRunStatus(run.status) ? run.status : "failed",
+      startedAt: Number.isFinite(run.startedAt) ? run.startedAt : Date.now(),
+      finishedAt: run.finishedAt,
+      ...(run.message !== undefined ? { message: run.message } : {}),
     };
   }
 
@@ -3187,6 +3406,7 @@ export class AgentHub {
     this.installRestoredChats(chats, asOptionalString(record.activeChatId), asOptionalString(record.workDir));
     this.installRestoredTasks([], undefined);
     this.installRestoredTeams([], [], undefined, undefined);
+    this.restoreScheduledWorkflowStore(undefined);
   }
 
   private restorePersistedStateV2(record: Record<string, unknown>): void {
@@ -3299,6 +3519,7 @@ export class AgentHub {
     this.installRestoredTeams(teams, teamRuns, asOptionalString(record.activeTeamId), asOptionalString(record.activeTeamRunId));
     this.installRestoredConfiguredAgents(Array.isArray(record.configuredAgents) ? record.configuredAgents : []);
     this.restoreWorkflowStore(record.workflowStore, record.workflowDraft);
+    this.restoreScheduledWorkflowStore(record.scheduledWorkflowStore);
   }
 
   private installRestoredConfiguredAgents(rawAgents: unknown[]): void {
@@ -3534,6 +3755,91 @@ export class AgentHub {
     if (!workflow) return;
     this.workflows.set(workflow.workflowId, workflow);
     this.activeWorkflowId = workflow.workflowId;
+  }
+
+  private restoreScheduledWorkflowStore(rawStore: unknown): void {
+    this.scheduledWorkflowSchedules.clear();
+    this.scheduledWorkflowRuns.clear();
+    this.activeScheduledWorkflowId = undefined;
+    this.scheduledWorkflowRunnerConfig = { baseUrl: "" };
+    this.scheduledWorkflowRunnerStatus = { connected: false, connecting: false };
+
+    const storeRecord = asRecord(rawStore);
+    if (!storeRecord) return;
+    const configRecord = asRecord(storeRecord.runnerConfig);
+    if (configRecord) {
+      this.scheduledWorkflowRunnerConfig = this.cloneScheduledWorkflowRunnerConfig({
+        baseUrl: asOptionalString(configRecord.baseUrl) ?? "",
+        ...(asOptionalString(configRecord.tenantId) !== undefined ? { tenantId: asOptionalString(configRecord.tenantId) } : {}),
+        ...(asOptionalString(configRecord.userId) !== undefined ? { userId: asOptionalString(configRecord.userId) } : {}),
+        ...(asOptionalString(configRecord.deviceName) !== undefined ? { deviceName: asOptionalString(configRecord.deviceName) } : {}),
+        ...(asOptionalString(configRecord.deviceId) !== undefined ? { deviceId: asOptionalString(configRecord.deviceId) } : {}),
+        ...(asOptionalString(configRecord.runnerToken) !== undefined ? { runnerToken: asOptionalString(configRecord.runnerToken) } : {}),
+      });
+    }
+
+    for (const item of asArray(storeRecord.schedules)) {
+      const schedule = this.restoreScheduledWorkflowSchedule(item);
+      if (schedule) this.scheduledWorkflowSchedules.set(schedule.scheduleId, schedule);
+    }
+    for (const item of asArray(storeRecord.runs)) {
+      const run = this.restoreScheduledWorkflowRun(item);
+      if (run) this.scheduledWorkflowRuns.set(run.runId, run);
+    }
+    const activeScheduleId = asOptionalString(storeRecord.activeScheduleId);
+    this.activeScheduledWorkflowId =
+      activeScheduleId && this.scheduledWorkflowSchedules.has(activeScheduleId)
+        ? activeScheduleId
+        : [...this.scheduledWorkflowSchedules.values()].sort((left, right) => right.createdAt - left.createdAt)[0]?.scheduleId;
+  }
+
+  private restoreScheduledWorkflowSchedule(raw: unknown): ScheduledWorkflowSchedule | undefined {
+    const record = asRecord(raw);
+    if (!record) return undefined;
+    const scheduleId = asOptionalString(record.scheduleId);
+    const workflowId = asOptionalString(record.workflowId);
+    if (!scheduleId || !workflowId || !this.workflows.has(workflowId)) return undefined;
+    return this.cloneScheduledWorkflowSchedule({
+      scheduleId,
+      workflowId,
+      title: asOptionalString(record.title) ?? this.workflows.get(workflowId)?.title ?? "Scheduled workflow",
+      enabled: record.enabled !== false,
+      intervalSeconds: Math.max(60, Math.floor(asNumber(record.intervalSeconds, 3600))),
+      frequency: normalizeScheduledWorkflowFrequency(record.frequency ?? record.scheduleType),
+      timeOfDay: normalizeScheduledWorkflowTimeOfDay(record.timeOfDay),
+      timezone: asOptionalString(record.timezone)?.trim() || DEFAULT_SCHEDULED_WORKFLOW_TIMEZONE,
+      ...(normalizeScheduledWorkflowWeekdays(record.weekdays) !== undefined ? { weekdays: normalizeScheduledWorkflowWeekdays(record.weekdays) } : {}),
+      ...(normalizeScheduledWorkflowDayOfMonth(record.dayOfMonth) !== undefined ? { dayOfMonth: normalizeScheduledWorkflowDayOfMonth(record.dayOfMonth) } : {}),
+      ...(typeof record.nextRunAt === "number" ? { nextRunAt: record.nextRunAt } : {}),
+      ...(typeof record.lastRunAt === "number" ? { lastRunAt: record.lastRunAt } : {}),
+      source: record.source === "local" ? "local" : "cloud",
+      createdAt: asNumber(record.createdAt, Date.now()),
+      updatedAt: asNumber(record.updatedAt, Date.now()),
+    });
+  }
+
+  private restoreScheduledWorkflowRun(raw: unknown): ScheduledWorkflowRun | undefined {
+    const record = asRecord(raw);
+    if (!record) return undefined;
+    const runId = asOptionalString(record.runId);
+    const scheduleId = asOptionalString(record.scheduleId);
+    const workflowId = asOptionalString(record.workflowId);
+    if (!runId || !scheduleId || !workflowId || !this.workflows.has(workflowId)) return undefined;
+    const status = isScheduledWorkflowRunStatus(record.status) ? record.status : "failed";
+    return this.cloneScheduledWorkflowRun({
+      runId,
+      scheduleId,
+      workflowId,
+      ...(asOptionalString(record.eventId) !== undefined ? { eventId: asOptionalString(record.eventId) } : {}),
+      ...(asOptionalString(record.workflowRunId) !== undefined ? { workflowRunId: asOptionalString(record.workflowRunId) } : {}),
+      title: asOptionalString(record.title) ?? this.scheduledWorkflowSchedules.get(scheduleId)?.title ?? "Scheduled workflow",
+      status: status === "running" || status === "queued" ? "failed" : status,
+      startedAt: asNumber(record.startedAt, Date.now()),
+      finishedAt: typeof record.finishedAt === "number" ? record.finishedAt : undefined,
+      ...((asOptionalString(record.message) ?? (status === "running" || status === "queued" ? "Interrupted before app restart" : undefined)) !== undefined
+        ? { message: asOptionalString(record.message) ?? "Interrupted before app restart" }
+        : {}),
+    });
   }
 
   private restoreWorkflowDraft(raw: unknown): WorkflowDraftState | undefined {
@@ -3891,6 +4197,7 @@ export class AgentHub {
       teamRuns,
       configuredAgents: this.listConfiguredAgents(),
       workflowStore: this.cloneWorkflowStore(),
+      scheduledWorkflowStore: this.cloneScheduledWorkflowStore(),
     };
   }
 

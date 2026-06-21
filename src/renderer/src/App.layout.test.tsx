@@ -2,6 +2,7 @@ import { readFileSync } from "node:fs";
 import { renderToStaticMarkup } from "react-dom/server";
 import { describe, expect, test } from "vitest";
 import { Markdown } from "./Markdown";
+import { buildPaletteCommands } from "./CommandPalette";
 import {
   App,
   appShellClass,
@@ -11,6 +12,7 @@ import {
   ConfigPage,
   RuntimePage,
   SettingsPage,
+  ScheduledWorkflowPage,
   SkillsPage,
   applySkillTemplate,
   applyProviderPresetToChannel,
@@ -18,12 +20,16 @@ import {
   applyProviderModelIdToAgentConfig,
   rememberProviderKeyFromChannel,
   shouldRefreshBalances,
+  fetchOnlineSkills,
   onlineSkillTreeUrl,
   parseSkillMarkdown,
+  skillsShResultFromApiSkill,
+  skillsShSearchUrl,
   missingAppCapabilityMessage,
   shouldSendComposerKey,
   SlashCommandSuggestions,
   slashCommandSuggestionsFor,
+  scheduledWorkflowEventTarget,
   resolveConfiguredAgentChannel,
   reorderTeamMembers,
   taskDetailIdFor,
@@ -37,6 +43,7 @@ import {
   parseWorkflowJudgeResult,
   workflowArtifactSummary,
   workflowAssistantDisplayContent,
+  workflowCanvasLayout,
   workflowContextDocumentFromArtifacts,
   workflowFinalReviewPrompt,
   workflowDraftShouldPersist,
@@ -63,6 +70,11 @@ import type {
   TaskRun,
   TeamRun,
   WorkflowGraph,
+  WorkflowDraftState,
+  ScheduledWorkflowRun,
+  ScheduledWorkflowSchedule,
+  ScheduledWorkflowStoreState,
+  ScheduledWorkflowDueEvent,
 } from "../../shared/types";
 
 const runtimes: AgentRuntime[] = [
@@ -196,7 +208,26 @@ const appSnapshot: AppSnapshot = {
     workflows: [],
     runs: [],
   },
+  scheduledWorkflowStore: {
+    activeScheduleId: undefined,
+    runnerConfig: { baseUrl: "" },
+    runnerStatus: { connected: false, connecting: false },
+    schedules: [],
+    runs: [],
+  },
   workflowDraft: undefined,
+};
+
+const paletteContext = {
+  chats: appSnapshot.chats.map((chat) => ({ id: chat.id, title: chat.title, agentId: chat.agentId })),
+  theme: "light" as const,
+  language: "en" as const,
+  onNavigate: () => undefined,
+  onSelectChat: () => undefined,
+  onNewChat: () => undefined,
+  onToggleTheme: () => undefined,
+  onChooseWorkDir: () => undefined,
+  onRefreshAgents: () => undefined,
 };
 
 const teams: AgentTeam[] = [
@@ -369,6 +400,7 @@ function cssSelectorsForDeclaration(declaration: RegExp): string[] {
 describe("ChatControls", () => {
   test("uses a full-width shell when tasks are shown", () => {
     expect(appShellClass("tasks")).toBe("shell tasks-shell");
+    expect(appShellClass("schedules")).toBe("shell schedules-shell");
     expect(appShellClass("skills")).toBe("shell skills-shell");
     expect(appShellClass("runtimes")).toBe("shell runtimes-shell");
     expect(appShellClass("chat")).toBe("shell");
@@ -398,6 +430,36 @@ describe("ChatControls", () => {
     expect(styles).toContain(".workflow-edge {\n  display: block;\n  width: 36px");
     expect(styles).not.toContain(".workflow-builder-board.is-panning");
     expect(styles).not.toContain(".workflow-free-canvas-stage");
+  });
+
+  test("removes the standalone Teams surface from top-level navigation", () => {
+    expect(buildPaletteCommands(paletteContext).map((command) => command.id)).not.toContain("nav-teams");
+    expect(appShellClass("workflow")).toBe("shell workflow-shell");
+    expect(styles).not.toContain(".feature-nav-item[data-feature=\"teams\"]");
+  });
+
+  test("uses a React Flow canvas for workflow graphs with pan and fit controls", () => {
+    expect(styles).toContain(".workflow-canvas-board.workflow-graph-board {");
+    expect(styles).toContain(".workflow-react-flow-board {");
+    expect(styles).toContain(".workflow-canvas-controls.react-flow__controls");
+    expect(styles).toContain(".workflow-canvas-minimap.react-flow__minimap");
+    expect(styles).toContain(".workflow-result-card .workflow-canvas-board.workflow-graph-board:not(.is-expanded)");
+    expect(styles).toContain("max-width: 760px;");
+    expect(styles).toContain("height: clamp(220px, 34vh, 320px);");
+    expect(styles).toContain("width: 224px;");
+    expect(styles).toContain("font-size: 15px;");
+    expect(styles).toContain("overflow: hidden;\n  padding: 0;");
+    expect(styles).not.toContain(".workflow-result-card .workflow-graph-board:not(.is-expanded) {\n  max-height: min(460px, 56vh);\n  justify-content: center;");
+    expect(styles).toMatch(
+      /\.workflow-graph-board:not\(\.is-expanded\) \.workflow-graph-card textarea,[\s\S]*?\.workflow-graph-board:not\(\.is-expanded\) \.workflow-node-config-grid,[\s\S]*?\{\n  display: none;\n\}/,
+    );
+    expect(styles).toContain(".workflow-graph-board.is-expanded .workflow-graph-card textarea");
+    expect(styles).toContain(".workflow-node-edit-overlay {");
+    expect(styles).toContain(".workflow-node-edit-modal {");
+    expect(styles).toContain(".workflow-node-edit-field textarea");
+    expect(styles).not.toContain(".workflow-graph-board.is-expanded .workflow-graph-card textarea {\n  display: block;\n}");
+    expect(styles).not.toContain(".workflow-graph-board.is-expanded .workflow-node-config-grid {\n  display: grid;\n}");
+    expect(styles).not.toContain("linear-gradient(var(--line-faint) 1px, transparent 1px)");
   });
 
   test("keeps the workflow history sidebar visible", () => {
@@ -1232,6 +1294,264 @@ describe("ConfigPage", () => {
     expect(html).toContain("English");
   });
 
+  test("renders a keep-awake control for scheduled local task execution", () => {
+    const html = renderToStaticMarkup(
+      <SettingsPage
+        language="zh"
+        onLanguageChange={() => undefined}
+        {...({
+          keepAwake: true,
+          onKeepAwakeChange: () => undefined,
+        } as Record<string, unknown>)}
+      />,
+    );
+
+    expect(html).toContain("保持唤醒");
+    expect(html).toContain("定时任务");
+    expect(html).toContain("aria-label=\"Keep awake for scheduled tasks\"");
+    expect(html).toContain("checked=\"\"");
+  });
+
+  test("renders scheduled workflow runner status, schedules, and run history", () => {
+    const workflow: WorkflowDraftState = {
+      workflowId: "wf_daily_review",
+      title: "每日代码复盘",
+      status: "completed",
+      revision: 1,
+      agentId: "codex",
+      channelId: "codex-openai",
+      modelId: DEFAULT_MODEL_ID,
+      objective: "每天总结代码变化",
+      graph: {
+        title: "每日代码复盘",
+        objective: "每天总结代码变化",
+        nodes: [
+          { id: "start", kind: "start", title: "Start", prompt: "" },
+          { id: "review", kind: "agent", title: "Review", prompt: "Review changes.", agentId: "codex", channelId: "codex-openai", modelId: DEFAULT_MODEL_ID },
+          { id: "end", kind: "end", title: "Done", prompt: "" },
+        ],
+        edges: [
+          { id: "start->review", fromNodeId: "start", toNodeId: "review" },
+          { id: "review->end", fromNodeId: "review", toNodeId: "end" },
+        ],
+      },
+      graphReady: true,
+      messages: [],
+      reply: "",
+      error: undefined,
+      runProgress: [],
+      runContextDocument: "",
+      contextDocument: "",
+      runIds: [],
+      agentSessionId: undefined,
+      createdAt: 1710000000000,
+      updatedAt: 1710000000000,
+    };
+    const schedule: ScheduledWorkflowSchedule = {
+      scheduleId: "sched_daily_review",
+      workflowId: workflow.workflowId,
+      title: "每天 9 点复盘",
+      enabled: true,
+      intervalSeconds: 86400,
+      frequency: "daily",
+      timeOfDay: "09:00",
+      timezone: "Asia/Shanghai",
+      nextRunAt: 1710003600000,
+      source: "cloud",
+      createdAt: 1710000000000,
+      updatedAt: 1710000000000,
+    };
+    const run: ScheduledWorkflowRun = {
+      runId: "scheduled_run_1",
+      scheduleId: schedule.scheduleId,
+      workflowId: workflow.workflowId,
+      eventId: "event_1",
+      workflowRunId: "run_1",
+      title: schedule.title,
+      status: "completed",
+      startedAt: 1710003600000,
+      finishedAt: 1710003900000,
+      message: "Workflow completed.",
+    };
+    const store: ScheduledWorkflowStoreState = {
+      activeScheduleId: schedule.scheduleId,
+      runnerConfig: { baseUrl: "https://scheduler.example.com", deviceId: "device-local", runnerToken: "token" },
+      runnerStatus: { connected: true, connecting: false, lastConnectedAt: 1710000000000 },
+      schedules: [schedule],
+      runs: [run],
+    };
+
+    const html = renderToStaticMarkup(
+      <ScheduledWorkflowPage
+        language="zh"
+        workflows={[workflow]}
+        store={store}
+        draft={{
+          workflowId: workflow.workflowId,
+          title: "新的定时任务",
+          intervalSeconds: 86400,
+          frequency: "daily",
+          timeOfDay: "09:00",
+          timezone: "Asia/Shanghai",
+          weekdays: [1],
+          dayOfMonth: 1,
+          enabled: true,
+        }}
+        onDraftChange={() => undefined}
+        onConnectRunner={() => undefined}
+        onDisconnectRunner={() => undefined}
+        onRefreshSchedules={() => undefined}
+        onCreateSchedule={() => undefined}
+        onUpdateSchedule={() => undefined}
+        onDeleteSchedule={() => undefined}
+        onTriggerSchedule={() => undefined}
+      />,
+    );
+
+    expect(html).toContain("定时任务");
+    expect(html).toContain("本机已连接");
+    expect(html).toContain("云端调度服务");
+    expect(html).toContain("scheduled-toolbar");
+    expect(html).toContain("scheduled-side-panel");
+    expect(html).toContain("aria-label=\"定时任务 Workflow 详情\"");
+    expect(html).toContain("aria-label=\"Workflow 图详情\"");
+    expect(html).toContain("workflow-graph-board");
+    expect(html).toContain("workflow-react-flow-board");
+    expect(html).toContain("react-flow__edges");
+    expect(html).toContain("scheduled-workflow-node");
+    expect(html).not.toContain("scheduled-workflow-list");
+    expect(html).not.toContain("scheduled-workflow-row");
+    expect(html).not.toContain("scheduled-workflow-down-arrow");
+    expect(html).not.toContain("scheduled-runner-panel");
+    expect(html).not.toContain("<h3>计划列表</h3>");
+    expect(html).not.toContain("<h3>给 Workflow 加计划</h3>");
+    expect(html).not.toContain("Runner Token");
+    expect(html).not.toContain("远端地址");
+    expect(html).not.toContain("运行 Workflow");
+    expect(html).not.toContain("间隔秒数");
+    expect(html).toContain("每日代码复盘");
+    expect(html).toContain("每天 9 点复盘");
+    expect(html).toContain("每天 09:00");
+    expect(html).toContain("aria-label=\"编辑定时任务时间\"");
+    expect(html).toContain("scheduled-time-panel");
+    expect(html).toContain("type=\"time\"");
+    expect(html).toContain("value=\"09:00\"");
+    expect(html).not.toContain("scheduled-inline-control");
+    expect(html).toContain("应用");
+    expect(html).toContain("disabled=\"\"");
+    expect(html).toContain("Start");
+    expect(html).toContain("Review");
+    expect(html).toContain("Done");
+    expect(html).not.toContain("Review changes.");
+    expect(html).not.toContain(DEFAULT_MODEL_ID);
+    expect(html).not.toContain("每天总结代码变化");
+    expect(html).not.toContain("可运行");
+    expect(html).not.toContain("个执行节点");
+    expect(html).toContain("aria-label=\"暂停计划\"");
+    expect(styles).not.toContain(".scheduled-edit-strip");
+    expect(styles).not.toContain(".scheduled-inline-control");
+    expect(styles).toContain(".scheduled-time-panel {");
+    expect(styles).toContain(".scheduled-weekday-checks {");
+    expect(styles).toContain(".scheduled-apply-btn {");
+    expect(styles).toContain(".scheduled-workflow-graph {\n  min-height: 260px;");
+    expect(styles).toContain(".scheduled-workflow-node {");
+    expect(html).toContain("删除");
+    expect(html).toContain("Workflow completed.");
+  });
+
+  test("renders the scheduled workflow creation form only in create mode", () => {
+    const workflow: WorkflowDraftState = {
+      workflowId: "wf_daily_review",
+      title: "每日代码复盘",
+      objective: "每天总结代码变化",
+      status: "draft",
+      revision: 1,
+      graph: {
+        title: "每日代码复盘",
+        objective: "每天总结代码变化",
+        nodes: [
+          { id: "start", kind: "start", title: "Start", prompt: "" },
+          { id: "review", kind: "agent", title: "Review", prompt: "Review changes.", agentId: "codex", channelId: "codex-openai", modelId: DEFAULT_MODEL_ID },
+          { id: "end", kind: "end", title: "Done", prompt: "" },
+        ],
+        edges: [
+          { id: "start-review", fromNodeId: "start", toNodeId: "review" },
+          { id: "review-end", fromNodeId: "review", toNodeId: "end" },
+        ],
+      },
+      graphReady: true,
+      messages: [],
+      reply: "",
+      error: undefined,
+      runProgress: [],
+      runContextDocument: "",
+      contextDocument: "",
+      finalReport: "",
+      runIds: [],
+      agentId: "codex",
+      channelId: "codex-openai",
+      modelId: DEFAULT_MODEL_ID,
+      agentSessionId: undefined,
+      createdAt: 1710000000000,
+      updatedAt: 1710000000000,
+    };
+    const store: ScheduledWorkflowStoreState = {
+      activeScheduleId: undefined,
+      runnerConfig: { baseUrl: "https://scheduler.example.com", deviceId: "device-local", runnerToken: "token" },
+      runnerStatus: { connected: true, connecting: false, lastConnectedAt: 1710000000000 },
+      schedules: [],
+      runs: [],
+    };
+    const html = renderToStaticMarkup(
+      <ScheduledWorkflowPage
+        language="zh"
+        mode="create"
+        workflows={[workflow]}
+        store={store}
+        draft={{
+          workflowId: workflow.workflowId,
+          title: "新的定时任务",
+          intervalSeconds: 86400,
+          frequency: "daily",
+          timeOfDay: "09:00",
+          timezone: "Asia/Shanghai",
+          weekdays: [1],
+          dayOfMonth: 1,
+          enabled: true,
+        }}
+        onDraftChange={() => undefined}
+        onConnectRunner={() => undefined}
+        onDisconnectRunner={() => undefined}
+        onRefreshSchedules={() => undefined}
+        onCreateSchedule={() => undefined}
+        onUpdateSchedule={() => undefined}
+        onDeleteSchedule={() => undefined}
+        onTriggerSchedule={() => undefined}
+      />,
+    );
+
+    expect(html).toContain("<h3>新增定时任务</h3>");
+    expect(html).toContain("运行 Workflow");
+    expect(html).toContain("周期");
+    expect(html).toContain("执行时间");
+    expect(html).toContain("云端到点触发");
+    expect(html).toContain("创建定时任务");
+    expect(html).not.toContain("aria-label=\"定时任务 Workflow 详情\"");
+  });
+
+  test("extracts workflow and schedule ids from cloud due events", () => {
+    const event: ScheduledWorkflowDueEvent = {
+      eventId: "event_1",
+      type: "workflow_due",
+      title: "Due",
+      message: "Run now",
+      payload: { scheduleId: "sched_1", workflowId: "wf_1" },
+    };
+
+    expect(scheduledWorkflowEventTarget(event)).toEqual({ scheduleId: "sched_1", workflowId: "wf_1" });
+    expect(scheduledWorkflowEventTarget({ ...event, payload: { workflowId: "wf_1" } })).toBeUndefined();
+  });
+
   test("applies skill templates without changing runtime or provider selection", () => {
     const template = SKILL_TEMPLATES.find((item) => item.id === "personal-finance-planning")!;
     const agent = configuredAgents[0]!;
@@ -1360,8 +1680,10 @@ describe("SkillsPage", () => {
     expect(html).toContain("技能库");
     expect(html).toContain("内置技能");
     expect(html).toContain("搜索网上 Skills");
-    expect(html).toContain("OpenAI Skills");
-    expect(html).toContain("Anthropic Skills");
+    expect(html).toContain("skills.sh");
+    expect(html).not.toContain("OpenAgentSkill");
+    expect(html).not.toContain("OpenAI Skills");
+    expect(html).not.toContain("Anthropic Skills");
     expect(html).toContain("brainstorming");
     expect(html).toContain("personal-finance-planning");
     expect(html).toContain("resume-optimization");
@@ -1390,12 +1712,15 @@ describe("SkillsPage", () => {
     expect(html).not.toContain("skills-grid");
     expect(html).not.toContain("头脑风暴 Agent");
     expect(html).not.toContain("代码审查 Agent");
+    expect(html).not.toContain("online-skill-sources");
+    expect(html).not.toContain("Online skill search results");
   });
 
   test("builds online skill source URLs and parses SKILL.md frontmatter", () => {
     expect(onlineSkillTreeUrl({ id: "openai", label: "OpenAI Skills", owner: "openai", repo: "skills", branch: "main" })).toBe(
       "https://api.github.com/repos/openai/skills/git/trees/main?recursive=1",
     );
+    expect(skillsShSearchUrl("flaky tests")).toBe("https://skills.sh/api/search?q=flaky%20tests&limit=10");
 
     expect(
       parseSkillMarkdown(
@@ -1418,6 +1743,70 @@ describe("SkillsPage", () => {
       prompt: expect.stringContaining("name: code-review"),
       tags: ["code-review"],
       path: "skills/code-review/SKILL.md",
+    });
+
+    expect(
+      skillsShResultFromApiSkill({
+        id: "composiohq/awesome-claude-skills/tailored-resume-generator",
+        skillId: "tailored-resume-generator",
+        name: "tailored-resume-generator",
+        installs: 6359,
+        source: "composiohq/awesome-claude-skills",
+      }),
+    ).toMatchObject({
+      id: "skills-sh:composiohq/awesome-claude-skills/tailored-resume-generator",
+      sourceLabel: "skills.sh Find",
+      contentLabel: "skills.sh result",
+      repositoryUrl: "https://github.com/composiohq/awesome-claude-skills",
+      installCommand: "npx skills add composiohq/awesome-claude-skills@tailored-resume-generator",
+      prompt: expect.stringContaining("skills.sh search returns registry metadata"),
+    });
+  });
+
+  test("searches skills.sh find results before GitHub skill sources", async () => {
+    const calls: string[] = [];
+    const fakeFetch = async (input: RequestInfo | URL) => {
+      const url = String(input);
+      calls.push(url);
+      if (url.includes("/api/search?")) {
+        return new Response(
+          JSON.stringify({
+            query: "resume",
+            searchType: "fuzzy",
+            skills: [
+              {
+                id: "composiohq/awesome-claude-skills/tailored-resume-generator",
+                skillId: "tailored-resume-generator",
+                name: "tailored-resume-generator",
+                installs: 6359,
+                source: "composiohq/awesome-claude-skills",
+              },
+              {
+                id: "claude-office-skills/skills/resume-tailor",
+                skillId: "resume-tailor",
+                name: "resume-tailor",
+                installs: 2957,
+                source: "claude-office-skills/skills",
+              },
+            ],
+            count: 2,
+          }),
+          { status: 200, headers: { "content-type": "application/json" } },
+        );
+      }
+      throw new Error(`Unexpected URL: ${url}`);
+    };
+
+    const results = await fetchOnlineSkills("resume", undefined, fakeFetch as typeof fetch);
+
+    expect(calls).toEqual(["https://skills.sh/api/search?q=resume&limit=10"]);
+    expect(results.map((skill) => skill.name)).toEqual(["tailored-resume-generator", "resume-tailor"]);
+    expect(results[0]).toMatchObject({
+      sourceLabel: "skills.sh Find",
+      contentLabel: "skills.sh result",
+      repositoryUrl: "https://github.com/composiohq/awesome-claude-skills",
+      installCommand: "npx skills add composiohq/awesome-claude-skills@tailored-resume-generator",
+      prompt: expect.stringContaining("skills.sh search returns registry metadata"),
     });
   });
 });
@@ -2031,6 +2420,177 @@ describe("WorkflowPage", () => {
     expect(html).toContain("Run Graph");
   });
 
+  test("lays out workflow graphs on a two-dimensional canvas with parallel node groups", () => {
+    const parallelGraph: WorkflowGraph = {
+      title: "Parallel review",
+      objective: "Review release in parallel",
+      nodes: [
+        { id: "start", kind: "start", title: "Start", prompt: "" },
+        { id: "inventory", kind: "agent", title: "Inventory", prompt: "Map repo.", agentId: "codex", channelId: "codex-openai", modelId: "gpt-5.5" },
+        { id: "security", kind: "agent", title: "Security", prompt: "Review security.", agentId: "codex", channelId: "codex-openai", modelId: "gpt-5.5" },
+        { id: "testing", kind: "agent", title: "Testing", prompt: "Review tests.", agentId: "claude", channelId: "claude-code", modelId: DEFAULT_MODEL_ID },
+        { id: "writer", kind: "agent", title: "Writer", prompt: "Synthesize results.", agentId: "codex", channelId: "codex-openai", modelId: "gpt-5.5" },
+        { id: "end", kind: "end", title: "Done", prompt: "" },
+      ],
+      edges: [
+        { id: "start->inventory", fromNodeId: "start", toNodeId: "inventory" },
+        { id: "inventory->security", fromNodeId: "inventory", toNodeId: "security" },
+        { id: "inventory->testing", fromNodeId: "inventory", toNodeId: "testing" },
+        { id: "security->writer", fromNodeId: "security", toNodeId: "writer" },
+        { id: "testing->writer", fromNodeId: "testing", toNodeId: "writer" },
+        { id: "writer->end", fromNodeId: "writer", toNodeId: "end" },
+      ],
+    };
+    const layout = workflowCanvasLayout(parallelGraph);
+    const byId = new Map(layout.nodes.map((node) => [node.node.id, node]));
+
+    expect(byId.get("start")!.x).toBeLessThan(byId.get("inventory")!.x);
+    expect(byId.get("inventory")!.x).toBeLessThan(byId.get("security")!.x);
+    expect(byId.get("security")!.x).toBeLessThan(byId.get("writer")!.x);
+    expect(byId.get("testing")!.x).toBe(byId.get("security")!.x);
+    expect(byId.get("testing")!.y).toBeGreaterThan(byId.get("security")!.y);
+    expect(layout.edges).toHaveLength(6);
+    expect(layout.width).toBeGreaterThan(900);
+  });
+
+  test("renders workflow graphs as a pannable canvas with parallel node groups", () => {
+    const parallelGraph: WorkflowGraph = {
+      title: "Parallel review",
+      objective: "Review release in parallel",
+      nodes: [
+        { id: "start", kind: "start", title: "Start", prompt: "" },
+        { id: "inventory", kind: "agent", title: "Inventory", prompt: "Map repo.", agentId: "codex", channelId: "codex-openai", modelId: "gpt-5.5" },
+        { id: "security", kind: "agent", title: "Security", prompt: "Review security.", agentId: "codex", channelId: "codex-openai", modelId: "gpt-5.5" },
+        { id: "testing", kind: "agent", title: "Testing", prompt: "Review tests.", agentId: "claude", channelId: "claude-code", modelId: DEFAULT_MODEL_ID },
+        { id: "writer", kind: "agent", title: "Writer", prompt: "Synthesize results.", agentId: "codex", channelId: "codex-openai", modelId: "gpt-5.5" },
+        { id: "end", kind: "end", title: "Done", prompt: "" },
+      ],
+      edges: [
+        { id: "start->inventory", fromNodeId: "start", toNodeId: "inventory" },
+        { id: "inventory->security", fromNodeId: "inventory", toNodeId: "security" },
+        { id: "inventory->testing", fromNodeId: "inventory", toNodeId: "testing" },
+        { id: "security->writer", fromNodeId: "security", toNodeId: "writer" },
+        { id: "testing->writer", fromNodeId: "testing", toNodeId: "writer" },
+        { id: "writer->end", fromNodeId: "writer", toNodeId: "end" },
+      ],
+    };
+
+    const html = renderToStaticMarkup(
+      <WorkflowPage
+        title="Parallel review"
+        status="draft"
+        graph={parallelGraph}
+        graphReady
+        objective="Review release in parallel"
+        messages={[]}
+        reply=""
+        error={undefined}
+        agentId="codex"
+        channelId="codex-openai"
+        modelId="gpt-5.5"
+        runtimes={runtimes}
+        channels={channels}
+        workDir="/tmp/workspace"
+        running={false}
+        runProgress={[
+          { nodeId: "inventory", title: "Inventory", status: "completed" },
+          { nodeId: "security", title: "Security", status: "running", detail: "Checking auth paths" },
+          { nodeId: "testing", title: "Testing", status: "running", detail: "Inspecting coverage" },
+          { nodeId: "writer", title: "Writer", status: "queued" },
+        ]}
+        onObjectiveChange={() => undefined}
+        onSelectAgent={() => undefined}
+        onSelectChannel={() => undefined}
+        onSelectModel={() => undefined}
+        onDraftGraph={() => undefined}
+        onReplyChange={() => undefined}
+        onSendReply={() => undefined}
+        onUpdateNode={() => undefined}
+        onRunGraph={async () => undefined}
+        onResetSession={() => undefined}
+      />,
+    );
+
+    expect(html).toContain("workflow-canvas-board");
+    expect(html).toContain("workflow-canvas-viewport");
+    expect(html).toContain("workflow-react-flow-board");
+    expect(html).toContain("workflow-canvas-node");
+    expect(html).toContain("react-flow__edges");
+    expect(html).toContain("workflow-canvas-controls");
+    expect(html).toContain("Fit View");
+    expect(html).not.toContain("workflow-preview-list");
+    expect(html).not.toContain("workflow-preview-row");
+    expect(html).toContain("data-layer-size=\"2\"");
+    expect(html.indexOf("Security")).toBeLessThan(html.indexOf("Writer"));
+    expect(html.indexOf("Testing")).toBeLessThan(html.indexOf("Writer"));
+    expect(html).toContain("Checking auth paths");
+    expect(html).toContain("Inspecting coverage");
+  });
+
+  test("renders long workflow previews without folding nodes", () => {
+    const nodes: WorkflowGraph["nodes"] = [
+      { id: "start", kind: "start", title: "Start", prompt: "" },
+      ...Array.from({ length: 8 }, (_, index) => ({
+        id: `agent-${index + 1}`,
+        kind: "agent" as const,
+        title: `Agent ${index + 1}`,
+        prompt: `Run step ${index + 1}.`,
+        agentId: "codex" as const,
+        channelId: "codex-openai",
+        modelId: DEFAULT_MODEL_ID,
+      })),
+      { id: "end", kind: "end", title: "Done", prompt: "" },
+    ];
+    const edges: WorkflowGraph["edges"] = nodes.slice(0, -1).map((node, index) => ({
+      id: `${node.id}->${nodes[index + 1]!.id}`,
+      fromNodeId: node.id,
+      toNodeId: nodes[index + 1]!.id,
+    }));
+    const graph: WorkflowGraph = {
+      title: "Long workflow",
+      objective: "Run many steps",
+      nodes,
+      edges,
+    };
+
+    const html = renderToStaticMarkup(
+      <WorkflowPage
+        title="Long workflow"
+        status="draft"
+        graph={graph}
+        graphReady
+        objective="Run many steps"
+        messages={[]}
+        reply=""
+        error={undefined}
+        agentId="codex"
+        channelId="codex-openai"
+        modelId={DEFAULT_MODEL_ID}
+        runtimes={runtimes}
+        channels={channels}
+        workDir="/tmp/workspace"
+        running={false}
+        onObjectiveChange={() => undefined}
+        onSelectAgent={() => undefined}
+        onSelectChannel={() => undefined}
+        onSelectModel={() => undefined}
+        onDraftGraph={() => undefined}
+        onReplyChange={() => undefined}
+        onSendReply={() => undefined}
+        onUpdateNode={() => undefined}
+        onRunGraph={async () => undefined}
+        onResetSession={() => undefined}
+      />,
+    );
+
+    expect(html).not.toContain("workflow-preview-gap");
+    expect(html).not.toContain("workflow-preview-more");
+    expect(html).not.toContain("+ 6 nodes");
+    expect(html).toContain("Agent 1");
+    expect(html).toContain("Agent 4");
+    expect(html).toContain("Agent 8");
+  });
+
   test("renders workflow output documents from final report paths", () => {
     expect(extractWorkflowOutputDocuments("产物见 docs/learning-highlights.md 和 [summary](reports/summary.md).")).toEqual([
       { path: "docs/learning-highlights.md", title: "learning-highlights.md" },
@@ -2398,6 +2958,41 @@ workflowGraph.upsert({
     expect(workflowTaskLiveDetail(task)).toBe('Tool shell_command: rg -n "auth" src');
   });
 
+  test("hides shell tool transport metadata from live workflow task activity", () => {
+    const task: TaskRun = {
+      ...taskRuns[0]!,
+      status: "running",
+      running: true,
+      messages: [
+        {
+          id: "assistant-1",
+          role: "assistant",
+          content: "Inspecting files",
+          timestamp: 1710000000001,
+          events: [
+            {
+              id: "event-1",
+              type: "tool_result",
+              name: "exec_command",
+              content: [
+                "Chunk ID: e28e4a",
+                "Wall time: 0.0000 seconds",
+                "Process exited with code 0",
+                "Original token count: 1816",
+                "Output:",
+                "What I did:",
+                "- Interpreted workflow results.",
+              ].join("\n"),
+              timestamp: 1710000000002,
+            },
+          ],
+        },
+      ],
+    };
+
+    expect(workflowTaskLiveDetail(task)).toBe("Tool exec_command done: What I did: - Interpreted workflow results.");
+  });
+
   test("renders the first grill question only after the user starts the workflow chat", () => {
     const html = renderToStaticMarkup(
       <WorkflowPage
@@ -2437,7 +3032,7 @@ workflowGraph.upsert({
     expect(html).not.toContain("DAG valid");
   });
 
-  test("renders the editable DAG only after the grill session is complete", () => {
+  test("renders a compact graph preview after the grill session is complete", () => {
     const html = renderToStaticMarkup(
       <WorkflowPage
         graph={graph}
@@ -2475,18 +3070,24 @@ workflowGraph.upsert({
     expect(html).toContain("Clarify &amp; Plan");
     expect(html).toContain("Review");
     expect(html).toContain("Done");
-    expect(html).toContain("aria-label=\"Node plan runtime\"");
-    expect(html).toContain("aria-label=\"Node plan provider\"");
-    expect(html).toContain("aria-label=\"Node plan model\"");
+    expect(html).toContain("workflow-canvas-board");
+    expect(html).toContain("workflow-react-flow-board");
+    expect(html).toContain("react-flow__edges");
+    expect(html).not.toContain("workflow-preview-list");
+    expect(html).not.toContain("aria-label=\"Node plan runtime\"");
+    expect(html).not.toContain("aria-label=\"Node plan provider\"");
+    expect(html).not.toContain("aria-label=\"Node plan model\"");
     expect(html).toContain("aria-label=\"Expand workflow graph board\"");
     expect(html).toContain("Run Graph");
+    expect(html).not.toContain("aria-label=\"New workflow\"");
+    expect(html).not.toContain("<span>New workflow</span>");
     expect(html).toContain("aria-label=\"Reply to workflow agent\"");
     expect(html).toContain("Ask the workflow agent to modify the graph");
     expect(html).toContain("Send");
     expect(html).not.toContain("Generate Graph");
   });
 
-  test("renders configured agents instead of raw channels in workflow node cards", () => {
+  test("keeps workflow provider controls out of the collapsed graph preview", () => {
     const html = renderToStaticMarkup(
       <WorkflowPage
         graph={graph}
@@ -2516,10 +3117,53 @@ workflowGraph.upsert({
       />,
     );
 
-    expect(html).toContain("aria-label=\"Node plan configured agent\"");
-    expect(html).toContain("Repo Reviewer");
+    expect(html).toContain("workflow-canvas-board");
+    expect(html).toContain("workflow-react-flow-board");
+    expect(html).not.toContain("workflow-preview-list");
+    expect(html).not.toContain("aria-label=\"Node plan configured agent\"");
     expect(html).not.toContain("aria-label=\"Node plan channel\"");
     expect(html).not.toContain(">Channel</span>");
+  });
+
+  test("keeps expanded workflow nodes readable and moves editing into a right-click modal", () => {
+    const html = renderToStaticMarkup(
+      <WorkflowPage
+        graph={graph}
+        graphReady
+        objective="Review payment release"
+        messages={[{ id: "m-1", role: "assistant", content: "信息足够了，已经生成 DAG。" }]}
+        reply=""
+        error={undefined}
+        agentId="codex"
+        channelId="codex-openai"
+        modelId="gpt-5.5"
+        runtimes={runtimes}
+        channels={channels}
+        configuredAgents={configuredAgents}
+        workDir="/tmp/workspace"
+        running={false}
+        defaultGraphExpanded
+        onObjectiveChange={() => undefined}
+        onSelectAgent={() => undefined}
+        onSelectChannel={() => undefined}
+        onSelectModel={() => undefined}
+        onDraftGraph={() => undefined}
+        onReplyChange={() => undefined}
+        onSendReply={() => undefined}
+        onUpdateNode={() => undefined}
+        onRunGraph={async () => undefined}
+        onResetSession={() => undefined}
+      />,
+    );
+
+    expect(html).toContain("workflow-expanded-node-card");
+    expect(html).not.toContain("右键编辑");
+    expect(html).not.toContain("Right-click to edit");
+    expect(html).not.toContain("aria-label=\"Node plan prompt\"");
+    expect(html).not.toContain("aria-label=\"Node plan model\"");
+    expect(styles).toContain(".workflow-expanded-node-card {");
+    expect(styles).toContain(".workflow-node-edit-overlay {");
+    expect(styles).not.toContain(".workflow-node-edit-trigger");
   });
 
   test("renders workflow run feedback while execution is in progress", () => {

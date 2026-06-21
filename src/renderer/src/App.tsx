@@ -1,7 +1,21 @@
-import { useEffect, useMemo, useRef, useState, type DragEvent, type KeyboardEvent, type MouseEvent } from "react";
+import { useEffect, useMemo, useRef, useState, type DragEvent, type KeyboardEvent, type MouseEvent, type ReactElement } from "react";
+import {
+  Background,
+  Controls,
+  Handle,
+  MarkerType,
+  MiniMap,
+  Position,
+  ReactFlow,
+  type Edge as ReactFlowEdge,
+  type Node as ReactFlowNode,
+  type NodeProps as ReactFlowNodeProps,
+} from "@xyflow/react";
+import "@xyflow/react/dist/style.css";
 import {
   Bot,
   CheckCircle2,
+  CalendarClock,
   CircleStop,
   ClipboardList,
   Cpu,
@@ -33,6 +47,21 @@ import { configChannelForSelection, selectConfigChannelsForDisplay } from "../..
 import { DEFAULT_MODEL_ID, defaultChannelForAgent, modelsForChannel } from "../../shared/models";
 import { AGENT_PROVIDER_PRESETS, type AgentProviderPreset } from "../../shared/provider-presets";
 import { SKILL_TEMPLATES } from "../../shared/skill-templates";
+import {
+  fetchOnlineSkills,
+  SKILLS_SH_SOURCE,
+  onlineSkillTreeUrl,
+  skillsShResultFromApiSkill,
+  skillsShSearchUrl,
+  parseSkillMarkdown,
+  skillFrontmatterValue,
+  type OnlineSkillResult,
+} from "../../shared/online-skills";
+import {
+  DEFAULT_SCHEDULED_WORKFLOW_CLOUD_BASE_URL,
+  DEFAULT_SCHEDULED_WORKFLOW_TIME_OF_DAY,
+  DEFAULT_SCHEDULED_WORKFLOW_TIMEZONE,
+} from "../../shared/types";
 import { buildWorkflowAgentPrompt, WORKFLOW_TOTAL_QUESTION_COUNT } from "../../shared/workflow-agent";
 import {
   createWorkflowGraphFromObjective,
@@ -63,6 +92,11 @@ import type {
   InstalledSkillResult,
   LocalFilePreview,
   ProviderBalanceResult,
+  ScheduledWorkflowDueEvent,
+  ScheduledWorkflowFrequency,
+  ScheduledWorkflowRun,
+  ScheduledWorkflowSchedule,
+  ScheduledWorkflowStoreState,
   SkillInstallTarget,
   TeamRun,
   TaskProgress,
@@ -77,10 +111,19 @@ import type {
   UninstalledSkillResult,
 } from "../../shared/types";
 
+export {
+  fetchOnlineSkills,
+  onlineSkillTreeUrl,
+  skillsShResultFromApiSkill,
+  skillsShSearchUrl,
+  parseSkillMarkdown,
+};
+
 const AGENTS: AgentId[] = ["codex", "claude", "api"];
 const THEME_STORAGE_KEY = "multi-agent-chat-theme";
 const PROVIDER_KEYS_STORAGE_KEY = "multi-agent-chat-provider-keys";
 const LANGUAGE_STORAGE_KEY = "multi-agent-chat-language";
+const KEEP_AWAKE_STORAGE_KEY = "multi-agent-chat-keep-awake";
 const BALANCE_REFRESH_INTERVAL_MS = 5 * 60_000;
 
 export type Language = "zh" | "en";
@@ -92,6 +135,7 @@ const UI_TEXT = {
       tasks: "任务",
       teams: "团队",
       workflow: "工作流",
+      schedules: "定时任务",
       skills: "技能",
       runtimes: "配置",
       configs: "Agent 组装",
@@ -146,7 +190,7 @@ const UI_TEXT = {
       agentDeployed: "Agent 部署成功",
     },
     workflow: {
-      newWorkflow: "新建工作流会话",
+      newWorkflow: "新建 Workflow",
       runGraph: "运行图",
       running: "运行中...",
       executableNodes: "可执行节点",
@@ -183,6 +227,7 @@ const UI_TEXT = {
       tasks: "Tasks",
       teams: "Teams",
       workflow: "Workflow",
+      schedules: "Schedules",
       skills: "Skills",
       runtimes: "Config",
       configs: "Agent Assembly",
@@ -237,7 +282,7 @@ const UI_TEXT = {
       agentDeployed: "Agent deployed",
     },
     workflow: {
-      newWorkflow: "New workflow session",
+      newWorkflow: "New workflow",
       runGraph: "Run Graph",
       running: "Running...",
       executableNodes: "executable nodes",
@@ -293,95 +338,11 @@ interface AgentTestTranscriptItem {
   timestamp: number;
 }
 
-export interface OnlineSkillSource {
-  id: string;
-  label: string;
-  owner: string;
-  repo: string;
-  branch: string;
-  basePath?: string;
-  homepage?: string;
-  maxFetch?: number;
-}
-
-export interface OnlineSkillResult extends SkillTemplate {
-  sourceId: string;
-  sourceLabel: string;
-  path: string;
-  url: string;
-  rawUrl: string;
-}
-
-export const ONLINE_SKILL_SOURCES: OnlineSkillSource[] = [
-  {
-    id: "openai-skills",
-    label: "OpenAI Skills",
-    owner: "openai",
-    repo: "skills",
-    branch: "main",
-    basePath: "skills",
-    homepage: "https://github.com/openai/skills",
-    maxFetch: 80,
-  },
-  {
-    id: "anthropic-skills",
-    label: "Anthropic Skills",
-    owner: "anthropics",
-    repo: "skills",
-    branch: "main",
-    homepage: "https://github.com/anthropics/skills",
-    maxFetch: 80,
-  },
-];
-
 const SKILL_INSTALL_TARGETS: Array<{ id: SkillInstallTarget; label: string; path: string }> = [
   { id: "codex", label: "Codex", path: "~/.codex/skills" },
   { id: "claude", label: "Claude", path: "~/.claude/skills" },
   { id: "trae", label: "Trae", path: "~/.trae/skills" },
 ];
-
-interface ParsedSkillMarkdown {
-  name: string;
-  description: string;
-  prompt: string;
-  tags: string[];
-  path: string;
-}
-
-export function onlineSkillTreeUrl(source: OnlineSkillSource): string {
-  return `https://api.github.com/repos/${source.owner}/${source.repo}/git/trees/${source.branch}?recursive=1`;
-}
-
-function onlineSkillBlobUrl(source: OnlineSkillSource, path: string): string {
-  return `https://github.com/${source.owner}/${source.repo}/blob/${source.branch}/${path}`;
-}
-
-function onlineSkillRawUrl(source: OnlineSkillSource, path: string): string {
-  return `https://raw.githubusercontent.com/${source.owner}/${source.repo}/${source.branch}/${path}`;
-}
-
-function stripYamlQuotes(value: string): string {
-  const trimmed = value.trim();
-  if ((trimmed.startsWith("\"") && trimmed.endsWith("\"")) || (trimmed.startsWith("'") && trimmed.endsWith("'"))) {
-    return trimmed.slice(1, -1);
-  }
-  return trimmed;
-}
-
-export function skillFrontmatterValue(markdown: string, key: string): string | undefined {
-  const normalized = markdown.replace(/\r\n/g, "\n");
-  if (!normalized.startsWith("---\n")) return undefined;
-  const end = normalized.indexOf("\n---", 4);
-  if (end < 0) return undefined;
-  const frontmatter = normalized.slice(4, end).split("\n");
-  const normalizedKey = key.toLowerCase();
-  for (const line of frontmatter) {
-    if (/^\s/.test(line)) continue;
-    const match = line.match(/^([A-Za-z0-9_-]+):\s*(.*)$/);
-    if (match?.[1]?.toLowerCase() === normalizedKey) return stripYamlQuotes(match[2] ?? "");
-  }
-  return undefined;
-}
 
 function skillDisplayName(skill: Pick<SkillTemplate, "name" | "prompt">): string {
   return skillFrontmatterValue(skill.prompt, "name") || skill.name;
@@ -420,87 +381,6 @@ function isMarkdownFilePath(path: string): boolean {
   return /\.(md|markdown)$/i.test(path.split(/[?#]/)[0] ?? "");
 }
 
-function skillNameFromPath(path: string): string {
-  const parts = path.split("/").filter(Boolean);
-  return parts.length >= 2 ? parts[parts.length - 2]! : path.replace(/\/?SKILL\.md$/i, "");
-}
-
-export function parseSkillMarkdown(markdown: string, path: string): ParsedSkillMarkdown {
-  const normalized = markdown.replace(/\r\n/g, "\n");
-  const fields: Record<string, string> = {};
-  let body = normalized;
-
-  if (normalized.startsWith("---\n")) {
-    const end = normalized.indexOf("\n---", 4);
-    if (end >= 0) {
-      const frontmatter = normalized.slice(4, end).split("\n");
-      for (const line of frontmatter) {
-        if (/^\s/.test(line)) continue;
-        const match = line.match(/^([A-Za-z0-9_-]+):\s*(.*)$/);
-        if (match) fields[match[1]!.toLowerCase()] = stripYamlQuotes(match[2] ?? "");
-      }
-      body = normalized.slice(end + 4).trim();
-    }
-  }
-
-  const fallbackName = skillNameFromPath(path);
-  const name = fields.name || fallbackName;
-  const description = fields.description || body.split("\n").find((line) => line.trim() && !line.trim().startsWith("#"))?.trim() || "";
-  return {
-    name,
-    description,
-    prompt: normalized.trim(),
-    tags: [name],
-    path,
-  };
-}
-
-function onlineSkillMatches(skill: ParsedSkillMarkdown, query: string): boolean {
-  const normalized = query.trim().toLowerCase();
-  if (!normalized) return true;
-  return [skill.name, skill.description, skill.prompt, skill.path, ...skill.tags].some((value) => value.toLowerCase().includes(normalized));
-}
-
-async function fetchOnlineSkills(query: string, sources: OnlineSkillSource[] = ONLINE_SKILL_SOURCES, fetcher: typeof fetch = fetch): Promise<OnlineSkillResult[]> {
-  const normalizedQuery = query.trim().toLowerCase();
-  const results = await Promise.all(
-    sources.map(async (source) => {
-      const treeResponse = await fetcher(onlineSkillTreeUrl(source), { headers: { Accept: "application/vnd.github+json" } });
-      if (!treeResponse.ok) throw new Error(`${source.label}: ${treeResponse.status}`);
-      const treePayload = (await treeResponse.json()) as { tree?: Array<{ path?: string; type?: string }> };
-      const skillPaths = (treePayload.tree ?? [])
-        .map((item) => item.path ?? "")
-        .filter((path) => path.endsWith("/SKILL.md") || path === "SKILL.md")
-        .filter((path) => !source.basePath || path === source.basePath || path.startsWith(`${source.basePath}/`));
-      const pathMatches = normalizedQuery ? skillPaths.filter((path) => path.toLowerCase().includes(normalizedQuery)) : skillPaths;
-      const candidates = [...pathMatches, ...skillPaths.filter((path) => !pathMatches.includes(path))].slice(0, source.maxFetch ?? 60);
-      const parsed = await Promise.all(
-        candidates.map(async (path) => {
-          const rawUrl = onlineSkillRawUrl(source, path);
-          const rawResponse = await fetcher(rawUrl);
-          if (!rawResponse.ok) return undefined;
-          const skill = parseSkillMarkdown(await rawResponse.text(), path);
-          if (!onlineSkillMatches(skill, query)) return undefined;
-          return {
-            id: `${source.id}:${path}`,
-            name: skill.name,
-            description: skill.description,
-            prompt: skill.prompt,
-            tags: skill.tags,
-            sourceId: source.id,
-            sourceLabel: source.label,
-            path,
-            url: onlineSkillBlobUrl(source, path),
-            rawUrl,
-          } satisfies OnlineSkillResult;
-        }),
-      );
-      return parsed.filter((skill): skill is OnlineSkillResult => Boolean(skill));
-    }),
-  );
-  return results.flat().slice(0, 60);
-}
-
 export function loadStoredTheme(storage: Pick<Storage, "getItem">): Theme {
   return storage.getItem(THEME_STORAGE_KEY) === "dark" ? "dark" : "light";
 }
@@ -525,7 +405,11 @@ function loadStoredLanguage(storage: Pick<Storage, "getItem">): Language {
   return storage.getItem(LANGUAGE_STORAGE_KEY) === "en" ? "en" : "zh";
 }
 
-export type ActiveFeature = "chat" | "tasks" | "teams" | "workflow" | "skills" | "runtimes" | "configs" | "settings";
+function loadStoredKeepAwake(storage: Pick<Storage, "getItem">): boolean {
+  return storage.getItem(KEEP_AWAKE_STORAGE_KEY) === "true";
+}
+
+export type ActiveFeature = "chat" | "tasks" | "workflow" | "schedules" | "skills" | "runtimes" | "configs" | "settings";
 type MaybePromise = void | Promise<void>;
 export type TaskStatusFilterValue = "all" | TaskProgress;
 const WORKFLOW_THINKING_MESSAGE = "Agent is thinking...";
@@ -535,6 +419,16 @@ const WORKFLOW_NODE_MAX_ATTEMPTS = 2;
 const WORKFLOW_FINAL_REVIEW_NODE_ID = "__final_review__";
 const WORKFLOW_OUTPUT_DOCUMENT_EXTENSIONS = "md|markdown|txt|json|yaml|yml|html|htm";
 const WORKFLOW_STORAGE_ROOT = ".multi-agent-chat/workflows";
+const DEFAULT_SCHEDULE_INTERVAL_SECONDS = 86400;
+const WEEKDAY_OPTIONS = [
+  { value: 1, zh: "周一", en: "Mon" },
+  { value: 2, zh: "周二", en: "Tue" },
+  { value: 3, zh: "周三", en: "Wed" },
+  { value: 4, zh: "周四", en: "Thu" },
+  { value: 5, zh: "周五", en: "Fri" },
+  { value: 6, zh: "周六", en: "Sat" },
+  { value: 0, zh: "周日", en: "Sun" },
+];
 
 const TASK_STATUS_FILTERS: Array<{ id: TaskStatusFilterValue; label: string }> = [
   { id: "all", label: "All" },
@@ -577,7 +471,7 @@ const SLASH_COMMANDS: SlashCommandSuggestion[] = [
 ];
 
 export function appShellClass(activeFeature: ActiveFeature): string {
-  return activeFeature === "tasks" || activeFeature === "teams" || activeFeature === "workflow" || activeFeature === "skills" || activeFeature === "runtimes"
+  return activeFeature === "tasks" || activeFeature === "workflow" || activeFeature === "schedules" || activeFeature === "skills" || activeFeature === "runtimes"
     ? `shell ${activeFeature}-shell`
     : "shell";
 }
@@ -593,6 +487,13 @@ export function taskDetailIdFor(
 ): string | undefined {
   void persistedActiveTaskId;
   return activeFeature === "tasks" ? selectedTaskDetailId : undefined;
+}
+
+export function scheduledWorkflowEventTarget(event: ScheduledWorkflowDueEvent): { scheduleId: string; workflowId: string } | undefined {
+  const scheduleId = typeof event.payload.scheduleId === "string" ? event.payload.scheduleId : undefined;
+  const workflowId = typeof event.payload.workflowId === "string" ? event.payload.workflowId : undefined;
+  if (!scheduleId || !workflowId) return undefined;
+  return { scheduleId, workflowId };
 }
 
 const DEFAULT_SNAPSHOT: AppSnapshot = {
@@ -614,8 +515,30 @@ const DEFAULT_SNAPSHOT: AppSnapshot = {
     workflows: [],
     runs: [],
   },
+  scheduledWorkflowStore: {
+    activeScheduleId: undefined,
+    runnerConfig: { baseUrl: DEFAULT_SCHEDULED_WORKFLOW_CLOUD_BASE_URL },
+    runnerStatus: { connected: false, connecting: false },
+    schedules: [],
+    runs: [],
+  },
   workflowDraft: undefined,
 };
+
+function defaultScheduledWorkflowDraft(workflows: WorkflowDraftState[], activeWorkflowId?: string): ScheduledWorkflowDraft {
+  const firstWorkflow = workflows.find((workflow) => workflow.workflowId === activeWorkflowId) ?? workflows[0];
+  return {
+    workflowId: firstWorkflow?.workflowId ?? "",
+    title: firstWorkflow ? `${firstWorkflow.title} schedule` : "Scheduled workflow",
+    intervalSeconds: DEFAULT_SCHEDULE_INTERVAL_SECONDS,
+    frequency: "daily",
+    timeOfDay: DEFAULT_SCHEDULED_WORKFLOW_TIME_OF_DAY,
+    timezone: DEFAULT_SCHEDULED_WORKFLOW_TIMEZONE,
+    weekdays: [1],
+    dayOfMonth: 1,
+    enabled: true,
+  };
+}
 
 function agentLabel(agentId: AgentId): string {
   if (agentId === "codex") return "Codex";
@@ -653,6 +576,50 @@ function formatTime(value: number): string {
 function formatDuration(value: number): string {
   if (value < 1000) return `${Math.max(0, Math.round(value))}ms`;
   return `${Math.max(0, value / 1000).toFixed(1)}s`;
+}
+
+function formatScheduleInterval(seconds: number): string {
+  if (seconds % 3600 === 0) return `${seconds / 3600}h`;
+  if (seconds % 60 === 0) return `${seconds / 60}m`;
+  return `${seconds}s`;
+}
+
+function intervalSecondsForFrequency(frequency: ScheduledWorkflowFrequency): number {
+  if (frequency === "weekly") return 7 * 86400;
+  if (frequency === "monthly") return 30 * 86400;
+  return 86400;
+}
+
+function normalizeScheduleTimeOfDay(value: string | undefined): string {
+  return value && /^\d{2}:\d{2}$/.test(value) ? value : DEFAULT_SCHEDULED_WORKFLOW_TIME_OF_DAY;
+}
+
+function normalizeScheduleWeekdays(value: number[] | undefined): number[] {
+  const days = [...new Set((value ?? []).filter((day) => Number.isInteger(day) && day >= 0 && day <= 6))];
+  return days.length > 0 ? days : [1];
+}
+
+function normalizeScheduleDayOfMonth(value: number | undefined): number {
+  return Math.min(31, Math.max(1, Math.floor(value || 1)));
+}
+
+function formatScheduleRecurrence(schedule: Pick<ScheduledWorkflowSchedule, "frequency" | "timeOfDay" | "weekdays" | "dayOfMonth" | "intervalSeconds">, language: Language): string {
+  const zh = language === "zh";
+  const timeOfDay = normalizeScheduleTimeOfDay(schedule.timeOfDay);
+  if (schedule.frequency === "weekly") {
+    const days = normalizeScheduleWeekdays(schedule.weekdays)
+      .map((day) => WEEKDAY_OPTIONS.find((item) => item.value === day)?.[zh ? "zh" : "en"] ?? String(day))
+      .join(zh ? "、" : ", ");
+    return zh ? `每周${days} ${timeOfDay}` : `Every ${days} at ${timeOfDay}`;
+  }
+  if (schedule.frequency === "monthly") {
+    const day = normalizeScheduleDayOfMonth(schedule.dayOfMonth);
+    return zh ? `每月 ${day} 号 ${timeOfDay}` : `Monthly on day ${day} at ${timeOfDay}`;
+  }
+  if (schedule.frequency === "daily" || schedule.timeOfDay) {
+    return zh ? `每天 ${timeOfDay}` : `Daily at ${timeOfDay}`;
+  }
+  return formatScheduleInterval(schedule.intervalSeconds);
 }
 
 function formatBalanceNumber(value: number): string {
@@ -1153,6 +1120,21 @@ function compactWorkflowActivity(content: string, limit = 140): string {
   return `${normalized.slice(0, Math.max(0, limit - 3)).trim()}...`;
 }
 
+function workflowToolResultDisplayContent(content: string): string {
+  const lines = content.replace(/\r\n/g, "\n").split("\n");
+  const filtered = lines.filter((line) => {
+    const trimmed = line.trim();
+    if (!trimmed) return false;
+    if (/^Chunk ID:/i.test(trimmed)) return false;
+    if (/^Wall time:/i.test(trimmed)) return false;
+    if (/^Process exited with code\b/i.test(trimmed)) return false;
+    if (/^Original token count:/i.test(trimmed)) return false;
+    if (/^Output:$/i.test(trimmed)) return false;
+    return true;
+  });
+  return filtered.join("\n").trim() || content;
+}
+
 export function workflowTaskLiveDetail(task: TaskRun): string {
   const latestEvent = task.messages
     .flatMap((message) => message.events ?? [])
@@ -1161,7 +1143,8 @@ export function workflowTaskLiveDetail(task: TaskRun): string {
 
   if (latestEvent) {
     const name = latestEvent.name ?? "tool";
-    const content = compactWorkflowActivity(latestEvent.content);
+    const eventContent = latestEvent.type === "tool_result" ? workflowToolResultDisplayContent(latestEvent.content) : latestEvent.content;
+    const content = compactWorkflowActivity(eventContent);
     if (latestEvent.type === "tool_call") return content ? `Tool ${name}: ${content}` : `Tool ${name} started`;
     if (latestEvent.type === "tool_result") return content ? `Tool ${name} done: ${content}` : `Tool ${name} done`;
     if (latestEvent.type === "system") return content ? `System: ${content}` : "System event";
@@ -1549,6 +1532,111 @@ function workflowRunStatusLabel(status: WorkflowRunNodeStatus): string {
   return "queued";
 }
 
+interface WorkflowCanvasNodeLayout {
+  node: WorkflowGraphNode;
+  x: number;
+  y: number;
+  width: number;
+  height: number;
+  layerIndex: number;
+  layerSize: number;
+}
+
+interface WorkflowCanvasEdgeLayout {
+  edge: WorkflowGraph["edges"][number];
+  from: { x: number; y: number };
+  to: { x: number; y: number };
+}
+
+interface WorkflowCanvasLayout {
+  nodes: WorkflowCanvasNodeLayout[];
+  edges: WorkflowCanvasEdgeLayout[];
+  width: number;
+  height: number;
+}
+
+type WorkflowCanvasLayoutVariant = "preview" | "expanded";
+
+const WORKFLOW_CANVAS_DIMENSIONS: Record<
+  WorkflowCanvasLayoutVariant,
+  {
+    nodeWidth: number;
+    nodeHeight: number;
+    terminalWidth: number;
+    terminalHeight: number;
+    layerGap: number;
+    nodeGap: number;
+    padding: number;
+  }
+> = {
+  preview: {
+    nodeWidth: 224,
+    nodeHeight: 88,
+    terminalWidth: 118,
+    terminalHeight: 58,
+    layerGap: 46,
+    nodeGap: 16,
+    padding: 28,
+  },
+  expanded: {
+    nodeWidth: 220,
+    nodeHeight: 132,
+    terminalWidth: 132,
+    terminalHeight: 76,
+    layerGap: 132,
+    nodeGap: 34,
+    padding: 96,
+  },
+};
+
+export function workflowCanvasLayout(graph: WorkflowGraph, variant: WorkflowCanvasLayoutVariant = "preview"): WorkflowCanvasLayout {
+  const dimensions = WORKFLOW_CANVAS_DIMENSIONS[variant];
+  const nodeById = new Map(graph.nodes.map((node) => [node.id, node]));
+  const layers = workflowGraphDisplayLayers(graph)
+    .map((layer) => layer.map((nodeId) => nodeById.get(nodeId)).filter((node): node is WorkflowGraphNode => Boolean(node)))
+    .filter((layer) => layer.length > 0);
+  const positionedNodes = new Map<string, WorkflowCanvasNodeLayout>();
+  let maxX = dimensions.padding;
+  let maxY = dimensions.padding;
+
+  layers.forEach((layer, layerIndex) => {
+    const x = dimensions.padding + layerIndex * (dimensions.nodeWidth + dimensions.layerGap);
+    const layerHeights = layer.map((node) => (node.kind === "agent" ? dimensions.nodeHeight : dimensions.terminalHeight));
+    const totalHeight = layerHeights.reduce((sum, height) => sum + height, 0) + Math.max(0, layer.length - 1) * dimensions.nodeGap;
+    let y = dimensions.padding + Math.max(0, (dimensions.nodeHeight * 1.35 - totalHeight) / 2);
+
+    layer.forEach((node, nodeIndex) => {
+      const width = node.kind === "agent" ? dimensions.nodeWidth : dimensions.terminalWidth;
+      const height = layerHeights[nodeIndex] ?? dimensions.nodeHeight;
+      const layout = { node, x, y, width, height, layerIndex, layerSize: layer.length };
+      positionedNodes.set(node.id, layout);
+      maxX = Math.max(maxX, x + width + dimensions.padding);
+      maxY = Math.max(maxY, y + height + dimensions.padding);
+      y += height + dimensions.nodeGap;
+    });
+  });
+
+  const edges = graph.edges
+    .map((edge) => {
+      const fromNode = positionedNodes.get(edge.fromNodeId);
+      const toNode = positionedNodes.get(edge.toNodeId);
+      if (!fromNode || !toNode) return undefined;
+      return {
+        edge,
+        from: { x: fromNode.x + fromNode.width, y: fromNode.y + fromNode.height / 2 },
+        to: { x: toNode.x, y: toNode.y + toNode.height / 2 },
+      };
+    })
+    .filter((item): item is WorkflowCanvasEdgeLayout => Boolean(item));
+
+  return {
+    nodes: [...positionedNodes.values()],
+    edges,
+    width: Math.max(maxX, dimensions.padding * 2 + dimensions.nodeWidth),
+    height: Math.max(maxY, dimensions.padding * 2 + dimensions.nodeHeight),
+  };
+}
+
 export function App() {
   const initialWorkflowGraph = useMemo(() => createWorkflowGraphFromObjective(""), []);
   const [snapshot, setSnapshot] = useState<AppSnapshot>(DEFAULT_SNAPSHOT);
@@ -1580,6 +1668,10 @@ export function App() {
   const [workflowRunIds, setWorkflowRunIds] = useState<string[]>([]);
   const [workflowAgentSessionId, setWorkflowAgentSessionId] = useState<string | undefined>();
   const [workflowCreatedAt, setWorkflowCreatedAt] = useState(Date.now());
+  const [scheduledWorkflowDraft, setScheduledWorkflowDraft] = useState<ScheduledWorkflowDraft>(() =>
+    defaultScheduledWorkflowDraft(DEFAULT_SNAPSHOT.workflowStore.workflows, DEFAULT_SNAPSHOT.workflowStore.activeWorkflowId),
+  );
+  const [scheduledWorkflowMode, setScheduledWorkflowMode] = useState<"detail" | "create">("detail");
   const workflowRequestIdRef = useRef<string | undefined>(undefined);
   const workflowAssistantMessageIdRef = useRef<string | undefined>(undefined);
   const workflowStreamingStartedRef = useRef(false);
@@ -1587,6 +1679,8 @@ export function App() {
   const workflowDraftHydratedRef = useRef(false);
   const workflowDraftHydratingRef = useRef(false);
   const workflowDraftSaveTimerRef = useRef<number | undefined>(undefined);
+  const snapshotRef = useRef(snapshot);
+  const workflowRunningRef = useRef(workflowRunning);
   const workflowStoreIds = snapshot.workflowStore.workflows.map((workflow) => workflow.workflowId).join(":");
   const [taskStatusFilter, setTaskStatusFilter] = useState<TaskStatusFilterValue>("all");
   const [selectedTaskDetailId, setSelectedTaskDetailId] = useState<string | undefined>();
@@ -1601,6 +1695,7 @@ export function App() {
   const [theme, setTheme] = useState<Theme>(() => loadStoredTheme(window.localStorage));
   const [providerKeys, setProviderKeys] = useState<Record<string, string>>(() => loadStoredProviderKeys(window.localStorage));
   const [language, setLanguage] = useState<Language>(() => loadStoredLanguage(window.localStorage));
+  const [keepAwake, setKeepAwake] = useState(() => loadStoredKeepAwake(window.localStorage));
   const [agentTestResults, setAgentTestResults] = useState<Record<string, AgentTestUiState>>({});
   const [testingAgentId, setTestingAgentId] = useState<string | undefined>();
   const [agentTestTick, setAgentTestTick] = useState(0);
@@ -1631,6 +1726,13 @@ export function App() {
   useEffect(() => {
     window.localStorage.setItem(LANGUAGE_STORAGE_KEY, language);
   }, [language]);
+
+  useEffect(() => {
+    window.localStorage.setItem(KEEP_AWAKE_STORAGE_KEY, String(keepAwake));
+    void window.multiAgentChat.setKeepAwake(keepAwake).catch((error) => {
+      console.warn("Failed to update keep-awake state", error);
+    });
+  }, [keepAwake]);
 
   useEffect(() => {
     if (!testingAgentId) return undefined;
@@ -1870,6 +1972,21 @@ export function App() {
   }, [snapshot.channels, workflowAgentId, workflowChannelId]);
 
   useEffect(() => {
+    snapshotRef.current = snapshot;
+  }, [snapshot]);
+
+  useEffect(() => {
+    workflowRunningRef.current = workflowRunning;
+  }, [workflowRunning]);
+
+  useEffect(() => {
+    setScheduledWorkflowDraft((current) => {
+      if (current.workflowId && snapshot.workflowStore.workflows.some((workflow) => workflow.workflowId === current.workflowId)) return current;
+      return defaultScheduledWorkflowDraft(snapshot.workflowStore.workflows, snapshot.workflowStore.activeWorkflowId);
+    });
+  }, [snapshot.workflowStore.activeWorkflowId, workflowStoreIds]);
+
+  useEffect(() => {
     if (activeFeature !== "runtimes" || pluginCatalogStatus || codexPluginCatalog.length > 0) return;
     void loadCodexPluginCatalog();
   }, [activeFeature, codexPluginCatalog.length, pluginCatalogStatus]);
@@ -1894,6 +2011,12 @@ export function App() {
     if (snapshot.tasks.some((task) => task.id === selectedTaskDetailId)) return;
     setSelectedTaskDetailId(undefined);
   }, [selectedTaskDetailId, snapshot.tasks]);
+
+  useEffect(() => {
+    return window.multiAgentChat.onScheduledWorkflowEvent((event) => {
+      void handleScheduledWorkflowEvent(event);
+    });
+  }, []);
 
   useEffect(() => {
     return window.multiAgentChat.onWorkflowAgentEvent((event) => {
@@ -1983,7 +2106,7 @@ export function App() {
         return;
       }
       if (Date.now() - gChordRef.current < 900) {
-        const navMap: Record<string, ActiveFeature> = { c: "chat", t: "tasks", w: "teams", f: "workflow", r: "runtimes", s: "configs" };
+        const navMap: Record<string, ActiveFeature> = { c: "chat", t: "tasks", w: "workflow", f: "workflow", r: "runtimes", s: "configs" };
         const feature = navMap[event.key.toLowerCase()];
         if (feature) {
           event.preventDefault();
@@ -2663,6 +2786,130 @@ export function App() {
     setTaskPrompt("");
   }
 
+  async function connectScheduledRunner(): Promise<void> {
+    const next = await window.multiAgentChat.connectScheduledWorkflowRunner();
+    setSnapshot(next);
+  }
+
+  async function disconnectScheduledRunner(): Promise<void> {
+    const next = await window.multiAgentChat.disconnectScheduledWorkflowRunner();
+    setSnapshot(next);
+  }
+
+  async function refreshScheduledWorkflows(): Promise<void> {
+    const next = await window.multiAgentChat.refreshScheduledWorkflowSchedules();
+    setSnapshot(next);
+  }
+
+  async function selectScheduledWorkflowSchedule(scheduleId: string): Promise<void> {
+    setScheduledWorkflowMode("detail");
+    const next = await window.multiAgentChat.selectScheduledWorkflowSchedule(scheduleId);
+    setSnapshot(next);
+  }
+
+  function startCreatingScheduledWorkflow(): void {
+    setActiveFeature("schedules");
+    setScheduledWorkflowMode("create");
+    setScheduledWorkflowDraft(defaultScheduledWorkflowDraft(snapshot.workflowStore.workflows, snapshot.workflowStore.activeWorkflowId));
+  }
+
+  async function createScheduledWorkflow(): Promise<void> {
+    const workflow = snapshot.workflowStore.workflows.find((item) => item.workflowId === scheduledWorkflowDraft.workflowId);
+    if (!workflow) return;
+    const next = await window.multiAgentChat.createScheduledWorkflowSchedule({
+      workflowId: workflow.workflowId,
+      title: scheduledWorkflowDraft.title.trim() || workflow.title,
+      enabled: scheduledWorkflowDraft.enabled,
+      intervalSeconds: intervalSecondsForFrequency(scheduledWorkflowDraft.frequency),
+      frequency: scheduledWorkflowDraft.frequency,
+      timeOfDay: normalizeScheduleTimeOfDay(scheduledWorkflowDraft.timeOfDay),
+      timezone: scheduledWorkflowDraft.timezone || DEFAULT_SCHEDULED_WORKFLOW_TIMEZONE,
+      ...(scheduledWorkflowDraft.frequency === "weekly" ? { weekdays: normalizeScheduleWeekdays(scheduledWorkflowDraft.weekdays) } : {}),
+      ...(scheduledWorkflowDraft.frequency === "monthly" ? { dayOfMonth: normalizeScheduleDayOfMonth(scheduledWorkflowDraft.dayOfMonth) } : {}),
+    });
+    setScheduledWorkflowMode("detail");
+    setSnapshot(next);
+  }
+
+  async function updateScheduledWorkflow(
+    schedule: ScheduledWorkflowSchedule,
+    update: Partial<Pick<ScheduledWorkflowSchedule, "enabled" | "title" | "intervalSeconds" | "frequency" | "timeOfDay" | "timezone" | "weekdays" | "dayOfMonth">>,
+  ): Promise<void> {
+    const next = await window.multiAgentChat.updateScheduledWorkflowSchedule(schedule.scheduleId, update);
+    setSnapshot(next);
+  }
+
+  async function deleteScheduledWorkflow(scheduleId: string): Promise<void> {
+    const next = await window.multiAgentChat.deleteScheduledWorkflowSchedule(scheduleId);
+    setSnapshot(next);
+  }
+
+  async function triggerScheduledWorkflow(scheduleId: string): Promise<void> {
+    await window.multiAgentChat.triggerScheduledWorkflowSchedule(scheduleId);
+  }
+
+  async function handleScheduledWorkflowEvent(event: ScheduledWorkflowDueEvent): Promise<void> {
+    const target = scheduledWorkflowEventTarget(event);
+    if (!target) {
+      await window.multiAgentChat.ackScheduledWorkflowEvent(event.eventId, {
+        status: "failed",
+        message: "Scheduled event payload is missing scheduleId or workflowId.",
+      });
+      return;
+    }
+    const currentSnapshot = snapshotRef.current;
+    const workflow = currentSnapshot.workflowStore.workflows.find((item) => item.workflowId === target.workflowId);
+    const runId = `scheduled_run_${event.eventId}`;
+    if (!workflow) {
+      const failedSnapshot = await window.multiAgentChat.recordScheduledWorkflowRun({
+        runId,
+        scheduleId: target.scheduleId,
+        workflowId: target.workflowId,
+        eventId: event.eventId,
+        title: event.title,
+        status: "failed",
+        startedAt: Date.now(),
+        finishedAt: Date.now(),
+        message: `Workflow ${target.workflowId} was not found locally.`,
+      });
+      setSnapshot(failedSnapshot);
+      await window.multiAgentChat.ackScheduledWorkflowEvent(event.eventId, {
+        status: "failed",
+        message: `Workflow ${target.workflowId} was not found locally.`,
+      });
+      return;
+    }
+
+    const runningSnapshot = await window.multiAgentChat.recordScheduledWorkflowRun({
+      runId,
+      scheduleId: target.scheduleId,
+      workflowId: workflow.workflowId,
+      eventId: event.eventId,
+      title: event.title || workflow.title,
+      status: "running",
+      startedAt: Date.now(),
+      finishedAt: undefined,
+      message: event.message || "Runner started workflow.",
+    });
+    setSnapshot(runningSnapshot);
+
+    const result = await runWorkflowGraphInternal(workflow);
+    const finalStatus = result.ok ? "completed" : "failed";
+    const message = result.ok ? "Workflow completed." : result.error || "Workflow failed.";
+    const finishedSnapshot = await window.multiAgentChat.finishScheduledWorkflowRun(runId, {
+      status: finalStatus,
+      ...(result.workflowRunId !== undefined ? { workflowRunId: result.workflowRunId } : {}),
+      message,
+      finishedAt: Date.now(),
+    });
+    setSnapshot(finishedSnapshot);
+    await window.multiAgentChat.ackScheduledWorkflowEvent(event.eventId, {
+      status: finalStatus,
+      ...(result.workflowRunId !== undefined ? { workflowRunId: result.workflowRunId } : {}),
+      message,
+    });
+  }
+
   function syncWorkflowGraph(nextGraph: WorkflowGraph): void {
     setWorkflowGraph(nextGraph);
     setWorkflowTitle(nextGraph.title);
@@ -2711,19 +2958,30 @@ export function App() {
     setWorkflowError(undefined);
   }
 
-  async function askSelectedWorkflowAgent(promptText: string, sessionId: string | undefined, requestId: string): Promise<string> {
-    const channelId = workflowChannelId || defaultChannelForAgent(workflowAgentId, snapshot.channels);
+  async function askWorkflowAgentFor(
+    promptText: string,
+    sessionId: string | undefined,
+    requestId: string,
+    agentId: AgentId,
+    channelId: string,
+    modelId: string,
+  ): Promise<string> {
     const request = {
       requestId,
       prompt: promptText,
-      agentId: workflowAgentId,
+      agentId,
       channelId,
-      modelId: workflowModelId || DEFAULT_MODEL_ID,
-      workDir: snapshot.workDir,
+      modelId,
+      workDir: snapshotRef.current.workDir,
     };
     const response = await window.multiAgentChat.askWorkflowAgent(sessionId ? { ...request, sessionId } : request);
     setWorkflowAgentSessionId(response.sessionId);
     return response.content.trim() || "Workflow agent returned an empty response.";
+  }
+
+  async function askSelectedWorkflowAgent(promptText: string, sessionId: string | undefined, requestId: string): Promise<string> {
+    const channelId = workflowChannelId || defaultChannelForAgent(workflowAgentId, snapshot.channels);
+    return askWorkflowAgentFor(promptText, sessionId, requestId, workflowAgentId, channelId, workflowModelId || DEFAULT_MODEL_ID);
   }
 
   async function sendWorkflowReply(): Promise<void> {
@@ -2792,15 +3050,34 @@ export function App() {
   }
 
   async function runWorkflowGraph(): Promise<void> {
-    const validation = validateWorkflowGraph(workflowGraph);
-    if (!validation.valid || workflowRunning) {
-      setWorkflowError(validation.errors.join(" "));
-      return;
+    await runWorkflowGraphInternal();
+  }
+
+  async function runWorkflowGraphInternal(targetWorkflow?: WorkflowDraftState): Promise<{ ok: boolean; workflowRunId?: string; error?: string }> {
+    const runWorkflowId = targetWorkflow?.workflowId ?? workflowId;
+    const runGraph = targetWorkflow?.graph ?? workflowGraph;
+    const runAgentId = targetWorkflow?.agentId ?? workflowAgentId;
+    const runChannelId = targetWorkflow?.channelId || workflowChannelId || defaultChannelForAgent(runAgentId, snapshotRef.current.channels);
+    const runModelId = targetWorkflow?.modelId || workflowModelId || DEFAULT_MODEL_ID;
+    const initialWorkflowContextDocument = targetWorkflow?.contextDocument ?? workflowContextDocument;
+    const runAgentSessionId = targetWorkflow?.agentSessionId ?? workflowAgentSessionId;
+
+    if (targetWorkflow) {
+      applyPersistedWorkflowDraft(targetWorkflow);
+      setActiveFeature("workflow");
     }
-    const executionLevels = workflowGraphExecutionLevels(workflowGraph);
+
+    const validation = validateWorkflowGraph(runGraph);
+    if (!validation.valid || workflowRunningRef.current) {
+      const error = workflowRunningRef.current ? "Workflow is already running." : validation.errors.join(" ");
+      setWorkflowError(error);
+      return { ok: false, error };
+    }
+    const executionLevels = workflowGraphExecutionLevels(runGraph);
     if (executionLevels.length === 0) {
-      setWorkflowError("Workflow graph has no executable agent nodes.");
-      return;
+      const error = "Workflow graph has no executable agent nodes.";
+      setWorkflowError(error);
+      return { ok: false, error };
     }
     setWorkflowRunning(true);
     setWorkflowStatus("running");
@@ -2811,19 +3088,19 @@ export function App() {
     let finalRunContextDocument = "";
     let finalReport = "";
     try {
-      let latestSnapshot = snapshot;
-      const storagePlan = workflowStoragePlanFor(workflowId);
-      const baseWorkflowContextDocument = [workflowContextDocument.trim(), workflowStoragePlanDocument(storagePlan)].filter(Boolean).join("\n\n");
+      let latestSnapshot = snapshotRef.current;
+      const storagePlan = workflowStoragePlanFor(runWorkflowId);
+      const baseWorkflowContextDocument = [initialWorkflowContextDocument.trim(), workflowStoragePlanDocument(storagePlan)].filter(Boolean).join("\n\n");
       latestSnapshot = await window.multiAgentChat.startWorkflowRun({
-        workflowId,
+        workflowId: runWorkflowId,
         contextDocument: baseWorkflowContextDocument,
       });
       setSnapshot(latestSnapshot);
-      const runningWorkflow = latestSnapshot.workflowStore.workflows.find((workflow) => workflow.workflowId === workflowId);
+      const runningWorkflow = latestSnapshot.workflowStore.workflows.find((workflow) => workflow.workflowId === runWorkflowId);
       activeWorkflowRunId = runningWorkflow?.runIds.at(-1);
       if (!activeWorkflowRunId) throw new Error("Workflow run did not start.");
       setWorkflowRunIds(runningWorkflow?.runIds ?? workflowRunIds);
-      const nodeById = new Map(workflowGraph.nodes.map((node) => [node.id, node]));
+      const nodeById = new Map(runGraph.nodes.map((node) => [node.id, node]));
       latestRunProgress = executionLevels.flat().map((nodeId) => {
         const node = nodeById.get(nodeId);
         return {
@@ -2861,7 +3138,7 @@ export function App() {
       finalRunContextDocument = baseWorkflowContextDocument;
       const upstreamAgentNodeIdsByNodeId = new Map<string, string[]>();
       for (const nodeId of validation.executableNodeIds) upstreamAgentNodeIdsByNodeId.set(nodeId, []);
-      for (const edge of workflowGraph.edges) {
+      for (const edge of runGraph.edges) {
         const fromNode = nodeById.get(edge.fromNodeId);
         if (fromNode?.kind !== "agent" || !upstreamAgentNodeIdsByNodeId.has(edge.toNodeId)) continue;
         upstreamAgentNodeIdsByNodeId.get(edge.toNodeId)?.push(edge.fromNodeId);
@@ -2915,7 +3192,7 @@ export function App() {
           .filter((item): item is { node: WorkflowGraphNode; artifact: string } => Boolean(item));
 
       const nodeAttemptPrompt = (node: WorkflowGraphNode, attempt: number, retryPrompt: string, contextDocument: string): string => {
-        const basePrompt = workflowNodeRunPrompt(workflowGraph, node, upstreamArtifactsForNode(node), contextDocument, storagePlan);
+        const basePrompt = workflowNodeRunPrompt(runGraph, node, upstreamArtifactsForNode(node), contextDocument, storagePlan);
         if (!retryPrompt.trim()) return basePrompt;
         return [
           basePrompt,
@@ -2989,13 +3266,13 @@ export function App() {
           status: "running",
           detail: `Evaluating attempt ${attempt}/${WORKFLOW_NODE_MAX_ATTEMPTS}`,
         });
-        const judgeAgentId = workflowAgentId;
-        const judgeChannelId = workflowChannelId || defaultChannelForAgent(judgeAgentId, latestSnapshot.channels);
+        const judgeAgentId = runAgentId;
+        const judgeChannelId = runChannelId || defaultChannelForAgent(judgeAgentId, latestSnapshot.channels);
         const judgeTask = await startWorkflowTask({
-          prompt: workflowJudgePrompt(workflowGraph, node, artifact, contextDocument, attempt, WORKFLOW_NODE_MAX_ATTEMPTS),
+          prompt: workflowJudgePrompt(runGraph, node, artifact, contextDocument, attempt, WORKFLOW_NODE_MAX_ATTEMPTS),
           agentId: judgeAgentId,
           channelId: judgeChannelId,
-          modelId: workflowModelId || DEFAULT_MODEL_ID,
+          modelId: runModelId,
           workDir: latestSnapshot.workDir,
         });
         const completedJudgeTask = await (async (): Promise<TaskRun> => {
@@ -3098,7 +3375,7 @@ export function App() {
           return node && artifact ? { node, artifact } : undefined;
         })
         .filter((item): item is { node: WorkflowGraphNode; artifact: string } => Boolean(item));
-      const finalReviewPrompt = workflowFinalReviewPrompt(workflowGraph, nodeArtifacts, runContextDocument, completedNodeProgress, storagePlan);
+      const finalReviewPrompt = workflowFinalReviewPrompt(runGraph, nodeArtifacts, runContextDocument, completedNodeProgress, storagePlan);
       const finalReviewRequestId = `workflow-final-${Date.now()}-${Math.random().toString(36).slice(2)}`;
       const finalAssistantMessageId = `workflow-final-assistant-${Date.now()}`;
       workflowRequestIdRef.current = finalReviewRequestId;
@@ -3111,7 +3388,7 @@ export function App() {
         detail: "Main agent reviewing all node outputs",
       });
       try {
-        finalReport = await askSelectedWorkflowAgent(finalReviewPrompt, workflowAgentSessionId, finalReviewRequestId);
+        finalReport = await askWorkflowAgentFor(finalReviewPrompt, runAgentSessionId, finalReviewRequestId, runAgentId, runChannelId, runModelId);
         if (!workflowStreamingStartedRef.current && finalReport) {
           setWorkflowMessages((current) =>
             current.map((message) => (message.id === finalAssistantMessageId ? { ...message, content: finalReport } : message)),
@@ -3142,7 +3419,7 @@ export function App() {
         detail: "Main agent report ready",
       });
       latestSnapshot = await window.multiAgentChat.finishWorkflowRun({
-        workflowId,
+        workflowId: runWorkflowId,
         runId: activeWorkflowRunId,
         status: "completed",
         progress: latestRunProgress,
@@ -3151,17 +3428,19 @@ export function App() {
       });
       setSnapshot(latestSnapshot);
       setWorkflowStatus("completed");
+      return { ok: true, workflowRunId: activeWorkflowRunId };
     } catch (error) {
+      const message = error instanceof Error ? error.message : String(error);
       if (activeWorkflowRunId) {
         try {
           const failedSnapshot = await window.multiAgentChat.finishWorkflowRun({
-            workflowId,
+            workflowId: runWorkflowId,
             runId: activeWorkflowRunId,
             status: "failed",
             progress: latestRunProgress,
             contextDocument: finalRunContextDocument,
             ...(finalReport ? { finalReport } : {}),
-            lastError: error instanceof Error ? error.message : String(error),
+            lastError: message,
           });
           setSnapshot(failedSnapshot);
           setWorkflowStatus("failed");
@@ -3171,7 +3450,12 @@ export function App() {
       } else {
         setWorkflowStatus("failed");
       }
-      setWorkflowError(error instanceof Error ? error.message : String(error));
+      setWorkflowError(message);
+      return {
+        ok: false,
+        ...(activeWorkflowRunId !== undefined ? { workflowRunId: activeWorkflowRunId } : {}),
+        error: message,
+      };
     } finally {
       setWorkflowRunning(false);
     }
@@ -3237,7 +3521,7 @@ export function App() {
       ],
     });
     setSnapshot(next);
-    setActiveFeature("teams");
+    setActiveFeature("workflow");
   }
 
   async function updateTeam(
@@ -3305,19 +3589,18 @@ export function App() {
             <span>{text.nav.tasks}</span>
           </button>
           <button
-            className={`feature-nav-item ${activeFeature === "teams" ? "is-active" : ""}`}
-            onClick={() => setActiveFeature("teams")}
-           
-          >
-            <Users size={15} />
-            <span>{text.nav.teams}</span>
-          </button>
-          <button
             className={`feature-nav-item ${activeFeature === "workflow" ? "is-active" : ""}`}
             onClick={() => setActiveFeature("workflow")}
           >
             <GitBranch size={15} />
             <span>{text.nav.workflow}</span>
+          </button>
+          <button
+            className={`feature-nav-item ${activeFeature === "schedules" ? "is-active" : ""}`}
+            onClick={() => setActiveFeature("schedules")}
+          >
+            <CalendarClock size={15} />
+            <span>{text.nav.schedules}</span>
           </button>
           <button
             className={`feature-nav-item ${activeFeature === "skills" ? "is-active" : ""}`}
@@ -3365,10 +3648,10 @@ export function App() {
                 ? text.nav.chat
                 : activeFeature === "tasks"
                   ? text.nav.tasks
-                  : activeFeature === "teams"
-                    ? text.nav.teams
-                    : activeFeature === "workflow"
-                      ? text.nav.workflow
+                  : activeFeature === "workflow"
+                    ? text.nav.workflow
+                    : activeFeature === "schedules"
+                      ? text.nav.schedules
                       : activeFeature === "skills"
                         ? text.nav.skills
                         : activeFeature === "runtimes"
@@ -3442,6 +3725,49 @@ export function App() {
             onCancelRename={() => setWorkflowRenameDraft(undefined)}
             onDeleteWorkflow={deleteWorkflow}
           />
+        ) : activeFeature === "schedules" ? (
+          <section className="resource-panel scheduled-nav-panel">
+            <div className="panel-header">
+              <span>{text.nav.schedules}</span>
+              <CalendarClock size={14} />
+            </div>
+            <div className="scheduled-nav-summary">
+              <strong>{snapshot.scheduledWorkflowStore.schedules.length}</strong>
+              <span>{language === "zh" ? "个计划" : "schedules"}</span>
+            </div>
+            <div className="new-chat-menu-wrap">
+              <button
+                className={`new-chat-compact-btn ${scheduledWorkflowMode === "create" ? "is-active" : ""}`}
+                type="button"
+                onClick={startCreatingScheduledWorkflow}
+              >
+                <Plus size={13} />
+                <span>{language === "zh" ? "新增定时任务" : "New schedule"}</span>
+              </button>
+            </div>
+            <div className="config-nav-list">
+              {snapshot.scheduledWorkflowStore.schedules.length === 0 ? (
+                <div className="empty-state config-empty">{language === "zh" ? "暂无定时任务" : "No schedules"}</div>
+              ) : (
+                snapshot.scheduledWorkflowStore.schedules.map((schedule) => (
+                  <button
+                    key={schedule.scheduleId}
+                    className={`config-nav-row ${schedule.scheduleId === snapshot.scheduledWorkflowStore.activeScheduleId ? "is-active" : ""}`}
+                    onClick={() => {
+                      setActiveFeature("schedules");
+                      void selectScheduledWorkflowSchedule(schedule.scheduleId);
+                    }}
+                  >
+                    <span className={`agent-badge mini ${schedule.enabled ? "agent-api" : "agent-claude"}`}>
+                      {schedule.enabled ? (language === "zh" ? "启用" : "On") : (language === "zh" ? "暂停" : "Off")}
+                    </span>
+                    <strong>{schedule.title}</strong>
+                    <span>{formatScheduleRecurrence(schedule, language)}</span>
+                  </button>
+                ))
+              )}
+            </div>
+          </section>
         ) : activeFeature === "skills" ? (
           <section className="resource-panel skills-nav-panel">
             <div className="panel-header">
@@ -3528,17 +3854,17 @@ export function App() {
             ? "chat-content"
             : activeFeature === "tasks"
               ? "tasks-content"
-                : activeFeature === "teams"
-                  ? "teams-content"
-                  : activeFeature === "workflow"
-                    ? "workflow-content"
-                    : activeFeature === "skills"
-                      ? "skills-content"
-                      : activeFeature === "runtimes"
-                        ? "runtime-content"
-                        : activeFeature === "settings"
-                          ? "settings-content"
-                          : "config-content"
+              : activeFeature === "workflow"
+                ? "workflow-content"
+                : activeFeature === "schedules"
+                  ? "scheduled-content"
+                  : activeFeature === "skills"
+                    ? "skills-content"
+                    : activeFeature === "runtimes"
+                      ? "runtime-content"
+                      : activeFeature === "settings"
+                        ? "settings-content"
+                        : "config-content"
         }`}
       >
         {activeFeature === "tasks" ? (
@@ -3565,27 +3891,6 @@ export function App() {
             onStopTask={stopTask}
             onDeleteTask={deleteTask}
             onUpdateTaskProgress={updateTaskProgress}
-          />
-        ) : activeFeature === "teams" ? (
-          <TeamPage
-            teams={snapshot.teams}
-            teamRuns={snapshot.teamRuns}
-            activeTeamId={activeTeam?.id}
-            activeTeamRunId={activeTeamRun?.id}
-            prompt={teamPrompt}
-            workDir={snapshot.workDir}
-            runtimes={snapshot.runtimes}
-            channels={snapshot.channels}
-            onPromptChange={setTeamPrompt}
-            onCreateTeam={createTeam}
-            onUpdateTeam={updateTeam}
-            onDeleteTeam={deleteTeam}
-            onSelectTeam={selectTeam}
-            onSelectTeamRun={selectTeamRun}
-            onRunTeam={runTeam}
-            onStopTeamRun={stopTeamRun}
-            onChooseWorkDir={chooseWorkDir}
-            onRefresh={refresh}
           />
         ) : activeFeature === "workflow" ? (
           <WorkflowPage
@@ -3625,6 +3930,22 @@ export function App() {
             onReadOutputFile={readLocalFile}
             language={language}
           />
+        ) : activeFeature === "schedules" ? (
+          <ScheduledWorkflowPage
+            language={language}
+            workflows={snapshot.workflowStore.workflows}
+            store={snapshot.scheduledWorkflowStore}
+            draft={scheduledWorkflowDraft}
+            mode={scheduledWorkflowMode}
+            onDraftChange={setScheduledWorkflowDraft}
+            onConnectRunner={connectScheduledRunner}
+            onDisconnectRunner={disconnectScheduledRunner}
+            onRefreshSchedules={refreshScheduledWorkflows}
+            onCreateSchedule={createScheduledWorkflow}
+            onUpdateSchedule={updateScheduledWorkflow}
+            onDeleteSchedule={deleteScheduledWorkflow}
+            onTriggerSchedule={triggerScheduledWorkflow}
+          />
         ) : activeFeature === "skills" ? (
           <SkillsPage language={language} templates={SKILL_TEMPLATES} onInstallSkill={installSkill} onUninstallSkill={uninstallSkill} />
         ) : activeFeature === "runtimes" ? (
@@ -3656,7 +3977,7 @@ export function App() {
             onUpdateProviderKey={updateProviderKey}
           />
         ) : activeFeature === "settings" ? (
-          <SettingsPage language={language} onLanguageChange={setLanguage} />
+          <SettingsPage language={language} keepAwake={keepAwake} onLanguageChange={setLanguage} onKeepAwakeChange={setKeepAwake} />
         ) : activeFeature === "configs" ? (
           <ConfigPage
             language={language}
@@ -5375,6 +5696,7 @@ interface WorkflowPageProps {
   onRefresh?: () => MaybePromise;
   onReadOutputFile?: (filePath: string) => Promise<LocalFilePreview>;
   language?: Language;
+  defaultGraphExpanded?: boolean;
 }
 
 export function WorkflowPage({
@@ -5413,15 +5735,12 @@ export function WorkflowPage({
   onRefresh = () => undefined,
   onReadOutputFile,
   language = "en",
+  defaultGraphExpanded = false,
 }: WorkflowPageProps) {
   const workflowText = UI_TEXT[language].workflow;
   const validation = validateWorkflowGraph(graph);
   const workflowStarted = messages.length > 0;
   const grillComplete = Math.max(0, messages.filter((message) => message.role === "user").length - 1) >= WORKFLOW_TOTAL_QUESTION_COUNT;
-  const nodeById = new Map(graph.nodes.map((node) => [node.id, node]));
-  const displayLayers = workflowGraphDisplayLayers(graph)
-    .map((layer) => layer.map((nodeId) => nodeById.get(nodeId)).filter((node): node is WorkflowGraphNode => Boolean(node)))
-    .filter((layer) => layer.length > 0);
   const runtimeMap = new Map(runtimes.map((runtime) => [runtime.id, runtime]));
   const workflowChannelOptions = channels.filter((channel) => channel.agentId === agentId);
   const workflowFallbackChannelId = defaultChannelForAgent(agentId, channels);
@@ -5464,12 +5783,14 @@ export function WorkflowPage({
     : workflowText.taskPlaceholder;
   const composerCanSend = Boolean(composerValue.trim()) && !running;
   const composerLocked = workflowStarted || running;
-  const [graphExpanded, setGraphExpanded] = useState(false);
+  const [graphExpanded, setGraphExpanded] = useState(defaultGraphExpanded);
+  const [editingWorkflowNodeId, setEditingWorkflowNodeId] = useState<string | undefined>(undefined);
   const [filePreview, setFilePreview] = useState<LocalFilePreview | undefined>(undefined);
   const [filePreviewError, setFilePreviewError] = useState<string | undefined>(undefined);
   const [filePreviewLoadingPath, setFilePreviewLoadingPath] = useState<string | undefined>(undefined);
   const grillTranscriptRef = useRef<HTMLElement>(null);
   const grillStickRef = useRef(true);
+  const editingWorkflowNode = graph.nodes.find((node) => node.id === editingWorkflowNodeId);
 
   useEffect(() => {
     const transcript = grillTranscriptRef.current;
@@ -5480,10 +5801,17 @@ export function WorkflowPage({
   useEffect(() => {
     if (!graphExpanded) return;
     function handleKeyDown(event: globalThis.KeyboardEvent): void {
-      if (event.key === "Escape") setGraphExpanded(false);
+      if (event.key === "Escape") {
+        setEditingWorkflowNodeId(undefined);
+        setGraphExpanded(false);
+      }
     }
     window.addEventListener("keydown", handleKeyDown);
     return () => window.removeEventListener("keydown", handleKeyDown);
+  }, [graphExpanded]);
+
+  useEffect(() => {
+    if (!graphExpanded) setEditingWorkflowNodeId(undefined);
   }, [graphExpanded]);
 
   useEffect(() => {
@@ -5501,12 +5829,6 @@ export function WorkflowPage({
     grillStickRef.current = transcript.scrollHeight - transcript.scrollTop - transcript.clientHeight < 48;
   }
 
-  function expandGraphFromBoardClick(event: MouseEvent<HTMLElement>): void {
-    const target = event.target instanceof HTMLElement ? event.target : undefined;
-    if (target?.closest(".workflow-graph-card")) return;
-    setGraphExpanded(true);
-  }
-
   async function openOutputDocument(filePath: string): Promise<void> {
     if (!onReadOutputFile) {
       setFilePreviewError("当前环境不支持应用内文件预览。");
@@ -5521,6 +5843,200 @@ export function WorkflowPage({
     } finally {
       setFilePreviewLoadingPath(undefined);
     }
+  }
+
+  function renderWorkflowNodeCard(node: WorkflowGraphNode, compact: boolean): ReactElement {
+    const nodeAgentId = node.agentId ?? "codex";
+    const nodeRunProgress = runProgressByNodeId.get(node.id);
+    const channelOptions = channels.filter((channel) => channel.agentId === nodeAgentId);
+    const nodeChannelId = channelOptions.some((channel) => channel.id === node.channelId)
+      ? node.channelId!
+      : defaultChannelForAgent(nodeAgentId, channels);
+    const modelOptions = modelsForChannel(nodeAgentId, nodeChannelId, channels);
+    const nodeModelId = modelOptions.some((model) => model.id === node.modelId) ? node.modelId! : DEFAULT_MODEL_ID;
+    const runtime = runtimeMap.get(nodeAgentId) ?? fallbackRuntime(nodeAgentId);
+    const configuredAgentOptions = configuredAgents.filter((configuredAgent) => channels.some((channel) => channel.id === configuredAgent.channelId));
+    const selectedConfiguredAgent =
+      configuredAgentOptions.find((configuredAgent) => configuredAgent.channelId === nodeChannelId) ??
+      configuredAgentOptions.find((configuredAgent) => configuredAgent.runtimeAgentId === nodeAgentId) ??
+      configuredAgentOptions[0];
+    const nodeMeta = node.kind === "agent" ? (
+      <div className="workflow-node-meta-row">
+        <span>{selectedConfiguredAgent?.name || agentLabel(nodeAgentId)}</span>
+        <span>{modelOptions.find((model) => model.id === nodeModelId)?.label ?? nodeModelId}</span>
+      </div>
+    ) : null;
+
+    if (compact) {
+      return (
+        <article className={`workflow-graph-card workflow-canvas-node-card is-${node.kind} ${nodeRunProgress ? `run-${nodeRunProgress.status}` : ""}`}>
+          <div className="workflow-graph-card-head">
+            <span>{node.kind}</span>
+            <strong>{node.title}</strong>
+            {nodeRunProgress ? <em className={`workflow-node-run-pill is-${nodeRunProgress.status}`}>{workflowRunStatusLabel(nodeRunProgress.status)}</em> : null}
+          </div>
+          {nodeMeta}
+          {nodeRunProgress?.detail ? <div className={`workflow-node-run-detail is-${nodeRunProgress.status}`}>{nodeRunProgress.detail}</div> : null}
+        </article>
+      );
+    }
+
+    return (
+      <article
+        className={`workflow-graph-card workflow-canvas-node-card workflow-expanded-node-card is-${node.kind} ${nodeRunProgress ? `run-${nodeRunProgress.status}` : ""}`}
+        onContextMenu={(event) => {
+          event.preventDefault();
+          event.stopPropagation();
+          setEditingWorkflowNodeId(node.id);
+        }}
+      >
+        <div className="workflow-graph-card-head">
+          <span>{node.kind}</span>
+          <strong>{node.title}</strong>
+          {nodeRunProgress ? <em className={`workflow-node-run-pill is-${nodeRunProgress.status}`}>{workflowRunStatusLabel(nodeRunProgress.status)}</em> : null}
+        </div>
+        {nodeMeta}
+        {node.kind === "agent" ? (
+          <div className="workflow-node-runtime">
+            <span className={`runtime-dot ${agentAccent(nodeAgentId)}`} />
+            <span>{runtime.available ? runtimeStatus(runtime) : runtime.error ?? "Unavailable"}</span>
+          </div>
+        ) : null}
+        {nodeRunProgress?.detail ? <div className={`workflow-node-run-detail is-${nodeRunProgress.status}`}>{nodeRunProgress.detail}</div> : null}
+      </article>
+    );
+  }
+
+  function renderWorkflowNodeEditor(node: WorkflowGraphNode): ReactElement {
+    const nodeAgentId = node.agentId ?? "codex";
+    const channelOptions = channels.filter((channel) => channel.agentId === nodeAgentId);
+    const nodeChannelId = channelOptions.some((channel) => channel.id === node.channelId)
+      ? node.channelId!
+      : defaultChannelForAgent(nodeAgentId, channels);
+    const modelOptions = modelsForChannel(nodeAgentId, nodeChannelId, channels);
+    const nodeModelId = modelOptions.some((model) => model.id === node.modelId) ? node.modelId! : DEFAULT_MODEL_ID;
+    const configuredAgentOptions = configuredAgents.filter((configuredAgent) => channels.some((channel) => channel.id === configuredAgent.channelId));
+    const selectedConfiguredAgent =
+      configuredAgentOptions.find((configuredAgent) => configuredAgent.channelId === nodeChannelId) ??
+      configuredAgentOptions.find((configuredAgent) => configuredAgent.runtimeAgentId === nodeAgentId) ??
+      configuredAgentOptions[0];
+    const disabled = running;
+
+    return (
+      <section className="workflow-node-edit-overlay" role="dialog" aria-modal="true" aria-label="Edit workflow node" onClick={() => setEditingWorkflowNodeId(undefined)}>
+        <article className="workflow-node-edit-modal" onClick={(event) => event.stopPropagation()} onContextMenu={(event) => event.stopPropagation()}>
+          <header>
+            <div>
+              <strong>{node.title}</strong>
+              <span>{node.kind === "agent" ? "Agent node" : node.kind === "start" ? "Start node" : "End node"}</span>
+            </div>
+            <button className="icon-btn" type="button" onClick={() => setEditingWorkflowNodeId(undefined)} aria-label="Close workflow node editor">
+              <X size={15} />
+            </button>
+          </header>
+          <label className="workflow-node-edit-field">
+            <span>Title</span>
+            <input aria-label={`Node ${node.id} title`} value={node.title} disabled={disabled} onChange={(event) => onUpdateNode(node.id, { title: event.currentTarget.value })} />
+          </label>
+          {node.kind === "agent" ? (
+            <>
+              <label className="workflow-node-edit-field">
+                <span>Prompt</span>
+                <textarea
+                  aria-label={`Node ${node.id} prompt`}
+                  value={node.prompt}
+                  disabled={disabled}
+                  onChange={(event) => onUpdateNode(node.id, { prompt: event.currentTarget.value })}
+                  rows={8}
+                />
+              </label>
+              <div className="workflow-node-edit-grid">
+                {configuredAgentOptions.length > 0 ? (
+                  <label className="workflow-node-edit-field">
+                    <span>Agent</span>
+                    <select
+                      aria-label={`Node ${node.id} configured agent`}
+                      value={selectedConfiguredAgent?.id ?? ""}
+                      disabled={disabled}
+                      onChange={(event) => {
+                        const selectedAgent = configuredAgentOptions.find((configuredAgent) => configuredAgent.id === event.currentTarget.value);
+                        if (!selectedAgent) return;
+                        onUpdateNode(node.id, {
+                          agentId: selectedAgent.runtimeAgentId,
+                          channelId: selectedAgent.channelId,
+                          modelId: selectedAgent.modelId || DEFAULT_MODEL_ID,
+                        });
+                      }}
+                    >
+                      {configuredAgentOptions.map((configuredAgent) => (
+                        <option key={configuredAgent.id} value={configuredAgent.id}>
+                          {configuredAgent.name || configuredAgent.id}
+                        </option>
+                      ))}
+                    </select>
+                  </label>
+                ) : (
+                  <>
+                    <label className="workflow-node-edit-field">
+                      <span>Runtime</span>
+                      <select
+                        aria-label={`Node ${node.id} runtime`}
+                        value={nodeAgentId}
+                        disabled={disabled}
+                        onChange={(event) => {
+                          const nextAgentId = event.currentTarget.value as AgentId;
+                          onUpdateNode(node.id, {
+                            agentId: nextAgentId,
+                            channelId: defaultChannelForAgent(nextAgentId, channels),
+                            modelId: DEFAULT_MODEL_ID,
+                          });
+                        }}
+                      >
+                        {AGENTS.map((item) => (
+                          <option key={item} value={item}>
+                            {agentLabel(item)}
+                          </option>
+                        ))}
+                      </select>
+                    </label>
+                    <label className="workflow-node-edit-field">
+                      <span>Provider</span>
+                      <select
+                        aria-label={`Node ${node.id} provider`}
+                        value={nodeChannelId}
+                        disabled={disabled}
+                        onChange={(event) => onUpdateNode(node.id, { channelId: event.currentTarget.value, modelId: DEFAULT_MODEL_ID })}
+                      >
+                        {channelOptions.map((channel) => (
+                          <option key={channel.id} value={channel.id}>
+                            {channel.label}
+                          </option>
+                        ))}
+                      </select>
+                    </label>
+                  </>
+                )}
+                <label className="workflow-node-edit-field">
+                  <span>Model</span>
+                  <select
+                    aria-label={`Node ${node.id} model`}
+                    value={nodeModelId}
+                    disabled={disabled}
+                    onChange={(event) => onUpdateNode(node.id, { modelId: event.currentTarget.value })}
+                  >
+                    {modelOptions.map((model) => (
+                      <option key={model.id} value={model.id}>
+                        {model.label}
+                      </option>
+                    ))}
+                  </select>
+                </label>
+              </div>
+            </>
+          ) : null}
+        </article>
+      </section>
+    );
   }
 
   return (
@@ -5540,10 +6056,6 @@ export function WorkflowPage({
           {running && !graphVisible ? (
             <button className="icon-btn danger" onClick={() => onStopGrill()} title="Stop agent">
               <CircleStop size={14} />
-            </button>
-          ) : workflowStarted || graphVisible ? (
-            <button className="icon-btn" onClick={() => void onResetSession()} title={workflowText.newWorkflow} disabled={running}>
-              <Plus size={14} />
             </button>
           ) : null}
           {graphVisible ? (
@@ -5669,162 +6181,12 @@ export function WorkflowPage({
                 <button className="workflow-graph-close icon-btn" onClick={() => setGraphExpanded(false)} title="Close graph board" aria-label="Close workflow graph board">
                   <X size={15} />
                 </button>
+                <WorkflowCanvasBoard graph={graph} expanded renderNodeCard={(node) => renderWorkflowNodeCard(node, false)} />
+                {editingWorkflowNode ? renderWorkflowNodeEditor(editingWorkflowNode) : null}
               </>
-            ) : null}
-            <div
-              className={`workflow-graph-board ${graphExpanded ? "is-expanded" : ""}`}
-              aria-label="Workflow graph board"
-              onClick={expandGraphFromBoardClick}
-            >
-              {displayLayers.map((layer, layerIndex) => (
-                <div className="workflow-graph-layer" key={layer.map((node) => node.id).join(":")}>
-                  {layerIndex > 0 ? <span className="workflow-graph-edge" /> : null}
-                  <div className="workflow-graph-layer-stack">
-                    {layer.map((node) => {
-                      const agentId = node.agentId ?? "codex";
-                      const nodeRunProgress = runProgressByNodeId.get(node.id);
-                      const channelOptions = channels.filter((channel) => channel.agentId === agentId);
-                      const channelId = channelOptions.some((channel) => channel.id === node.channelId)
-                        ? node.channelId!
-                        : defaultChannelForAgent(agentId, channels);
-                      const modelOptions = modelsForChannel(agentId, channelId, channels);
-                      const modelId = modelOptions.some((model) => model.id === node.modelId) ? node.modelId! : DEFAULT_MODEL_ID;
-                      const runtime = runtimeMap.get(agentId) ?? fallbackRuntime(agentId);
-                      const configuredAgentOptions = configuredAgents.filter((agent) => channels.some((channel) => channel.id === agent.channelId));
-                      const selectedConfiguredAgent =
-                        configuredAgentOptions.find((agent) => agent.channelId === channelId) ??
-                        configuredAgentOptions.find((agent) => agent.runtimeAgentId === agentId) ??
-                        configuredAgentOptions[0];
-                      const nodeEditingDisabled = running;
-                      return (
-                        <article className={`workflow-graph-card is-${node.kind} ${nodeRunProgress ? `run-${nodeRunProgress.status}` : ""}`} key={node.id}>
-                          <div className="workflow-graph-card-head">
-                            <span>{node.kind}</span>
-                            <strong>{node.title}</strong>
-                            {nodeRunProgress ? (
-                              <em className={`workflow-node-run-pill is-${nodeRunProgress.status}`}>{workflowRunStatusLabel(nodeRunProgress.status)}</em>
-                            ) : null}
-                          </div>
-                          <input
-                            aria-label={`Node ${node.id} title`}
-                            value={node.title}
-                            disabled={nodeEditingDisabled}
-                            onChange={(event) => onUpdateNode(node.id, { title: event.currentTarget.value })}
-                          />
-                          {node.kind === "agent" ? (
-                            <>
-                              <p className="workflow-node-prompt-preview">{node.prompt}</p>
-                              <div className="workflow-node-meta-row">
-                                <span>{selectedConfiguredAgent?.name || agentLabel(agentId)}</span>
-                                <span>{modelOptions.find((model) => model.id === modelId)?.label ?? modelId}</span>
-                              </div>
-                              <textarea
-                                aria-label={`Node ${node.id} prompt`}
-                                value={node.prompt}
-                                disabled={nodeEditingDisabled}
-                                onChange={(event) => onUpdateNode(node.id, { prompt: event.currentTarget.value })}
-                                rows={4}
-                              />
-                              <div className="workflow-node-config-grid">
-                                {configuredAgentOptions.length > 0 ? (
-                                  <label>
-                                    <span>Agent</span>
-                                    <select
-                                      aria-label={`Node ${node.id} configured agent`}
-                                      value={selectedConfiguredAgent?.id ?? ""}
-                                      disabled={nodeEditingDisabled}
-                                      onChange={(event) => {
-                                        const selectedAgent = configuredAgentOptions.find((agent) => agent.id === event.currentTarget.value);
-                                        if (!selectedAgent) return;
-                                        onUpdateNode(node.id, {
-                                          agentId: selectedAgent.runtimeAgentId,
-                                          channelId: selectedAgent.channelId,
-                                          modelId: selectedAgent.modelId || DEFAULT_MODEL_ID,
-                                        });
-                                      }}
-                                    >
-                                      {configuredAgentOptions.map((agent) => (
-                                        <option key={agent.id} value={agent.id}>
-                                          {agent.name || agent.id}
-                                        </option>
-                                      ))}
-                                    </select>
-                                  </label>
-                                ) : (
-                                  <>
-                                    <label>
-                                      <span>Runtime</span>
-                                      <select
-                                        aria-label={`Node ${node.id} runtime`}
-                                        value={agentId}
-                                        disabled={nodeEditingDisabled}
-                                        onChange={(event) => {
-                                          const nextAgentId = event.currentTarget.value as AgentId;
-                                          onUpdateNode(node.id, {
-                                            agentId: nextAgentId,
-                                            channelId: defaultChannelForAgent(nextAgentId, channels),
-                                            modelId: DEFAULT_MODEL_ID,
-                                          });
-                                        }}
-                                      >
-                                        {AGENTS.map((item) => (
-                                          <option key={item} value={item}>
-                                            {agentLabel(item)}
-                                          </option>
-                                        ))}
-                                      </select>
-                                    </label>
-                                    <label>
-                                      <span>Provider</span>
-                                      <select
-                                        aria-label={`Node ${node.id} provider`}
-                                        value={channelId}
-                                        disabled={nodeEditingDisabled}
-                                        onChange={(event) => onUpdateNode(node.id, { channelId: event.currentTarget.value, modelId: DEFAULT_MODEL_ID })}
-                                      >
-                                        {channelOptions.map((channel) => (
-                                          <option key={channel.id} value={channel.id}>
-                                            {channel.label}
-                                          </option>
-                                        ))}
-                                      </select>
-                                    </label>
-                                  </>
-                                )}
-                                <label>
-                                  <span>Model</span>
-                                  <select
-                                    aria-label={`Node ${node.id} model`}
-                                    value={modelId}
-                                    disabled={nodeEditingDisabled}
-                                    onChange={(event) => onUpdateNode(node.id, { modelId: event.currentTarget.value })}
-                                  >
-                                    {modelOptions.map((model) => (
-                                      <option key={model.id} value={model.id}>
-                                        {model.label}
-                                      </option>
-                                    ))}
-                                  </select>
-                                </label>
-                              </div>
-                              <div className="workflow-node-runtime">
-                                <span className={`runtime-dot ${agentAccent(agentId)}`} />
-                                <span>{runtime.available ? runtimeStatus(runtime) : runtime.error ?? "Unavailable"}</span>
-                              </div>
-                              {nodeRunProgress?.detail ? (
-                                <div className={`workflow-node-run-detail is-${nodeRunProgress.status}`}>{nodeRunProgress.detail}</div>
-                              ) : null}
-                            </>
-                          ) : (
-                            <p>{node.kind === "start" ? workflowText.entryNode : workflowText.terminalNode}</p>
-                          )}
-                        </article>
-                      );
-                    })}
-                  </div>
-                </div>
-              ))}
-            </div>
+            ) : (
+              <WorkflowCanvasBoard graph={graph} runProgressByNodeId={runProgressByNodeId} onExpand={() => setGraphExpanded(true)} renderNodeCard={(node) => renderWorkflowNodeCard(node, true)} />
+            )}
           </section>
         ) : null}
       </section>
@@ -5909,6 +6271,190 @@ export function WorkflowPage({
   );
 }
 
+type WorkflowFlowNodeData = {
+  graphNode: WorkflowGraphNode;
+  layerSize: number;
+  runProgress?: WorkflowRunProgressItem;
+  renderNodeCard: (node: WorkflowGraphNode) => ReactElement;
+};
+
+type WorkflowFlowNode = ReactFlowNode<WorkflowFlowNodeData, "workflowNode">;
+type WorkflowFlowEdge = ReactFlowEdge<Record<string, never>, "smoothstep">;
+
+const workflowFlowNodeTypes = {
+  workflowNode: WorkflowFlowNodeCard,
+};
+
+function WorkflowFlowNodeCard({ data }: ReactFlowNodeProps<WorkflowFlowNode>) {
+  const { graphNode, layerSize, renderNodeCard, runProgress } = data;
+  return (
+    <div
+      className={`workflow-canvas-node nodrag nopan nowheel is-${graphNode.kind} ${runProgress ? `run-${runProgress.status}` : ""}`}
+      data-layer-size={layerSize}
+    >
+      <Handle type="target" position={Position.Left} className="workflow-canvas-handle" isConnectable={false} />
+      {renderNodeCard(graphNode)}
+      <Handle type="source" position={Position.Right} className="workflow-canvas-handle" isConnectable={false} />
+    </div>
+  );
+}
+
+function workflowReactFlowElements({
+  graph,
+  runProgressByNodeId,
+  renderNodeCard,
+  variant,
+}: {
+  graph: WorkflowGraph;
+  runProgressByNodeId: Map<string, WorkflowRunProgressItem>;
+  renderNodeCard: (node: WorkflowGraphNode) => ReactElement;
+  variant: WorkflowCanvasLayoutVariant;
+}): { nodes: WorkflowFlowNode[]; edges: WorkflowFlowEdge[] } {
+  const layout = workflowCanvasLayout(graph, variant);
+  const nodes: WorkflowFlowNode[] = layout.nodes.map((layoutNode) => {
+    const runProgress = runProgressByNodeId.get(layoutNode.node.id);
+    return {
+      id: layoutNode.node.id,
+      type: "workflowNode",
+      position: { x: layoutNode.x, y: layoutNode.y },
+      sourcePosition: Position.Right,
+      targetPosition: Position.Left,
+      data: {
+        graphNode: layoutNode.node,
+        layerSize: layoutNode.layerSize,
+        renderNodeCard,
+        ...(runProgress ? { runProgress } : {}),
+      },
+      draggable: true,
+      selectable: false,
+      style: {
+        width: layoutNode.width,
+        minHeight: layoutNode.height,
+      },
+    };
+  });
+  const edges: WorkflowFlowEdge[] = layout.edges.map(({ edge }) => ({
+    id: edge.id,
+    type: "smoothstep",
+    source: edge.fromNodeId,
+    target: edge.toNodeId,
+    animated: Boolean(runProgressByNodeId.get(edge.fromNodeId)?.status === "running" || runProgressByNodeId.get(edge.toNodeId)?.status === "running"),
+    selectable: false,
+    data: {},
+    markerEnd: {
+      type: MarkerType.ArrowClosed,
+      width: 16,
+      height: 16,
+    },
+    style: {
+      strokeWidth: 1.8,
+    },
+  }));
+  return { nodes, edges };
+}
+
+function workflowMiniMapNodeColor(node: WorkflowFlowNode): string {
+  const graphNode = node.data.graphNode;
+  const runProgress = node.data.runProgress;
+  if (runProgress?.status === "failed") return "var(--danger)";
+  if (runProgress?.status === "completed") return "var(--ok)";
+  if (runProgress?.status === "running") return "var(--accent)";
+  if (graphNode.kind === "start") return "var(--ok)";
+  if (graphNode.kind === "end") return "var(--muted)";
+  return "var(--accent)";
+}
+
+function WorkflowCanvasBoard({
+  graph,
+  expanded = false,
+  runProgressByNodeId = new Map<string, WorkflowRunProgressItem>(),
+  onExpand,
+  renderNodeCard,
+  className = "",
+}: {
+  graph: WorkflowGraph;
+  expanded?: boolean;
+  runProgressByNodeId?: Map<string, WorkflowRunProgressItem>;
+  onExpand?: () => void;
+  renderNodeCard: (node: WorkflowGraphNode) => ReactElement;
+  className?: string;
+}) {
+  const { nodes, edges } = useMemo(
+    () => workflowReactFlowElements({ graph, runProgressByNodeId, renderNodeCard, variant: expanded ? "expanded" : "preview" }),
+    [expanded, graph, renderNodeCard, runProgressByNodeId],
+  );
+  const fitViewOptions = useMemo(
+    () => ({
+      padding: expanded ? 0.16 : 0.04,
+      minZoom: expanded ? 0.24 : 0.36,
+      maxZoom: expanded ? 1.05 : 1.22,
+    }),
+    [expanded],
+  );
+
+  const board = (
+    <div
+      className={`workflow-canvas-board workflow-graph-board ${className} ${expanded ? "is-expanded" : ""}`}
+      aria-label="Workflow graph board"
+      onDoubleClick={() => onExpand?.()}
+    >
+      <div className="workflow-canvas-viewport">
+        <ReactFlow<WorkflowFlowNode, WorkflowFlowEdge>
+          className="workflow-react-flow-board"
+          nodes={nodes}
+          edges={edges}
+          nodeTypes={workflowFlowNodeTypes}
+          fitView
+          fitViewOptions={fitViewOptions}
+          minZoom={expanded ? 0.18 : 0.32}
+          maxZoom={expanded ? 1.35 : 1.28}
+          panOnDrag
+          panOnScroll
+          zoomOnScroll={expanded}
+          zoomOnPinch
+          zoomOnDoubleClick={false}
+          nodesConnectable={false}
+          nodesFocusable={false}
+          edgesFocusable={false}
+          elementsSelectable={false}
+          preventScrolling={expanded}
+          proOptions={{ hideAttribution: true }}
+          defaultEdgeOptions={{
+            type: "smoothstep",
+            markerEnd: {
+              type: MarkerType.ArrowClosed,
+              width: 16,
+              height: 16,
+            },
+          }}
+        >
+          <Background gap={18} size={1.25} color="var(--workflow-canvas-dot)" />
+          <Controls className="workflow-canvas-controls" position="bottom-left" fitViewOptions={fitViewOptions} showInteractive={false} />
+          {expanded ? (
+            <MiniMap
+              className="workflow-canvas-minimap"
+              position="bottom-right"
+              pannable
+              zoomable
+              nodeColor={workflowMiniMapNodeColor}
+              nodeBorderRadius={8}
+              bgColor="var(--panel)"
+              maskColor="color-mix(in srgb, var(--panel) 42%, transparent)"
+            />
+          ) : null}
+        </ReactFlow>
+      </div>
+    </div>
+  );
+
+  if (expanded || !onExpand) return board;
+  return (
+    <div className="workflow-canvas-preview-trigger" role="button" tabIndex={0} aria-label="Expand workflow graph board" onClick={() => onExpand?.()}>
+      {board}
+    </div>
+  );
+}
+
 interface ConfigPageProps {
   language?: Language;
   channels: AgentChannel[];
@@ -5964,13 +6510,13 @@ export function SkillsPage({
   const title = text.skillLibrary;
   const description =
     language === "zh"
-      ? `${templates.length} 个内置技能，随应用开箱即用，也可搜索 GitHub 上的公开 Skills`
-      : `${templates.length} bundled skills, ready to use, plus online GitHub skill search`;
+      ? `${templates.length} 个内置技能，随应用开箱即用，也可搜索 skills.sh 上的公开 Skills`
+      : `${templates.length} bundled skills, ready to use, plus skills.sh search`;
   const onlineTitle = language === "zh" ? "搜索网上 Skills" : "Search online skills";
   const onlineDescription =
     language === "zh"
-      ? "从公开 GitHub skill 仓库读取 SKILL.md 元数据。第三方 skill 只当作未审查内容展示。"
-      : "Read SKILL.md metadata from public GitHub skill repositories. Treat third-party skills as untrusted content.";
+      ? "默认使用 skills.sh find API 读取公开 skill 元数据。第三方 skill 只当作未审查内容展示。"
+      : "Read public skill metadata from the skills.sh find API by default. Treat third-party skills as untrusted content.";
   const localTitle = language === "zh" ? "内置技能" : "Bundled skills";
   const searchPlaceholder = language === "zh" ? "搜索 code review、testing、pdf、docs..." : "Search code review, testing, pdf, docs...";
   const searchButton = language === "zh" ? "搜索" : "Search";
@@ -5980,14 +6526,24 @@ export function SkillsPage({
   const localInstall = language === "zh" ? "本地安装" : "Local install";
   const installLinks = language === "zh" ? "安装/更新链接" : "Install/update links";
   const removeLinks = language === "zh" ? "删除本地链接" : "Remove local links";
+  const searchDialogTitle = language === "zh" ? "搜索网上 Skills" : "Search online skills";
+  const searchDialogDescription =
+    language === "zh"
+      ? "搜索结果只在这里展示。预览不会安装到本地；关闭弹窗即不安装。"
+      : "Results stay in this dialog. Previewing does not install locally; close the dialog to skip.";
+  const previewWithoutInstall = language === "zh" ? "预览，不安装" : "Preview, do not install";
   const translateToZh = language === "zh" ? "查看中文" : "View Chinese";
   const showOriginal = language === "zh" ? "查看原文" : "Show original";
   const sourceTitle = language === "zh" ? "出处" : "Source";
+  const repositoryTitle = language === "zh" ? "仓库" : "Repository";
+  const installCommandTitle = language === "zh" ? "安装命令" : "Install";
   const [query, setQuery] = useState("");
   const [onlineResults, setOnlineResults] = useState<OnlineSkillResult[]>([]);
   const [onlineStatus, setOnlineStatus] = useState("");
   const [onlineSearching, setOnlineSearching] = useState(false);
   const [selectedSkillKey, setSelectedSkillKey] = useState<string | undefined>();
+  const [selectedOnlineSkillKey, setSelectedOnlineSkillKey] = useState<string | undefined>();
+  const [searchDialogOpen, setSearchDialogOpen] = useState(false);
   const [installingTarget, setInstallingTarget] = useState<SkillInstallTarget | undefined>();
   const [installAction, setInstallAction] = useState<"install" | "uninstall" | undefined>();
   const [installDialogOpen, setInstallDialogOpen] = useState(false);
@@ -6004,25 +6560,44 @@ export function SkillsPage({
     () => onlineResults.map((skill) => ({ ...skill, itemKey: `online:${skill.id}`, kind: "online" as const })),
     [onlineResults],
   );
-  const skillItems = useMemo(() => [...localSkillItems, ...onlineSkillItems], [localSkillItems, onlineSkillItems]);
-  const selectedSkill = skillItems.find((skill) => skill.itemKey === selectedSkillKey) ?? skillItems[0];
+  const selectedOnlineSkill = onlineSkillItems.find((skill) => skill.itemKey === selectedOnlineSkillKey);
+  const selectedSkill = selectedOnlineSkill ?? localSkillItems.find((skill) => skill.itemKey === selectedSkillKey) ?? localSkillItems[0];
   const selectedSkillSourceUrl = selectedSkill ? (selectedSkill.kind === "online" ? selectedSkill.url : selectedSkill.sourceUrl) : undefined;
   const selectedSkillSourcePath = selectedSkill ? (selectedSkill.kind === "online" ? selectedSkill.path : selectedSkill.sourcePath) : undefined;
+  const selectedSkillRepositoryUrl = selectedSkill?.kind === "online" ? selectedSkill.repositoryUrl : undefined;
+  const selectedSkillInstallCommand = selectedSkill?.kind === "online" ? selectedSkill.installCommand : undefined;
+  const selectedSkillContentLabel = selectedSkill?.kind === "online" ? (selectedSkill.contentLabel ?? "SKILL.md") : "SKILL.md";
+
+  async function searchOnlineSkills(query: string): Promise<OnlineSkillResult[]> {
+    const api = window.multiAgentChat as typeof window.multiAgentChat & {
+      searchOnlineSkills?: (query: string) => Promise<OnlineSkillResult[]>;
+    };
+    return api.searchOnlineSkills ? api.searchOnlineSkills(query) : fetchOnlineSkills(query);
+  }
 
   async function runOnlineSearch(): Promise<void> {
     setOnlineSearching(true);
     setOnlineStatus(searchingText);
     try {
-      const results = await fetchOnlineSkills(query);
+      const results = await searchOnlineSkills(query);
       setOnlineResults(results);
       setOnlineStatus(results.length === 0 ? noOnlineResults : `${results.length} skills`);
-      if (results.length > 0) setSelectedSkillKey(`online:${results[0]!.id}`);
     } catch (error) {
       setOnlineStatus(error instanceof Error ? error.message : String(error));
       setOnlineResults([]);
     } finally {
       setOnlineSearching(false);
     }
+  }
+
+  function previewOnlineSkill(skill: (typeof onlineSkillItems)[number]): void {
+    setSelectedOnlineSkillKey(skill.itemKey);
+    setSelectedSkillKey(undefined);
+    setInstallStatus("");
+    setInstallStatusTone(undefined);
+    setTranslationStatus("");
+    setShowTranslatedSkill(false);
+    setSearchDialogOpen(false);
   }
 
   function toggleInstallTarget(target: SkillInstallTarget): void {
@@ -6090,6 +6665,10 @@ export function SkillsPage({
           <h2>{title}</h2>
           <p>{description}</p>
         </div>
+        <button className="control-btn compact" type="button" onClick={() => setSearchDialogOpen(true)}>
+          <Search size={13} />
+          <span>{onlineTitle}</span>
+        </button>
       </header>
 
       <div className="skills-browser">
@@ -6099,23 +6678,8 @@ export function SkillsPage({
               <h3>{localTitle}</h3>
               <p>{onlineDescription}</p>
             </div>
-            <span>{skillItems.length}</span>
+            <span>{localSkillItems.length}</span>
           </div>
-          <div className="online-skill-sources" aria-label="Online skill sources">
-            {ONLINE_SKILL_SOURCES.map((source) => (
-              <a key={source.id} href={source.homepage ?? onlineSkillTreeUrl(source)} target="_blank" rel="noreferrer">
-                {source.label}
-              </a>
-            ))}
-          </div>
-          <div className="online-skills-search">
-            <Search size={14} />
-            <input value={query} placeholder={searchPlaceholder} onChange={(event) => setQuery(event.currentTarget.value)} aria-label={onlineTitle} />
-            <button className="control-btn compact" type="button" onClick={() => void runOnlineSearch()} disabled={onlineSearching}>
-              <span>{onlineSearching ? searchingText : searchButton}</span>
-            </button>
-          </div>
-          {onlineStatus ? <div className="online-skills-status">{onlineStatus}</div> : null}
           <div className="skill-list-scroll" aria-label="Skill list">
             {localSkillItems.length === 0 ? (
               <div className="empty-state config-empty">{text.noSkills}</div>
@@ -6129,6 +6693,7 @@ export function SkillsPage({
                     type="button"
                     onClick={() => {
                       setSelectedSkillKey(skill.itemKey);
+                      setSelectedOnlineSkillKey(undefined);
                       setInstallStatus("");
                       setInstallStatusTone(undefined);
                       setTranslationStatus("");
@@ -6142,29 +6707,6 @@ export function SkillsPage({
                 ))}
               </div>
             )}
-            {onlineSkillItems.length > 0 ? (
-              <div className="skill-list-group">
-                <span>{onlineTitle}</span>
-                {onlineSkillItems.map((skill) => (
-                  <button
-                    key={skill.itemKey}
-                    className={`skill-list-item ${selectedSkill?.itemKey === skill.itemKey ? "is-active" : ""}`}
-                    type="button"
-                    onClick={() => {
-                      setSelectedSkillKey(skill.itemKey);
-                      setInstallStatus("");
-                      setInstallStatusTone(undefined);
-                      setTranslationStatus("");
-                      setShowTranslatedSkill(false);
-                    }}
-                  >
-                    <strong>{skillDisplayName(skill)}</strong>
-                    <small>{skillDisplayDescription(skill)}</small>
-                    <span>{skill.sourceLabel}</span>
-                  </button>
-                ))}
-              </div>
-            ) : null}
           </div>
         </aside>
 
@@ -6193,11 +6735,17 @@ export function SkillsPage({
                       {sourceUrlLabel(selectedSkillSourceUrl)}
                     </a>
                   ) : null}
+                  {selectedSkillRepositoryUrl ? (
+                    <a className="skill-source-pill link" href={selectedSkillRepositoryUrl} target="_blank" rel="noreferrer">
+                      {repositoryTitle}: {sourceUrlLabel(selectedSkillRepositoryUrl)}
+                    </a>
+                  ) : null}
+                  {selectedSkillInstallCommand ? <span className="skill-source-pill muted">{installCommandTitle}: {selectedSkillInstallCommand}</span> : null}
                   {!selectedSkillSourcePath && !selectedSkillSourceUrl ? <span className="skill-source-pill muted">{localTitle}</span> : null}
                 </div>
               </div>
               <div className="skill-detail-body-head">
-                <span>SKILL.md</span>
+                <span>{selectedSkillContentLabel}</span>
                 <div>
                   <button
                     className="control-btn compact secondary"
@@ -6274,22 +6822,482 @@ export function SkillsPage({
           )}
         </section>
       </div>
+      {searchDialogOpen ? (
+        <div className="skill-install-modal-backdrop skill-search-modal-backdrop" role="presentation" onClick={() => setSearchDialogOpen(false)}>
+          <section className="skill-search-modal" role="dialog" aria-modal="true" aria-label={searchDialogTitle} onClick={(event) => event.stopPropagation()}>
+            <header className="skill-search-modal-head">
+              <div>
+                <strong>{searchDialogTitle}</strong>
+                <span>{searchDialogDescription}</span>
+              </div>
+              <button className="icon-btn" type="button" onClick={() => setSearchDialogOpen(false)} aria-label="Close">
+                <X size={14} />
+              </button>
+            </header>
+            <div className="online-skill-sources" aria-label="Online skill sources">
+              <a href={SKILLS_SH_SOURCE.homepage} target="_blank" rel="noreferrer">
+                {SKILLS_SH_SOURCE.label}
+              </a>
+            </div>
+            <div className="online-skills-search">
+              <Search size={14} />
+              <input
+                value={query}
+                placeholder={searchPlaceholder}
+                onChange={(event) => setQuery(event.currentTarget.value)}
+                onKeyDown={(event) => {
+                  if (event.key === "Enter") void runOnlineSearch();
+                }}
+                aria-label={onlineTitle}
+                autoFocus
+              />
+              <button className="control-btn compact" type="button" onClick={() => void runOnlineSearch()} disabled={onlineSearching}>
+                <span>{onlineSearching ? searchingText : searchButton}</span>
+              </button>
+            </div>
+            {onlineStatus ? <div className="online-skills-status">{onlineStatus}</div> : null}
+            <div className="skill-search-results" aria-label="Online skill search results">
+              {onlineSkillItems.length === 0 ? (
+                <div className="empty-state config-empty">{onlineSearching ? searchingText : noOnlineResults}</div>
+              ) : (
+                onlineSkillItems.map((skill) => (
+                  <article key={skill.itemKey} className="skill-search-result">
+                    <div>
+                      <strong>{skillDisplayName(skill)}</strong>
+                      <small>{skillDisplayDescription(skill)}</small>
+                      <span>{skill.installCommand ? `${skill.sourceLabel} · ${skill.installCommand}` : skill.sourceLabel}</span>
+                    </div>
+                    <div className="skill-search-result-actions">
+                      {skill.url ? (
+                        <a href={skill.url} target="_blank" rel="noreferrer">
+                          {openSource}
+                        </a>
+                      ) : null}
+                      <button className="control-btn compact" type="button" onClick={() => previewOnlineSkill(skill)}>
+                        <span>{previewWithoutInstall}</span>
+                      </button>
+                    </div>
+                  </article>
+                ))
+              )}
+            </div>
+          </section>
+        </div>
+      ) : null}
     </section>
+  );
+}
+
+export interface ScheduledWorkflowDraft {
+  workflowId: string;
+  title: string;
+  intervalSeconds: number;
+  frequency: ScheduledWorkflowFrequency;
+  timeOfDay: string;
+  timezone: string;
+  weekdays: number[];
+  dayOfMonth: number;
+  enabled: boolean;
+}
+
+interface ScheduledWorkflowPageProps {
+  language?: Language;
+  mode?: "detail" | "create";
+  workflows: WorkflowDraftState[];
+  store: ScheduledWorkflowStoreState;
+  draft: ScheduledWorkflowDraft;
+  onDraftChange: (draft: ScheduledWorkflowDraft) => void;
+  onConnectRunner: () => MaybePromise;
+  onDisconnectRunner: () => MaybePromise;
+  onRefreshSchedules: () => MaybePromise;
+  onCreateSchedule: () => MaybePromise;
+  onUpdateSchedule: (
+    schedule: ScheduledWorkflowSchedule,
+    update: Partial<Pick<ScheduledWorkflowSchedule, "enabled" | "title" | "intervalSeconds" | "frequency" | "timeOfDay" | "timezone" | "weekdays" | "dayOfMonth">>,
+  ) => MaybePromise;
+  onDeleteSchedule: (scheduleId: string) => MaybePromise;
+  onTriggerSchedule: (scheduleId: string) => MaybePromise;
+}
+
+export function ScheduledWorkflowPage({
+  language = "en",
+  mode = "detail",
+  workflows,
+  store,
+  draft,
+  onDraftChange,
+  onConnectRunner,
+  onDisconnectRunner,
+  onRefreshSchedules,
+  onCreateSchedule,
+  onUpdateSchedule,
+  onDeleteSchedule,
+  onTriggerSchedule,
+}: ScheduledWorkflowPageProps) {
+  const zh = language === "zh";
+  const draftWorkflow = workflows.find((workflow) => workflow.workflowId === draft.workflowId) ?? workflows[0];
+  const selectedSchedule = mode === "detail" ? (store.schedules.find((schedule) => schedule.scheduleId === store.activeScheduleId) ?? store.schedules[0]) : undefined;
+  const selectedScheduleWorkflow = selectedSchedule ? workflows.find((workflow) => workflow.workflowId === selectedSchedule.workflowId) : undefined;
+  const [scheduleEditDraft, setScheduleEditDraft] = useState(() => ({
+    scheduleId: selectedSchedule?.scheduleId ?? "",
+    frequency: selectedSchedule?.frequency ?? "daily",
+    timeOfDay: normalizeScheduleTimeOfDay(selectedSchedule?.timeOfDay),
+    weekdays: normalizeScheduleWeekdays(selectedSchedule?.weekdays),
+    dayOfMonth: normalizeScheduleDayOfMonth(selectedSchedule?.dayOfMonth),
+  }));
+  const runnerConnected = store.runnerStatus.connected;
+  const runnerStatusText = store.runnerStatus.connecting
+    ? zh ? "本机连接中" : "Local app connecting"
+    : runnerConnected
+      ? zh ? "本机已连接" : "Local app connected"
+      : zh ? "本机未连接" : "Local app disconnected";
+  const runnerDetail = runnerConnected
+    ? zh ? "定时任务到期后会在这台电脑上执行。" : "Due schedules will run on this computer."
+    : zh ? "连接后会自动注册本机，并接收云端定时事件。" : "Connect to register this computer and receive cloud schedule events.";
+  const sortedRuns = store.runs.slice().sort((left, right) => right.startedAt - left.startedAt);
+
+  useEffect(() => {
+    setScheduleEditDraft({
+      scheduleId: selectedSchedule?.scheduleId ?? "",
+      frequency: selectedSchedule?.frequency ?? "daily",
+      timeOfDay: normalizeScheduleTimeOfDay(selectedSchedule?.timeOfDay),
+      weekdays: normalizeScheduleWeekdays(selectedSchedule?.weekdays),
+      dayOfMonth: normalizeScheduleDayOfMonth(selectedSchedule?.dayOfMonth),
+    });
+  }, [selectedSchedule?.dayOfMonth, selectedSchedule?.frequency, selectedSchedule?.scheduleId, selectedSchedule?.timeOfDay, selectedSchedule?.weekdays]);
+
+  const scheduleEditDirty = Boolean(
+    selectedSchedule &&
+      (scheduleEditDraft.frequency !== selectedSchedule.frequency ||
+        scheduleEditDraft.timeOfDay !== normalizeScheduleTimeOfDay(selectedSchedule.timeOfDay) ||
+        scheduleEditDraft.dayOfMonth !== normalizeScheduleDayOfMonth(selectedSchedule.dayOfMonth) ||
+        normalizeScheduleWeekdays(scheduleEditDraft.weekdays).join(",") !== normalizeScheduleWeekdays(selectedSchedule.weekdays).join(",")),
+  );
+
+  function applyScheduleEdit(): void {
+    if (!selectedSchedule) return;
+    void onUpdateSchedule(selectedSchedule, {
+      frequency: scheduleEditDraft.frequency,
+      intervalSeconds: intervalSecondsForFrequency(scheduleEditDraft.frequency),
+      timeOfDay: normalizeScheduleTimeOfDay(scheduleEditDraft.timeOfDay),
+      ...(scheduleEditDraft.frequency === "weekly" ? { weekdays: normalizeScheduleWeekdays(scheduleEditDraft.weekdays) } : {}),
+      ...(scheduleEditDraft.frequency === "monthly" ? { dayOfMonth: normalizeScheduleDayOfMonth(scheduleEditDraft.dayOfMonth) } : {}),
+    });
+  }
+
+  const createForm = (
+    <section className="scheduled-panel scheduled-create-panel scheduled-workflow-detail-panel" aria-label={zh ? "新增定时任务" : "Create scheduled task"}>
+      <div className="scheduled-panel-head">
+        <h3>{zh ? "新增定时任务" : "New schedule"}</h3>
+        <p>{draftWorkflow?.title ?? (zh ? "先在 Workflow 页配置好流程" : "Create and save a workflow first")}</p>
+      </div>
+      <label className="scheduled-field">
+        <span>{zh ? "运行 Workflow" : "Workflow to run"}</span>
+        <select
+          value={draft.workflowId}
+          onChange={(event) => onDraftChange({ ...draft, workflowId: event.currentTarget.value })}
+          disabled={workflows.length === 0}
+        >
+          {workflows.length === 0 ? <option value="">{zh ? "暂无 Workflow" : "No workflows"}</option> : null}
+          {workflows.map((workflow) => (
+            <option key={workflow.workflowId} value={workflow.workflowId}>
+              {workflow.title}
+            </option>
+          ))}
+        </select>
+      </label>
+      <label className="scheduled-field">
+        <span>{zh ? "标题" : "Title"}</span>
+        <input value={draft.title} onChange={(event) => onDraftChange({ ...draft, title: event.currentTarget.value })} />
+      </label>
+      <div className="scheduled-field-row">
+        <label className="scheduled-field">
+          <span>{zh ? "周期" : "Frequency"}</span>
+          <select
+            value={draft.frequency}
+            onChange={(event) => {
+              const frequency = event.currentTarget.value as ScheduledWorkflowFrequency;
+              onDraftChange({ ...draft, frequency, intervalSeconds: intervalSecondsForFrequency(frequency) });
+            }}
+          >
+            <option value="daily">{zh ? "每天" : "Daily"}</option>
+            <option value="weekly">{zh ? "每周" : "Weekly"}</option>
+            <option value="monthly">{zh ? "每月" : "Monthly"}</option>
+          </select>
+        </label>
+        <label className="scheduled-field">
+          <span>{zh ? "执行时间" : "Run time"}</span>
+          <input
+            type="time"
+            value={normalizeScheduleTimeOfDay(draft.timeOfDay)}
+            onChange={(event) => onDraftChange({ ...draft, timeOfDay: normalizeScheduleTimeOfDay(event.currentTarget.value) })}
+          />
+        </label>
+      </div>
+      {draft.frequency === "weekly" ? (
+        <div className="scheduled-weekday-picker" aria-label={zh ? "选择星期" : "Choose weekdays"}>
+          {WEEKDAY_OPTIONS.map((day) => {
+            const active = normalizeScheduleWeekdays(draft.weekdays).includes(day.value);
+            return (
+              <button
+                key={day.value}
+                className={`control-btn compact ${active ? "is-active" : ""}`}
+                type="button"
+                onClick={() => {
+                  const current = normalizeScheduleWeekdays(draft.weekdays);
+                  const nextDays = active ? current.filter((item) => item !== day.value) : [...current, day.value];
+                  onDraftChange({ ...draft, weekdays: normalizeScheduleWeekdays(nextDays) });
+                }}
+              >
+                <span>{zh ? day.zh : day.en}</span>
+              </button>
+            );
+          })}
+        </div>
+      ) : null}
+      {draft.frequency === "monthly" ? (
+        <label className="scheduled-field">
+          <span>{zh ? "每月几号" : "Day of month"}</span>
+          <input
+            type="number"
+            min={1}
+            max={31}
+            value={normalizeScheduleDayOfMonth(draft.dayOfMonth)}
+            onChange={(event) => onDraftChange({ ...draft, dayOfMonth: normalizeScheduleDayOfMonth(Number(event.currentTarget.value)) })}
+          />
+        </label>
+      ) : null}
+      <label className="settings-toggle-row scheduled-toggle-row">
+        <input
+          type="checkbox"
+          checked={draft.enabled}
+          onChange={(event) => onDraftChange({ ...draft, enabled: event.currentTarget.checked })}
+        />
+        <span>
+          <strong>{zh ? "云端到点触发" : "Trigger on schedule"}</strong>
+          <small>{zh ? "开启后服务器到点会通知本机执行；关闭后只保存计划，不触发。" : "When enabled, the server notifies this computer when due; disabled schedules are saved but do not trigger."}</small>
+        </span>
+      </label>
+      <button className="send-btn compact" type="button" disabled={!draft.workflowId || workflows.length === 0} onClick={() => void onCreateSchedule()}>
+        <Plus size={13} />
+        <span>{zh ? "创建定时任务" : "Create schedule"}</span>
+      </button>
+    </section>
+  );
+  const scheduleEditor = selectedSchedule ? (
+    <section className="scheduled-panel scheduled-time-panel" aria-label={zh ? "编辑定时任务时间" : "Edit schedule time"}>
+      <div className="scheduled-panel-head">
+        <h3>{zh ? "计划时间" : "Schedule time"}</h3>
+        <p>{formatScheduleRecurrence(selectedSchedule, language)}</p>
+      </div>
+      <label className="scheduled-field">
+        <span>{zh ? "周期" : "Frequency"}</span>
+        <select
+          value={scheduleEditDraft.frequency}
+          onChange={(event) => {
+            const frequency = event.currentTarget.value as ScheduledWorkflowFrequency;
+            setScheduleEditDraft((current) => ({ ...current, frequency }));
+          }}
+        >
+          <option value="daily">{zh ? "每天" : "Daily"}</option>
+          <option value="weekly">{zh ? "每周" : "Weekly"}</option>
+          <option value="monthly">{zh ? "每月" : "Monthly"}</option>
+        </select>
+      </label>
+      <label className="scheduled-field">
+        <span>{zh ? "执行时间" : "Run time"}</span>
+        <input
+          type="time"
+          value={normalizeScheduleTimeOfDay(scheduleEditDraft.timeOfDay)}
+          onChange={(event) => setScheduleEditDraft((current) => ({ ...current, timeOfDay: normalizeScheduleTimeOfDay(event.currentTarget.value) }))}
+        />
+      </label>
+      {scheduleEditDraft.frequency === "weekly" ? (
+        <div className="scheduled-field" aria-label={zh ? "选择星期" : "Choose weekdays"}>
+          <span>{zh ? "星期" : "Weekdays"}</span>
+          <div className="scheduled-weekday-checks">
+            {WEEKDAY_OPTIONS.map((day) => {
+              const active = normalizeScheduleWeekdays(scheduleEditDraft.weekdays).includes(day.value);
+              return (
+                <label key={day.value}>
+                  <input
+                    type="checkbox"
+                    checked={active}
+                    onChange={() => {
+                      const current = normalizeScheduleWeekdays(scheduleEditDraft.weekdays);
+                      const nextDays = active ? current.filter((item) => item !== day.value) : [...current, day.value];
+                      setScheduleEditDraft((currentDraft) => ({ ...currentDraft, weekdays: normalizeScheduleWeekdays(nextDays) }));
+                    }}
+                  />
+                  <span>{zh ? day.zh : day.en}</span>
+                </label>
+              );
+            })}
+          </div>
+        </div>
+      ) : null}
+      {scheduleEditDraft.frequency === "monthly" ? (
+        <label className="scheduled-field">
+          <span>{zh ? "每月几号" : "Day of month"}</span>
+          <input
+            type="number"
+            min={1}
+            max={31}
+            value={normalizeScheduleDayOfMonth(scheduleEditDraft.dayOfMonth)}
+            onChange={(event) => setScheduleEditDraft((current) => ({ ...current, dayOfMonth: normalizeScheduleDayOfMonth(Number(event.currentTarget.value)) }))}
+          />
+        </label>
+      ) : null}
+      <button className="send-btn compact scheduled-apply-btn" type="button" onClick={applyScheduleEdit} disabled={!scheduleEditDirty}>
+        <Save size={13} />
+        <span>{zh ? "应用" : "Apply"}</span>
+      </button>
+    </section>
+  ) : null;
+
+  return (
+    <section className="scheduled-page">
+      <header className="scheduled-page-header scheduled-toolbar">
+        <div>
+          <h2>{zh ? "定时任务" : "Scheduled tasks"}</h2>
+          <p>{zh ? "云端保存计划，到点后通知本机执行 Workflow。" : "The cloud stores schedules and asks this computer to run workflows when due."}</p>
+        </div>
+        <div className="scheduled-toolbar-actions">
+          <div className={`scheduled-runner-pill ${runnerConnected ? "is-connected" : ""}`}>
+            <CheckCircle2 size={13} />
+            <span>{runnerStatusText}</span>
+            <small>{zh ? "云端调度服务" : "Cloud scheduler"}</small>
+          </div>
+          <button className="send-btn compact" type="button" onClick={() => void onConnectRunner()}>
+            <RefreshCw size={13} />
+            <span>{zh ? "连接" : "Connect"}</span>
+          </button>
+          <button className="control-btn compact" type="button" onClick={() => void onDisconnectRunner()}>
+            <CircleStop size={13} />
+            <span>{zh ? "断开" : "Disconnect"}</span>
+          </button>
+          <button className="icon-btn" type="button" onClick={() => void onRefreshSchedules()} aria-label="Refresh schedules">
+            <RefreshCw size={14} />
+          </button>
+        </div>
+      </header>
+      {store.runnerStatus.lastError ? <div className="workflow-error">{store.runnerStatus.lastError}</div> : null}
+
+      <div className="scheduled-layout">
+        {mode === "create" ? (
+          createForm
+        ) : (
+          <section className="scheduled-panel scheduled-workflow-detail-panel" aria-label={zh ? "定时任务 Workflow 详情" : "Scheduled workflow detail"}>
+            <div className="scheduled-panel-head inline scheduled-workflow-detail-head">
+              <div>
+                <h3>{selectedSchedule?.title ?? (zh ? "Workflow 详情" : "Workflow detail")}</h3>
+              <p>
+                {selectedSchedule
+                  ? `${formatScheduleRecurrence(selectedSchedule, language)} · ${zh ? "Workflow" : "Workflow"}: ${selectedScheduleWorkflow?.title ?? selectedSchedule.workflowId}${
+                      selectedSchedule.nextRunAt ? ` · ${zh ? "下次" : "Next"} ${formatTime(selectedSchedule.nextRunAt)}` : ""
+                    } · ${runnerDetail}`
+                  : runnerDetail}
+                </p>
+              </div>
+              {selectedSchedule ? (
+                <div className="scheduled-detail-actions">
+                  <button
+                    className={`control-btn compact ${selectedSchedule.enabled ? "is-active" : ""}`}
+                    type="button"
+                    aria-label={selectedSchedule.enabled ? (zh ? "暂停计划" : "Pause schedule") : (zh ? "启用计划" : "Enable schedule")}
+                    onClick={() => void onUpdateSchedule(selectedSchedule, { enabled: !selectedSchedule.enabled })}
+                  >
+                    <span>{selectedSchedule.enabled ? (zh ? "暂停" : "Pause") : (zh ? "启用" : "Enable")}</span>
+                  </button>
+                  <button className="control-btn compact" type="button" onClick={() => void onTriggerSchedule(selectedSchedule.scheduleId)}>
+                    <Play size={13} />
+                    <span>{zh ? "立即执行" : "Run"}</span>
+                  </button>
+                  <button className="control-btn compact danger" type="button" onClick={() => void onDeleteSchedule(selectedSchedule.scheduleId)}>
+                    <Trash2 size={13} />
+                    <span>{zh ? "删除" : "Delete"}</span>
+                  </button>
+                </div>
+              ) : null}
+            </div>
+            {selectedScheduleWorkflow ? (
+              <ScheduledWorkflowGraphPreview workflow={selectedScheduleWorkflow} language={language} />
+            ) : (
+              <div className="empty-state config-empty">{zh ? "左侧选择一个计划，或先创建定时任务。" : "Select a schedule on the left, or create one first."}</div>
+            )}
+          </section>
+        )}
+
+        <aside className="scheduled-side-panel">
+          {scheduleEditor}
+          <section className="scheduled-panel scheduled-runs-panel">
+            <div className="scheduled-panel-head">
+              <h3>{zh ? "最近执行" : "Recent runs"}</h3>
+              <p>{zh ? "本机执行定时任务后的状态。" : "Execution status reported by this computer."}</p>
+            </div>
+            <div className="scheduled-run-list">
+              {sortedRuns.length === 0 ? <div className="empty-state config-empty">{zh ? "暂无执行记录" : "No run history"}</div> : null}
+              {sortedRuns.map((run) => (
+                <article key={run.runId} className={`scheduled-run-row is-${run.status}`}>
+                  <span>{run.status}</span>
+                  <strong>{run.title}</strong>
+                  <small>{run.message || (run.finishedAt ? formatTime(run.finishedAt) : formatTime(run.startedAt))}</small>
+                </article>
+              ))}
+            </div>
+          </section>
+        </aside>
+      </div>
+    </section>
+  );
+}
+
+function ScheduledWorkflowGraphPreview({ workflow, language }: { workflow: WorkflowDraftState; language: Language }) {
+  const zh = language === "zh";
+  const renderScheduleNodeCard = (node: WorkflowGraphNode): ReactElement => (
+    <article className={`scheduled-workflow-node workflow-graph-card workflow-canvas-node-card is-${node.kind}`}>
+      <div className="workflow-graph-card-head">
+        <span>{node.kind}</span>
+        <strong>{node.title}</strong>
+      </div>
+    </article>
+  );
+
+  return (
+    <div className="scheduled-workflow-detail">
+      <div aria-label={zh ? "Workflow 图详情" : "Workflow graph detail"}>
+        <WorkflowCanvasBoard graph={workflow.graph} className="scheduled-workflow-graph" renderNodeCard={renderScheduleNodeCard} />
+      </div>
+    </div>
   );
 }
 
 export function SettingsPage({
   language,
+  keepAwake = false,
   onLanguageChange,
+  onKeepAwakeChange,
 }: {
   language: Language;
+  keepAwake?: boolean;
   onLanguageChange: (language: Language) => void;
+  onKeepAwakeChange?: (enabled: boolean) => void;
 }) {
   const configText = UI_TEXT[language].config;
   const title = language === "zh" ? "设置" : "Settings";
   const description = language === "zh" ? "调整应用级偏好。" : "Adjust app-level preferences.";
   const languageTitle = language === "zh" ? "语言" : "Language";
   const languageDescription = language === "zh" ? "选择界面显示语言。" : "Choose the interface language.";
+  const powerTitle = language === "zh" ? "定时任务" : "Scheduled tasks";
+  const powerDescription =
+    language === "zh"
+      ? "本地 App 在线等待远程定时任务时，可阻止系统自动进入休眠。"
+      : "Prevent automatic sleep while the local app waits for remote scheduled tasks.";
+  const keepAwakeTitle = language === "zh" ? "保持唤醒" : "Keep awake";
+  const keepAwakeDescription =
+    language === "zh"
+      ? "只阻止自动休眠，不点亮屏幕；手动合盖、关机或断网仍会中断本地执行。"
+      : "Prevents idle sleep without forcing the display on; closing the lid, shutdown, or network loss still interrupts local execution.";
 
   return (
     <section className="settings-page">
@@ -6311,6 +7319,24 @@ export function SettingsPage({
               <option value="zh">{configText.zh}</option>
               <option value="en">{configText.en}</option>
             </select>
+          </label>
+        </section>
+        <section className="settings-panel" aria-label={powerTitle}>
+          <div className="settings-panel-head">
+            <h3>{powerTitle}</h3>
+            <p>{powerDescription}</p>
+          </div>
+          <label className="settings-toggle-row">
+            <input
+              type="checkbox"
+              aria-label="Keep awake for scheduled tasks"
+              checked={keepAwake}
+              onChange={(event) => onKeepAwakeChange?.(event.currentTarget.checked)}
+            />
+            <span>
+              <strong>{keepAwakeTitle}</strong>
+              <small>{keepAwakeDescription}</small>
+            </span>
           </label>
         </section>
       </div>

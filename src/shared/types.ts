@@ -493,6 +493,106 @@ export interface WorkflowStoreState {
   runs: WorkflowRunState[];
 }
 
+export const DEFAULT_SCHEDULED_WORKFLOW_CLOUD_BASE_URL = "";
+export const DEFAULT_SCHEDULED_WORKFLOW_TIME_OF_DAY = "09:00";
+export const DEFAULT_SCHEDULED_WORKFLOW_TIMEZONE = "Asia/Shanghai";
+
+export type ScheduledWorkflowRunStatus = "queued" | "running" | "completed" | "failed" | "skipped";
+export type ScheduledWorkflowFrequency = "daily" | "weekly" | "monthly";
+
+export interface ScheduledWorkflowRunnerConfig {
+  baseUrl: string;
+  tenantId?: string | undefined;
+  userId?: string | undefined;
+  deviceName?: string | undefined;
+  deviceId?: string | undefined;
+  runnerToken?: string | undefined;
+}
+
+export type RegisterScheduledWorkflowRunnerRequest = Pick<ScheduledWorkflowRunnerConfig, "baseUrl" | "tenantId" | "userId" | "deviceName">;
+
+export interface ScheduledWorkflowRunnerStatus {
+  connected: boolean;
+  connecting: boolean;
+  lastConnectedAt?: number | undefined;
+  lastEventAt?: number | undefined;
+  lastError?: string | undefined;
+}
+
+export interface ScheduledWorkflowSchedule {
+  scheduleId: string;
+  workflowId: string;
+  title: string;
+  enabled: boolean;
+  intervalSeconds: number;
+  frequency: ScheduledWorkflowFrequency;
+  timeOfDay: string;
+  timezone: string;
+  weekdays?: number[] | undefined;
+  dayOfMonth?: number | undefined;
+  nextRunAt?: number | undefined;
+  lastRunAt?: number | undefined;
+  source: "local" | "cloud";
+  createdAt: number;
+  updatedAt: number;
+}
+
+export interface CreateScheduledWorkflowScheduleRequest {
+  workflowId: string;
+  title: string;
+  enabled: boolean;
+  intervalSeconds?: number | undefined;
+  frequency: ScheduledWorkflowFrequency;
+  timeOfDay: string;
+  timezone: string;
+  weekdays?: number[] | undefined;
+  dayOfMonth?: number | undefined;
+}
+
+export type UpdateScheduledWorkflowScheduleRequest = Partial<CreateScheduledWorkflowScheduleRequest>;
+
+export interface ScheduledWorkflowRun {
+  runId: string;
+  scheduleId: string;
+  workflowId: string;
+  eventId?: string | undefined;
+  workflowRunId?: string | undefined;
+  title: string;
+  status: ScheduledWorkflowRunStatus;
+  startedAt: number;
+  finishedAt: number | undefined;
+  message?: string | undefined;
+}
+
+export interface ScheduledWorkflowDueEvent {
+  eventId: string;
+  type: string;
+  title: string;
+  message: string;
+  payload: Record<string, unknown>;
+}
+
+export interface AckScheduledWorkflowEventRequest {
+  status: Extract<ScheduledWorkflowRunStatus, "completed" | "failed" | "skipped">;
+  workflowRunId?: string | undefined;
+  message?: string | undefined;
+}
+
+export interface ScheduledWorkflowStoreState {
+  activeScheduleId: string | undefined;
+  runnerConfig: ScheduledWorkflowRunnerConfig;
+  runnerStatus: ScheduledWorkflowRunnerStatus;
+  schedules: ScheduledWorkflowSchedule[];
+  runs: ScheduledWorkflowRun[];
+}
+
+export interface ScheduledWorkflowOperationResult {
+  ok: boolean;
+  scheduleId?: string;
+  runId?: string;
+  error?: string;
+}
+
 export interface WorkflowOperationResult {
   ok: boolean;
   workflowId?: string;
@@ -585,5 +685,6 @@ export interface AppSnapshot {
   teams: AgentTeam[];
   teamRuns: TeamRun[];
   workflowStore: WorkflowStoreState;
+  scheduledWorkflowStore: ScheduledWorkflowStoreState;
   workflowDraft: WorkflowDraftState | undefined;
 }

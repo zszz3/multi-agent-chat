@@ -1234,6 +1234,144 @@ describe("AgentHub chat sessions", () => {
       finalReport: "## Final User Report\nThe workflow completed successfully.",
     });
   });
+
+  test("persists scheduled workflow config, schedules, and run history", async () => {
+    const dir = await mkdtemp(path.join(os.tmpdir(), "multi-agent-chat-scheduled-workflows-"));
+    const storagePath = path.join(dir, "app-state.json");
+    const hub = new AgentHub();
+    await hub.loadPersistedState(storagePath);
+
+    const created = (hub as any).createWorkflow({
+      title: "Daily repo review",
+      objective: "Review repository changes every morning",
+      graph: {
+        title: "Daily repo review",
+        objective: "Review repository changes every morning",
+        nodes: [
+          { id: "start", kind: "start", title: "Start", prompt: "" },
+          { id: "review", kind: "agent", title: "Review", prompt: "Review recent changes.", agentId: "codex", channelId: "codex-openai", modelId: DEFAULT_MODEL_ID },
+          { id: "end", kind: "end", title: "Done", prompt: "" },
+        ],
+        edges: [
+          { id: "start->review", fromNodeId: "start", toNodeId: "review" },
+          { id: "review->end", fromNodeId: "review", toNodeId: "end" },
+        ],
+      },
+    });
+
+    (hub as any).saveScheduledWorkflowRunnerConfig({
+      baseUrl: "https://scheduler.example.com",
+      deviceId: "device-local",
+      runnerToken: "runner-token",
+    });
+    const upserted = (hub as any).upsertScheduledWorkflowSchedule({
+      scheduleId: "sched_daily_review",
+      workflowId: created.workflowId,
+      title: "Daily repo review",
+      enabled: true,
+      intervalSeconds: 86400,
+      frequency: "daily",
+      timeOfDay: "09:00",
+      timezone: "Asia/Shanghai",
+      nextRunAt: 1710003600000,
+      lastRunAt: undefined,
+      source: "cloud",
+      createdAt: 1710000000000,
+      updatedAt: 1710000000000,
+    });
+    expect(upserted).toMatchObject({ ok: true, scheduleId: "sched_daily_review" });
+
+    const runningSnapshot = (hub as any).recordScheduledWorkflowRun({
+      runId: "scheduled_run_1",
+      scheduleId: "sched_daily_review",
+      workflowId: created.workflowId,
+      eventId: "event_1",
+      title: "Daily repo review",
+      status: "running",
+      startedAt: 1710003600000,
+      finishedAt: undefined,
+      message: "Runner started workflow.",
+    });
+    expect(runningSnapshot.scheduledWorkflowStore.runs[0]).toMatchObject({
+      runId: "scheduled_run_1",
+      status: "running",
+      eventId: "event_1",
+    });
+
+    (hub as any).finishScheduledWorkflowRun("scheduled_run_1", {
+      status: "completed",
+      workflowRunId: "run_workflow_1",
+      message: "Workflow completed.",
+      finishedAt: 1710003900000,
+    });
+    await hub.flushPersistence();
+
+    const persisted = JSON.parse(await readFile(storagePath, "utf8")) as any;
+    expect(persisted.scheduledWorkflowStore.runnerConfig).toMatchObject({
+      baseUrl: "https://scheduler.example.com",
+      deviceId: "device-local",
+      runnerToken: "runner-token",
+    });
+    expect(persisted.scheduledWorkflowStore.schedules).toHaveLength(1);
+    expect(persisted.scheduledWorkflowStore.runs[0]).toMatchObject({
+      runId: "scheduled_run_1",
+      scheduleId: "sched_daily_review",
+      status: "completed",
+      workflowRunId: "run_workflow_1",
+    });
+
+    const restored = new AgentHub();
+    await restored.loadPersistedState(storagePath);
+    const snapshot = restored.snapshot() as any;
+
+    expect(snapshot.scheduledWorkflowStore.runnerConfig).toMatchObject({
+      baseUrl: "https://scheduler.example.com",
+      deviceId: "device-local",
+      runnerToken: "runner-token",
+    });
+    expect(snapshot.scheduledWorkflowStore.schedules[0]).toMatchObject({
+      scheduleId: "sched_daily_review",
+      workflowId: created.workflowId,
+      title: "Daily repo review",
+      enabled: true,
+      intervalSeconds: 86400,
+      frequency: "daily",
+      timeOfDay: "09:00",
+      timezone: "Asia/Shanghai",
+      nextRunAt: 1710003600000,
+      source: "cloud",
+    });
+    expect(snapshot.scheduledWorkflowStore.runs[0]).toMatchObject({
+      runId: "scheduled_run_1",
+      status: "completed",
+      workflowRunId: "run_workflow_1",
+      message: "Workflow completed.",
+    });
+  });
+
+  test("rejects schedules for missing workflows", () => {
+    const hub = new AgentHub();
+
+    const result = (hub as any).upsertScheduledWorkflowSchedule({
+      scheduleId: "sched_missing",
+      workflowId: "wf_missing",
+      title: "Missing workflow",
+      enabled: true,
+      intervalSeconds: 3600,
+      frequency: "daily",
+      timeOfDay: "09:00",
+      timezone: "Asia/Shanghai",
+      source: "cloud",
+      createdAt: 1710000000000,
+      updatedAt: 1710000000000,
+    });
+
+    expect(result).toMatchObject({
+      ok: false,
+      error: "Workflow wf_missing was not found.",
+    });
+    expect((hub.snapshot() as any).scheduledWorkflowStore.schedules).toEqual([]);
+  });
 });
 
 describe("AgentHub task runs", () => {
