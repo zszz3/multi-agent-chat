@@ -3023,11 +3023,39 @@ textarea:focus-visible {
 
 .workflow-graph-card-head {
   display: grid;
-  gap: 3px;
+  grid-template-columns: auto minmax(0, 1fr) auto;
+  align-items: center;
+  gap: 8px;
   min-width: 0;
 }
 
-.workflow-graph-card-head span,
+.workflow-graph-card-headings {
+  display: grid;
+  gap: 2px;
+  min-width: 0;
+}
+
+.workflow-node-type-icon {
+  display: grid;
+  place-items: center;
+  width: 24px;
+  height: 24px;
+  border-radius: 7px;
+  background: color-mix(in srgb, var(--accent) 14%, var(--panel));
+  color: var(--accent);
+}
+
+.workflow-node-type-icon[data-kind="start"] {
+  background: color-mix(in srgb, var(--ok) 16%, var(--panel));
+  color: var(--ok);
+}
+
+.workflow-node-type-icon[data-kind="end"] {
+  background: color-mix(in srgb, var(--muted) 20%, var(--panel));
+  color: var(--muted);
+}
+
+.workflow-node-type-label,
 .workflow-node-config-grid label > span {
   color: var(--muted);
   font-size: 10px;
@@ -8834,10 +8862,10 @@ textarea:focus-visible {
   position: relative;
   align-content: center;
   justify-content: stretch;
-  width: 224px;
-  min-height: 88px;
-  gap: 8px;
-  padding: 12px 14px 12px 34px;
+  width: 192px;
+  min-height: 72px;
+  gap: 6px;
+  padding: 10px 12px;
   border-color: color-mix(in srgb, var(--ink) 8%, var(--line));
   border-radius: 8px;
   background: var(--panel);
@@ -8850,22 +8878,11 @@ textarea:focus-visible {
   box-shadow: 0 8px 18px color-mix(in srgb, var(--ink) 8%, transparent);
 }
 
-.workflow-graph-board:not(.is-expanded) .workflow-graph-card::before {
-  position: absolute;
-  top: 18px;
-  left: 14px;
-  width: 10px;
-  height: 10px;
-  border-radius: 999px;
-  background: var(--accent);
-  content: "";
-}
-
 .workflow-graph-board:not(.is-expanded) .workflow-graph-card.is-start,
 .workflow-graph-board:not(.is-expanded) .workflow-graph-card.is-end {
-  width: 118px;
-  min-height: 58px;
-  padding: 10px 14px 10px 30px;
+  width: 112px;
+  min-height: 48px;
+  padding: 8px 12px;
   text-align: center;
 }
 
@@ -8874,29 +8891,18 @@ textarea:focus-visible {
   background: color-mix(in srgb, var(--ok-tint) 42%, var(--panel));
 }
 
-.workflow-graph-board:not(.is-expanded) .workflow-graph-card.is-start::before {
-  background: var(--ok);
-}
-
 .workflow-graph-board:not(.is-expanded) .workflow-graph-card.is-end {
   border-color: color-mix(in srgb, var(--ink) 16%, var(--line));
   background: color-mix(in srgb, var(--neutral-tint) 70%, var(--panel));
 }
 
-.workflow-graph-board:not(.is-expanded) .workflow-graph-card.is-end::before {
-  background: var(--muted);
-}
-
 .workflow-graph-board:not(.is-expanded) .workflow-graph-card-head {
-  display: grid;
-  grid-template-columns: minmax(0, 1fr) auto;
-  align-items: center;
+  grid-template-columns: auto minmax(0, 1fr) auto;
   justify-content: stretch;
-  gap: 4px;
-  min-width: 0;
+  gap: 8px;
 }
 
-.workflow-graph-board:not(.is-expanded) .workflow-graph-card-head > span {
+.workflow-graph-board:not(.is-expanded) .workflow-node-type-label {
   display: none;
 }
 
@@ -8905,9 +8911,9 @@ textarea:focus-visible {
   min-width: 0;
   max-width: 100%;
   color: var(--text);
-  font-size: 15px;
+  font-size: 13px;
   font-weight: 700;
-  line-height: 1.25;
+  line-height: 1.2;
   white-space: normal;
   -webkit-box-orient: vertical;
   -webkit-line-clamp: 2;
@@ -9003,8 +9009,8 @@ textarea:focus-visible {
   display: block;
   position: relative;
   width: 100%;
-  height: clamp(220px, 34vh, 320px);
-  min-height: 220px;
+  height: clamp(380px, 54vh, 600px);
+  min-height: 380px;
   overflow: hidden;
   padding: 0;
   border-color: color-mix(in srgb, var(--line) 82%, transparent);
@@ -9026,7 +9032,7 @@ textarea:focus-visible {
 }
 
 .workflow-result-card .workflow-canvas-board.workflow-graph-board:not(.is-expanded) {
-  height: clamp(220px, 34vh, 320px);
+  height: clamp(380px, 54vh, 600px);
   max-height: none;
   overflow: hidden;
   padding: 0;
@@ -9061,7 +9067,12 @@ textarea:focus-visible {
 }
 
 .workflow-react-flow-board .react-flow__edge-path {
-  stroke: color-mix(in srgb, var(--muted) 46%, transparent);
+  stroke: color-mix(in srgb, var(--muted) 66%, transparent);
+  stroke-linecap: round;
+}
+
+.workflow-react-flow-board .react-flow__edge:hover .react-flow__edge-path {
+  stroke: var(--accent);
 }
 
 .workflow-react-flow-board .react-flow__edge.animated .react-flow__edge-path {
@@ -9072,6 +9083,16 @@ textarea:focus-visible {
 .workflow-canvas-node {
   width: 100%;
   min-width: 0;
+  cursor: grab;
+}
+
+.workflow-react-flow-board .react-flow__node.dragging .workflow-canvas-node {
+  cursor: grabbing;
+}
+
+.workflow-canvas-board:not(.is-expanded) .workflow-canvas-minimap.react-flow__minimap {
+  width: 138px;
+  height: 92px;
 }
 
 .workflow-canvas-node .workflow-graph-card {

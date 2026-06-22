@@ -446,9 +446,9 @@ describe("ChatControls", () => {
     expect(styles).toContain(".workflow-canvas-minimap.react-flow__minimap");
     expect(styles).toContain(".workflow-result-card .workflow-canvas-board.workflow-graph-board:not(.is-expanded)");
     expect(styles).toContain("max-width: 760px;");
-    expect(styles).toContain("height: clamp(220px, 34vh, 320px);");
-    expect(styles).toContain("width: 224px;");
-    expect(styles).toContain("font-size: 15px;");
+    expect(styles).toContain("height: clamp(380px, 54vh, 600px);");
+    expect(styles).toContain("width: 192px;");
+    expect(styles).toContain("font-size: 13px;");
     expect(styles).toContain("overflow: hidden;\n  padding: 0;");
     expect(styles).not.toContain(".workflow-canvas-preview-trigger .workflow-canvas-board");
     expect(styles).not.toContain(".workflow-result-card .workflow-graph-board:not(.is-expanded) {\n  max-height: min(460px, 56vh);\n  justify-content: center;");
@@ -2461,11 +2461,35 @@ describe("WorkflowPage", () => {
 
     expect(byId.get("start")!.x).toBeLessThan(byId.get("inventory")!.x);
     expect(byId.get("inventory")!.x).toBeLessThan(byId.get("security")!.x);
-    expect(byId.get("security")!.x).toBeLessThan(byId.get("writer")!.x);
     expect(byId.get("testing")!.x).toBe(byId.get("security")!.x);
     expect(byId.get("testing")!.y).toBeGreaterThan(byId.get("security")!.y);
+    // long flows wrap onto additional rows instead of one wide line
+    expect(byId.get("writer")!.y).toBeGreaterThan(byId.get("security")!.y);
+    expect(byId.get("writer")!.x).toBeLessThan(byId.get("security")!.x);
+    expect(byId.get("end")!.y).toBeGreaterThan(byId.get("start")!.y);
     expect(layout.edges).toHaveLength(6);
-    expect(layout.width).toBeGreaterThan(900);
+    expect(layout.width).toBeLessThan(900);
+  });
+
+  test("pins workflow nodes to their explicit position when set", () => {
+    const graph: WorkflowGraph = {
+      title: "Pinned",
+      objective: "Pin one node",
+      nodes: [
+        { id: "start", kind: "start", title: "Start", prompt: "" },
+        { id: "plan", kind: "agent", title: "Plan", prompt: "Plan.", agentId: "codex", channelId: "codex-openai", modelId: "gpt-5.5", position: { x: 999, y: 777 } },
+        { id: "end", kind: "end", title: "Done", prompt: "" },
+      ],
+      edges: [
+        { id: "start->plan", fromNodeId: "start", toNodeId: "plan" },
+        { id: "plan->end", fromNodeId: "plan", toNodeId: "end" },
+      ],
+    };
+    const byId = new Map(workflowCanvasLayout(graph).nodes.map((node) => [node.node.id, node]));
+    expect(byId.get("plan")!.x).toBe(999);
+    expect(byId.get("plan")!.y).toBe(777);
+    // nodes without an explicit position still auto-layout
+    expect(byId.get("start")!.x).not.toBe(999);
   });
 
   test("renders workflow graphs as a pannable canvas with parallel node groups", () => {

@@ -16,6 +16,13 @@ function asString(value: unknown): string | undefined {
   return typeof value === "string" ? value : undefined;
 }
 
+function asPosition(value: unknown): { x: number; y: number } | undefined {
+  if (!isRecord(value)) return undefined;
+  const { x, y } = value;
+  if (typeof x !== "number" || typeof y !== "number" || !Number.isFinite(x) || !Number.isFinite(y)) return undefined;
+  return { x, y };
+}
+
 function isAgentId(value: unknown): value is AgentId {
   return value === "codex" || value === "claude";
 }
@@ -150,6 +157,8 @@ function normalizeWorkflowGraph(value: unknown): WorkflowGraph | undefined {
     if (channelId !== undefined) node.channelId = channelId;
     const modelId = asString(nodeRecord.modelId);
     if (modelId !== undefined) node.modelId = modelId;
+    const position = asPosition(nodeRecord.position);
+    if (position) node.position = position;
     nodes.push(node);
   }
 

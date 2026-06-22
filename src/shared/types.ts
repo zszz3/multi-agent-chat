@@ -394,6 +394,12 @@ export interface WorkflowGraphNode {
   agentId?: AgentId;
   channelId?: string;
   modelId?: string;
+  /**
+   * Optional explicit canvas position. When set, the workflow board pins the
+   * node here instead of auto-layout; agents (via MCP) and user drags both write
+   * this. Omit it to let the auto wrapping layout place the node.
+   */
+  position?: { x: number; y: number };
 }
 
 export interface WorkflowGraphEdge {

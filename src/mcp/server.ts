@@ -46,7 +46,8 @@ function objectSchema(properties: Record<string, unknown>, required: string[] = 
 
 const workflowGraphSchema = {
   type: "object",
-  description: "WorkflowGraph with title, objective, nodes, and edges.",
+  description:
+    "WorkflowGraph with title, objective, nodes, and edges. Each node may include an optional position {x,y} (canvas coordinates, x increases left-to-right, y top-to-bottom) to pin where it appears on the board; omit position to let the app auto-layout the node. Positions round-trip with user drags, so workflow_get returns current positions.",
   additionalProperties: true,
 };
 

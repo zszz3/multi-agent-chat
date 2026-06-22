@@ -1069,6 +1069,46 @@ describe("AgentHub chat sessions", () => {
     expect(snapshot.workflowDraft.title).toBe("Renamed workflow");
   });
 
+  test("preserves explicit node positions through create and update", () => {
+    const hub = new AgentHub();
+    const created = (hub as any).createWorkflow({
+      title: "Positioned workflow",
+      objective: "Pin nodes",
+      graph: {
+        title: "Positioned workflow",
+        objective: "Pin nodes",
+        nodes: [
+          { id: "start", kind: "start", title: "Start", prompt: "", position: { x: 12, y: 34 } },
+          { id: "inventory", kind: "agent", title: "Inventory", prompt: "Map repo.", agentId: "codex", channelId: "codex-openai", modelId: DEFAULT_MODEL_ID },
+          { id: "end", kind: "end", title: "Done", prompt: "" },
+        ],
+        edges: [
+          { id: "start->inventory", fromNodeId: "start", toNodeId: "inventory" },
+          { id: "inventory->end", fromNodeId: "inventory", toNodeId: "end" },
+        ],
+      },
+    });
+
+    const graphOf = (workflowId: string) =>
+      (hub as any).snapshot().workflowStore.workflows.find((item: any) => item.workflowId === workflowId).graph;
+    const createdNodes = new Map<string, any>(graphOf(created.workflowId).nodes.map((node: any) => [node.id, node]));
+    expect(createdNodes.get("start").position).toEqual({ x: 12, y: 34 });
+    expect(createdNodes.get("inventory").position).toBeUndefined();
+
+    (hub as any).updateWorkflow({
+      workflowId: created.workflowId,
+      graph: {
+        ...graphOf(created.workflowId),
+        nodes: graphOf(created.workflowId).nodes.map((node: any) =>
+          node.id === "inventory" ? { ...node, position: { x: 200, y: 80 } } : node,
+        ),
+      },
+    });
+    const updatedNodes = new Map<string, any>(graphOf(created.workflowId).nodes.map((node: any) => [node.id, node]));
+    expect(updatedNodes.get("inventory").position).toEqual({ x: 200, y: 80 });
+    expect(updatedNodes.get("start").position).toEqual({ x: 12, y: 34 });
+  });
+
   test("deletes a workflow draft with its runs and selects the next remaining workflow", () => {
     const hub = new AgentHub();
     const first = (hub as any).createWorkflow({

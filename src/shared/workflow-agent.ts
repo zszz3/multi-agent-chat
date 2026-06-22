@@ -88,6 +88,7 @@ export function buildWorkflowAgentPrompt({ objective }: WorkflowAgentPromptInput
     "- Include a planning node that decides the shared memory strategy and final output document structure when the task produces documents.",
     "- Do not include prose around the template when producing the final graph.",
     "- Do not include cycles or unreachable nodes.",
+    "- Node positions are optional: omit them to use the automatic canvas layout. Only add a per-node position {x,y} (x left-to-right, y top-to-bottom) when the user explicitly asks you to arrange or move nodes on the canvas.",
     "",
     "User task:",
     task,

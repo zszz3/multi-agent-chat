@@ -1,4 +1,4 @@
-import { useEffect, useMemo, useRef, useState, type DragEvent, type KeyboardEvent, type MouseEvent, type ReactElement } from "react";
+import { createContext, useCallback, useContext, useEffect, useMemo, useRef, useState, type DragEvent, type KeyboardEvent, type MouseEvent, type ReactElement } from "react";
 import {
   Background,
   Controls,
@@ -7,6 +7,7 @@ import {
   MiniMap,
   Position,
   ReactFlow,
+  useNodesState,
   type Edge as ReactFlowEdge,
   type Node as ReactFlowNode,
   type NodeProps as ReactFlowNodeProps,
@@ -1579,26 +1580,32 @@ const WORKFLOW_CANVAS_DIMENSIONS: Record<
     terminalHeight: number;
     layerGap: number;
     nodeGap: number;
+    rowGap: number;
     padding: number;
+    maxColumns: number;
   }
 > = {
   preview: {
-    nodeWidth: 224,
-    nodeHeight: 88,
-    terminalWidth: 118,
-    terminalHeight: 58,
+    nodeWidth: 192,
+    nodeHeight: 72,
+    terminalWidth: 112,
+    terminalHeight: 48,
     layerGap: 46,
     nodeGap: 16,
+    rowGap: 78,
     padding: 28,
+    maxColumns: 4,
   },
   expanded: {
-    nodeWidth: 220,
-    nodeHeight: 132,
-    terminalWidth: 132,
-    terminalHeight: 76,
-    layerGap: 132,
-    nodeGap: 34,
-    padding: 96,
+    nodeWidth: 188,
+    nodeHeight: 112,
+    terminalWidth: 112,
+    terminalHeight: 64,
+    layerGap: 120,
+    nodeGap: 30,
+    rowGap: 128,
+    padding: 88,
+    maxColumns: 5,
   },
 };
 
@@ -1608,25 +1615,47 @@ export function workflowCanvasLayout(graph: WorkflowGraph, variant: WorkflowCanv
   const layers = workflowGraphDisplayLayers(graph)
     .map((layer) => layer.map((nodeId) => nodeById.get(nodeId)).filter((node): node is WorkflowGraphNode => Boolean(node)))
     .filter((layer) => layer.length > 0);
+  // Wrap the layer sequence into rows so long flows stay close to the visible
+  // area instead of stretching into one very wide line. Each DAG layer keeps its
+  // own column; rows fill left-to-right and the count is balanced so the board
+  // ends up roughly square.
+  const layerCount = layers.length;
+  const rowCount = Math.max(1, Math.ceil(layerCount / dimensions.maxColumns));
+  const columnsPerRow = Math.max(1, Math.ceil(layerCount / rowCount));
+  const layerHeight = (layer: WorkflowGraphNode[]): number => {
+    const heights = layer.map((node) => (node.kind === "agent" ? dimensions.nodeHeight : dimensions.terminalHeight));
+    return heights.reduce((sum, height) => sum + height, 0) + Math.max(0, layer.length - 1) * dimensions.nodeGap;
+  };
+
+  const rows: WorkflowGraphNode[][][] = [];
+  for (let index = 0; index < layerCount; index += columnsPerRow) {
+    rows.push(layers.slice(index, index + columnsPerRow));
+  }
+
   const positionedNodes = new Map<string, WorkflowCanvasNodeLayout>();
   let maxX = dimensions.padding;
   let maxY = dimensions.padding;
+  let rowTop = dimensions.padding;
 
-  layers.forEach((layer, layerIndex) => {
-    const x = dimensions.padding + layerIndex * (dimensions.nodeWidth + dimensions.layerGap);
-    const layerHeights = layer.map((node) => (node.kind === "agent" ? dimensions.nodeHeight : dimensions.terminalHeight));
-    const totalHeight = layerHeights.reduce((sum, height) => sum + height, 0) + Math.max(0, layer.length - 1) * dimensions.nodeGap;
-    let y = dimensions.padding + Math.max(0, (dimensions.nodeHeight * 1.35 - totalHeight) / 2);
-
-    layer.forEach((node, nodeIndex) => {
-      const width = node.kind === "agent" ? dimensions.nodeWidth : dimensions.terminalWidth;
-      const height = layerHeights[nodeIndex] ?? dimensions.nodeHeight;
-      const layout = { node, x, y, width, height, layerIndex, layerSize: layer.length };
-      positionedNodes.set(node.id, layout);
-      maxX = Math.max(maxX, x + width + dimensions.padding);
-      maxY = Math.max(maxY, y + height + dimensions.padding);
-      y += height + dimensions.nodeGap;
+  rows.forEach((row, rowIndex) => {
+    const rowHeight = Math.max(dimensions.nodeHeight, ...row.map(layerHeight));
+    row.forEach((layer, columnIndex) => {
+      const x = dimensions.padding + columnIndex * (dimensions.nodeWidth + dimensions.layerGap);
+      let y = rowTop + Math.max(0, (rowHeight - layerHeight(layer)) / 2);
+      layer.forEach((node) => {
+        const width = node.kind === "agent" ? dimensions.nodeWidth : dimensions.terminalWidth;
+        const height = node.kind === "agent" ? dimensions.nodeHeight : dimensions.terminalHeight;
+        // Honor an explicit position (set by agents via MCP or by user drags);
+        // fall back to the auto wrapping slot.
+        const nodeX = node.position?.x ?? x;
+        const nodeY = node.position?.y ?? y;
+        positionedNodes.set(node.id, { node, x: nodeX, y: nodeY, width, height, layerIndex: rowIndex * columnsPerRow + columnIndex, layerSize: layer.length });
+        maxX = Math.max(maxX, nodeX + width + dimensions.padding);
+        maxY = Math.max(maxY, nodeY + height + dimensions.padding);
+        y += height + dimensions.nodeGap;
+      });
     });
+    rowTop += rowHeight + dimensions.rowGap;
   });
 
   const edges = graph.edges
@@ -5882,14 +5911,32 @@ export function WorkflowPage({
       </div>
     ) : null;
 
+    const NodeKindIcon = node.kind === "start" ? Play : node.kind === "end" ? CircleStop : Bot;
+    const openNodeEditor = (event: MouseEvent) => {
+      event.preventDefault();
+      event.stopPropagation();
+      setEditingWorkflowNodeId(node.id);
+    };
+    const cardHead = (
+      <div className="workflow-graph-card-head">
+        <span className="workflow-node-type-icon" data-kind={node.kind} aria-hidden="true">
+          <NodeKindIcon size={15} strokeWidth={2.2} />
+        </span>
+        <div className="workflow-graph-card-headings">
+          <span className="workflow-node-type-label">{node.kind}</span>
+          <strong>{node.title}</strong>
+        </div>
+        {nodeRunProgress ? <em className={`workflow-node-run-pill is-${nodeRunProgress.status}`}>{workflowRunStatusLabel(nodeRunProgress.status)}</em> : null}
+      </div>
+    );
+
     if (compact) {
       return (
-        <article className={`workflow-graph-card workflow-canvas-node-card is-${node.kind} ${nodeRunProgress ? `run-${nodeRunProgress.status}` : ""}`}>
-          <div className="workflow-graph-card-head">
-            <span>{node.kind}</span>
-            <strong>{node.title}</strong>
-            {nodeRunProgress ? <em className={`workflow-node-run-pill is-${nodeRunProgress.status}`}>{workflowRunStatusLabel(nodeRunProgress.status)}</em> : null}
-          </div>
+        <article
+          className={`workflow-graph-card workflow-canvas-node-card is-${node.kind} ${nodeRunProgress ? `run-${nodeRunProgress.status}` : ""}`}
+          onContextMenu={openNodeEditor}
+        >
+          {cardHead}
           {nodeMeta}
           {nodeRunProgress?.detail ? <div className={`workflow-node-run-detail is-${nodeRunProgress.status}`}>{nodeRunProgress.detail}</div> : null}
         </article>
@@ -5899,17 +5946,9 @@ export function WorkflowPage({
     return (
       <article
         className={`workflow-graph-card workflow-canvas-node-card workflow-expanded-node-card is-${node.kind} ${nodeRunProgress ? `run-${nodeRunProgress.status}` : ""}`}
-        onContextMenu={(event) => {
-          event.preventDefault();
-          event.stopPropagation();
-          setEditingWorkflowNodeId(node.id);
-        }}
+        onContextMenu={openNodeEditor}
       >
-        <div className="workflow-graph-card-head">
-          <span>{node.kind}</span>
-          <strong>{node.title}</strong>
-          {nodeRunProgress ? <em className={`workflow-node-run-pill is-${nodeRunProgress.status}`}>{workflowRunStatusLabel(nodeRunProgress.status)}</em> : null}
-        </div>
+        {cardHead}
         {nodeMeta}
         {node.kind === "agent" ? (
           <div className="workflow-node-runtime">
@@ -6196,11 +6235,11 @@ export function WorkflowPage({
                 <button className="workflow-graph-close icon-btn" onClick={() => setGraphExpanded(false)} title="Close graph board" aria-label="Close workflow graph board">
                   <X size={15} />
                 </button>
-                <WorkflowCanvasBoard graph={graph} expanded renderNodeCard={(node) => renderWorkflowNodeCard(node, false)} />
+                <WorkflowCanvasBoard graph={graph} expanded onNodePositionChange={(nodeId, position) => onUpdateNode(nodeId, { position })} renderNodeCard={(node) => renderWorkflowNodeCard(node, false)} />
                 {editingWorkflowNode ? renderWorkflowNodeEditor(editingWorkflowNode) : null}
               </>
             ) : (
-              <WorkflowCanvasBoard graph={graph} runProgressByNodeId={runProgressByNodeId} onExpand={() => setGraphExpanded(true)} renderNodeCard={(node) => renderWorkflowNodeCard(node, true)} />
+              <WorkflowCanvasBoard graph={graph} runProgressByNodeId={runProgressByNodeId} onExpand={() => setGraphExpanded(true)} onNodePositionChange={(nodeId, position) => onUpdateNode(nodeId, { position })} renderNodeCard={(node) => renderWorkflowNodeCard(node, true)} />
             )}
           </section>
         ) : null}
@@ -6291,8 +6330,6 @@ export function WorkflowPage({
 type WorkflowFlowNodeData = {
   graphNode: WorkflowGraphNode;
   layerSize: number;
-  runProgress?: WorkflowRunProgressItem;
-  renderNodeCard: (node: WorkflowGraphNode) => ReactElement;
 };
 
 type WorkflowFlowNode = ReactFlowNode<WorkflowFlowNodeData, "workflowNode">;
@@ -6302,11 +6339,24 @@ const workflowFlowNodeTypes = {
   workflowNode: WorkflowFlowNodeCard,
 };
 
+// Render callback + run progress are injected through context so they can change
+// every render without forcing the laid-out node array (and thus dragged
+// positions) to be rebuilt.
+const WorkflowCanvasNodeContext = createContext<{
+  renderNodeCard: (node: WorkflowGraphNode) => ReactElement;
+  runProgressByNodeId: Map<string, WorkflowRunProgressItem>;
+}>({
+  renderNodeCard: () => <span />,
+  runProgressByNodeId: new Map<string, WorkflowRunProgressItem>(),
+});
+
 function WorkflowFlowNodeCard({ data }: ReactFlowNodeProps<WorkflowFlowNode>) {
-  const { graphNode, layerSize, renderNodeCard, runProgress } = data;
+  const { graphNode, layerSize } = data;
+  const { renderNodeCard, runProgressByNodeId } = useContext(WorkflowCanvasNodeContext);
+  const runProgress = runProgressByNodeId.get(graphNode.id);
   return (
     <div
-      className={`workflow-canvas-node nodrag is-${graphNode.kind} ${runProgress ? `run-${runProgress.status}` : ""}`}
+      className={`workflow-canvas-node is-${graphNode.kind} ${runProgress ? `run-${runProgress.status}` : ""}`}
       data-layer-size={layerSize}
     >
       <Handle type="target" position={Position.Left} className="workflow-canvas-handle" isConnectable={false} />
@@ -6316,41 +6366,32 @@ function WorkflowFlowNodeCard({ data }: ReactFlowNodeProps<WorkflowFlowNode>) {
   );
 }
 
-function workflowReactFlowElements({
-  graph,
-  runProgressByNodeId,
-  renderNodeCard,
-  variant,
-}: {
-  graph: WorkflowGraph;
-  runProgressByNodeId: Map<string, WorkflowRunProgressItem>;
-  renderNodeCard: (node: WorkflowGraphNode) => ReactElement;
-  variant: WorkflowCanvasLayoutVariant;
-}): { nodes: WorkflowFlowNode[]; edges: WorkflowFlowEdge[] } {
+function workflowLayoutFlowNodes(graph: WorkflowGraph, variant: WorkflowCanvasLayoutVariant): WorkflowFlowNode[] {
   const layout = workflowCanvasLayout(graph, variant);
-  const nodes: WorkflowFlowNode[] = layout.nodes.map((layoutNode) => {
-    const runProgress = runProgressByNodeId.get(layoutNode.node.id);
-    return {
-      id: layoutNode.node.id,
-      type: "workflowNode",
-      position: { x: layoutNode.x, y: layoutNode.y },
-      sourcePosition: Position.Right,
-      targetPosition: Position.Left,
-      data: {
-        graphNode: layoutNode.node,
-        layerSize: layoutNode.layerSize,
-        renderNodeCard,
-        ...(runProgress ? { runProgress } : {}),
-      },
-      draggable: false,
-      selectable: false,
-      style: {
-        width: layoutNode.width,
-        minHeight: layoutNode.height,
-      },
-    };
-  });
-  const edges: WorkflowFlowEdge[] = layout.edges.map(({ edge }) => ({
+  return layout.nodes.map((layoutNode) => ({
+    id: layoutNode.node.id,
+    type: "workflowNode",
+    position: { x: layoutNode.x, y: layoutNode.y },
+    sourcePosition: Position.Right,
+    targetPosition: Position.Left,
+    data: {
+      graphNode: layoutNode.node,
+      layerSize: layoutNode.layerSize,
+    },
+    style: {
+      width: layoutNode.width,
+      minHeight: layoutNode.height,
+    },
+  }));
+}
+
+function workflowFlowEdges(
+  graph: WorkflowGraph,
+  variant: WorkflowCanvasLayoutVariant,
+  runProgressByNodeId: Map<string, WorkflowRunProgressItem>,
+): WorkflowFlowEdge[] {
+  const layout = workflowCanvasLayout(graph, variant);
+  return layout.edges.map(({ edge }) => ({
     id: edge.id,
     type: "smoothstep",
     source: edge.fromNodeId,
@@ -6364,15 +6405,13 @@ function workflowReactFlowElements({
       height: 16,
     },
     style: {
-      strokeWidth: 1.8,
+      strokeWidth: 2,
     },
   }));
-  return { nodes, edges };
 }
 
-function workflowMiniMapNodeColor(node: WorkflowFlowNode): string {
+function workflowMiniMapNodeColor(node: WorkflowFlowNode, runProgress?: WorkflowRunProgressItem): string {
   const graphNode = node.data.graphNode;
-  const runProgress = node.data.runProgress;
   if (runProgress?.status === "failed") return "var(--danger)";
   if (runProgress?.status === "completed") return "var(--ok)";
   if (runProgress?.status === "running") return "var(--accent)";
@@ -6386,6 +6425,7 @@ function WorkflowCanvasBoard({
   expanded = false,
   runProgressByNodeId = new Map<string, WorkflowRunProgressItem>(),
   onExpand,
+  onNodePositionChange,
   renderNodeCard,
   className = "",
 }: {
@@ -6393,18 +6433,34 @@ function WorkflowCanvasBoard({
   expanded?: boolean;
   runProgressByNodeId?: Map<string, WorkflowRunProgressItem>;
   onExpand?: () => void;
+  onNodePositionChange?: (nodeId: string, position: { x: number; y: number }) => void;
   renderNodeCard: (node: WorkflowGraphNode) => ReactElement;
   className?: string;
 }) {
-  const { nodes, edges } = useMemo(
-    () => workflowReactFlowElements({ graph, runProgressByNodeId, renderNodeCard, variant: expanded ? "expanded" : "preview" }),
-    [expanded, graph, renderNodeCard, runProgressByNodeId],
+  const variant: WorkflowCanvasLayoutVariant = expanded ? "expanded" : "preview";
+  const layoutNodes = useMemo(() => workflowLayoutFlowNodes(graph, variant), [graph, variant]);
+  const edges = useMemo(() => workflowFlowEdges(graph, variant, runProgressByNodeId), [graph, variant, runProgressByNodeId]);
+  // Controlled node state so dragged positions survive re-renders; positions are
+  // only reset when the structural layout (graph / variant) changes.
+  const [nodes, setNodes, onNodesChange] = useNodesState<WorkflowFlowNode>(layoutNodes);
+  useEffect(() => {
+    setNodes(layoutNodes);
+  }, [layoutNodes, setNodes]);
+
+  const nodeContextValue = useMemo(() => ({ renderNodeCard, runProgressByNodeId }), [renderNodeCard, runProgressByNodeId]);
+  const miniMapNodeColor = useCallback(
+    (node: WorkflowFlowNode) => workflowMiniMapNodeColor(node, runProgressByNodeId.get(node.id)),
+    [runProgressByNodeId],
   );
+
   const fitViewOptions = useMemo(
     () => ({
-      padding: expanded ? 0.16 : 0.04,
-      minZoom: expanded ? 0.24 : 0.36,
-      maxZoom: expanded ? 1.05 : 1.22,
+      padding: expanded ? 0.16 : 0.12,
+      // Preview keeps nodes at a readable size: when the flow gets long, fitView
+      // is clamped at minZoom instead of shrinking everything to fit, and the
+      // canvas overflows so it can be panned (Dify-style) rather than squished.
+      minZoom: expanded ? 0.24 : 0.82,
+      maxZoom: expanded ? 1.05 : 1,
     }),
     [expanded],
   );
@@ -6416,51 +6472,53 @@ function WorkflowCanvasBoard({
       onDoubleClick={() => onExpand?.()}
     >
       <div className="workflow-canvas-viewport">
-        <ReactFlow<WorkflowFlowNode, WorkflowFlowEdge>
-          className="workflow-react-flow-board"
-          nodes={nodes}
-          edges={edges}
-          nodeTypes={workflowFlowNodeTypes}
-          fitView
-          fitViewOptions={fitViewOptions}
-          minZoom={expanded ? 0.18 : 0.32}
-          maxZoom={expanded ? 1.35 : 1.28}
-          panOnDrag
-          panOnScroll
-          zoomOnScroll={expanded}
-          zoomOnPinch
-          zoomOnDoubleClick={false}
-          nodesConnectable={false}
-          nodesDraggable={false}
-          nodesFocusable={false}
-          edgesFocusable={false}
-          elementsSelectable={false}
-          preventScrolling={expanded}
-          proOptions={{ hideAttribution: true }}
-          defaultEdgeOptions={{
-            type: "smoothstep",
-            markerEnd: {
-              type: MarkerType.ArrowClosed,
-              width: 16,
-              height: 16,
-            },
-          }}
-        >
-          <Background gap={18} size={1.25} color="var(--workflow-canvas-dot)" />
-          <Controls className="workflow-canvas-controls" position="bottom-left" fitViewOptions={fitViewOptions} showInteractive={false} />
-          {expanded ? (
+        <WorkflowCanvasNodeContext.Provider value={nodeContextValue}>
+          <ReactFlow<WorkflowFlowNode, WorkflowFlowEdge>
+            className="workflow-react-flow-board"
+            nodes={nodes}
+            edges={edges}
+            onNodesChange={onNodesChange}
+            onNodeDragStop={(_event, node) => onNodePositionChange?.(node.id, { x: Math.round(node.position.x), y: Math.round(node.position.y) })}
+            nodeTypes={workflowFlowNodeTypes}
+            fitView
+            fitViewOptions={fitViewOptions}
+            minZoom={expanded ? 0.18 : 0.32}
+            maxZoom={expanded ? 1.35 : 1.28}
+            panOnDrag
+            panOnScroll
+            zoomOnScroll={expanded}
+            zoomOnPinch
+            zoomOnDoubleClick={false}
+            nodesConnectable={false}
+            nodesDraggable={Boolean(onNodePositionChange)}
+            nodesFocusable={false}
+            edgesFocusable={false}
+            elementsSelectable={false}
+            preventScrolling={expanded}
+            proOptions={{ hideAttribution: true }}
+            defaultEdgeOptions={{
+              type: "smoothstep",
+              markerEnd: {
+                type: MarkerType.ArrowClosed,
+                width: 16,
+                height: 16,
+              },
+            }}
+          >
+            <Background gap={18} size={1.25} color="var(--workflow-canvas-dot)" />
+            <Controls className="workflow-canvas-controls" position="bottom-left" fitViewOptions={fitViewOptions} showInteractive={false} />
             <MiniMap
               className="workflow-canvas-minimap"
               position="bottom-right"
               pannable
               zoomable
-              nodeColor={workflowMiniMapNodeColor}
+              nodeColor={miniMapNodeColor}
               nodeBorderRadius={8}
               bgColor="var(--panel)"
               maskColor="color-mix(in srgb, var(--panel) 42%, transparent)"
             />
-          ) : null}
-        </ReactFlow>
+          </ReactFlow>
+        </WorkflowCanvasNodeContext.Provider>
       </div>
     </div>
   );

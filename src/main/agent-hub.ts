@@ -2335,6 +2335,15 @@ export class AgentHub {
     if (isAgentId(node.agentId)) cloned.agentId = node.agentId;
     if (node.channelId !== undefined) cloned.channelId = node.channelId;
     if (node.modelId !== undefined) cloned.modelId = node.modelId;
+    if (
+      node.position &&
+      typeof node.position.x === "number" &&
+      typeof node.position.y === "number" &&
+      Number.isFinite(node.position.x) &&
+      Number.isFinite(node.position.y)
+    ) {
+      cloned.position = { x: node.position.x, y: node.position.y };
+    }
     return cloned;
   }
 

@@ -71,6 +71,27 @@ workflowGraph.upsert({
     expect(validateWorkflowGraph(graph!).valid).toBe(true);
   });
 
+  test("preserves valid node positions and drops malformed ones", () => {
+    const graph = parseWorkflowGraphUpsert(`workflowGraph.upsert({
+  title: "Positioned",
+  objective: "Pin nodes",
+  nodes: [
+    { id: "start", kind: "start", title: "Start", prompt: "", position: { x: 40, y: 120 } },
+    { id: "plan", kind: "agent", title: "Plan", prompt: "Plan it.", position: { x: "nope", y: 10 } },
+    { id: "end", kind: "end", title: "Done", prompt: "" }
+  ],
+  edges: [
+    { id: "start->plan", fromNodeId: "start", toNodeId: "plan" },
+    { id: "plan->end", fromNodeId: "plan", toNodeId: "end" }
+  ]
+});`)!;
+
+    const byId = new Map(graph.nodes.map((node) => [node.id, node]));
+    expect(byId.get("start")!.position).toEqual({ x: 40, y: 120 });
+    expect(byId.get("plan")!.position).toBeUndefined();
+    expect(byId.get("end")!.position).toBeUndefined();
+  });
+
   test("groups executable workflow nodes by satisfied dependencies", () => {
     const graph = parseWorkflowGraphUpsert(`workflowGraph.upsert({
   title: "Review DAG",
