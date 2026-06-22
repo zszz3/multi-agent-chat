@@ -1525,6 +1525,19 @@ export function workflowRunProgressSummary(progress: WorkflowRunProgressItem[]):
   return details.length > 0 ? `${headline} · ${details.join(" · ")}` : headline;
 }
 
+export function workflowProgressAfterFailure(progress: WorkflowRunProgressItem[], errorMessage: string): WorkflowRunProgressItem[] {
+  return progress.map((item) => {
+    if (item.status !== "running" && item.status !== "queued") return item;
+    const next: WorkflowRunProgressItem = {
+      ...item,
+      status: "failed",
+      detail: errorMessage,
+    };
+    delete next.taskId;
+    return next;
+  });
+}
+
 function workflowRunStatusLabel(status: WorkflowRunNodeStatus): string {
   if (status === "completed") return "completed";
   if (status === "running") return "running";
@@ -3431,6 +3444,8 @@ export function App() {
       return { ok: true, workflowRunId: activeWorkflowRunId };
     } catch (error) {
       const message = error instanceof Error ? error.message : String(error);
+      latestRunProgress = workflowProgressAfterFailure(latestRunProgress, message);
+      setWorkflowRunProgress(latestRunProgress);
       if (activeWorkflowRunId) {
         try {
           const failedSnapshot = await window.multiAgentChat.finishWorkflowRun({
@@ -6204,7 +6219,9 @@ export function WorkflowPage({
               </button>
             </header>
             {filePreview.truncated ? <div className="workflow-file-preview-note">{workflowText.largeFile}</div> : null}
-            {isMarkdownFilePath(filePreview.path) ? <MarkdownDocument className="workflow-file-preview-body" text={filePreview.content} /> : <pre>{filePreview.content}</pre>}
+            <div className="workflow-file-preview-content">
+              {isMarkdownFilePath(filePreview.path) ? <MarkdownDocument className="workflow-file-preview-body" text={filePreview.content} /> : <pre>{filePreview.content}</pre>}
+            </div>
           </article>
         </section>
       ) : null}

@@ -49,6 +49,7 @@ import {
   workflowDraftShouldPersist,
   workflowJudgePrompt,
   workflowNodeRunPrompt,
+  workflowProgressAfterFailure,
   workflowRunProgressSummary,
   workflowStoragePlanDocument,
   workflowTaskLiveDetail,
@@ -461,6 +462,19 @@ describe("ChatControls", () => {
     expect(styles).not.toContain(".workflow-graph-board.is-expanded .workflow-graph-card textarea {\n  display: block;\n}");
     expect(styles).not.toContain(".workflow-graph-board.is-expanded .workflow-node-config-grid {\n  display: grid;\n}");
     expect(styles).not.toContain("linear-gradient(var(--line-faint) 1px, transparent 1px)");
+  });
+
+  test("positions workflow output document preview as a right-side reader drawer", () => {
+    expect(styles).toContain(".workflow-file-preview-overlay {\n  position: fixed;");
+    expect(styles).toContain("justify-content: flex-end;");
+    expect(styles).toContain(".workflow-file-preview-modal {\n  display: grid;");
+    expect(styles).toContain("width: min(760px, calc(100vw - 92px));");
+    expect(styles).toContain("height: 100%;");
+    expect(styles).toContain("max-height: none;");
+    expect(styles).toContain("border-radius: 0;");
+    expect(styles).toContain(".workflow-file-preview-content {\n  grid-row: 3;");
+    expect(styles).not.toContain(".workflow-file-preview-overlay {\n  position: fixed;\n  inset: 0;\n  z-index: 110;\n  display: grid;\n  place-items: center;");
+    expect(styles).not.toContain("width: min(980px, 100%);");
   });
 
   test("keeps the workflow history sidebar visible", () => {
@@ -2909,6 +2923,25 @@ workflowGraph.upsert({
         { nodeId: "writer", title: "Writer", status: "queued" },
       ]),
     ).toBe("Running 2/3 · 1 done · 1 queued");
+  });
+
+  test("marks unfinished workflow progress as failed when a run fails", () => {
+    expect(
+      workflowProgressAfterFailure(
+        [
+          { nodeId: "plan", title: "Plan", status: "completed", taskId: "task-done" },
+          { nodeId: "review", title: "Review", status: "running", taskId: "task-running", detail: "Judge running" },
+          { nodeId: "ship", title: "Ship", status: "queued" },
+          { nodeId: "doc", title: "Doc", status: "failed", detail: "Already failed" },
+        ],
+        "Workflow task timed out.",
+      ),
+    ).toEqual([
+      { nodeId: "plan", title: "Plan", status: "completed", taskId: "task-done" },
+      { nodeId: "review", title: "Review", status: "failed", detail: "Workflow task timed out." },
+      { nodeId: "ship", title: "Ship", status: "failed", detail: "Workflow task timed out." },
+      { nodeId: "doc", title: "Doc", status: "failed", detail: "Already failed" },
+    ]);
   });
 
   test("keeps an empty active workflow draft persistable", () => {
