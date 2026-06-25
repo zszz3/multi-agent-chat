@@ -31,6 +31,7 @@ describe("preload skill API", () => {
     expect(electronState.exposedApi).toHaveProperty("installSkill");
     expect(electronState.exposedApi).toHaveProperty("uninstallSkill");
     expect(electronState.exposedApi).toHaveProperty("searchOnlineSkills");
+    expect(electronState.exposedApi).toHaveProperty("revealPathInFinder");
     expect(electronState.exposedApi).toHaveProperty("getKeepAwake");
     expect(electronState.exposedApi).toHaveProperty("setKeepAwake");
     expect(electronState.exposedApi).toHaveProperty("saveScheduledWorkflowRunnerConfig");

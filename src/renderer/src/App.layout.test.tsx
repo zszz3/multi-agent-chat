@@ -23,10 +23,12 @@ import {
   fetchOnlineSkills,
   findSkillFallbackMessage,
   findSkillImportRequest,
+  findSkillImportSelection,
   findSkillRequestsImport,
   findSkillSearchQuery,
   onlineSkillTreeUrl,
   parseSkillMarkdown,
+  skillPopularityLabel,
   skillsShResultFromApiSkill,
   skillsShSearchUrl,
   missingAppCapabilityMessage,
@@ -1679,7 +1681,14 @@ describe("SkillsPage", () => {
       sourcePath: "/Users/example/Library/Application Support/Multi Agent Chat/bundled-skills/brainstorming/SKILL.md",
       existed: false,
     };
-    const html = renderToStaticMarkup(<SkillsPage language="zh" templates={SKILL_TEMPLATES} onInstallSkill={async () => installResult} />);
+    const html = renderToStaticMarkup(
+      <SkillsPage
+        language="zh"
+        templates={SKILL_TEMPLATES}
+        onInstallSkill={async () => installResult}
+        onRevealSkillInFinder={async () => undefined}
+      />,
+    );
 
     expect(html).toContain("skills-page");
     expect(html).toContain("skills-browser");
@@ -1708,6 +1717,7 @@ describe("SkillsPage", () => {
     expect(html).toContain("https://github.com/obra/superpowers/blob/main/skills/brainstorming/SKILL.md");
     expect(html).toContain("SKILL.md");
     expect(html).toContain("本地安装");
+    expect(html).toContain("Finder");
     expect(html).toContain("查看中文");
     expect(html).not.toContain("翻译成中文");
     expect(html).not.toContain("安装到 Codex");
@@ -1762,6 +1772,7 @@ describe("SkillsPage", () => {
           rawUrl: "https://www.skills.sh/anthropics/skills/front-end-design",
           repositoryUrl: "https://github.com/anthropics/skills",
           installCommand: "npx skills add anthropics/skills@front-end-design",
+          installs: 22,
           contentLabel: "skills.sh result",
         },
       ],
@@ -1771,6 +1782,7 @@ describe("SkillsPage", () => {
 
     expect(message).toContain("已找到在线候选");
     expect(message).toContain("front-end-design");
+    expect(message).toContain("popularity: 22 installs");
     expect(message).toContain("npx skills add anthropics/skills@front-end-design");
     expect(message).not.toContain("Codex");
     expect(message).not.toContain("Error invoking remote method");
@@ -1793,6 +1805,7 @@ describe("SkillsPage", () => {
           url: "https://github.com/anthropics/skills/blob/main/skills/frontend-design/SKILL.md",
           rawUrl: "https://raw.githubusercontent.com/anthropics/skills/main/skills/frontend-design/SKILL.md",
           repositoryUrl: "https://github.com/anthropics/skills",
+          repositoryStars: 13200,
           contentLabel: "SKILL.md",
         },
       ],
@@ -1802,7 +1815,9 @@ describe("SkillsPage", () => {
 
     expect(message).toContain("frontend-design");
     expect(message).toContain("source: Anthropic Skills");
+    expect(message).toContain("popularity: 13.2K GitHub stars");
     expect(message).toContain("download_url: https://raw.githubusercontent.com/anthropics/skills/main/skills/frontend-design/SKILL.md");
+    expect(message).toContain("回复 1 或 导入 1");
     expect(message).not.toContain("install_cmd");
     expect(message).not.toContain("Codex");
   });
@@ -1814,27 +1829,34 @@ describe("SkillsPage", () => {
     expect(query).toContain("anthropic");
   });
 
-  test("detects import intent and builds an app-managed skill import request", () => {
+  test("requires explicit candidate confirmation before importing online skills", () => {
+    const candidate = {
+      id: "anthropic-skills:skills/frontend-design/SKILL.md",
+      name: "frontend-design",
+      description: "Guidance for distinctive, intentional visual design.",
+      prompt: "# Frontend Design",
+      tags: ["frontend-design"],
+      sourceId: "anthropic-skills",
+      sourceLabel: "Anthropic Skills",
+      sourcePath: "skills/frontend-design/SKILL.md",
+      sourceUrl: "https://github.com/anthropics/skills/blob/main/skills/frontend-design/SKILL.md",
+      path: "skills/frontend-design/SKILL.md",
+      url: "https://github.com/anthropics/skills/blob/main/skills/frontend-design/SKILL.md",
+      rawUrl: "https://raw.githubusercontent.com/anthropics/skills/main/skills/frontend-design/SKILL.md",
+      repositoryUrl: "https://github.com/anthropics/skills",
+      repositoryStars: 13200,
+      contentLabel: "SKILL.md",
+    };
+
     expect(findSkillRequestsImport("下载一个前端设计skill，A那家公司的")).toBe(true);
-    expect(findSkillRequestsImport("找一个前端设计skill")).toBe(false);
+    expect(findSkillImportSelection("下载一个前端设计skill，A那家公司的", [candidate])).toBeUndefined();
+    expect(findSkillImportSelection("1", [candidate])).toBe(candidate);
+    expect(findSkillImportSelection("导入 1", [candidate])).toBe(candidate);
+    expect(findSkillImportSelection("下载 frontend-design", [candidate])).toBe(candidate);
+    expect(skillPopularityLabel(candidate)).toBe("13.2K GitHub stars");
 
     expect(
-      findSkillImportRequest({
-        id: "anthropic-skills:skills/frontend-design/SKILL.md",
-        name: "frontend-design",
-        description: "Guidance for distinctive, intentional visual design.",
-        prompt: "# Frontend Design",
-        tags: ["frontend-design"],
-        sourceId: "anthropic-skills",
-        sourceLabel: "Anthropic Skills",
-        sourcePath: "skills/frontend-design/SKILL.md",
-        sourceUrl: "https://github.com/anthropics/skills/blob/main/skills/frontend-design/SKILL.md",
-        path: "skills/frontend-design/SKILL.md",
-        url: "https://github.com/anthropics/skills/blob/main/skills/frontend-design/SKILL.md",
-        rawUrl: "https://raw.githubusercontent.com/anthropics/skills/main/skills/frontend-design/SKILL.md",
-        repositoryUrl: "https://github.com/anthropics/skills",
-        contentLabel: "SKILL.md",
-      }),
+      findSkillImportRequest(candidate),
     ).toMatchObject({
       id: "anthropic-skills:skills/frontend-design/SKILL.md",
       name: "frontend-design",

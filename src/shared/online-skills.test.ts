@@ -41,6 +41,9 @@ describe("fetchOnlineSkills", () => {
           { status: 200, headers: { "Content-Type": "application/json" } },
         );
       }
+      if (url === "https://api.github.com/repos/anthropics/skills") {
+        return new Response(JSON.stringify({ stargazers_count: 13200 }), { status: 200, headers: { "Content-Type": "application/json" } });
+      }
       if (url === "https://raw.githubusercontent.com/anthropics/skills/main/skills/frontend-design/SKILL.md") {
         return new Response(
           [
@@ -91,6 +94,7 @@ describe("fetchOnlineSkills", () => {
       sourceId: "anthropic-skills",
       name: "frontend-design",
       path: "skills/frontend-design/SKILL.md",
+      repositoryStars: 13200,
     });
     expect(results[0]?.installCommand).toBeUndefined();
   });

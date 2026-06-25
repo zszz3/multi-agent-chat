@@ -64,6 +64,7 @@ const api = {
   setWorkDir: (workDir: string): Promise<AppSnapshot> => ipcRenderer.invoke("workdir:set", workDir),
   chooseWorkDir: (): Promise<AppSnapshot> => ipcRenderer.invoke("workdir:choose"),
   readLocalFile: (filePath: string): Promise<LocalFilePreview> => ipcRenderer.invoke("file:read-text", filePath),
+  revealPathInFinder: (filePath: string): Promise<string> => ipcRenderer.invoke("file:reveal", filePath),
   getKeepAwake: (): Promise<boolean> => ipcRenderer.invoke("power:get-keep-awake"),
   setKeepAwake: (enabled: boolean): Promise<boolean> => ipcRenderer.invoke("power:set-keep-awake", enabled),
   searchOnlineSkills: (query: string): Promise<OnlineSkillResult[]> => ipcRenderer.invoke("skills:search-online", query),

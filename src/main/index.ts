@@ -1,4 +1,4 @@
-import { app, BrowserWindow, dialog, ipcMain, powerSaveBlocker, screen, type OpenDialogOptions } from "electron";
+import { app, BrowserWindow, dialog, ipcMain, powerSaveBlocker, screen, shell, type OpenDialogOptions } from "electron";
 import { createHash } from "node:crypto";
 import { hostname, platform, userInfo } from "node:os";
 import path from "node:path";
@@ -302,6 +302,13 @@ function registerIpcHandlers(): void {
     return hub.snapshot();
   });
   ipcMain.handle("file:read-text", async (_event, filePath: string) => createLocalTextFilePreview(filePath, hub.getWorkDir(), app.getPath("home")));
+  ipcMain.handle("file:reveal", async (_event, filePath: string) => {
+    const targetPath = String(filePath ?? "").trim();
+    if (!targetPath) throw new Error("Missing path to reveal.");
+    const resolvedPath = path.isAbsolute(targetPath) ? targetPath : path.resolve(process.cwd(), targetPath);
+    shell.showItemInFolder(resolvedPath);
+    return resolvedPath;
+  });
   ipcMain.handle("power:get-keep-awake", () => getKeepAwake());
   ipcMain.handle("power:set-keep-awake", (_event, enabled: boolean) => setKeepAwake(Boolean(enabled)));
   ipcMain.handle("skills:search-online", async (_event, query: string) => fetchOnlineSkills(String(query ?? ""), ONLINE_SKILL_SOURCES));

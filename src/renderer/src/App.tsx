@@ -367,6 +367,49 @@ export function findSkillRequestsImport(input: string): boolean {
   return /下载|安装|导入|装一下|装进|install|download|import/i.test(input);
 }
 
+function compactCount(value: number): string {
+  if (value >= 1_000_000) return `${(value / 1_000_000).toFixed(value >= 10_000_000 ? 0 : 1).replace(/\.0$/, "")}M`;
+  if (value >= 1_000) return `${(value / 1_000).toFixed(1).replace(/\.0$/, "")}K`;
+  return String(value);
+}
+
+export function skillPopularityLabel(skill: Pick<OnlineSkillResult, "repositoryStars" | "installs">): string | undefined {
+  if (skill.repositoryStars !== undefined) return `${compactCount(skill.repositoryStars)} GitHub stars`;
+  if (skill.installs !== undefined) return `${compactCount(skill.installs)} installs`;
+  return undefined;
+}
+
+function chineseOrdinalIndex(value: string): number | undefined {
+  const normalized = value.trim();
+  const map: Record<string, number> = { 一: 0, 二: 1, 两: 1, 三: 2, 四: 3, 五: 4, 六: 5, 七: 6, 八: 7, 九: 8, 十: 9 };
+  return map[normalized];
+}
+
+export function findSkillImportSelection(input: string, candidates: OnlineSkillResult[]): OnlineSkillResult | undefined {
+  if (candidates.length === 0) return undefined;
+  const trimmed = input.trim();
+  const numeric = trimmed.match(/^(?:#\s*)?([1-9]\d*)$/);
+  const actionNumeric = trimmed.match(/^(?:导入|下载|安装|install|download|import)\s*(?:第\s*)?([1-9]\d*)\s*(?:个)?$/i);
+  const actionChinese = trimmed.match(/^(?:导入|下载|安装)\s*第\s*([一二两三四五六七八九十])\s*个?$/);
+  const index =
+    numeric?.[1] !== undefined
+      ? Number(numeric[1]) - 1
+      : actionNumeric?.[1] !== undefined
+        ? Number(actionNumeric[1]) - 1
+        : actionChinese?.[1] !== undefined
+          ? chineseOrdinalIndex(actionChinese[1])
+          : undefined;
+  if (index !== undefined) return candidates[index];
+
+  const named = trimmed.match(/^(?:导入|下载|安装|install|download|import)\s+(.+)$/i)?.[1]?.trim().toLowerCase();
+  if (!named) return undefined;
+  const normalized = named.replace(/\s+/g, "-");
+  return candidates.find((skill) => {
+    const name = skillDisplayName(skill).toLowerCase();
+    return normalized === name || normalized.includes(name);
+  });
+}
+
 export function findSkillImportRequest(skill: OnlineSkillResult): ImportOnlineSkillRequest {
   return {
     id: skill.id,
@@ -397,10 +440,13 @@ export function findSkillFallbackMessage(candidates: OnlineSkillResult[], langua
   const lines = topCandidates.map((skill, index) => {
     const install = skill.installCommand ? `\n   install_cmd: \`${skill.installCommand}\`` : "";
     const download = !skill.installCommand && skill.rawUrl && skill.rawUrl !== skill.url ? `\n   download_url: ${skill.rawUrl}` : "";
+    const popularity = skillPopularityLabel(skill);
+    const popularityLine = popularity ? `\n   popularity: ${popularity}` : "";
     const source = skill.repositoryUrl ?? skill.url;
-    return `${index + 1}. ${skillDisplayName(skill)} - ${skillDisplayDescription(skill)}\n   source: ${skill.sourceLabel}${source ? ` · ${source}` : ""}${install}${download}`;
+    return `${index + 1}. ${skillDisplayName(skill)} - ${skillDisplayDescription(skill)}\n   source: ${skill.sourceLabel}${source ? ` · ${source}` : ""}${popularityLine}${install}${download}`;
   });
-  return [intro, "", ...lines].join("\n");
+  const confirm = language === "zh" ? "确认导入到软件技能库：回复 1 或 导入 1。" : "To import into this app's skill library, reply with 1 or import 1.";
+  return [intro, "", ...lines, "", confirm].join("\n");
 }
 
 function sourceUrlLabel(url: string): string {
@@ -2661,6 +2707,14 @@ export function App() {
     return api.readLocalFile(filePath);
   }
 
+  async function revealSkillInFinder(filePath: string): Promise<void> {
+    const api = window.multiAgentChat as typeof window.multiAgentChat & {
+      revealPathInFinder?: (path: string) => Promise<string>;
+    };
+    if (!api.revealPathInFinder) throw new Error("Finder 打开能力需要重启应用后生效。");
+    await api.revealPathInFinder(filePath);
+  }
+
   async function refreshImportedSkills(): Promise<SkillTemplate[]> {
     const api = window.multiAgentChat as typeof window.multiAgentChat & {
       listImportedSkills?: () => Promise<SkillTemplate[]>;
@@ -3931,6 +3985,7 @@ export function App() {
             templates={skillTemplates}
             configuredAgents={snapshot.configuredAgents}
             onImportOnlineSkill={importOnlineSkill}
+            onRevealSkillInFinder={revealSkillInFinder}
             onInstallSkill={installSkill}
             onUninstallSkill={uninstallSkill}
           />
@@ -6342,6 +6397,7 @@ export function SkillsPage({
   templates,
   configuredAgents = [],
   onImportOnlineSkill,
+  onRevealSkillInFinder,
   onInstallSkill,
   onUninstallSkill,
   defaultFindSkillChatOpen = false,
@@ -6350,6 +6406,7 @@ export function SkillsPage({
   templates: SkillTemplate[];
   configuredAgents?: ConfiguredAgent[];
   onImportOnlineSkill?: (skill: OnlineSkillResult) => Promise<ImportedSkillResult>;
+  onRevealSkillInFinder?: (filePath: string) => Promise<void>;
   onInstallSkill?: (templateId: string, target: SkillInstallTarget) => Promise<InstalledSkillResult>;
   onUninstallSkill?: (templateId: string, target: SkillInstallTarget) => Promise<UninstalledSkillResult>;
   defaultFindSkillChatOpen?: boolean;
@@ -6463,21 +6520,12 @@ export function SkillsPage({
     setFindSkillRunning(true);
     let candidates: OnlineSkillResult[] = [];
     try {
-      setOnlineStatus(searchingText);
-      candidates = await searchOnlineSkills(findSkillSearchQuery(text));
-      setOnlineResults(candidates);
-      setOnlineStatus(candidates.length === 0 ? noOnlineResults : `${candidates.length} skills`);
-      if (candidates[0]) {
-        setSelectedOnlineSkillKey(`online:${candidates[0].id}`);
-        setSelectedSkillKey(undefined);
-        setShowTranslatedSkill(false);
-        setTranslationStatus("");
-      }
-      if (findSkillRequestsImport(text) && candidates[0]) {
+      const selectedImportCandidate = findSkillImportSelection(text, onlineResults);
+      if (selectedImportCandidate) {
         if (!onImportOnlineSkill) throw new Error(language === "zh" ? "技能导入能力需要重启应用后生效。" : "Skill import requires restarting the app.");
         let result: ImportedSkillResult;
         try {
-          result = await onImportOnlineSkill(candidates[0]);
+          result = await onImportOnlineSkill(selectedImportCandidate);
         } catch (error) {
           const message = error instanceof Error ? error.message : String(error);
           setFindSkillMessages((current) => [
@@ -6485,7 +6533,7 @@ export function SkillsPage({
             {
               id: `find-skill-assistant-${Date.now()}`,
               role: "assistant",
-              content: `${language === "zh" ? "导入失败" : "Import failed"}：${message}\n\n${findSkillFallbackMessage(candidates, language)}`,
+              content: `${language === "zh" ? "导入失败" : "Import failed"}：${message}`,
             },
           ]);
           return;
@@ -6497,10 +6545,20 @@ export function SkillsPage({
           {
             id: `find-skill-assistant-${Date.now()}`,
             role: "assistant",
-            content: `${findSkillImportSuccessMessage(result, language)}\n\n${findSkillFallbackMessage(candidates, language)}`,
+            content: findSkillImportSuccessMessage(result, language),
           },
         ]);
         return;
+      }
+      setOnlineStatus(searchingText);
+      candidates = await searchOnlineSkills(findSkillSearchQuery(text));
+      setOnlineResults(candidates);
+      setOnlineStatus(candidates.length === 0 ? noOnlineResults : `${candidates.length} skills`);
+      if (candidates[0]) {
+        setSelectedOnlineSkillKey(`online:${candidates[0].id}`);
+        setSelectedSkillKey(undefined);
+        setShowTranslatedSkill(false);
+        setTranslationStatus("");
       }
       setFindSkillMessages((current) => [
         ...current,
@@ -6679,6 +6737,21 @@ export function SkillsPage({
               <div className="skill-detail-body-head">
                 <span>{selectedSkillContentLabel}</span>
                 <div>
+                  {selectedSkill.kind === "local" && selectedSkillSourcePath && onRevealSkillInFinder ? (
+                    <button
+                      className="control-btn compact secondary"
+                      type="button"
+                      onClick={() => {
+                        void onRevealSkillInFinder(selectedSkillSourcePath).catch((error) => {
+                          setInstallStatus(error instanceof Error ? error.message : String(error));
+                          setInstallStatusTone("error");
+                        });
+                      }}
+                    >
+                      <FolderOpen size={13} />
+                      <span>Finder</span>
+                    </button>
+                  ) : null}
                   <button
                     className="control-btn compact secondary"
                     type="button"

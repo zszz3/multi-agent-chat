@@ -18,6 +18,8 @@ export interface OnlineSkillResult extends SkillTemplate {
   url: string;
   rawUrl: string;
   repositoryUrl?: string;
+  repositoryStars?: number;
+  installs?: number;
   installCommand?: string;
   contentLabel?: string;
 }
@@ -61,6 +63,10 @@ export const SKILLS_SH_SOURCE = {
 
 export function onlineSkillTreeUrl(source: OnlineSkillSource): string {
   return `https://api.github.com/repos/${source.owner}/${source.repo}/git/trees/${source.branch}?recursive=1`;
+}
+
+function onlineSkillRepositoryApiUrl(source: OnlineSkillSource): string {
+  return `https://api.github.com/repos/${source.owner}/${source.repo}`;
 }
 
 function onlineSkillBlobUrl(source: OnlineSkillSource, path: string): string {
@@ -256,7 +262,7 @@ export function skillsShResultFromApiSkill(skill: SkillsShApiSkill): OnlineSkill
   const installCommand = skillsShInstallCommand(source, name);
   const url = skillsShWebUrl(id);
   const installSummary = installs !== undefined ? `${formatCompactNumber(installs)} installs` : "Install with npx skills";
-  return {
+  const result: OnlineSkillResult = {
     id: `${SKILLS_SH_SOURCE.id}:${id}`,
     name,
     description: `${installSummary} · ${source}`,
@@ -273,6 +279,19 @@ export function skillsShResultFromApiSkill(skill: SkillsShApiSkill): OnlineSkill
     installCommand,
     contentLabel: "skills.sh result",
   };
+  if (installs !== undefined) result.installs = installs;
+  return result;
+}
+
+async function fetchRepositoryStars(source: OnlineSkillSource, fetcher: typeof fetch): Promise<number | undefined> {
+  try {
+    const response = await fetcher(onlineSkillRepositoryApiUrl(source), { headers: { Accept: "application/vnd.github+json" } });
+    if (!response.ok) return undefined;
+    const payload = objectValue(await response.json());
+    return numberValue(payload.stargazers_count);
+  } catch {
+    return undefined;
+  }
 }
 
 function resultMatchesProvider(skill: OnlineSkillResult, provider: "anthropic" | "openai"): boolean {
@@ -336,6 +355,7 @@ export async function fetchOnlineSkills(query: string, sources: OnlineSkillSourc
   const results = await Promise.all(
     sources.map(async (source) => {
       try {
+        const repositoryStars = await fetchRepositoryStars(source, fetcher);
         const treeResponse = await fetcher(onlineSkillTreeUrl(source), { headers: { Accept: "application/vnd.github+json" } });
         if (!treeResponse.ok) throw new Error(`${source.label}: ${treeResponse.status}`);
         const treePayload = (await treeResponse.json()) as { tree?: Array<{ path?: string; type?: string }> };
@@ -372,6 +392,7 @@ export async function fetchOnlineSkills(query: string, sources: OnlineSkillSourc
               repositoryUrl: source.homepage ?? `https://github.com/${source.owner}/${source.repo}`,
               contentLabel: "SKILL.md",
             };
+            if (repositoryStars !== undefined) result.repositoryStars = repositoryStars;
             return result;
           }),
         );
