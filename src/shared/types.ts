@@ -51,7 +51,6 @@ export interface ConfiguredAgent {
   runtimeAgentId: AgentId;
   channelId: string;
   modelId: string;
-  prompt: string;
   tags: string[];
   createdAt: number;
   updatedAt: number;
@@ -194,8 +193,7 @@ export interface ChatEvent {
 export interface ChatSession {
   id: string;
   title: string;
-  agentId: AgentId;
-  channelId: string;
+  configuredAgentId: string;
   modelId: string;
   sessionId: string | undefined;
   running: boolean;
@@ -213,8 +211,7 @@ export interface TaskRun {
   id: string;
   title: string;
   prompt: string;
-  agentId: AgentId;
-  channelId: string;
+  configuredAgentId: string;
   modelId: string;
   workDir: string;
   status: TaskRunStatus;
@@ -230,8 +227,7 @@ export interface TaskRun {
 
 export interface RunTaskRequest {
   prompt: string;
-  agentId: AgentId;
-  channelId?: string;
+  configuredAgentId: string;
   modelId?: string;
   workDir?: string;
 }
@@ -239,8 +235,7 @@ export interface RunTaskRequest {
 export interface WorkflowAgentRequest {
   requestId?: string;
   prompt: string;
-  agentId: AgentId;
-  channelId?: string;
+  configuredAgentId: string;
   modelId?: string;
   workDir?: string;
   sessionId?: string;
@@ -308,9 +303,7 @@ export interface AgentTeamMember {
   id: string;
   roleName: string;
   prompt: string;
-  agentId: AgentId;
-  channelId: string;
-  modelId: string;
+  configuredAgentId: string;
   canvasPosition?: AgentCanvasPosition;
 }
 
@@ -333,9 +326,7 @@ export interface TeamRunStep {
   teamMemberId: string;
   roleName: string;
   prompt: string;
-  agentId: AgentId;
-  channelId: string;
-  modelId: string;
+  configuredAgentId: string;
   status: TeamRunStepStatus;
   taskId: string | undefined;
   artifact: string | undefined;
@@ -391,9 +382,6 @@ export interface WorkflowGraphNode {
   kind: WorkflowGraphNodeKind;
   title: string;
   prompt: string;
-  agentId?: AgentId;
-  channelId?: string;
-  modelId?: string;
   /**
    * Optional explicit canvas position. When set, the workflow board pins the
    * node here instead of auto-layout; agents (via MCP) and user drags both write
@@ -461,8 +449,7 @@ export interface WorkflowDraftState {
   title: string;
   status: WorkflowStatus;
   revision: number;
-  agentId: AgentId;
-  channelId: string;
+  configuredAgentId: string;
   modelId: string;
   objective: string;
   graph: WorkflowGraph;
@@ -612,8 +599,7 @@ export interface CreateWorkflowRequest {
   title: string;
   objective: string;
   graph: WorkflowGraph;
-  agentId?: AgentId;
-  channelId?: string;
+  configuredAgentId?: string;
   modelId?: string;
   graphReady?: boolean;
   messages?: WorkflowGrillMessage[];
@@ -635,8 +621,7 @@ export interface UpdateWorkflowRequest {
   title?: string;
   objective?: string;
   graph?: WorkflowGraph;
-  agentId?: AgentId;
-  channelId?: string;
+  configuredAgentId?: string;
   modelId?: string;
   graphReady?: boolean;
   messages?: WorkflowGrillMessage[];

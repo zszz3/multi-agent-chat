@@ -23,10 +23,7 @@ export const WORKFLOW_GRAPH_CODE_TEMPLATE = `workflowGraph.upsert({
       id: "plan",
       kind: "agent",
       title: "<agent role name>",
-      prompt: "<specific instructions for this agent node>",
-      agentId: "<codex|claude>",
-      channelId: "<channel id or empty>",
-      modelId: "<model id or default>"
+      prompt: "<specific instructions for this agent node>"
     },
     {
       id: "end",
@@ -72,7 +69,7 @@ export function buildWorkflowAgentPrompt({ objective }: WorkflowAgentPromptInput
     "Workflow graph contract:",
     "- The graph must be a DAG.",
     "- It must have exactly one start node.",
-    "- It must contain executable agent nodes with title, prompt, agent/channel/model placeholders, and directed edges.",
+    "- It must contain executable agent nodes with title, prompt, and directed edges.",
     "- It should be easy for the user to edit agent assignments before execution.",
     "- Agent node prompts must explain what each node writes to shared memory and what user-facing output documents, if any, should be saved under the runtime Workflow storage plan output directory.",
     "- Do not hard-code arbitrary output paths in node prompts. Refer to the runtime Workflow storage plan provided during execution.",

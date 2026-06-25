@@ -21,6 +21,8 @@ import {
   rememberProviderKeyFromChannel,
   shouldRefreshBalances,
   fetchOnlineSkills,
+  findSkillFallbackMessage,
+  findSkillSearchQuery,
   onlineSkillTreeUrl,
   parseSkillMarkdown,
   skillsShResultFromApiSkill,
@@ -129,8 +131,18 @@ const configuredAgents: ConfiguredAgent[] = [
     runtimeAgentId: "codex",
     channelId: "codex-openai",
     modelId: "gpt-5.5",
-    prompt: "Review the repo and produce a concise report.",
     tags: ["review", "docs"],
+    createdAt: 1710000000000,
+    updatedAt: 1710000000000,
+  },
+  {
+    id: "claude-reviewer",
+    name: "Claude Reviewer",
+    description: "Reviews with Claude.",
+    runtimeAgentId: "claude",
+    channelId: "claude-code",
+    modelId: DEFAULT_MODEL_ID,
+    tags: ["review"],
     createdAt: 1710000000000,
     updatedAt: 1710000000000,
   },
@@ -159,8 +171,7 @@ const taskRuns: TaskRun[] = [
     id: "task-1",
     title: "Inspect repo",
     prompt: "Inspect repo",
-    agentId: "codex",
-    channelId: "codex-openai",
+    configuredAgentId: "repo-reviewer",
     modelId: "gpt-5.5",
     workDir: "/tmp/workspace",
     status: "completed",
@@ -189,8 +200,7 @@ const appSnapshot: AppSnapshot = {
     {
       id: "chat-1",
       title: "Repo chat",
-      agentId: "codex",
-      channelId: "codex-openai",
+      configuredAgentId: "repo-reviewer",
       modelId: "gpt-5.5",
       messages: [],
       running: false,
@@ -220,7 +230,7 @@ const appSnapshot: AppSnapshot = {
 };
 
 const paletteContext = {
-  chats: appSnapshot.chats.map((chat) => ({ id: chat.id, title: chat.title, agentId: chat.agentId })),
+  chats: appSnapshot.chats.map((chat) => ({ id: chat.id, title: chat.title, agentId: "codex" })),
   theme: "light" as const,
   language: "en" as const,
   onNavigate: () => undefined,
@@ -242,18 +252,14 @@ const teams: AgentTeam[] = [
         id: "member-1",
         roleName: "Planner",
         prompt: "Create a review plan first.",
-        agentId: "codex",
-        channelId: "codex-openai",
-        modelId: "gpt-5.5",
+        configuredAgentId: "repo-reviewer",
         canvasPosition: { x: 120, y: 90 },
       },
       {
         id: "member-2",
         roleName: "Checker",
         prompt: "Verify the previous artifact.",
-        agentId: "claude",
-        channelId: "claude-code",
-        modelId: DEFAULT_MODEL_ID,
+        configuredAgentId: "claude-reviewer",
       },
     ],
     workflow: {
@@ -352,9 +358,7 @@ const teamRuns: TeamRun[] = [
         teamMemberId: "member-1",
         roleName: "Planner",
         prompt: "Create a review plan first.",
-        agentId: "codex",
-        channelId: "codex-openai",
-        modelId: "gpt-5.5",
+        configuredAgentId: "repo-reviewer",
         status: "completed",
         taskId: "task-1",
         artifact: "artifact-1",
@@ -367,9 +371,7 @@ const teamRuns: TeamRun[] = [
         teamMemberId: "member-2",
         roleName: "Checker",
         prompt: "Verify the previous artifact.",
-        agentId: "claude",
-        channelId: "claude-code",
-        modelId: DEFAULT_MODEL_ID,
+        configuredAgentId: "claude-reviewer",
         status: "running",
         taskId: "task-2",
         artifact: undefined,
@@ -543,9 +545,8 @@ describe("ChatControls", () => {
       chatConfigLocked({
         id: "chat-1",
         title: "New Codex chat",
-        agentId: "codex",
-        channelId: "codex-openai",
-        modelId: DEFAULT_MODEL_ID,
+        configuredAgentId: "repo-reviewer",
+        modelId: "gpt-5.5",
         sessionId: undefined,
         running: false,
         messages: [
@@ -563,30 +564,24 @@ describe("ChatControls", () => {
   test("renders agent and workdir as compact composer controls", () => {
     const html = renderToStaticMarkup(
       <ChatControls
-        agentId="codex"
-        channelId="codex-openai"
-        modelId={DEFAULT_MODEL_ID}
+        configuredAgentId="repo-reviewer"
+        configuredAgents={configuredAgents}
         channels={channels}
         locked={false}
         running={false}
         workDir="/tmp/workspace"
         runtimes={runtimes}
-        onSelectAgent={async () => undefined}
-        onSelectChannel={async () => undefined}
-        onSelectModel={async () => undefined}
+        onSelectConfiguredAgent={async () => undefined}
         onChooseWorkDir={async () => undefined}
         onRefresh={async () => undefined}
       />,
     );
 
     expect(html).toContain("composer-controls");
-    expect(html).toContain("aria-label=\"Agent\"");
-    expect(html).toContain("aria-label=\"Channel\"");
-    expect(html).toContain("aria-label=\"Model\"");
-    expect(html).toContain("Codex");
-    expect(html).toContain("Claude Code");
-    expect(html).toContain("Codex OpenAI");
-    expect(html).toContain("GPT-5.5");
+    expect(html).toContain("aria-label=\"Configured agent\"");
+    expect(html).toContain("Repo Reviewer");
+    expect(html).toContain("aria-label=\"Agent model\"");
+    expect(html).toContain("value=\"gpt-5.5\" selected=\"\"");
     expect(html).toContain("aria-label=\"Choose work directory\"");
     expect(html).toContain("/tmp/workspace");
   });
@@ -594,25 +589,21 @@ describe("ChatControls", () => {
   test("locks agent and model selects after a chat starts", () => {
     const html = renderToStaticMarkup(
       <ChatControls
-        agentId="codex"
-        channelId="codex-openai"
-        modelId={DEFAULT_MODEL_ID}
+        configuredAgentId="repo-reviewer"
+        configuredAgents={configuredAgents}
         channels={channels}
         locked={true}
         running={false}
         workDir="/tmp/workspace"
         runtimes={runtimes}
-        onSelectAgent={async () => undefined}
-        onSelectChannel={async () => undefined}
-        onSelectModel={async () => undefined}
+        onSelectConfiguredAgent={async () => undefined}
         onChooseWorkDir={async () => undefined}
         onRefresh={async () => undefined}
       />,
     );
 
-    expect(html).toContain("<select class=\"composer-select\" aria-label=\"Agent\" disabled=\"\"");
-    expect(html).toContain("<select class=\"composer-select\" aria-label=\"Channel\" disabled=\"\"");
-    expect(html).toContain("<select class=\"composer-select\" aria-label=\"Model\" disabled=\"\"");
+    expect(html).toContain("<select class=\"composer-select\" aria-label=\"Configured agent\" disabled=\"\"");
+    expect(html).toContain("<select class=\"composer-select\" aria-label=\"Agent model\" disabled=\"\"");
   });
 });
 
@@ -633,8 +624,8 @@ describe("Sidebar history panels", () => {
     objective: "Review payment release",
     nodes: [
       { id: "start", kind: "start", title: "Start", prompt: "" },
-      { id: "plan", kind: "agent", title: "Plan", prompt: "Plan release.", agentId: "codex", channelId: "codex-openai", modelId: DEFAULT_MODEL_ID },
-      { id: "review", kind: "agent", title: "Review", prompt: "Review release.", agentId: "claude", channelId: "claude-code", modelId: DEFAULT_MODEL_ID },
+      { id: "plan", kind: "agent", title: "Plan", prompt: "Plan release."},
+      { id: "review", kind: "agent", title: "Review", prompt: "Review release."},
       { id: "end", kind: "end", title: "Done", prompt: "" },
     ],
     edges: [
@@ -648,9 +639,8 @@ describe("Sidebar history panels", () => {
     const chat: ChatSession = {
       id: "chat-1",
       title: "Payment review",
-      agentId: "codex",
-      channelId: "codex-openai",
-      modelId: DEFAULT_MODEL_ID,
+      configuredAgentId: "repo-reviewer",
+      modelId: "gpt-5.5",
       sessionId: "019e9143-2451-7612-a62d-e65389574d7d",
       running: false,
       messages: [],
@@ -663,6 +653,8 @@ describe("Sidebar history panels", () => {
     const html = renderToStaticMarkup(
       <ChatHistoryPanel
         chats={[chat]}
+        configuredAgents={configuredAgents}
+        channels={channels}
         activeChatId="chat-1"
         contextMenu={{ chatId: "chat-1", x: 24, y: 32 }}
         onCreateChat={() => undefined}
@@ -698,8 +690,7 @@ describe("Sidebar history panels", () => {
             runContextDocument: "",
             contextDocument: "",
             runIds: [],
-            agentId: "codex",
-            channelId: "codex-openai",
+            configuredAgentId: "repo-reviewer",
             modelId: "gpt-5.5",
             agentSessionId: undefined,
             createdAt: 1710000000000,
@@ -773,7 +764,9 @@ describe("ConfigPage", () => {
     expect(html).toContain("Repo Reviewer");
     expect(html).toContain("aria-label=\"Agent execution config\"");
     expect(html).toContain("Codex OpenAI · Codex");
-    expect(html).toContain("aria-label=\"Agent prompt\"");
+    expect(html).toContain("aria-label=\"Agent model\"");
+    expect(html).toContain("GPT-5.5");
+    expect(html).not.toContain("aria-label=\"Agent prompt\"");
     expect(html).not.toContain(">Test<");
     expect(html).toContain("configured-agent-editor-actions");
     expect(html).toContain(">Save<");
@@ -1333,16 +1326,15 @@ describe("ConfigPage", () => {
       title: "每日代码复盘",
       status: "completed",
       revision: 1,
-      agentId: "codex",
-      channelId: "codex-openai",
-      modelId: DEFAULT_MODEL_ID,
+      configuredAgentId: "repo-reviewer",
+      modelId: "gpt-5.5",
       objective: "每天总结代码变化",
       graph: {
         title: "每日代码复盘",
         objective: "每天总结代码变化",
         nodes: [
           { id: "start", kind: "start", title: "Start", prompt: "" },
-          { id: "review", kind: "agent", title: "Review", prompt: "Review changes.", agentId: "codex", channelId: "codex-openai", modelId: DEFAULT_MODEL_ID },
+          { id: "review", kind: "agent", title: "Review", prompt: "Review changes."},
           { id: "end", kind: "end", title: "Done", prompt: "" },
         ],
         edges: [
@@ -1486,7 +1478,7 @@ describe("ConfigPage", () => {
         objective: "每天总结代码变化",
         nodes: [
           { id: "start", kind: "start", title: "Start", prompt: "" },
-          { id: "review", kind: "agent", title: "Review", prompt: "Review changes.", agentId: "codex", channelId: "codex-openai", modelId: DEFAULT_MODEL_ID },
+          { id: "review", kind: "agent", title: "Review", prompt: "Review changes."},
           { id: "end", kind: "end", title: "Done", prompt: "" },
         ],
         edges: [
@@ -1503,9 +1495,8 @@ describe("ConfigPage", () => {
       contextDocument: "",
       finalReport: "",
       runIds: [],
-      agentId: "codex",
-      channelId: "codex-openai",
-      modelId: DEFAULT_MODEL_ID,
+      configuredAgentId: "repo-reviewer",
+      modelId: "gpt-5.5",
       agentSessionId: undefined,
       createdAt: 1710000000000,
       updatedAt: 1710000000000,
@@ -1567,7 +1558,7 @@ describe("ConfigPage", () => {
     expect(scheduledWorkflowEventTarget({ ...event, payload: { workflowId: "wf_1" } })).toBeUndefined();
   });
 
-  test("applies skill templates without changing runtime or provider selection", () => {
+  test("applies skill templates without storing template prompts in agent config", () => {
     const template = SKILL_TEMPLATES.find((item) => item.id === "personal-finance-planning")!;
     const agent = configuredAgents[0]!;
 
@@ -1575,7 +1566,7 @@ describe("ConfigPage", () => {
 
     expect(nextAgent.name).toBe("personal-finance-planning");
     expect(nextAgent.description).toBe("整理财务目标、预算、风险偏好和长期规划。");
-    expect(nextAgent.prompt).toContain("name: personal-finance-planning");
+    expect(nextAgent).not.toHaveProperty("prompt");
     expect(nextAgent.tags).toEqual(template.tags);
     expect(nextAgent.runtimeAgentId).toBe(agent.runtimeAgentId);
     expect(nextAgent.channelId).toBe(agent.channelId);
@@ -1731,6 +1722,64 @@ describe("SkillsPage", () => {
     expect(html).not.toContain("Online skill search results");
   });
 
+  test("renders a Codex assistant for finding skills online", () => {
+    const html = renderToStaticMarkup(
+      <SkillsPage
+        language="zh"
+        templates={SKILL_TEMPLATES}
+        configuredAgents={configuredAgents}
+        defaultFindSkillChatOpen
+      />,
+    );
+
+    expect(html).toContain("skills-browser");
+    expect(html).toContain("skill-find-chat-panel");
+    expect(html).toContain("Find skill");
+    expect(html).toContain("Codex");
+    expect(html).toContain("aria-label=\"Find skill message\"");
+    expect(html).toContain("网上找 skill");
+    expect(html).toContain("skills.sh find API");
+    expect(html).not.toContain("优先从当前页面里的技能里找");
+  });
+
+  test("keeps find-skill useful when Codex cannot summarize online candidates", () => {
+    const message = findSkillFallbackMessage(
+      [
+        {
+          id: "skills-sh:anthropics/skills/front-end-design",
+          name: "front-end-design",
+          description: "Anthropic frontend design skill",
+          prompt: "# front-end-design",
+          tags: ["skills.sh", "anthropics/skills"],
+          sourceId: "skills-sh",
+          sourceLabel: "skills.sh Find",
+          sourcePath: "anthropics/skills/front-end-design",
+          sourceUrl: "https://www.skills.sh/anthropics/skills/front-end-design",
+          path: "anthropics/skills/front-end-design",
+          url: "https://www.skills.sh/anthropics/skills/front-end-design",
+          rawUrl: "https://www.skills.sh/anthropics/skills/front-end-design",
+          repositoryUrl: "https://github.com/anthropics/skills",
+          installCommand: "npx skills add anthropics/skills@front-end-design",
+          contentLabel: "skills.sh result",
+        },
+      ],
+      "zh",
+      "Codex error",
+    );
+
+    expect(message).toContain("已找到在线候选");
+    expect(message).toContain("front-end-design");
+    expect(message).toContain("npx skills add anthropics/skills@front-end-design");
+    expect(message).toContain("Codex 暂时无法总结");
+  });
+
+  test("normalizes Chinese find-skill requests for Anthropic frontend design skills", () => {
+    const query = findSkillSearchQuery("下载一个前端设计skill，A那家公司的");
+
+    expect(query).toContain("frontend design");
+    expect(query).toContain("anthropic");
+  });
+
   test("builds online skill source URLs and parses SKILL.md frontmatter", () => {
     expect(onlineSkillTreeUrl({ id: "openai", label: "OpenAI Skills", owner: "openai", repo: "skills", branch: "main" })).toBe(
       "https://api.github.com/repos/openai/skills/git/trees/main?recursive=1",
@@ -1862,18 +1911,15 @@ describe("TaskPage", () => {
     const html = renderToStaticMarkup(
       <TaskPage
         prompt="Review this project"
-        agentId="codex"
-        channelId="codex-openai"
-        modelId="gpt-5.5"
+        configuredAgentId="repo-reviewer"
+        configuredAgents={configuredAgents}
         workDir="/tmp/workspace"
         runtimes={runtimes}
         channels={channels}
         tasks={taskRuns}
         activeTaskId="task-1"
         onPromptChange={() => undefined}
-        onSelectAgent={() => undefined}
-        onSelectChannel={() => undefined}
-        onSelectModel={() => undefined}
+        onSelectConfiguredAgent={() => undefined}
         onChooseWorkDir={async () => undefined}
         onRefresh={async () => undefined}
         onRunTask={async () => undefined}
@@ -1911,9 +1957,7 @@ describe("TaskPage", () => {
     expect(html).toContain("aria-label=\"Task progress\"");
     expect(html).toContain("Review");
     expect(html).toContain("aria-label=\"Task prompt\"");
-    expect(html).toContain("aria-label=\"Agent\"");
-    expect(html).toContain("aria-label=\"Channel\"");
-    expect(html).toContain("aria-label=\"Model\"");
+    expect(html).toContain("aria-label=\"Configured agent\"");
     expect(html).toContain("Run Agent");
     expect(html).toContain("Inspect repo");
     expect(html).toContain("/tmp/workspace");
@@ -1929,18 +1973,15 @@ describe("TaskPage", () => {
     const html = renderToStaticMarkup(
       <TaskPage
         prompt="Review this project"
-        agentId="codex"
-        channelId="codex-openai"
-        modelId="gpt-5.5"
+        configuredAgentId="repo-reviewer"
+        configuredAgents={configuredAgents}
         workDir="/tmp/workspace"
         runtimes={runtimes}
         channels={channels}
         tasks={taskRuns}
         activeTaskId={undefined}
         onPromptChange={() => undefined}
-        onSelectAgent={() => undefined}
-        onSelectChannel={() => undefined}
-        onSelectModel={() => undefined}
+        onSelectConfiguredAgent={() => undefined}
         onChooseWorkDir={async () => undefined}
         onRefresh={async () => undefined}
         onRunTask={async () => undefined}
@@ -2018,6 +2059,7 @@ describe("TeamPage", () => {
         workDir="/tmp/workspace"
         runtimes={runtimes}
         channels={channels}
+        configuredAgents={configuredAgents}
         onPromptChange={() => undefined}
         onCreateTeam={async () => undefined}
         onUpdateTeam={async () => undefined}
@@ -2112,6 +2154,7 @@ describe("TeamPage", () => {
         workDir="/tmp/workspace"
         runtimes={runtimes}
         channels={channels}
+        configuredAgents={configuredAgents}
         onPromptChange={() => undefined}
         onCreateTeam={async () => undefined}
         onUpdateTeam={async () => undefined}
@@ -2145,6 +2188,7 @@ describe("TeamPage", () => {
         workDir="/tmp/workspace"
         runtimes={runtimes}
         channels={channels}
+        configuredAgents={configuredAgents}
         onPromptChange={() => undefined}
         onCreateTeam={async () => undefined}
         onUpdateTeam={async () => undefined}
@@ -2178,6 +2222,7 @@ describe("TeamPage", () => {
         workDir="/tmp/workspace"
         runtimes={runtimes}
         channels={channels}
+        configuredAgents={configuredAgents}
         onPromptChange={() => undefined}
         onCreateTeam={async () => undefined}
         onUpdateTeam={async () => undefined}
@@ -2212,6 +2257,7 @@ describe("TeamPage", () => {
         workDir="/tmp/workspace"
         runtimes={runtimes}
         channels={channels}
+        configuredAgents={configuredAgents}
         onPromptChange={() => undefined}
         onCreateTeam={async () => undefined}
         onUpdateTeam={async () => undefined}
@@ -2251,6 +2297,7 @@ describe("TeamPage", () => {
         workDir="/tmp/workspace"
         runtimes={runtimes}
         channels={channels}
+        configuredAgents={configuredAgents}
         onPromptChange={() => undefined}
         onCreateTeam={async () => undefined}
         onUpdateTeam={async () => undefined}
@@ -2280,18 +2327,12 @@ describe("WorkflowPage", () => {
         kind: "agent",
         title: "Clarify & Plan",
         prompt: "Interrogate the task and produce a plan.",
-        agentId: "codex",
-        channelId: "codex-openai",
-        modelId: "gpt-5.5",
       },
       {
         id: "review",
         kind: "agent",
         title: "Review",
         prompt: "Review the output.",
-        agentId: "claude",
-        channelId: "claude-code",
-        modelId: DEFAULT_MODEL_ID,
       },
       { id: "end", kind: "end", title: "Done", prompt: "" },
     ],
@@ -2319,17 +2360,14 @@ describe("WorkflowPage", () => {
         messages={[]}
         reply=""
         error={undefined}
-        agentId="codex"
-        channelId="codex-openai"
-        modelId="gpt-5.5"
+        configuredAgentId="repo-reviewer"
         runtimes={runtimes}
         channels={channels}
+        configuredAgents={configuredAgents}
         workDir="/tmp/workspace"
         running={false}
         onObjectiveChange={() => undefined}
-        onSelectAgent={() => undefined}
-        onSelectChannel={() => undefined}
-        onSelectModel={() => undefined}
+        onSelectConfiguredAgent={() => undefined}
         onDraftGraph={() => undefined}
         onReplyChange={() => undefined}
         onSendReply={() => undefined}
@@ -2341,9 +2379,10 @@ describe("WorkflowPage", () => {
 
     expect(html).toContain("New workflow");
     expect(html).toContain("Describe a task to start generating a workflow.");
-    expect(html).toContain("aria-label=\"Agent\"");
-    expect(html).toContain("aria-label=\"Channel\"");
-    expect(html).toContain("aria-label=\"Model\"");
+    expect(html).toContain("aria-label=\"Configured agent\"");
+    expect(html).toContain("Repo Reviewer");
+    expect(html).toContain("Codex OpenAI");
+    expect(html).toContain("GPT-5.5");
     expect(html).toContain("aria-label=\"Workflow task\"");
     expect(html).toContain("Start");
     expect(html).not.toContain("第一个问题：最终交付物是什么？");
@@ -2370,17 +2409,13 @@ describe("WorkflowPage", () => {
         messages={[]}
         reply=""
         error={undefined}
-        agentId="codex"
-        channelId="codex-openai"
-        modelId="gpt-5.5"
+        configuredAgentId="repo-reviewer"
         runtimes={runtimes}
         channels={channels}
         workDir="/tmp/workspace"
         running={false}
         onObjectiveChange={() => undefined}
-        onSelectAgent={() => undefined}
-        onSelectChannel={() => undefined}
-        onSelectModel={() => undefined}
+        onSelectConfiguredAgent={() => undefined}
         onDraftGraph={() => undefined}
         onReplyChange={() => undefined}
         onSendReply={() => undefined}
@@ -2407,18 +2442,14 @@ describe("WorkflowPage", () => {
         messages={[]}
         reply=""
         error={undefined}
-        agentId="codex"
-        channelId="codex-openai"
-        modelId="gpt-5.5"
+        configuredAgentId="repo-reviewer"
         runtimes={runtimes}
         channels={channels}
         workDir="/tmp/workspace"
         running={false}
         finalReport="## Final User Report\nqjagents workflow finished."
         onObjectiveChange={() => undefined}
-        onSelectAgent={() => undefined}
-        onSelectChannel={() => undefined}
-        onSelectModel={() => undefined}
+        onSelectConfiguredAgent={() => undefined}
         onDraftGraph={() => undefined}
         onReplyChange={() => undefined}
         onSendReply={() => undefined}
@@ -2441,10 +2472,10 @@ describe("WorkflowPage", () => {
       objective: "Review release in parallel",
       nodes: [
         { id: "start", kind: "start", title: "Start", prompt: "" },
-        { id: "inventory", kind: "agent", title: "Inventory", prompt: "Map repo.", agentId: "codex", channelId: "codex-openai", modelId: "gpt-5.5" },
-        { id: "security", kind: "agent", title: "Security", prompt: "Review security.", agentId: "codex", channelId: "codex-openai", modelId: "gpt-5.5" },
-        { id: "testing", kind: "agent", title: "Testing", prompt: "Review tests.", agentId: "claude", channelId: "claude-code", modelId: DEFAULT_MODEL_ID },
-        { id: "writer", kind: "agent", title: "Writer", prompt: "Synthesize results.", agentId: "codex", channelId: "codex-openai", modelId: "gpt-5.5" },
+        { id: "inventory", kind: "agent", title: "Inventory", prompt: "Map repo."},
+        { id: "security", kind: "agent", title: "Security", prompt: "Review security."},
+        { id: "testing", kind: "agent", title: "Testing", prompt: "Review tests."},
+        { id: "writer", kind: "agent", title: "Writer", prompt: "Synthesize results."},
         { id: "end", kind: "end", title: "Done", prompt: "" },
       ],
       edges: [
@@ -2477,7 +2508,7 @@ describe("WorkflowPage", () => {
       objective: "Pin one node",
       nodes: [
         { id: "start", kind: "start", title: "Start", prompt: "" },
-        { id: "plan", kind: "agent", title: "Plan", prompt: "Plan.", agentId: "codex", channelId: "codex-openai", modelId: "gpt-5.5", position: { x: 999, y: 777 } },
+        { id: "plan", kind: "agent", title: "Plan", prompt: "Plan.", position: { x: 999, y: 777 } },
         { id: "end", kind: "end", title: "Done", prompt: "" },
       ],
       edges: [
@@ -2498,10 +2529,10 @@ describe("WorkflowPage", () => {
       objective: "Review release in parallel",
       nodes: [
         { id: "start", kind: "start", title: "Start", prompt: "" },
-        { id: "inventory", kind: "agent", title: "Inventory", prompt: "Map repo.", agentId: "codex", channelId: "codex-openai", modelId: "gpt-5.5" },
-        { id: "security", kind: "agent", title: "Security", prompt: "Review security.", agentId: "codex", channelId: "codex-openai", modelId: "gpt-5.5" },
-        { id: "testing", kind: "agent", title: "Testing", prompt: "Review tests.", agentId: "claude", channelId: "claude-code", modelId: DEFAULT_MODEL_ID },
-        { id: "writer", kind: "agent", title: "Writer", prompt: "Synthesize results.", agentId: "codex", channelId: "codex-openai", modelId: "gpt-5.5" },
+        { id: "inventory", kind: "agent", title: "Inventory", prompt: "Map repo."},
+        { id: "security", kind: "agent", title: "Security", prompt: "Review security."},
+        { id: "testing", kind: "agent", title: "Testing", prompt: "Review tests."},
+        { id: "writer", kind: "agent", title: "Writer", prompt: "Synthesize results."},
         { id: "end", kind: "end", title: "Done", prompt: "" },
       ],
       edges: [
@@ -2524,9 +2555,7 @@ describe("WorkflowPage", () => {
         messages={[]}
         reply=""
         error={undefined}
-        agentId="codex"
-        channelId="codex-openai"
-        modelId="gpt-5.5"
+        configuredAgentId="repo-reviewer"
         runtimes={runtimes}
         channels={channels}
         workDir="/tmp/workspace"
@@ -2538,9 +2567,7 @@ describe("WorkflowPage", () => {
           { nodeId: "writer", title: "Writer", status: "queued" },
         ]}
         onObjectiveChange={() => undefined}
-        onSelectAgent={() => undefined}
-        onSelectChannel={() => undefined}
-        onSelectModel={() => undefined}
+        onSelectConfiguredAgent={() => undefined}
         onDraftGraph={() => undefined}
         onReplyChange={() => undefined}
         onSendReply={() => undefined}
@@ -2602,17 +2629,13 @@ describe("WorkflowPage", () => {
         messages={[]}
         reply=""
         error={undefined}
-        agentId="codex"
-        channelId="codex-openai"
-        modelId={DEFAULT_MODEL_ID}
+        configuredAgentId="repo-reviewer"
         runtimes={runtimes}
         channels={channels}
         workDir="/tmp/workspace"
         running={false}
         onObjectiveChange={() => undefined}
-        onSelectAgent={() => undefined}
-        onSelectChannel={() => undefined}
-        onSelectModel={() => undefined}
+        onSelectConfiguredAgent={() => undefined}
         onDraftGraph={() => undefined}
         onReplyChange={() => undefined}
         onSendReply={() => undefined}
@@ -2656,18 +2679,14 @@ describe("WorkflowPage", () => {
         messages={[]}
         reply=""
         error={undefined}
-        agentId="codex"
-        channelId="codex-openai"
-        modelId="gpt-5.5"
+        configuredAgentId="repo-reviewer"
         runtimes={runtimes}
         channels={channels}
         workDir="/tmp/workspace"
         running={false}
         finalReport="## Final User Report\n证据包含 README.md；最终产物见 .multi-agent-chat/workflows/wf_review/outputs/learning-highlights.md。"
         onObjectiveChange={() => undefined}
-        onSelectAgent={() => undefined}
-        onSelectChannel={() => undefined}
-        onSelectModel={() => undefined}
+        onSelectConfiguredAgent={() => undefined}
         onDraftGraph={() => undefined}
         onReplyChange={() => undefined}
         onSendReply={() => undefined}
@@ -2702,8 +2721,7 @@ describe("WorkflowPage", () => {
             runContextDocument: "",
             contextDocument: "",
             runIds: [],
-            agentId: "codex",
-            channelId: "codex-openai",
+            configuredAgentId: "repo-reviewer",
             modelId: "gpt-5.5",
             agentSessionId: undefined,
             createdAt: 1710000000000,
@@ -2724,8 +2742,7 @@ describe("WorkflowPage", () => {
             runContextDocument: "",
             contextDocument: "",
             runIds: [],
-            agentId: "codex",
-            channelId: "codex-openai",
+            configuredAgentId: "repo-reviewer",
             modelId: "gpt-5.5",
             agentSessionId: undefined,
             createdAt: 1710001000000,
@@ -2764,7 +2781,7 @@ workflowGraph.upsert({
   objective: "Review the repo",
   nodes: [
     { id: "start", kind: "start", title: "Start", prompt: "" },
-    { id: "review", kind: "agent", title: "Review Agent", prompt: "Review.", agentId: "codex", channelId: "", modelId: "default" },
+    { id: "review", kind: "agent", title: "Review Agent", prompt: "Review."},
     { id: "end", kind: "end", title: "Done", prompt: "" }
   ],
   edges: [
@@ -3063,17 +3080,13 @@ workflowGraph.upsert({
         ]}
         reply=""
         error={undefined}
-        agentId="codex"
-        channelId="codex-openai"
-        modelId="gpt-5.5"
+        configuredAgentId="repo-reviewer"
         runtimes={runtimes}
         channels={channels}
         workDir="/tmp/workspace"
         running={false}
         onObjectiveChange={() => undefined}
-        onSelectAgent={() => undefined}
-        onSelectChannel={() => undefined}
-        onSelectModel={() => undefined}
+        onSelectConfiguredAgent={() => undefined}
         onDraftGraph={() => undefined}
         onReplyChange={() => undefined}
         onSendReply={() => undefined}
@@ -3103,17 +3116,13 @@ workflowGraph.upsert({
         ]}
         reply=""
         error={undefined}
-        agentId="codex"
-        channelId="codex-openai"
-        modelId="gpt-5.5"
+        configuredAgentId="repo-reviewer"
         runtimes={runtimes}
         channels={channels}
         workDir="/tmp/workspace"
         running={false}
         onObjectiveChange={() => undefined}
-        onSelectAgent={() => undefined}
-        onSelectChannel={() => undefined}
-        onSelectModel={() => undefined}
+        onSelectConfiguredAgent={() => undefined}
         onDraftGraph={() => undefined}
         onReplyChange={() => undefined}
         onSendReply={() => undefined}
@@ -3155,18 +3164,14 @@ workflowGraph.upsert({
         messages={[{ id: "m-1", role: "assistant", content: "信息足够了，已经生成 DAG。" }]}
         reply=""
         error={undefined}
-        agentId="codex"
-        channelId="codex-openai"
-        modelId="gpt-5.5"
+        configuredAgentId="repo-reviewer"
         runtimes={runtimes}
         channels={channels}
         configuredAgents={configuredAgents}
         workDir="/tmp/workspace"
         running={false}
         onObjectiveChange={() => undefined}
-        onSelectAgent={() => undefined}
-        onSelectChannel={() => undefined}
-        onSelectModel={() => undefined}
+        onSelectConfiguredAgent={() => undefined}
         onDraftGraph={() => undefined}
         onReplyChange={() => undefined}
         onSendReply={() => undefined}
@@ -3193,9 +3198,7 @@ workflowGraph.upsert({
         messages={[{ id: "m-1", role: "assistant", content: "信息足够了，已经生成 DAG。" }]}
         reply=""
         error={undefined}
-        agentId="codex"
-        channelId="codex-openai"
-        modelId="gpt-5.5"
+        configuredAgentId="repo-reviewer"
         runtimes={runtimes}
         channels={channels}
         configuredAgents={configuredAgents}
@@ -3203,9 +3206,7 @@ workflowGraph.upsert({
         running={false}
         defaultGraphExpanded
         onObjectiveChange={() => undefined}
-        onSelectAgent={() => undefined}
-        onSelectChannel={() => undefined}
-        onSelectModel={() => undefined}
+        onSelectConfiguredAgent={() => undefined}
         onDraftGraph={() => undefined}
         onReplyChange={() => undefined}
         onSendReply={() => undefined}
@@ -3234,9 +3235,7 @@ workflowGraph.upsert({
         messages={[{ id: "m-1", role: "assistant", content: "信息足够了，已经生成 DAG。" }]}
         reply=""
         error={undefined}
-        agentId="codex"
-        channelId="codex-openai"
-        modelId="gpt-5.5"
+        configuredAgentId="repo-reviewer"
         runtimes={runtimes}
         channels={channels}
         workDir="/tmp/workspace"
@@ -3248,9 +3247,7 @@ workflowGraph.upsert({
           { nodeId: "review", title: "Review", status: "queued" },
         ]}
         onObjectiveChange={() => undefined}
-        onSelectAgent={() => undefined}
-        onSelectChannel={() => undefined}
-        onSelectModel={() => undefined}
+        onSelectConfiguredAgent={() => undefined}
         onDraftGraph={() => undefined}
         onReplyChange={() => undefined}
         onSendReply={() => undefined}
@@ -3281,9 +3278,7 @@ workflowGraph.upsert({
         ]}
         reply=""
         error={undefined}
-        agentId="codex"
-        channelId="codex-openai"
-        modelId="gpt-5.5"
+        configuredAgentId="repo-reviewer"
         runtimes={runtimes}
         channels={channels}
         workDir="/tmp/workspace"
@@ -3295,9 +3290,7 @@ workflowGraph.upsert({
           { nodeId: "__final_review__", title: "Main agent review", status: "completed", detail: "Main agent report ready" },
         ]}
         onObjectiveChange={() => undefined}
-        onSelectAgent={() => undefined}
-        onSelectChannel={() => undefined}
-        onSelectModel={() => undefined}
+        onSelectConfiguredAgent={() => undefined}
         onDraftGraph={() => undefined}
         onReplyChange={() => undefined}
         onSendReply={() => undefined}
@@ -3334,17 +3327,13 @@ workflowGraph.upsert({
         messages={[{ id: "m-1", role: "assistant", content: "第一个问题：最终交付物是什么？推荐答案：风险清单。" }]}
         reply=""
         error={undefined}
-        agentId="codex"
-        channelId="codex-openai"
-        modelId="gpt-5.5"
+        configuredAgentId="repo-reviewer"
         runtimes={runtimes}
         channels={channels}
         workDir="/tmp/workspace"
         running={false}
         onObjectiveChange={() => undefined}
-        onSelectAgent={() => undefined}
-        onSelectChannel={() => undefined}
-        onSelectModel={() => undefined}
+        onSelectConfiguredAgent={() => undefined}
         onDraftGraph={() => undefined}
         onReplyChange={() => undefined}
         onSendReply={() => undefined}

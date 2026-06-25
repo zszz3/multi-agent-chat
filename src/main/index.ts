@@ -10,11 +10,10 @@ import { startMcpBridge, type McpBridgeServer } from "./mcp-bridge";
 import { ScheduledWorkflowCloudClient, type ScheduledWorkflowCloudEventConnection } from "./scheduled-workflow-cloud";
 import { installBundledSkill, uninstallBundledSkill } from "./skill-installer";
 import { centeredWindowBounds } from "./window-bounds";
-import { fetchOnlineSkills } from "../shared/online-skills";
+import { fetchOnlineSkills, ONLINE_SKILL_SOURCES } from "../shared/online-skills";
 import { DEFAULT_SCHEDULED_WORKFLOW_CLOUD_BASE_URL } from "../shared/types";
 import type {
   AgentChannel,
-  AgentId,
   AckScheduledWorkflowEventRequest,
   AppSnapshot,
   ConfiguredAgent,
@@ -250,8 +249,8 @@ function registerIpcHandlers(): void {
   ipcRegistered = true;
   ipcMain.handle("snapshot:get", () => hub.snapshot());
   ipcMain.handle("agents:refresh", async () => hub.refreshAgents());
-  ipcMain.handle("chat:create", (_event, agentId?: AgentId) => {
-    hub.createChat(agentId ?? "codex");
+  ipcMain.handle("chat:create", (_event, configuredAgentId?: string) => {
+    hub.createChat(configuredAgentId);
     return hub.snapshot();
   });
   ipcMain.handle("chat:select", (_event, chatId: string) => {
@@ -259,8 +258,8 @@ function registerIpcHandlers(): void {
     return hub.snapshot();
   });
   ipcMain.handle("chat:delete", (_event, chatId: string) => hub.deleteChat(chatId));
-  ipcMain.handle("chat:set-agent", (_event, chatId: string, agentId: AgentId) => {
-    hub.setChatAgent(chatId, agentId);
+  ipcMain.handle("chat:set-agent", (_event, chatId: string, configuredAgentId: string) => {
+    hub.setChatAgent(chatId, configuredAgentId);
     return hub.snapshot();
   });
   ipcMain.handle("chat:set-model", (_event, chatId: string, modelId: string) => {
@@ -304,7 +303,7 @@ function registerIpcHandlers(): void {
   ipcMain.handle("file:read-text", async (_event, filePath: string) => createLocalTextFilePreview(filePath, hub.getWorkDir(), app.getPath("home")));
   ipcMain.handle("power:get-keep-awake", () => getKeepAwake());
   ipcMain.handle("power:set-keep-awake", (_event, enabled: boolean) => setKeepAwake(Boolean(enabled)));
-  ipcMain.handle("skills:search-online", async (_event, query: string) => fetchOnlineSkills(String(query ?? "")));
+  ipcMain.handle("skills:search-online", async (_event, query: string) => fetchOnlineSkills(String(query ?? ""), ONLINE_SKILL_SOURCES));
   ipcMain.handle("skills:install", async (_event, request: InstallSkillRequest) =>
     installBundledSkill(request, app.getPath("home"), path.join(app.getPath("userData"), "bundled-skills")),
   );

@@ -50,6 +50,7 @@ import { AGENT_PROVIDER_PRESETS, type AgentProviderPreset } from "../../shared/p
 import { SKILL_TEMPLATES } from "../../shared/skill-templates";
 import {
   fetchOnlineSkills,
+  ONLINE_SKILL_SOURCES,
   SKILLS_SH_SOURCE,
   onlineSkillTreeUrl,
   skillsShResultFromApiSkill,
@@ -161,7 +162,7 @@ const UI_TEXT = {
     },
     config: {
       title: "Agent 组装",
-      description: "组装 Agent 的名称、描述、Prompt 和标签。",
+      description: "组装 Agent 的名称、描述、执行配置和标签。",
       save: "保存",
       language: "界面语言",
       zh: "统一中文",
@@ -175,7 +176,6 @@ const UI_TEXT = {
       model: "模型",
       tags: "标签",
       descriptionField: "描述",
-      prompt: "Prompt",
       advancedProvider: "高级 Provider 设置",
       plugins: "Codex 插件",
       loadCatalog: "加载目录",
@@ -187,7 +187,7 @@ const UI_TEXT = {
       enabled: "启用",
       models: "模型",
       addModel: "添加模型",
-      emptyAgent: "新建 Agent 后可编辑名称、描述、Prompt 和标签。",
+      emptyAgent: "新建 Agent 后可编辑名称、描述、执行配置和标签。",
       agentDeployed: "Agent 部署成功",
     },
     workflow: {
@@ -253,7 +253,7 @@ const UI_TEXT = {
     },
     config: {
       title: "Agent Assembly",
-      description: "Assemble agent profiles, prompts, and tags.",
+      description: "Assemble agent profiles, execution config, and tags.",
       save: "Save",
       language: "Language",
       zh: "统一中文",
@@ -267,7 +267,6 @@ const UI_TEXT = {
       model: "Model",
       tags: "Tags",
       descriptionField: "Description",
-      prompt: "Prompt",
       advancedProvider: "Advanced provider settings",
       plugins: "Codex Plugins",
       loadCatalog: "Load catalog",
@@ -279,7 +278,7 @@ const UI_TEXT = {
       enabled: "Enabled",
       models: "Models",
       addModel: "Add model",
-      emptyAgent: "Create an agent to edit its profile, prompt, and tags.",
+      emptyAgent: "Create an agent to edit its profile, execution config, and tags.",
       agentDeployed: "Agent deployed",
     },
     workflow: {
@@ -353,6 +352,34 @@ function skillDisplayDescription(skill: Pick<SkillTemplate, "description" | "pro
   return skillFrontmatterValue(skill.prompt, "description") || skill.description;
 }
 
+export function findSkillSearchQuery(input: string): string {
+  const trimmed = input.trim();
+  const additions: string[] = [];
+  if (/(^|[^a-z])a\s*那家|anthropic|anthropics|claude|克劳德/i.test(trimmed)) additions.push("anthropic");
+  if (/前端|frontend|front-end|界面|ui|设计|design/i.test(trimmed)) additions.push("frontend design");
+  if (/下载|安装|install|装一个|skill/i.test(trimmed)) additions.push("skill");
+  return [trimmed, ...additions].filter(Boolean).join(" ");
+}
+
+export function findSkillFallbackMessage(candidates: OnlineSkillResult[], language: Language, codexError?: string): string {
+  const topCandidates = candidates.slice(0, 3);
+  if (topCandidates.length === 0) {
+    return language === "zh"
+      ? "没有找到匹配的在线 skill。可以换一个更具体的能力描述再搜，例如平台名、工具名或任务类型。"
+      : "No matching online skill was found. Try a more specific capability, platform, tool, or task type.";
+  }
+  const intro =
+    language === "zh"
+      ? `已找到在线候选。${codexError ? `Codex 暂时无法总结：${codexError}。` : ""}你可以先看这些结果：`
+      : `Online candidates found. ${codexError ? `Codex could not summarize them: ${codexError}. ` : ""}Review these results first:`;
+  const lines = topCandidates.map((skill, index) => {
+    const install = skill.installCommand ? `\n   install_cmd: \`${skill.installCommand}\`` : "";
+    const source = skill.repositoryUrl ?? skill.url;
+    return `${index + 1}. ${skillDisplayName(skill)} - ${skillDisplayDescription(skill)}\n   source: ${skill.sourceLabel}${source ? ` · ${source}` : ""}${install}`;
+  });
+  return [intro, "", ...lines].join("\n");
+}
+
 function sourceUrlLabel(url: string): string {
   try {
     const parsed = new URL(url);
@@ -410,7 +437,7 @@ function loadStoredKeepAwake(storage: Pick<Storage, "getItem">): boolean {
   return storage.getItem(KEEP_AWAKE_STORAGE_KEY) === "true";
 }
 
-export type ActiveFeature = "chat" | "tasks" | "workflow" | "schedules" | "skills" | "runtimes" | "configs" | "settings";
+export type ActiveFeature = "chat" | "tasks" | "workflow" | "schedules" | "skills" | "runtimes" | "settings";
 type MaybePromise = void | Promise<void>;
 export type TaskStatusFilterValue = "all" | TaskProgress;
 const WORKFLOW_THINKING_MESSAGE = "Agent is thinking...";
@@ -716,9 +743,8 @@ export function reorderTeamMembers(
   return next;
 }
 
-function draftWorkflowMembers(mode: AgentTeamMode, channels: AgentChannel[]): AgentTeamMember[] {
-  const agentId: AgentId = "codex";
-  const channelId = defaultChannelForAgent(agentId, channels);
+function draftWorkflowMembers(mode: AgentTeamMode, configuredAgents: ConfiguredAgent[]): AgentTeamMember[] {
+  const configuredAgentId = defaultConfiguredAgentId(configuredAgents);
   const templates: Array<[string, string]> =
     mode === "parallel"
       ? [
@@ -742,9 +768,7 @@ function draftWorkflowMembers(mode: AgentTeamMode, channels: AgentChannel[]): Ag
     id: `draft-${Date.now()}-${index}`,
     roleName,
     prompt,
-    agentId,
-    channelId,
-    modelId: DEFAULT_MODEL_ID,
+    configuredAgentId,
   }));
 }
 
@@ -864,6 +888,34 @@ export function resolveConfiguredAgentChannel(agent: ConfiguredAgent | undefined
   return channels.find((channel) => channel.id === agent.channelId) ?? channels.find((channel) => channel.agentId === agent.runtimeAgentId) ?? channels[0];
 }
 
+function configuredAgentById(configuredAgentId: string | undefined, configuredAgents: ConfiguredAgent[]): ConfiguredAgent | undefined {
+  return configuredAgents.find((agent) => agent.id === configuredAgentId) ?? configuredAgents[0];
+}
+
+function defaultConfiguredAgentId(configuredAgents: ConfiguredAgent[]): string {
+  return configuredAgents[0]?.id ?? "";
+}
+
+function configuredAgentModel(
+  agent: ConfiguredAgent | undefined,
+  channel: AgentChannel | undefined,
+  modelId?: string,
+): AgentModelOption | undefined {
+  if (!agent || !channel) return undefined;
+  const selectedModelId = modelId || agent.modelId;
+  return channel.models.find((model) => model.id === selectedModelId) ?? channel.models.find((model) => model.id === DEFAULT_MODEL_ID) ?? channel.models[0];
+}
+
+function configuredAgentRuntimeId(agent: ConfiguredAgent | undefined, channel: AgentChannel | undefined): AgentId {
+  return channel?.agentId ?? agent?.runtimeAgentId ?? "codex";
+}
+
+function configuredAgentModelId(configuredAgentId: string | undefined, modelId: string | undefined, configuredAgents: ConfiguredAgent[], channels: AgentChannel[]): string {
+  const agent = configuredAgentById(configuredAgentId, configuredAgents);
+  const channel = resolveConfiguredAgentChannel(agent, channels);
+  return configuredAgentModel(agent, channel, modelId)?.id ?? DEFAULT_MODEL_ID;
+}
+
 export function applyProviderPresetToConfiguredAgent(agent: ConfiguredAgent, channel: AgentChannel, preset: AgentProviderPreset): ConfiguredAgent {
   return {
     ...agent,
@@ -971,7 +1023,6 @@ function createConfiguredAgent(channels: AgentChannel[], existingIds: string[]):
     runtimeAgentId,
     channelId,
     modelId: DEFAULT_MODEL_ID,
-    prompt: "",
     tags: [],
     createdAt: Date.now(),
     updatedAt: Date.now(),
@@ -983,7 +1034,6 @@ export function applySkillTemplate(agent: ConfiguredAgent, template: SkillTempla
     ...agent,
     name: skillDisplayName(template),
     description: skillDisplayDescription(template),
-    prompt: template.prompt,
     tags: [...template.tags],
   };
 }
@@ -1686,15 +1736,13 @@ export function App() {
   const [slashCommandIndex, setSlashCommandIndex] = useState(0);
   const [taskPrompt, setTaskPrompt] = useState("");
   const [teamPrompt, setTeamPrompt] = useState("");
-  const [taskAgentId, setTaskAgentId] = useState<AgentId>("codex");
-  const [taskChannelId, setTaskChannelId] = useState("");
+  const [taskConfiguredAgentId, setTaskConfiguredAgentId] = useState("");
   const [taskModelId, setTaskModelId] = useState(DEFAULT_MODEL_ID);
   const [workflowId, setWorkflowId] = useState(() => createWorkflowId());
   const [workflowTitle, setWorkflowTitle] = useState("Untitled workflow");
   const [workflowStatus, setWorkflowStatus] = useState<WorkflowStatus>("draft");
   const [workflowRevision, setWorkflowRevision] = useState(1);
-  const [workflowAgentId, setWorkflowAgentId] = useState<AgentId>("codex");
-  const [workflowChannelId, setWorkflowChannelId] = useState("");
+  const [workflowConfiguredAgentId, setWorkflowConfiguredAgentId] = useState("");
   const [workflowModelId, setWorkflowModelId] = useState(DEFAULT_MODEL_ID);
   const [workflowObjective, setWorkflowObjective] = useState("");
   const [workflowGraph, setWorkflowGraph] = useState<WorkflowGraph>(initialWorkflowGraph);
@@ -1844,8 +1892,7 @@ export function App() {
     setWorkflowTitle(draft.title);
     setWorkflowStatus(draft.status);
     setWorkflowRevision(draft.revision);
-    setWorkflowAgentId(draft.agentId);
-    setWorkflowChannelId(draft.channelId);
+    setWorkflowConfiguredAgentId(draft.configuredAgentId);
     setWorkflowModelId(draft.modelId);
     setWorkflowObjective(draft.objective);
     setWorkflowGraph(draft.graph);
@@ -1890,9 +1937,13 @@ export function App() {
       title: workflowTitle || workflowGraph.title || workflowObjective || "Untitled workflow",
       status: workflowRunning ? "running" : workflowStatus,
       revision: workflowRevision,
-      agentId: workflowAgentId,
-      channelId: workflowChannelId || defaultChannelForAgent(workflowAgentId, snapshot.channels),
-      modelId: workflowModelId || DEFAULT_MODEL_ID,
+      configuredAgentId: workflowConfiguredAgentId || defaultConfiguredAgentId(snapshot.configuredAgents),
+      modelId: configuredAgentModelId(
+        workflowConfiguredAgentId || defaultConfiguredAgentId(snapshot.configuredAgents),
+        workflowModelId,
+        snapshot.configuredAgents,
+        snapshot.channels,
+      ),
       objective: workflowObjective,
       graph: workflowGraph,
       graphReady: workflowGraphReady,
@@ -1949,8 +2000,7 @@ export function App() {
     workflowTitle,
     workflowStatus,
     workflowRevision,
-    workflowAgentId,
-    workflowChannelId,
+    workflowConfiguredAgentId,
     workflowModelId,
     workflowObjective,
     workflowGraph,
@@ -1978,40 +2028,15 @@ export function App() {
   }, [configDirty, snapshot.channels]);
 
   useEffect(() => {
-    setTaskChannelId((current) => {
-      if (current && snapshot.channels.some((channel) => channel.id === current && channel.agentId === taskAgentId)) return current;
-      return defaultChannelForAgent(taskAgentId, snapshot.channels);
-    });
-  }, [snapshot.channels, taskAgentId]);
-
-  useEffect(() => {
-    setTaskModelId((current) => {
-      const channelId =
-        taskChannelId && snapshot.channels.some((channel) => channel.id === taskChannelId && channel.agentId === taskAgentId)
-          ? taskChannelId
-          : defaultChannelForAgent(taskAgentId, snapshot.channels);
-      const models = modelsForChannel(taskAgentId, channelId, snapshot.channels);
-      return models.some((model) => model.id === current) ? current : DEFAULT_MODEL_ID;
-    });
-  }, [snapshot.channels, taskAgentId, taskChannelId]);
-
-  useEffect(() => {
-    setWorkflowChannelId((current) => {
-      if (current && snapshot.channels.some((channel) => channel.id === current && channel.agentId === workflowAgentId)) return current;
-      return defaultChannelForAgent(workflowAgentId, snapshot.channels);
-    });
-  }, [snapshot.channels, workflowAgentId]);
-
-  useEffect(() => {
-    setWorkflowModelId((current) => {
-      const channelId =
-        workflowChannelId && snapshot.channels.some((channel) => channel.id === workflowChannelId && channel.agentId === workflowAgentId)
-          ? workflowChannelId
-          : defaultChannelForAgent(workflowAgentId, snapshot.channels);
-      const models = modelsForChannel(workflowAgentId, channelId, snapshot.channels);
-      return models.some((model) => model.id === current) ? current : DEFAULT_MODEL_ID;
-    });
-  }, [snapshot.channels, workflowAgentId, workflowChannelId]);
+    const fallbackId = defaultConfiguredAgentId(snapshot.configuredAgents);
+    if (!fallbackId) return;
+    const nextTaskAgentId = snapshot.configuredAgents.some((agent) => agent.id === taskConfiguredAgentId) ? taskConfiguredAgentId : fallbackId;
+    const nextWorkflowAgentId = snapshot.configuredAgents.some((agent) => agent.id === workflowConfiguredAgentId) ? workflowConfiguredAgentId : fallbackId;
+    if (nextTaskAgentId !== taskConfiguredAgentId) setTaskConfiguredAgentId(nextTaskAgentId);
+    if (nextWorkflowAgentId !== workflowConfiguredAgentId) setWorkflowConfiguredAgentId(nextWorkflowAgentId);
+    setTaskModelId((current) => configuredAgentModelId(nextTaskAgentId, current, snapshot.configuredAgents, snapshot.channels));
+    setWorkflowModelId((current) => configuredAgentModelId(nextWorkflowAgentId, current, snapshot.configuredAgents, snapshot.channels));
+  }, [snapshot.configuredAgents, snapshot.channels, taskConfiguredAgentId, workflowConfiguredAgentId]);
 
   useEffect(() => {
     snapshotRef.current = snapshot;
@@ -2103,14 +2128,22 @@ export function App() {
     () => (taskStatusFilter === "all" ? snapshot.tasks : snapshot.tasks.filter((task) => task.progress === taskStatusFilter)),
     [snapshot.tasks, taskStatusFilter],
   );
-  const activeRuntime = activeChat ? runtimeMap.get(activeChat.agentId) ?? fallbackRuntime(activeChat.agentId) : undefined;
-  const activeChannel = activeChat ? snapshot.channels.find((channel) => channel.id === activeChat.channelId) : undefined;
-  const activeModel = activeChat
-    ? modelsForChannel(activeChat.agentId, activeChat.channelId, snapshot.channels).find((model) => model.id === activeChat.modelId)
-    : undefined;
+  const activeChatConfiguredAgent = activeChat ? configuredAgentById(activeChat.configuredAgentId, snapshot.configuredAgents) : undefined;
+  const activeChatChannel = resolveConfiguredAgentChannel(activeChatConfiguredAgent, snapshot.channels);
+  const activeChatRuntimeId = configuredAgentRuntimeId(activeChatConfiguredAgent, activeChatChannel);
+  const activeRuntime = activeChat ? runtimeMap.get(activeChatRuntimeId) ?? fallbackRuntime(activeChatRuntimeId) : undefined;
+  const activeModel = configuredAgentModel(activeChatConfiguredAgent, activeChatChannel, activeChat?.modelId);
+  const activeChatConfigTitle = [
+    activeChatConfiguredAgent?.name,
+    activeChatChannel?.label,
+    activeModel?.label ?? activeChatConfiguredAgent?.modelId ?? DEFAULT_MODEL_ID,
+    activeRuntime ? runtimeStatus(activeRuntime) : undefined,
+  ]
+    .filter(Boolean)
+    .join(" · ");
   const slashCommandSuggestions = useMemo(
-    () => (activeChat ? slashCommandSuggestionsFor(prompt, activeChat.agentId) : []),
-    [activeChat?.agentId, prompt],
+    () => (activeChat ? slashCommandSuggestionsFor(prompt, activeChatRuntimeId) : []),
+    [activeChat, activeChatRuntimeId, prompt],
   );
   const promptIsSlashCommand = prompt.trimStart().startsWith("/");
   const canSend = !!activeChat && !activeChat.running && !!prompt.trim() && (promptIsSlashCommand || !!activeRuntime?.available);
@@ -2148,7 +2181,7 @@ export function App() {
         return;
       }
       if (Date.now() - gChordRef.current < 900) {
-        const navMap: Record<string, ActiveFeature> = { c: "chat", t: "tasks", w: "workflow", f: "workflow", r: "runtimes", s: "configs" };
+        const navMap: Record<string, ActiveFeature> = { c: "chat", t: "tasks", w: "workflow", f: "workflow", r: "runtimes", s: "runtimes" };
         const feature = navMap[event.key.toLowerCase()];
         if (feature) {
           event.preventDefault();
@@ -2177,7 +2210,11 @@ export function App() {
   const paletteCommands = useMemo(
     () =>
       buildPaletteCommands({
-        chats: snapshot.chats.map((chat) => ({ id: chat.id, title: chat.title, agentId: chat.agentId })),
+        chats: snapshot.chats.map((chat) => {
+          const agent = configuredAgentById(chat.configuredAgentId, snapshot.configuredAgents);
+          const channel = resolveConfiguredAgentChannel(agent, snapshot.channels);
+          return { id: chat.id, title: chat.title, agentId: configuredAgentRuntimeId(agent, channel) };
+        }),
         theme,
         language,
         onNavigate: setActiveFeature,
@@ -2187,7 +2224,7 @@ export function App() {
         onChooseWorkDir: () => void chooseWorkDir(),
         onRefreshAgents: () => void refresh(),
       }),
-    [snapshot.chats, theme, language],
+    [snapshot.chats, snapshot.configuredAgents, snapshot.channels, theme, language],
   );
 
   async function refresh(): Promise<void> {
@@ -2195,8 +2232,8 @@ export function App() {
     setSnapshot(next);
   }
 
-  async function createChat(agentId: AgentId = activeChat?.agentId ?? "codex"): Promise<void> {
-    const next = await window.multiAgentChat.createChat(agentId);
+  async function createChat(configuredAgentId = activeChat?.configuredAgentId ?? defaultConfiguredAgentId(snapshot.configuredAgents)): Promise<void> {
+    const next = await window.multiAgentChat.createChat(configuredAgentId);
     setSnapshot(next);
     setPrompt("");
   }
@@ -2207,15 +2244,9 @@ export function App() {
     setPrompt("");
   }
 
-  async function setActiveChatAgent(agentId: AgentId): Promise<void> {
-    if (!activeChat || activeChatLocked || activeChat.agentId === agentId) return;
-    const next = await window.multiAgentChat.setChatAgent(activeChat.id, agentId);
-    setSnapshot(next);
-  }
-
-  async function setActiveChatChannel(channelId: string): Promise<void> {
-    if (!activeChat || activeChatLocked || activeChat.channelId === channelId) return;
-    const next = await window.multiAgentChat.setChatChannel(activeChat.id, channelId);
+  async function setActiveChatConfiguredAgent(configuredAgentId: string): Promise<void> {
+    if (!activeChat || activeChatLocked || activeChat.configuredAgentId === configuredAgentId) return;
+    const next = await window.multiAgentChat.setChatAgent(activeChat.id, configuredAgentId);
     setSnapshot(next);
   }
 
@@ -2225,34 +2256,14 @@ export function App() {
     setSnapshot(next);
   }
 
-  function setTaskAgent(agentId: AgentId): void {
-    setTaskAgentId(agentId);
-    setTaskChannelId(defaultChannelForAgent(agentId, snapshot.channels));
-    setTaskModelId(DEFAULT_MODEL_ID);
+  function setTaskConfiguredAgent(configuredAgentId: string): void {
+    setTaskConfiguredAgentId(configuredAgentId);
+    setTaskModelId(configuredAgentModelId(configuredAgentId, undefined, snapshot.configuredAgents, snapshot.channels));
   }
 
-  function setTaskChannel(channelId: string): void {
-    setTaskChannelId(channelId);
-    setTaskModelId(DEFAULT_MODEL_ID);
-  }
-
-  function setTaskModel(modelId: string): void {
-    setTaskModelId(modelId);
-  }
-
-  function setWorkflowAgent(agentId: AgentId): void {
-    setWorkflowAgentId(agentId);
-    setWorkflowChannelId(defaultChannelForAgent(agentId, snapshot.channels));
-    setWorkflowModelId(DEFAULT_MODEL_ID);
-  }
-
-  function setWorkflowChannel(channelId: string): void {
-    setWorkflowChannelId(channelId);
-    setWorkflowModelId(DEFAULT_MODEL_ID);
-  }
-
-  function setWorkflowModel(modelId: string): void {
-    setWorkflowModelId(modelId);
+  function setWorkflowConfiguredAgent(configuredAgentId: string): void {
+    setWorkflowConfiguredAgentId(configuredAgentId);
+    setWorkflowModelId(configuredAgentModelId(configuredAgentId, undefined, snapshot.configuredAgents, snapshot.channels));
   }
 
   function updateConfigChannels(next: AgentChannel[]): void {
@@ -2327,63 +2338,6 @@ export function App() {
   async function saveConfiguredAgents(agents: ConfiguredAgent[]): Promise<void> {
     const next = await window.multiAgentChat.saveConfiguredAgents(agents);
     setSnapshot(next);
-  }
-
-  async function addConfiguredAgent(template?: SkillTemplate): Promise<void> {
-    const existingAgentIds = snapshot.configuredAgents.map((agent) => agent.id);
-    let nextAgent = createConfiguredAgent(configChannels, existingAgentIds);
-    if (template) {
-      nextAgent = {
-        ...applySkillTemplate(nextAgent, template),
-        id: uniqueId(template.id, existingAgentIds),
-      };
-    }
-    let availableChannels = configChannels;
-    if (configDirty) {
-      const channelSnapshot = await persistChannelConfig();
-      availableChannels = channelSnapshot.channels;
-    }
-    const defaultPreset = AGENT_PROVIDER_PRESETS[0]!;
-    const defaultChannel =
-      availableChannels.find((channel) => channel.id === defaultChannelForAgent(defaultPreset.runtimeAgentId, availableChannels) && channel.agentId === defaultPreset.runtimeAgentId) ??
-      availableChannels.find((channel) => channel.agentId === defaultPreset.runtimeAgentId);
-    if (defaultChannel) {
-      nextAgent.channelId = defaultChannel.id;
-      nextAgent.runtimeAgentId = defaultChannel.agentId;
-      nextAgent.modelId = DEFAULT_MODEL_ID;
-      setSelectedConfigChannelId(defaultChannel.id);
-    } else {
-      const nextChannel = applyProviderPresetToChannel(
-        createChannel(defaultPreset.runtimeAgentId, availableChannels.map((channel) => channel.id)),
-        defaultPreset,
-        providerKeys[defaultPreset.id] ?? "",
-      );
-      nextAgent.channelId = nextChannel.id;
-      nextAgent.runtimeAgentId = nextChannel.agentId;
-      nextAgent.modelId = DEFAULT_MODEL_ID;
-      const channelSnapshot = await window.multiAgentChat.saveModelChannels([...availableChannels, nextChannel]);
-      setConfigChannels(channelSnapshot.channels);
-      setConfigDirty(false);
-      setSelectedConfigChannelId(nextChannel.id);
-    }
-    setSelectedConfiguredAgentId(nextAgent.id);
-    const agentSnapshot = await window.multiAgentChat.saveConfiguredAgents([nextAgent, ...snapshot.configuredAgents]);
-    setSnapshot(agentSnapshot);
-  }
-
-  function removeConfiguredAgent(agentId: string): void {
-    setAgentContextMenu(undefined);
-    void saveConfiguredAgents(snapshot.configuredAgents.filter((agent) => agent.id !== agentId));
-  }
-
-  function openAgentContextMenu(event: MouseEvent, agentId: string): void {
-    event.preventDefault();
-    event.stopPropagation();
-    setChatContextMenu(undefined);
-    setWorkflowContextMenu(undefined);
-    setConfigContextMenu(undefined);
-    setSelectedConfiguredAgentId(agentId);
-    setAgentContextMenu({ agentId, x: event.clientX, y: event.clientY });
   }
 
   function openChatContextMenu(event: MouseEvent, chatId: string): void {
@@ -2476,11 +2430,6 @@ export function App() {
     } else if (targetWorkflowId === workflowId) {
       resetWorkflowLocalDraft();
     }
-  }
-
-  function updateConfiguredAgent(agentId: string, updater: (agent: ConfiguredAgent) => ConfiguredAgent): void {
-    const now = Date.now();
-    void saveConfiguredAgents(snapshot.configuredAgents.map((agent) => (agent.id === agentId ? { ...updater(agent), updatedAt: now } : agent)));
   }
 
   async function testRuntimeChannel(channelId: string): Promise<void> {
@@ -2744,17 +2693,19 @@ export function App() {
     abandonWorkflowGrillRequest();
     setWorkflowRunning(false);
     const now = Date.now();
-    const agentId = workflowAgentId;
-    const channelId = workflowChannelId || defaultChannelForAgent(agentId, snapshot.channels);
-    const graph = workflowGraphWithSelectedAgent(createWorkflowGraphFromObjective("", snapshot.channels));
+    const graph = createWorkflowGraphFromObjective("");
     const draft: WorkflowDraftState = {
       workflowId: createWorkflowId(),
       title: "Untitled workflow",
       status: "draft",
       revision: 1,
-      agentId,
-      channelId,
-      modelId: workflowModelId || DEFAULT_MODEL_ID,
+      configuredAgentId: workflowConfiguredAgentId || defaultConfiguredAgentId(snapshot.configuredAgents),
+      modelId: configuredAgentModelId(
+        workflowConfiguredAgentId || defaultConfiguredAgentId(snapshot.configuredAgents),
+        workflowModelId,
+        snapshot.configuredAgents,
+        snapshot.channels,
+      ),
       objective: "",
       graph,
       graphReady: false,
@@ -2816,12 +2767,10 @@ export function App() {
   async function runTask(): Promise<void> {
     const text = taskPrompt.trim();
     if (!text) return;
-    const channelId = taskChannelId || defaultChannelForAgent(taskAgentId, snapshot.channels);
     const next = await window.multiAgentChat.runTask({
       prompt: text,
-      agentId: taskAgentId,
-      channelId,
-      modelId: taskModelId || DEFAULT_MODEL_ID,
+      configuredAgentId: taskConfiguredAgentId || defaultConfiguredAgentId(snapshot.configuredAgents),
+      modelId: configuredAgentModelId(taskConfiguredAgentId || defaultConfiguredAgentId(snapshot.configuredAgents), taskModelId, snapshot.configuredAgents, snapshot.channels),
       workDir: snapshot.workDir,
     });
     setSnapshot(next);
@@ -2963,23 +2912,6 @@ export function App() {
     setWorkflowFinalReport("");
   }
 
-  function workflowGraphWithSelectedAgent(graph: WorkflowGraph): WorkflowGraph {
-    const channelId = workflowChannelId || defaultChannelForAgent(workflowAgentId, snapshot.channels);
-    return {
-      ...graph,
-      nodes: graph.nodes.map((node) =>
-        node.kind === "agent"
-          ? {
-              ...node,
-              agentId: workflowAgentId,
-              channelId,
-              modelId: workflowModelId || DEFAULT_MODEL_ID,
-            }
-          : node,
-      ),
-    };
-  }
-
   function applyWorkflowGraphFromAgentContent(content: string): boolean {
     const nextGraph = parseWorkflowGraphUpsert(content);
     if (!nextGraph) return false;
@@ -2994,7 +2926,7 @@ export function App() {
   }
 
   function draftWorkflowGraph(): void {
-    const nextGraph = workflowGraphWithSelectedAgent(createWorkflowGraphFromObjective(workflowObjective, snapshot.channels));
+    const nextGraph = createWorkflowGraphFromObjective(workflowObjective);
     syncWorkflowGraph(nextGraph);
     setWorkflowGraphReady(true);
     setWorkflowError(undefined);
@@ -3004,15 +2936,13 @@ export function App() {
     promptText: string,
     sessionId: string | undefined,
     requestId: string,
-    agentId: AgentId,
-    channelId: string,
+    configuredAgentId: string,
     modelId: string,
   ): Promise<string> {
     const request = {
       requestId,
       prompt: promptText,
-      agentId,
-      channelId,
+      configuredAgentId,
       modelId,
       workDir: snapshotRef.current.workDir,
     };
@@ -3022,8 +2952,14 @@ export function App() {
   }
 
   async function askSelectedWorkflowAgent(promptText: string, sessionId: string | undefined, requestId: string): Promise<string> {
-    const channelId = workflowChannelId || defaultChannelForAgent(workflowAgentId, snapshot.channels);
-    return askWorkflowAgentFor(promptText, sessionId, requestId, workflowAgentId, channelId, workflowModelId || DEFAULT_MODEL_ID);
+    const configuredAgentId = workflowConfiguredAgentId || defaultConfiguredAgentId(snapshot.configuredAgents);
+    return askWorkflowAgentFor(
+      promptText,
+      sessionId,
+      requestId,
+      configuredAgentId,
+      configuredAgentModelId(configuredAgentId, workflowModelId, snapshot.configuredAgents, snapshot.channels),
+    );
   }
 
   async function sendWorkflowReply(): Promise<void> {
@@ -3098,9 +3034,13 @@ export function App() {
   async function runWorkflowGraphInternal(targetWorkflow?: WorkflowDraftState): Promise<{ ok: boolean; workflowRunId?: string; error?: string }> {
     const runWorkflowId = targetWorkflow?.workflowId ?? workflowId;
     const runGraph = targetWorkflow?.graph ?? workflowGraph;
-    const runAgentId = targetWorkflow?.agentId ?? workflowAgentId;
-    const runChannelId = targetWorkflow?.channelId || workflowChannelId || defaultChannelForAgent(runAgentId, snapshotRef.current.channels);
-    const runModelId = targetWorkflow?.modelId || workflowModelId || DEFAULT_MODEL_ID;
+    const runConfiguredAgentId = targetWorkflow?.configuredAgentId || workflowConfiguredAgentId || defaultConfiguredAgentId(snapshotRef.current.configuredAgents);
+    const runModelId = configuredAgentModelId(
+      runConfiguredAgentId,
+      targetWorkflow?.modelId || workflowModelId,
+      snapshotRef.current.configuredAgents,
+      snapshotRef.current.channels,
+    );
     const initialWorkflowContextDocument = targetWorkflow?.contextDocument ?? workflowContextDocument;
     const runAgentSessionId = targetWorkflow?.agentSessionId ?? workflowAgentSessionId;
 
@@ -3188,8 +3128,7 @@ export function App() {
 
       const startWorkflowTask = async (request: {
         prompt: string;
-        agentId: AgentId;
-        channelId: string;
+        configuredAgentId: string;
         modelId: string;
         workDir: string;
       }): Promise<TaskRun> => {
@@ -3199,7 +3138,7 @@ export function App() {
         const task = latestSnapshot.tasks
           .filter((item) => !existingTaskIds.has(item.id))
           .sort((left, right) => right.createdAt - left.createdAt)
-          .find((item) => item.prompt === request.prompt && item.agentId === request.agentId);
+          .find((item) => item.prompt === request.prompt && item.configuredAgentId === request.configuredAgentId);
         if (task) return task;
         const fallbackTask = latestSnapshot.tasks.filter((item) => !existingTaskIds.has(item.id)).sort((left, right) => right.createdAt - left.createdAt)[0];
         if (!fallbackTask) throw new Error("Workflow task creation did not return a new task.");
@@ -3251,14 +3190,11 @@ export function App() {
         retryPrompt: string,
         contextDocument: string,
       ): Promise<{ node: WorkflowGraphNode; taskId: string; attempt: number }> => {
-        const agentId = node.agentId ?? "codex";
-        const channelId = node.channelId || defaultChannelForAgent(agentId, latestSnapshot.channels);
         const prompt = nodeAttemptPrompt(node, attempt, retryPrompt, contextDocument);
         const task = await startWorkflowTask({
           prompt,
-          agentId,
-          channelId,
-          modelId: node.modelId || DEFAULT_MODEL_ID,
+          configuredAgentId: runConfiguredAgentId,
+          modelId: runModelId,
           workDir: latestSnapshot.workDir,
         });
         updateWorkflowRunProgress(node.id, {
@@ -3308,12 +3244,9 @@ export function App() {
           status: "running",
           detail: `Evaluating attempt ${attempt}/${WORKFLOW_NODE_MAX_ATTEMPTS}`,
         });
-        const judgeAgentId = runAgentId;
-        const judgeChannelId = runChannelId || defaultChannelForAgent(judgeAgentId, latestSnapshot.channels);
         const judgeTask = await startWorkflowTask({
           prompt: workflowJudgePrompt(runGraph, node, artifact, contextDocument, attempt, WORKFLOW_NODE_MAX_ATTEMPTS),
-          agentId: judgeAgentId,
-          channelId: judgeChannelId,
+          configuredAgentId: runConfiguredAgentId,
           modelId: runModelId,
           workDir: latestSnapshot.workDir,
         });
@@ -3430,7 +3363,7 @@ export function App() {
         detail: "Main agent reviewing all node outputs",
       });
       try {
-        finalReport = await askWorkflowAgentFor(finalReviewPrompt, runAgentSessionId, finalReviewRequestId, runAgentId, runChannelId, runModelId);
+        finalReport = await askWorkflowAgentFor(finalReviewPrompt, runAgentSessionId, finalReviewRequestId, runConfiguredAgentId, runModelId);
         if (!workflowStreamingStartedRef.current && finalReport) {
           setWorkflowMessages((current) =>
             current.map((message) => (message.id === finalAssistantMessageId ? { ...message, content: finalReport } : message)),
@@ -3509,8 +3442,7 @@ export function App() {
     if (task.running) return;
     const next = await window.multiAgentChat.runTask({
       prompt: task.prompt,
-      agentId: task.agentId,
-      channelId: task.channelId,
+      configuredAgentId: task.configuredAgentId,
       modelId: task.modelId,
       workDir: task.workDir || snapshot.workDir,
     });
@@ -3543,6 +3475,7 @@ export function App() {
   }
 
   async function createTeam(): Promise<void> {
+    const configuredAgentId = defaultConfiguredAgentId(snapshot.configuredAgents);
     const next = await window.multiAgentChat.createTeam({
       name: `Agent Team ${snapshot.teams.length + 1}`,
       mode: "pipeline",
@@ -3551,16 +3484,12 @@ export function App() {
         {
           roleName: "Planner",
           prompt: "Plan the work and identify the main risks.",
-          agentId: "codex",
-          channelId: defaultChannelForAgent("codex", snapshot.channels),
-          modelId: DEFAULT_MODEL_ID,
+          configuredAgentId,
         },
         {
           roleName: "Checker",
           prompt: "Use the previous artifact to verify correctness and missing tests.",
-          agentId: "codex",
-          channelId: defaultChannelForAgent("codex", snapshot.channels),
-          modelId: DEFAULT_MODEL_ID,
+          configuredAgentId,
         },
       ],
     });
@@ -3660,13 +3589,6 @@ export function App() {
             <Cpu size={15} />
             <span>{text.nav.runtimes}</span>
           </button>
-          <button
-            className={`feature-nav-item ${activeFeature === "configs" ? "is-active" : ""}`}
-            onClick={() => setActiveFeature("configs")}
-          >
-            <Settings size={15} />
-            <span>{text.nav.configs}</span>
-          </button>
         </nav>
         <div className="rail-footer">
           <button
@@ -3716,6 +3638,8 @@ export function App() {
         {activeFeature === "chat" ? (
           <ChatHistoryPanel
             chats={snapshot.chats}
+            configuredAgents={snapshot.configuredAgents}
+            channels={snapshot.channels}
             activeChatId={activeChat?.id}
             contextMenu={chatContextMenu}
             newChatLabel={text.chrome.newChat}
@@ -3736,20 +3660,25 @@ export function App() {
               {visibleTasks.length === 0 ? (
                 <div className="empty-state config-empty">{snapshot.tasks.length === 0 ? "No tasks" : "No tasks in this progress"}</div>
               ) : (
-                visibleTasks.map((task) => (
-                  <button
-                    key={task.id}
-                    className={`task-nav-card ${task.id === activeTask?.id ? "is-active" : ""}`}
-                    onClick={() => void selectTask(task.id)}
-                  >
-                    <div className="task-nav-card-head">
-                      <span className={`agent-badge mini ${agentAccent(task.agentId)}`}>{agentLabel(task.agentId)}</span>
-                      <TaskStatusChip label={task.running ? "Running" : taskProgressLabel(task.progress)} tone={task.running ? "running" : task.progress} />
-                    </div>
-                    <strong>{task.title}</strong>
-                    <span>{`${task.status} · ${formatTime(task.updatedAt)}`}</span>
-                  </button>
-                ))
+                visibleTasks.map((task) => {
+                  const agent = configuredAgentById(task.configuredAgentId, snapshot.configuredAgents);
+                  const channel = resolveConfiguredAgentChannel(agent, snapshot.channels);
+                  const runtimeId = configuredAgentRuntimeId(agent, channel);
+                  return (
+                    <button
+                      key={task.id}
+                      className={`task-nav-card ${task.id === activeTask?.id ? "is-active" : ""}`}
+                      onClick={() => void selectTask(task.id)}
+                    >
+                      <div className="task-nav-card-head">
+                        <span className={`agent-badge mini ${agentAccent(runtimeId)}`}>{agent?.name || agentLabel(runtimeId)}</span>
+                        <TaskStatusChip label={task.running ? "Running" : taskProgressLabel(task.progress)} tone={task.running ? "running" : task.progress} />
+                      </div>
+                      <strong>{task.title}</strong>
+                      <span>{`${task.status} · ${formatTime(task.updatedAt)}`}</span>
+                    </button>
+                  );
+                })
               )}
             </div>
           </section>
@@ -3842,54 +3771,7 @@ export function App() {
               <span>{language === "zh" ? "语言" : "Language"}</span>
             </button>
           </section>
-        ) : (
-          <section className="resource-panel config-nav-panel">
-            <div className="panel-header">
-              <span>{text.chrome.configuredAgents}</span>
-              <Bot size={14} />
-            </div>
-            <div className="config-agent-actions">
-              <button className="new-chat-compact-btn" type="button" onClick={() => void addConfiguredAgent()}>
-                <Plus size={13} />
-                <span>{text.chrome.newAgent}</span>
-              </button>
-            </div>
-            <div className="config-nav-list">
-              {snapshot.configuredAgents.length === 0 ? (
-                <div className="empty-state config-empty">{text.chrome.noConfiguredAgents}</div>
-              ) : (
-                snapshot.configuredAgents.map((agent) => (
-                  <button
-                    key={agent.id}
-                    className={`config-nav-row ${agent.id === selectedConfiguredAgentId ? "is-active" : ""}`}
-                    onClick={() => {
-                      setAgentContextMenu(undefined);
-                      setSelectedConfiguredAgentId(agent.id);
-                    }}
-                    onContextMenu={(event) => openAgentContextMenu(event, agent.id)}
-                  >
-                    <span className={`agent-badge mini ${agentAccent(agent.runtimeAgentId)}`}>{agentLabel(agent.runtimeAgentId)}</span>
-                    <strong>{agent.name || agent.id}</strong>
-                    <span>{agent.tags.length > 0 ? agent.tags.join(", ") : agent.id}</span>
-                  </button>
-                ))
-              )}
-            </div>
-            {agentContextMenu ? (
-              <div
-                className="agent-context-menu"
-                style={{ left: agentContextMenu.x, top: agentContextMenu.y }}
-                onClick={(event) => event.stopPropagation()}
-                onContextMenu={(event) => event.preventDefault()}
-              >
-                <button type="button" className="agent-context-menu-item danger" onClick={() => removeConfiguredAgent(agentContextMenu.agentId)}>
-                  <Trash2 size={13} />
-                  <span>Delete agent</span>
-                </button>
-              </div>
-            ) : null}
-          </section>
-        )}
+        ) : null}
       </aside>
 
       <main
@@ -3914,18 +3796,17 @@ export function App() {
         {activeFeature === "tasks" ? (
           <TaskPage
             prompt={taskPrompt}
-            agentId={taskAgentId}
-            channelId={taskChannelId || defaultChannelForAgent(taskAgentId, snapshot.channels)}
+            configuredAgentId={taskConfiguredAgentId || defaultConfiguredAgentId(snapshot.configuredAgents)}
             modelId={taskModelId}
+            configuredAgents={snapshot.configuredAgents}
             workDir={snapshot.workDir}
             runtimes={snapshot.runtimes}
             channels={snapshot.channels}
             tasks={snapshot.tasks}
             activeTaskId={selectedTaskDetailActiveId}
             onPromptChange={setTaskPrompt}
-            onSelectAgent={setTaskAgent}
-            onSelectChannel={setTaskChannel}
-            onSelectModel={setTaskModel}
+            onSelectConfiguredAgent={setTaskConfiguredAgent}
+            onSelectModel={setTaskModelId}
             onChooseWorkDir={chooseWorkDir}
             onRefresh={refresh}
             onRunTask={runTask}
@@ -3947,8 +3828,7 @@ export function App() {
             messages={workflowMessages}
             reply={workflowReply}
             error={workflowError}
-            agentId={workflowAgentId}
-            channelId={workflowChannelId || defaultChannelForAgent(workflowAgentId, snapshot.channels)}
+            configuredAgentId={workflowConfiguredAgentId || defaultConfiguredAgentId(snapshot.configuredAgents)}
             modelId={workflowModelId}
             runtimes={snapshot.runtimes}
             channels={snapshot.channels}
@@ -3959,9 +3839,8 @@ export function App() {
             contextDocument={workflowRunContextDocument}
             finalReport={workflowFinalReport}
             onObjectiveChange={setWorkflowObjective}
-            onSelectAgent={setWorkflowAgent}
-            onSelectChannel={setWorkflowChannel}
-            onSelectModel={setWorkflowModel}
+            onSelectConfiguredAgent={setWorkflowConfiguredAgent}
+            onSelectModel={setWorkflowModelId}
             onDraftGraph={draftWorkflowGraph}
             onReplyChange={setWorkflowReply}
             onSendReply={sendWorkflowReply}
@@ -3991,7 +3870,13 @@ export function App() {
             onTriggerSchedule={triggerScheduledWorkflow}
           />
         ) : activeFeature === "skills" ? (
-          <SkillsPage language={language} templates={SKILL_TEMPLATES} onInstallSkill={installSkill} onUninstallSkill={uninstallSkill} />
+          <SkillsPage
+            language={language}
+            templates={SKILL_TEMPLATES}
+            configuredAgents={snapshot.configuredAgents}
+            onInstallSkill={installSkill}
+            onUninstallSkill={uninstallSkill}
+          />
         ) : activeFeature === "runtimes" ? (
           <RuntimePage
             language={language}
@@ -4022,29 +3907,17 @@ export function App() {
           />
         ) : activeFeature === "settings" ? (
           <SettingsPage language={language} keepAwake={keepAwake} onLanguageChange={setLanguage} onKeepAwakeChange={setKeepAwake} />
-        ) : activeFeature === "configs" ? (
-          <ConfigPage
-            language={language}
-            channels={configChannels}
-            configuredAgents={snapshot.configuredAgents}
-            selectedConfiguredAgentId={selectedConfiguredAgentId}
-            status={configStatus}
-            onSave={saveChannelConfig}
-            onAddConfiguredAgent={addConfiguredAgent}
-            onSelectConfiguredAgent={setSelectedConfiguredAgentId}
-            onUpdateConfiguredAgent={updateConfiguredAgent}
-          />
         ) : activeChat ? (
           <>
             <header className="chat-header">
               <div className="chat-title-block">
-                <h2>{activeChat.title}</h2>
-                <div className="chat-subtitle">
-                  <span className={`agent-badge mini ${agentAccent(activeChat.agentId)}`}>{agentLabel(activeChat.agentId)}</span>
-                  <span>{activeChannel?.label ?? activeChat.channelId}</span>
-                  <span>{activeModel?.label ?? activeChat.modelId}</span>
-                  <span>{activeChat.sessionId ? `session ${activeChat.sessionId}` : "No provider session yet"}</span>
-                </div>
+	                <h2>{activeChat.title}</h2>
+	                <div className="chat-subtitle">
+	                  <span className={`agent-badge mini ${agentAccent(activeChatRuntimeId)}`} title={activeChatConfigTitle}>
+	                    {activeChatConfiguredAgent?.name || agentLabel(activeChatRuntimeId)}
+	                  </span>
+	                  <span>{activeChat.sessionId ? `session ${activeChat.sessionId}` : "No provider session yet"}</span>
+	                </div>
               </div>
               <div className="chat-header-actions">
                 {activeChat.running ? (
@@ -4059,14 +3932,14 @@ export function App() {
               {activeChat.messages.length === 0 ? (
                 <div className="empty-state terminal-empty">
                   <Wand2 size={17} />
-                  <span>Start this {agentLabel(activeChat.agentId)} chat.</span>
+                  <span>Start this {activeChatConfiguredAgent?.name || agentLabel(activeChatRuntimeId)} chat.</span>
                 </div>
               ) : (
                 activeChat.messages.map((message) => (
                   <CliMessage
                     key={message.id}
                     message={message}
-                    agentId={activeChat.agentId}
+                    agentId={activeChatRuntimeId}
                     streaming={activeChat.running && message.id === activeChat.pendingAssistantMessageId}
                   />
                 ))
@@ -4075,7 +3948,7 @@ export function App() {
                 <div className="cli-status-line">
                   <span className="stream-pill">
                     <span className="stream-spinner" aria-hidden="true" />
-                    <span>{agentLabel(activeChat.agentId)} is working…</span>
+                    <span>{agentLabel(activeChatRuntimeId)} is working…</span>
                   </span>
                 </div>
               ) : null}
@@ -4120,21 +3993,20 @@ export function App() {
                     void send();
                   }
                 }}
-                placeholder={`Message ${agentLabel(activeChat.agentId)} or type /help...`}
+                placeholder={`Message ${activeChatConfiguredAgent?.name || agentLabel(activeChatRuntimeId)} or type /help...`}
                 rows={2}
               />
               <div className="composer-footer">
                 <ChatControls
-                  agentId={activeChat.agentId}
-                  channelId={activeChat.channelId}
-                  modelId={activeChat.modelId || DEFAULT_MODEL_ID}
+                  configuredAgentId={activeChat.configuredAgentId}
+                  modelId={activeChat.modelId}
+                  configuredAgents={snapshot.configuredAgents}
                   channels={snapshot.channels}
                   locked={activeChatLocked}
                   running={activeChat.running}
                   workDir={snapshot.workDir}
                   runtimes={snapshot.runtimes}
-                  onSelectAgent={setActiveChatAgent}
-                  onSelectChannel={setActiveChatChannel}
+                  onSelectConfiguredAgent={setActiveChatConfiguredAgent}
                   onSelectModel={setActiveChatModel}
                   onChooseWorkDir={chooseWorkDir}
                   onRefresh={refresh}
@@ -4164,92 +4036,81 @@ export function App() {
 }
 
 interface ChatControlsProps {
-  agentId: AgentId;
-  channelId: string;
-  modelId: string;
+  configuredAgentId: string;
+  modelId?: string;
+  configuredAgents?: ConfiguredAgent[];
   channels: AgentChannel[];
   locked: boolean;
   running: boolean;
   workDir: string;
   runtimes: AgentRuntime[];
-  onSelectAgent: (agentId: AgentId) => MaybePromise;
-  onSelectChannel: (channelId: string) => MaybePromise;
-  onSelectModel: (modelId: string) => MaybePromise;
+  onSelectConfiguredAgent: (configuredAgentId: string) => MaybePromise;
+  onSelectModel?: (modelId: string) => MaybePromise;
   onChooseWorkDir: () => MaybePromise;
   onRefresh: () => MaybePromise;
 }
 
 export function ChatControls({
-  agentId,
-  channelId,
+  configuredAgentId,
   modelId,
+  configuredAgents = [],
   channels,
   locked,
   running,
   workDir,
   runtimes,
-  onSelectAgent,
-  onSelectChannel,
-  onSelectModel,
+  onSelectConfiguredAgent,
+  onSelectModel = () => undefined,
   onChooseWorkDir,
   onRefresh,
 }: ChatControlsProps) {
   const runtimeMap = new Map(runtimes.map((runtime) => [runtime.id, runtime]));
-  const channelOptions = channels.filter((channel) => channel.agentId === agentId);
-  const fallbackChannelId = defaultChannelForAgent(agentId, channels);
-  const effectiveChannels =
-    channelOptions.length > 0
-      ? channelOptions
-      : [{ id: fallbackChannelId, agentId, label: "Default", models: modelsForChannel(agentId, fallbackChannelId, channels) }];
-  const selectedChannelId = effectiveChannels.some((channel) => channel.id === channelId) ? channelId : (effectiveChannels[0]?.id ?? fallbackChannelId);
-  const modelOptions = modelsForChannel(agentId, selectedChannelId, channels);
-  const selectedModelId = modelOptions.some((model) => model.id === modelId) ? modelId : DEFAULT_MODEL_ID;
+  const selectedAgent = configuredAgentById(configuredAgentId, configuredAgents);
+  const selectedChannel = resolveConfiguredAgentChannel(selectedAgent, channels);
+  const runtimeId = configuredAgentRuntimeId(selectedAgent, selectedChannel);
+  const runtime = runtimeMap.get(runtimeId) ?? fallbackRuntime(runtimeId);
+  const selectedModel = configuredAgentModel(selectedAgent, selectedChannel, modelId);
+  const modelOptions = selectedChannel?.models.length ? selectedChannel.models : [{ id: DEFAULT_MODEL_ID, label: "Default" }];
+  const selectedModelId = selectedModel?.id ?? DEFAULT_MODEL_ID;
   const selectsDisabled = locked || running;
+  const configTitle = [
+    selectedAgent?.name,
+    selectedChannel?.label ?? "No config",
+    selectedModel?.label ?? selectedAgent?.modelId ?? DEFAULT_MODEL_ID,
+    runtimeStatus(runtime),
+  ]
+    .filter(Boolean)
+    .join(" · ");
 
   return (
     <div className="composer-controls">
-      <label className="composer-select-wrap" title={runtimeStatus(runtimeMap.get(agentId) ?? fallbackRuntime(agentId))}>
-        <span className={`runtime-dot ${agentAccent(agentId)}`} />
+      <label className="composer-select-wrap" title={configTitle}>
+        <span className={`runtime-dot ${agentAccent(runtimeId)}`} />
         <select
           className="composer-select"
-          aria-label="Agent"
-          value={agentId}
-          disabled={selectsDisabled}
-          onChange={(event) => void onSelectAgent(event.currentTarget.value as AgentId)}
+          aria-label="Configured agent"
+          value={selectedAgent?.id ?? ""}
+          disabled={selectsDisabled || configuredAgents.length === 0}
+          onChange={(event) => void onSelectConfiguredAgent(event.currentTarget.value)}
         >
-          {AGENTS.map((candidate) => (
-            <option key={candidate} value={candidate}>
-              {agentLabel(candidate)}
+          {configuredAgents.map((agent) => (
+            <option key={agent.id} value={agent.id}>
+              {agent.name || agent.id}
             </option>
           ))}
         </select>
       </label>
-      <label className="composer-select-wrap">
+      <label className="composer-select-wrap" title={configTitle}>
         <select
           className="composer-select"
-          aria-label="Channel"
-          value={selectedChannelId}
-          disabled={selectsDisabled}
-          onChange={(event) => void onSelectChannel(event.currentTarget.value)}
-        >
-          {effectiveChannels.map((channel) => (
-            <option key={channel.id} value={channel.id}>
-              {channel.label}
-            </option>
-          ))}
-        </select>
-      </label>
-      <label className="composer-select-wrap">
-        <select
-          className="composer-select"
-          aria-label="Model"
+          aria-label="Agent model"
           value={selectedModelId}
-          disabled={selectsDisabled}
+          disabled={selectsDisabled || !selectedChannel}
           onChange={(event) => void onSelectModel(event.currentTarget.value)}
         >
           {modelOptions.map((model) => (
             <option key={model.id} value={model.id}>
-              {model.label}
+              {model.label || model.id}
             </option>
           ))}
         </select>
@@ -4279,6 +4140,7 @@ interface TeamPageProps {
   workDir: string;
   runtimes: AgentRuntime[];
   channels: AgentChannel[];
+  configuredAgents?: ConfiguredAgent[];
   defaultEditingMemberId?: string;
   onPromptChange: (value: string) => void;
   onCreateTeam: () => MaybePromise;
@@ -4301,6 +4163,7 @@ export function TeamPage({
   workDir,
   runtimes,
   channels,
+  configuredAgents = [],
   defaultEditingMemberId,
   onPromptChange,
   onCreateTeam,
@@ -4343,27 +4206,19 @@ export function TeamPage({
     updateMembers(members);
   }
 
-  function updateMemberAgent(index: number, agentId: AgentId): void {
-    const channelId = defaultChannelForAgent(agentId, channels);
-    updateMember(index, { agentId, channelId, modelId: DEFAULT_MODEL_ID });
-  }
-
-  function updateMemberChannel(index: number, agentId: AgentId, channelId: string): void {
-    updateMember(index, { channelId, modelId: DEFAULT_MODEL_ID });
+  function updateMemberConfiguredAgent(index: number, configuredAgentId: string): void {
+    updateMember(index, { configuredAgentId });
   }
 
   function addMember(): void {
     if (!activeTeam) return;
-    const agentId: AgentId = "codex";
     updateMembers([
       ...activeTeam.members,
       {
         id: `draft-${Date.now()}`,
         roleName: `Agent ${activeTeam.members.length + 1}`,
         prompt: "",
-        agentId,
-        channelId: defaultChannelForAgent(agentId, channels),
-        modelId: DEFAULT_MODEL_ID,
+        configuredAgentId: defaultConfiguredAgentId(configuredAgents),
       },
     ]);
   }
@@ -4372,7 +4227,7 @@ export function TeamPage({
     if (!activeTeam || draftingWorkflow) return;
     setDraftingWorkflow(true);
     try {
-      await onUpdateTeam(activeTeam.id, { members: draftWorkflowMembers(activeTeam.mode, channels) });
+      await onUpdateTeam(activeTeam.id, { members: draftWorkflowMembers(activeTeam.mode, configuredAgents) });
     } finally {
       setDraftingWorkflow(false);
     }
@@ -4442,6 +4297,7 @@ export function TeamPage({
           index={index}
           runtimes={runtimes}
           channels={channels}
+          configuredAgents={configuredAgents}
           editing={editingMemberId === member.id}
           dragging={draggingMemberId === member.id}
           dropTarget={Boolean(draggingMemberId && draggingMemberId !== member.id && dragOverMemberId === member.id)}
@@ -4456,9 +4312,7 @@ export function TeamPage({
           onDropBefore={dropMemberBefore}
           onUpdateRole={(roleName) => updateMember(index, { roleName })}
           onUpdatePrompt={(memberPrompt) => updateMember(index, { prompt: memberPrompt })}
-          onUpdateAgent={(agentId) => updateMemberAgent(index, agentId)}
-          onUpdateChannel={(channelId) => updateMemberChannel(index, member.agentId, channelId)}
-          onUpdateModel={(modelId) => updateMember(index, { modelId })}
+          onUpdateConfiguredAgent={(configuredAgentId) => updateMemberConfiguredAgent(index, configuredAgentId)}
           onRemove={() => removeMember(index)}
         />
       </div>
@@ -4708,7 +4562,7 @@ export function TeamPage({
             </div>
 
             {activeRun ? (
-              <TeamRunDetail run={activeRun} channels={channels} onStopTeamRun={onStopTeamRun} />
+              <TeamRunDetail run={activeRun} channels={channels} configuredAgents={configuredAgents} onStopTeamRun={onStopTeamRun} />
             ) : (
               <div className="empty-state page-empty">
                 <GitBranch size={18} />
@@ -4736,6 +4590,7 @@ function TeamMemberRow({
   index,
   runtimes,
   channels,
+  configuredAgents,
   editing,
   dragging,
   dropTarget,
@@ -4750,15 +4605,14 @@ function TeamMemberRow({
   onDropBefore,
   onUpdateRole,
   onUpdatePrompt,
-  onUpdateAgent,
-  onUpdateChannel,
-  onUpdateModel,
+  onUpdateConfiguredAgent,
   onRemove,
 }: {
   member: AgentTeamMember;
   index: number;
   runtimes: AgentRuntime[];
   channels: AgentChannel[];
+  configuredAgents: ConfiguredAgent[];
   editing: boolean;
   dragging: boolean;
   dropTarget: boolean;
@@ -4773,20 +4627,15 @@ function TeamMemberRow({
   onDropBefore: (event: DragEvent<HTMLElement>, targetMemberId: string | undefined) => void;
   onUpdateRole: (roleName: string) => void;
   onUpdatePrompt: (prompt: string) => void;
-  onUpdateAgent: (agentId: AgentId) => void;
-  onUpdateChannel: (channelId: string) => void;
-  onUpdateModel: (modelId: string) => void;
+  onUpdateConfiguredAgent: (configuredAgentId: string) => void;
   onRemove: () => void;
 }) {
   const runtimeMap = new Map(runtimes.map((runtime) => [runtime.id, runtime]));
-  const channelOptions = channels.filter((channel) => channel.agentId === member.agentId);
-  const selectedChannelId = channelOptions.some((channel) => channel.id === member.channelId)
-    ? member.channelId
-    : defaultChannelForAgent(member.agentId, channels);
-  const modelOptions = modelsForChannel(member.agentId, selectedChannelId, channels);
-  const selectedModelId = modelOptions.some((model) => model.id === member.modelId) ? member.modelId : DEFAULT_MODEL_ID;
-  const selectedChannel = channels.find((channel) => channel.id === selectedChannelId);
-  const selectedModel = modelOptions.find((model) => model.id === selectedModelId);
+  const selectedConfiguredAgent = configuredAgentById(member.configuredAgentId, configuredAgents);
+  const selectedChannel = resolveConfiguredAgentChannel(selectedConfiguredAgent, channels);
+  const runtimeId = configuredAgentRuntimeId(selectedConfiguredAgent, selectedChannel);
+  const runtime = runtimeMap.get(runtimeId) ?? fallbackRuntime(runtimeId);
+  const selectedModel = configuredAgentModel(selectedConfiguredAgent, selectedChannel);
   const suppressClickRef = useRef(false);
   const nodeStatusClass = workflowStatusClass(workflowStatus);
 
@@ -4844,13 +4693,13 @@ function TeamMemberRow({
         <div className="team-member-card-main">
           <div className="team-member-card-head">
             <strong>{member.roleName}</strong>
-            <span className={`agent-badge mini ${agentAccent(member.agentId)}`}>{agentLabel(member.agentId)}</span>
+            <span className={`agent-badge mini ${agentAccent(runtimeId)}`}>{selectedConfiguredAgent?.name || agentLabel(runtimeId)}</span>
             {workflowStatus !== "idle" ? <span className={`workflow-node-status-pill ${nodeStatusClass}`}>{workflowStatus}</span> : null}
           </div>
           <p>{member.prompt || "No member prompt."}</p>
           <div className="team-member-card-meta">
-            <span>{selectedChannel?.label ?? member.channelId}</span>
-            <span>{selectedModel?.label ?? member.modelId}</span>
+            <span>{selectedChannel?.label ?? "No config"}</span>
+            <span>{selectedModel?.label ?? selectedConfiguredAgent?.modelId ?? DEFAULT_MODEL_ID}</span>
           </div>
         </div>
       </article>
@@ -4875,9 +4724,9 @@ function TeamMemberRow({
                 <input aria-label={`Member ${index + 1} role`} value={member.roleName} onChange={(event) => onUpdateRole(event.currentTarget.value)} />
               </label>
               <div className="team-member-editor-summary">
-                <span className={`agent-badge mini ${agentAccent(member.agentId)}`}>{agentLabel(member.agentId)}</span>
-                <strong>{selectedModel?.label ?? member.modelId}</strong>
-                <small>{selectedChannel?.label ?? member.channelId}</small>
+                <span className={`agent-badge mini ${agentAccent(runtimeId)}`}>{selectedConfiguredAgent?.name || agentLabel(runtimeId)}</span>
+                <strong>{selectedModel?.label ?? selectedConfiguredAgent?.modelId ?? DEFAULT_MODEL_ID}</strong>
+                <small>{selectedChannel?.label ?? runtimeStatus(runtime)}</small>
               </div>
             </section>
 
@@ -4908,47 +4757,19 @@ function TeamMemberRow({
                   <span>Agent</span>
                   <select
                     className="composer-select"
-                    aria-label={`Member ${index + 1} agent`}
-                    value={member.agentId}
-                    onChange={(event) => onUpdateAgent(event.currentTarget.value as AgentId)}
+                    aria-label={`Member ${index + 1} configured agent`}
+                    value={selectedConfiguredAgent?.id ?? ""}
+                    onChange={(event) => onUpdateConfiguredAgent(event.currentTarget.value)}
                   >
-                    {AGENTS.map((agentId) => (
-                      <option key={agentId} value={agentId}>
-                        {agentLabel(agentId)}
+                    {configuredAgents.map((agent) => (
+                      <option key={agent.id} value={agent.id}>
+                        {agent.name || agent.id}
                       </option>
                     ))}
                   </select>
                 </label>
-                <label className="team-member-edit-field">
-                  <span>Channel</span>
-                  <select
-                    className="composer-select"
-                    aria-label={`Member ${index + 1} channel`}
-                    value={selectedChannelId}
-                    onChange={(event) => onUpdateChannel(event.currentTarget.value)}
-                  >
-                    {channelOptions.map((channel) => (
-                      <option key={channel.id} value={channel.id}>
-                        {channel.label}
-                      </option>
-                    ))}
-                  </select>
-                </label>
-                <label className="team-member-edit-field">
-                  <span>Model</span>
-                  <select
-                    className="composer-select"
-                    aria-label={`Member ${index + 1} model`}
-                    value={selectedModelId}
-                    onChange={(event) => onUpdateModel(event.currentTarget.value)}
-                  >
-                    {modelOptions.map((model) => (
-                      <option key={model.id} value={model.id}>
-                        {model.label}
-                      </option>
-                    ))}
-                  </select>
-                </label>
+                <TaskMeta label="Config" value={selectedChannel?.label ?? "No config"} />
+                <TaskMeta label="Model" value={selectedModel?.label ?? selectedConfiguredAgent?.modelId ?? DEFAULT_MODEL_ID} />
               </div>
             </section>
 
@@ -4978,10 +4799,12 @@ function TeamMemberRow({
 function TeamRunDetail({
   run,
   channels,
+  configuredAgents,
   onStopTeamRun,
 }: {
   run: TeamRun;
   channels: AgentChannel[];
+  configuredAgents: ConfiguredAgent[];
   onStopTeamRun: (teamRunId: string) => MaybePromise;
 }) {
   return (
@@ -5054,8 +4877,10 @@ function TeamRunDetail({
       </div>
       <div className="team-run-steps">
         {run.steps.map((step, index) => {
-          const channel = channels.find((item) => item.id === step.channelId);
-          const model = modelsForChannel(step.agentId, step.channelId, channels).find((item) => item.id === step.modelId);
+          const agent = configuredAgentById(step.configuredAgentId, configuredAgents);
+          const channel = resolveConfiguredAgentChannel(agent, channels);
+          const runtimeId = configuredAgentRuntimeId(agent, channel);
+          const model = configuredAgentModel(agent, channel);
           return (
             <article key={step.id} className="team-run-step">
               <div className="team-run-step-head">
@@ -5066,9 +4891,9 @@ function TeamRunDetail({
                 <TaskStatusChip label={step.status} tone={step.status} />
               </div>
               <div className="team-run-step-meta">
-                <span className={`agent-badge mini ${agentAccent(step.agentId)}`}>{agentLabel(step.agentId)}</span>
-                <span>{channel?.label ?? step.channelId}</span>
-                <span>{model?.label ?? step.modelId}</span>
+                <span className={`agent-badge mini ${agentAccent(runtimeId)}`}>{agent?.name || agentLabel(runtimeId)}</span>
+                <span>{channel?.label ?? "No config"}</span>
+                <span>{model?.label ?? agent?.modelId ?? DEFAULT_MODEL_ID}</span>
               </div>
               {step.artifact ? <MarkdownDocument className="team-run-step-artifact" text={step.artifact} /> : <p>{step.lastError ?? "Waiting for artifact."}</p>}
             </article>
@@ -5081,18 +4906,17 @@ function TeamRunDetail({
 
 interface TaskPageProps {
   prompt: string;
-  agentId: AgentId;
-  channelId: string;
-  modelId: string;
+  configuredAgentId: string;
+  modelId?: string;
+  configuredAgents: ConfiguredAgent[];
   workDir: string;
   runtimes: AgentRuntime[];
   channels: AgentChannel[];
   tasks: TaskRun[];
   activeTaskId: string | undefined;
   onPromptChange: (value: string) => void;
-  onSelectAgent: (agentId: AgentId) => MaybePromise;
-  onSelectChannel: (channelId: string) => MaybePromise;
-  onSelectModel: (modelId: string) => MaybePromise;
+  onSelectConfiguredAgent: (configuredAgentId: string) => MaybePromise;
+  onSelectModel?: (modelId: string) => MaybePromise;
   onChooseWorkDir: () => MaybePromise;
   onRefresh: () => MaybePromise;
   onRunTask: () => MaybePromise;
@@ -5106,18 +4930,17 @@ interface TaskPageProps {
 
 export function TaskPage({
   prompt,
-  agentId,
-  channelId,
-  modelId,
+  configuredAgentId,
+  modelId = DEFAULT_MODEL_ID,
+  configuredAgents,
   workDir,
   runtimes,
   channels,
   tasks,
   activeTaskId,
   onPromptChange,
-  onSelectAgent,
-  onSelectChannel,
-  onSelectModel,
+  onSelectConfiguredAgent,
+  onSelectModel = () => undefined,
   onChooseWorkDir,
   onRefresh,
   onRunTask,
@@ -5129,10 +4952,10 @@ export function TaskPage({
   onUpdateTaskProgress,
 }: TaskPageProps) {
   const activeTask = tasks.find((task) => task.id === activeTaskId);
-  const activeChannel = activeTask ? channels.find((channel) => channel.id === activeTask.channelId) : undefined;
-  const activeModel = activeTask
-    ? modelsForChannel(activeTask.agentId, activeTask.channelId, channels).find((model) => model.id === activeTask.modelId)
-    : undefined;
+  const activeTaskConfiguredAgent = activeTask ? configuredAgentById(activeTask.configuredAgentId, configuredAgents) : undefined;
+  const activeChannel = resolveConfiguredAgentChannel(activeTaskConfiguredAgent, channels);
+  const activeRuntimeId = configuredAgentRuntimeId(activeTaskConfiguredAgent, activeChannel);
+  const activeModel = configuredAgentModel(activeTaskConfiguredAgent, activeChannel, activeTask?.modelId);
   const canRun = Boolean(prompt.trim());
   const [draggingTaskId, setDraggingTaskId] = useState<string | undefined>();
   const kanbanColumns = TASK_STATUS_FILTERS.filter((filter): filter is { id: TaskProgress; label: string } => filter.id !== "all");
@@ -5176,21 +4999,20 @@ export function TaskPage({
                 </div>
                 <div className="task-kanban-stack">
                   {column.id === "backlog" ? (
-                    <TaskInlineCreateCard
-                      prompt={prompt}
-                      agentId={agentId}
-                      channelId={channelId}
-                      modelId={modelId}
-                      workDir={workDir}
-                      runtimes={runtimes}
-                      channels={channels}
-                      canRun={canRun}
-                      onPromptChange={onPromptChange}
-                      onSelectAgent={onSelectAgent}
-                      onSelectChannel={onSelectChannel}
-                      onSelectModel={onSelectModel}
-                      onChooseWorkDir={onChooseWorkDir}
-                      onRefresh={onRefresh}
+                      <TaskInlineCreateCard
+                        prompt={prompt}
+                        configuredAgentId={configuredAgentId}
+                        modelId={modelId}
+                        configuredAgents={configuredAgents}
+                        workDir={workDir}
+                        runtimes={runtimes}
+                        channels={channels}
+                        canRun={canRun}
+                        onPromptChange={onPromptChange}
+                        onSelectConfiguredAgent={onSelectConfiguredAgent}
+                        onSelectModel={onSelectModel}
+                        onChooseWorkDir={onChooseWorkDir}
+                        onRefresh={onRefresh}
                       onRunTask={onRunTask}
                     />
                   ) : null}
@@ -5201,6 +5023,8 @@ export function TaskPage({
                       <TaskKanbanCard
                         key={task.id}
                         task={task}
+                        configuredAgents={configuredAgents}
+                        channels={channels}
                         active={task.id === activeTask?.id}
                         onSelect={onSelectTask}
                         onDragStart={startTaskDrag}
@@ -5237,7 +5061,7 @@ export function TaskPage({
               <span>{activeTask.id}</span>
             </div>
             <div className="task-detail-status-row">
-              <span className={`agent-badge mini ${agentAccent(activeTask.agentId)}`}>{agentLabel(activeTask.agentId)}</span>
+              <span className={`agent-badge mini ${agentAccent(activeRuntimeId)}`}>{activeTaskConfiguredAgent?.name || agentLabel(activeRuntimeId)}</span>
               <TaskStatusChip label={activeTask.running ? "Running" : activeTask.status} tone={activeTask.running ? "running" : activeTask.status} />
               <TaskStatusChip label={activeTask.sessionId ? "Session linked" : "No session"} tone={activeTask.sessionId ? "done" : "backlog"} />
             </div>
@@ -5246,9 +5070,9 @@ export function TaskPage({
               <i />
             </div>
             <div className="task-detail-meta task-meta-grid">
-              <TaskMeta label="Agent" value={agentLabel(activeTask.agentId)} />
-              <TaskMeta label="Channel" value={activeChannel?.label ?? activeTask.channelId} />
-              <TaskMeta label="Model" value={activeModel?.label ?? activeTask.modelId} />
+              <TaskMeta label="Agent" value={activeTaskConfiguredAgent?.name || agentLabel(activeRuntimeId)} />
+              <TaskMeta label="Channel" value={activeChannel?.label ?? "No config"} />
+              <TaskMeta label="Model" value={activeModel?.label ?? activeTaskConfiguredAgent?.modelId ?? DEFAULT_MODEL_ID} />
               <TaskMeta label="Run status" value={activeTask.status} />
               <TaskMeta label="Progress" value={taskProgressLabel(activeTask.progress)} />
               <TaskMeta label="Work dir" value={activeTask.workDir} />
@@ -5306,13 +5130,13 @@ export function TaskPage({
                   </div>
                 ) : (
                   activeTask.messages.map((message) => (
-                    <TaskTimelineMessage key={message.id} message={message} agentId={activeTask.agentId} />
+                    <TaskTimelineMessage key={message.id} message={message} agentId={activeRuntimeId} />
                   ))
                 )}
                 {activeTask.running ? (
                   <div className="task-log-running">
-                    <span className={`runtime-dot ${agentAccent(activeTask.agentId)}`} />
-                    <span>{agentLabel(activeTask.agentId)} is running this task</span>
+                    <span className={`runtime-dot ${agentAccent(activeRuntimeId)}`} />
+                    <span>{agentLabel(activeRuntimeId)} is running this task</span>
                   </div>
                 ) : null}
               </div>
@@ -5326,17 +5150,25 @@ export function TaskPage({
 
 function TaskKanbanCard({
   task,
+  configuredAgents,
+  channels,
   active,
   onSelect,
   onDragStart,
   onDragEnd,
 }: {
   task: TaskRun;
+  configuredAgents: ConfiguredAgent[];
+  channels: AgentChannel[];
   active: boolean;
   onSelect: (taskId: string) => MaybePromise;
   onDragStart: (event: DragEvent<HTMLElement>, taskId: string) => void;
   onDragEnd: () => void;
 }) {
+  const agent = configuredAgentById(task.configuredAgentId, configuredAgents);
+  const channel = resolveConfiguredAgentChannel(agent, channels);
+  const runtimeId = configuredAgentRuntimeId(agent, channel);
+
   function selectTask(): void {
     void onSelect(task.id);
   }
@@ -5360,7 +5192,7 @@ function TaskKanbanCard({
       onDragEnd={onDragEnd}
     >
       <div className="task-kanban-card-head">
-        <span className={`agent-badge mini ${agentAccent(task.agentId)}`}>{agentLabel(task.agentId)}</span>
+        <span className={`agent-badge mini ${agentAccent(runtimeId)}`}>{agent?.name || agentLabel(runtimeId)}</span>
         <TaskStatusChip label={task.running ? "Running" : task.status} tone={task.running ? "running" : task.status} />
       </div>
       <strong>{task.title}</strong>
@@ -5375,32 +5207,30 @@ function TaskKanbanCard({
 
 function TaskInlineCreateCard({
   prompt,
-  agentId,
-  channelId,
+  configuredAgentId,
   modelId,
+  configuredAgents,
   workDir,
   runtimes,
   channels,
   canRun,
   onPromptChange,
-  onSelectAgent,
-  onSelectChannel,
+  onSelectConfiguredAgent,
   onSelectModel,
   onChooseWorkDir,
   onRefresh,
   onRunTask,
 }: {
   prompt: string;
-  agentId: AgentId;
-  channelId: string;
+  configuredAgentId: string;
   modelId: string;
+  configuredAgents: ConfiguredAgent[];
   workDir: string;
   runtimes: AgentRuntime[];
   channels: AgentChannel[];
   canRun: boolean;
   onPromptChange: (value: string) => void;
-  onSelectAgent: (agentId: AgentId) => MaybePromise;
-  onSelectChannel: (channelId: string) => MaybePromise;
+  onSelectConfiguredAgent: (configuredAgentId: string) => MaybePromise;
   onSelectModel: (modelId: string) => MaybePromise;
   onChooseWorkDir: () => MaybePromise;
   onRefresh: () => MaybePromise;
@@ -5437,16 +5267,15 @@ function TaskInlineCreateCard({
       />
       <div className="task-create-chipbar">
         <ChatControls
-          agentId={agentId}
-          channelId={channelId}
-          modelId={modelId || DEFAULT_MODEL_ID}
+          configuredAgentId={configuredAgentId}
+          modelId={modelId}
+          configuredAgents={configuredAgents}
           channels={channels}
           locked={false}
           running={false}
           workDir={workDir}
           runtimes={runtimes}
-          onSelectAgent={onSelectAgent}
-          onSelectChannel={onSelectChannel}
+          onSelectConfiguredAgent={onSelectConfiguredAgent}
           onSelectModel={onSelectModel}
           onChooseWorkDir={onChooseWorkDir}
           onRefresh={onRefresh}
@@ -5514,6 +5343,8 @@ function TaskTimelineMessage({ message, agentId }: { message: ChatMessage; agent
 
 interface ChatHistoryPanelProps {
   chats: ChatSession[];
+  configuredAgents: ConfiguredAgent[];
+  channels: AgentChannel[];
   activeChatId?: string | undefined;
   contextMenu?: { chatId: string; x: number; y: number } | undefined;
   newChatLabel?: string;
@@ -5526,6 +5357,8 @@ interface ChatHistoryPanelProps {
 
 export function ChatHistoryPanel({
   chats,
+  configuredAgents,
+  channels,
   activeChatId,
   contextMenu,
   newChatLabel = "New chat",
@@ -5548,19 +5381,24 @@ export function ChatHistoryPanel({
         </button>
       </div>
       <div className="chat-list">
-        {chats.map((chat) => (
-          <button
-            key={chat.id}
-            className={`chat-row ${chat.id === activeChatId ? "is-active" : ""}`}
-            onClick={() => void onSelectChat(chat.id)}
-            onContextMenu={(event) => onOpenContextMenu(event, chat.id)}
-            title={chat.title}
-          >
-            <span className={`runtime-dot ${agentAccent(chat.agentId)} ${chat.running ? "is-pulsing" : ""}`} />
-            <strong>{chat.title}</strong>
-            <span>{chat.running ? runningLabel : formatTime(chat.updatedAt)}</span>
-          </button>
-        ))}
+        {chats.map((chat) => {
+          const agent = configuredAgentById(chat.configuredAgentId, configuredAgents);
+          const channel = resolveConfiguredAgentChannel(agent, channels);
+          const runtimeId = configuredAgentRuntimeId(agent, channel);
+          return (
+            <button
+              key={chat.id}
+              className={`chat-row ${chat.id === activeChatId ? "is-active" : ""}`}
+              onClick={() => void onSelectChat(chat.id)}
+              onContextMenu={(event) => onOpenContextMenu(event, chat.id)}
+              title={chat.title}
+            >
+              <span className={`runtime-dot ${agentAccent(runtimeId)} ${chat.running ? "is-pulsing" : ""}`} />
+              <strong>{chat.title}</strong>
+              <span>{chat.running ? runningLabel : formatTime(chat.updatedAt)}</span>
+            </button>
+          );
+        })}
       </div>
       {contextMenu ? (
         <div
@@ -5714,9 +5552,8 @@ interface WorkflowPageProps {
   messages: WorkflowGrillMessage[];
   reply: string;
   error: string | undefined;
-  agentId: AgentId;
-  channelId: string;
-  modelId: string;
+  configuredAgentId: string;
+  modelId?: string;
   runtimes: AgentRuntime[];
   channels: AgentChannel[];
   configuredAgents?: ConfiguredAgent[];
@@ -5726,9 +5563,8 @@ interface WorkflowPageProps {
   contextDocument?: string;
   finalReport?: string;
   onObjectiveChange: (value: string) => void;
-  onSelectAgent: (agentId: AgentId) => void;
-  onSelectChannel: (channelId: string) => void;
-  onSelectModel: (modelId: string) => void;
+  onSelectConfiguredAgent: (configuredAgentId: string) => void;
+  onSelectModel?: (modelId: string) => void;
   onDraftGraph: () => void;
   onReplyChange: (value: string) => void;
   onSendReply: () => void;
@@ -5753,9 +5589,8 @@ export function WorkflowPage({
   messages,
   reply,
   error,
-  agentId,
-  channelId,
-  modelId,
+  configuredAgentId,
+  modelId = DEFAULT_MODEL_ID,
   runtimes,
   channels,
   configuredAgents = [],
@@ -5765,9 +5600,8 @@ export function WorkflowPage({
   contextDocument = "",
   finalReport = "",
   onObjectiveChange,
-  onSelectAgent,
-  onSelectChannel,
-  onSelectModel,
+  onSelectConfiguredAgent,
+  onSelectModel = () => undefined,
   onDraftGraph,
   onReplyChange,
   onSendReply,
@@ -5786,24 +5620,19 @@ export function WorkflowPage({
   const workflowStarted = messages.length > 0;
   const grillComplete = Math.max(0, messages.filter((message) => message.role === "user").length - 1) >= WORKFLOW_TOTAL_QUESTION_COUNT;
   const runtimeMap = new Map(runtimes.map((runtime) => [runtime.id, runtime]));
-  const workflowChannelOptions = channels.filter((channel) => channel.agentId === agentId);
-  const workflowFallbackChannelId = defaultChannelForAgent(agentId, channels);
-  const workflowEffectiveChannels =
-    workflowChannelOptions.length > 0
-      ? workflowChannelOptions
-      : [
-          {
-            id: workflowFallbackChannelId,
-            agentId,
-            label: "Default",
-            models: modelsForChannel(agentId, workflowFallbackChannelId, channels),
-          },
-        ];
-  const workflowSelectedChannelId = workflowEffectiveChannels.some((channel) => channel.id === channelId)
-    ? channelId
-    : (workflowEffectiveChannels[0]?.id ?? workflowFallbackChannelId);
-  const workflowModelOptions = modelsForChannel(agentId, workflowSelectedChannelId, channels);
-  const workflowSelectedModelId = workflowModelOptions.some((model) => model.id === modelId) ? modelId : DEFAULT_MODEL_ID;
+  const workflowConfiguredAgent = configuredAgentById(configuredAgentId, configuredAgents);
+  const workflowChannel = resolveConfiguredAgentChannel(workflowConfiguredAgent, channels);
+  const workflowRuntimeId = configuredAgentRuntimeId(workflowConfiguredAgent, workflowChannel);
+  const workflowRuntime = runtimeMap.get(workflowRuntimeId) ?? fallbackRuntime(workflowRuntimeId);
+  const workflowModel = configuredAgentModel(workflowConfiguredAgent, workflowChannel, modelId);
+  const workflowConfigTitle = [
+    workflowConfiguredAgent?.name,
+    workflowChannel?.label,
+    workflowModel?.label ?? workflowConfiguredAgent?.modelId ?? DEFAULT_MODEL_ID,
+    runtimeStatus(workflowRuntime),
+  ]
+    .filter(Boolean)
+    .join(" · ");
   const runProgressByNodeId = new Map(runProgress.map((item) => [item.nodeId, item]));
   const runProgressVisible = runProgress.length > 0;
   const contextDocumentVisible = contextDocument.trim().length > 0;
@@ -5890,24 +5719,10 @@ export function WorkflowPage({
   }
 
   function renderWorkflowNodeCard(node: WorkflowGraphNode, compact: boolean): ReactElement {
-    const nodeAgentId = node.agentId ?? "codex";
     const nodeRunProgress = runProgressByNodeId.get(node.id);
-    const channelOptions = channels.filter((channel) => channel.agentId === nodeAgentId);
-    const nodeChannelId = channelOptions.some((channel) => channel.id === node.channelId)
-      ? node.channelId!
-      : defaultChannelForAgent(nodeAgentId, channels);
-    const modelOptions = modelsForChannel(nodeAgentId, nodeChannelId, channels);
-    const nodeModelId = modelOptions.some((model) => model.id === node.modelId) ? node.modelId! : DEFAULT_MODEL_ID;
-    const runtime = runtimeMap.get(nodeAgentId) ?? fallbackRuntime(nodeAgentId);
-    const configuredAgentOptions = configuredAgents.filter((configuredAgent) => channels.some((channel) => channel.id === configuredAgent.channelId));
-    const selectedConfiguredAgent =
-      configuredAgentOptions.find((configuredAgent) => configuredAgent.channelId === nodeChannelId) ??
-      configuredAgentOptions.find((configuredAgent) => configuredAgent.runtimeAgentId === nodeAgentId) ??
-      configuredAgentOptions[0];
     const nodeMeta = node.kind === "agent" ? (
       <div className="workflow-node-meta-row">
-        <span>{selectedConfiguredAgent?.name || agentLabel(nodeAgentId)}</span>
-        <span>{modelOptions.find((model) => model.id === nodeModelId)?.label ?? nodeModelId}</span>
+        <span>{truncateWorkflowContext(node.prompt || "No node prompt.", compact ? 80 : 140)}</span>
       </div>
     ) : null;
 
@@ -5950,30 +5765,12 @@ export function WorkflowPage({
       >
         {cardHead}
         {nodeMeta}
-        {node.kind === "agent" ? (
-          <div className="workflow-node-runtime">
-            <span className={`runtime-dot ${agentAccent(nodeAgentId)}`} />
-            <span>{runtime.available ? runtimeStatus(runtime) : runtime.error ?? "Unavailable"}</span>
-          </div>
-        ) : null}
         {nodeRunProgress?.detail ? <div className={`workflow-node-run-detail is-${nodeRunProgress.status}`}>{nodeRunProgress.detail}</div> : null}
       </article>
     );
   }
 
   function renderWorkflowNodeEditor(node: WorkflowGraphNode): ReactElement {
-    const nodeAgentId = node.agentId ?? "codex";
-    const channelOptions = channels.filter((channel) => channel.agentId === nodeAgentId);
-    const nodeChannelId = channelOptions.some((channel) => channel.id === node.channelId)
-      ? node.channelId!
-      : defaultChannelForAgent(nodeAgentId, channels);
-    const modelOptions = modelsForChannel(nodeAgentId, nodeChannelId, channels);
-    const nodeModelId = modelOptions.some((model) => model.id === node.modelId) ? node.modelId! : DEFAULT_MODEL_ID;
-    const configuredAgentOptions = configuredAgents.filter((configuredAgent) => channels.some((channel) => channel.id === configuredAgent.channelId));
-    const selectedConfiguredAgent =
-      configuredAgentOptions.find((configuredAgent) => configuredAgent.channelId === nodeChannelId) ??
-      configuredAgentOptions.find((configuredAgent) => configuredAgent.runtimeAgentId === nodeAgentId) ??
-      configuredAgentOptions[0];
     const disabled = running;
 
     return (
@@ -6004,88 +5801,6 @@ export function WorkflowPage({
                   rows={8}
                 />
               </label>
-              <div className="workflow-node-edit-grid">
-                {configuredAgentOptions.length > 0 ? (
-                  <label className="workflow-node-edit-field">
-                    <span>Agent</span>
-                    <select
-                      aria-label={`Node ${node.id} configured agent`}
-                      value={selectedConfiguredAgent?.id ?? ""}
-                      disabled={disabled}
-                      onChange={(event) => {
-                        const selectedAgent = configuredAgentOptions.find((configuredAgent) => configuredAgent.id === event.currentTarget.value);
-                        if (!selectedAgent) return;
-                        onUpdateNode(node.id, {
-                          agentId: selectedAgent.runtimeAgentId,
-                          channelId: selectedAgent.channelId,
-                          modelId: selectedAgent.modelId || DEFAULT_MODEL_ID,
-                        });
-                      }}
-                    >
-                      {configuredAgentOptions.map((configuredAgent) => (
-                        <option key={configuredAgent.id} value={configuredAgent.id}>
-                          {configuredAgent.name || configuredAgent.id}
-                        </option>
-                      ))}
-                    </select>
-                  </label>
-                ) : (
-                  <>
-                    <label className="workflow-node-edit-field">
-                      <span>Runtime</span>
-                      <select
-                        aria-label={`Node ${node.id} runtime`}
-                        value={nodeAgentId}
-                        disabled={disabled}
-                        onChange={(event) => {
-                          const nextAgentId = event.currentTarget.value as AgentId;
-                          onUpdateNode(node.id, {
-                            agentId: nextAgentId,
-                            channelId: defaultChannelForAgent(nextAgentId, channels),
-                            modelId: DEFAULT_MODEL_ID,
-                          });
-                        }}
-                      >
-                        {AGENTS.map((item) => (
-                          <option key={item} value={item}>
-                            {agentLabel(item)}
-                          </option>
-                        ))}
-                      </select>
-                    </label>
-                    <label className="workflow-node-edit-field">
-                      <span>Provider</span>
-                      <select
-                        aria-label={`Node ${node.id} provider`}
-                        value={nodeChannelId}
-                        disabled={disabled}
-                        onChange={(event) => onUpdateNode(node.id, { channelId: event.currentTarget.value, modelId: DEFAULT_MODEL_ID })}
-                      >
-                        {channelOptions.map((channel) => (
-                          <option key={channel.id} value={channel.id}>
-                            {channel.label}
-                          </option>
-                        ))}
-                      </select>
-                    </label>
-                  </>
-                )}
-                <label className="workflow-node-edit-field">
-                  <span>Model</span>
-                  <select
-                    aria-label={`Node ${node.id} model`}
-                    value={nodeModelId}
-                    disabled={disabled}
-                    onChange={(event) => onUpdateNode(node.id, { modelId: event.currentTarget.value })}
-                  >
-                    {modelOptions.map((model) => (
-                      <option key={model.id} value={model.id}>
-                        {model.label}
-                      </option>
-                    ))}
-                  </select>
-                </label>
-              </div>
             </>
           ) : null}
         </article>
@@ -6099,9 +5814,9 @@ export function WorkflowPage({
         <div className="chat-title-block">
           <h2>{workflowDisplayTitle}</h2>
           <div className="chat-subtitle">
-            <span className={`agent-badge mini ${agentAccent(agentId)}`}>{agentLabel(agentId)}</span>
-            <span>{workflowEffectiveChannels.find((channel) => channel.id === workflowSelectedChannelId)?.label ?? workflowSelectedChannelId}</span>
-            <span>{workflowModelOptions.find((model) => model.id === workflowSelectedModelId)?.label ?? workflowSelectedModelId}</span>
+            <span className={`agent-badge mini ${agentAccent(workflowRuntimeId)}`} title={workflowConfigTitle}>
+              {workflowConfiguredAgent?.name || agentLabel(workflowRuntimeId)}
+            </span>
             <span>{graphVisible ? `${validation.executableNodeIds.length} ${workflowText.executableNodes}` : status}</span>
             <span>{workDir || workflowText.noWorkDir}</span>
           </div>
@@ -6131,7 +5846,7 @@ export function WorkflowPage({
           messages.map((message) => (
             <div key={message.id} className={`cli-message ${message.role}`}>
               <div className="cli-agent-line">
-                {message.role === "assistant" ? <span className={`runtime-dot ${agentAccent(agentId)}`} /> : null}
+                {message.role === "assistant" ? <span className={`runtime-dot ${agentAccent(workflowRuntimeId)}`} /> : null}
                 <span>{message.role === "assistant" ? "Workflow agent" : "You"}</span>
               </div>
               {message.role === "user" ? (
@@ -6149,9 +5864,9 @@ export function WorkflowPage({
         ) : null}
         {running ? (
           <div className="cli-status-line">
-            <span className="stream-pill">
-              <span className="stream-spinner" aria-hidden="true" />
-              <span>{`${agentLabel(agentId)} ${workflowText.agentWorking}`}</span>
+              <span className="stream-pill">
+                <span className="stream-spinner" aria-hidden="true" />
+              <span>{`${workflowConfiguredAgent?.name || agentLabel(workflowRuntimeId)} ${workflowText.agentWorking}`}</span>
             </span>
           </div>
         ) : null}
@@ -6291,16 +6006,15 @@ export function WorkflowPage({
           />
           <div className="composer-footer">
             <ChatControls
-              agentId={agentId}
-              channelId={workflowSelectedChannelId}
-              modelId={workflowSelectedModelId}
+              configuredAgentId={configuredAgentId}
+              modelId={modelId}
+              configuredAgents={configuredAgents}
               channels={channels}
               locked={composerLocked}
               running={running}
               workDir={workDir}
               runtimes={runtimes}
-              onSelectAgent={onSelectAgent}
-              onSelectChannel={onSelectChannel}
+              onSelectConfiguredAgent={onSelectConfiguredAgent}
               onSelectModel={onSelectModel}
               onChooseWorkDir={onChooseWorkDir}
               onRefresh={onRefresh}
@@ -6569,13 +6283,17 @@ interface RuntimePageProps {
 export function SkillsPage({
   language,
   templates,
+  configuredAgents = [],
   onInstallSkill,
   onUninstallSkill,
+  defaultFindSkillChatOpen = false,
 }: {
   language: Language;
   templates: SkillTemplate[];
+  configuredAgents?: ConfiguredAgent[];
   onInstallSkill?: (templateId: string, target: SkillInstallTarget) => Promise<InstalledSkillResult>;
   onUninstallSkill?: (templateId: string, target: SkillInstallTarget) => Promise<UninstalledSkillResult>;
+  defaultFindSkillChatOpen?: boolean;
 }) {
   const text = UI_TEXT[language].chrome;
   const title = text.skillLibrary;
@@ -6608,6 +6326,16 @@ export function SkillsPage({
   const sourceTitle = language === "zh" ? "出处" : "Source";
   const repositoryTitle = language === "zh" ? "仓库" : "Repository";
   const installCommandTitle = language === "zh" ? "安装命令" : "Install";
+  const findSkillTitle = "Find skill";
+  const findSkillDescription =
+    language === "zh"
+      ? "用 Codex 网上找 skill，只回答 skill 候选、用途和安装命令。"
+      : "Use Codex to find skills online. It only answers with skill candidates, use cases, and install commands.";
+  const findSkillPlaceholder = language === "zh" ? "描述你想网上找哪类 skill..." : "Describe what kind of skill to find online...";
+  const findSkillWelcome =
+    language === "zh"
+      ? "告诉我你要什么能力，我会通过 skills.sh find API 网上找 skill，并只返回匹配的候选和安装方式。"
+      : "Tell me what capability you need. I will search online through the skills.sh find API and only return matching skill candidates and install steps.";
   const [query, setQuery] = useState("");
   const [onlineResults, setOnlineResults] = useState<OnlineSkillResult[]>([]);
   const [onlineStatus, setOnlineStatus] = useState("");
@@ -6623,6 +6351,13 @@ export function SkillsPage({
   const [installStatusTone, setInstallStatusTone] = useState<"success" | "error" | undefined>();
   const [translationStatus, setTranslationStatus] = useState("");
   const [showTranslatedSkill, setShowTranslatedSkill] = useState(false);
+  const [findSkillChatOpen, setFindSkillChatOpen] = useState(defaultFindSkillChatOpen);
+  const [findSkillInput, setFindSkillInput] = useState("");
+  const [findSkillRunning, setFindSkillRunning] = useState(false);
+  const [findSkillSessionId, setFindSkillSessionId] = useState<string | undefined>();
+  const [findSkillMessages, setFindSkillMessages] = useState<Array<{ id: string; role: "assistant" | "user" | "error"; content: string }>>(() => [
+    { id: "find-skill-welcome", role: "assistant", content: findSkillWelcome },
+  ]);
   const localSkillItems = useMemo(
     () => templates.map((template) => ({ ...template, itemKey: `local:${template.id}`, kind: "local" as const })),
     [templates],
@@ -6638,12 +6373,13 @@ export function SkillsPage({
   const selectedSkillRepositoryUrl = selectedSkill?.kind === "online" ? selectedSkill.repositoryUrl : undefined;
   const selectedSkillInstallCommand = selectedSkill?.kind === "online" ? selectedSkill.installCommand : undefined;
   const selectedSkillContentLabel = selectedSkill?.kind === "online" ? (selectedSkill.contentLabel ?? "SKILL.md") : "SKILL.md";
+  const codexAgent = configuredAgents.find((agent) => agent.runtimeAgentId === "codex") ?? configuredAgents[0];
 
   async function searchOnlineSkills(query: string): Promise<OnlineSkillResult[]> {
     const api = window.multiAgentChat as typeof window.multiAgentChat & {
       searchOnlineSkills?: (query: string) => Promise<OnlineSkillResult[]>;
     };
-    return api.searchOnlineSkills ? api.searchOnlineSkills(query) : fetchOnlineSkills(query);
+    return api.searchOnlineSkills ? api.searchOnlineSkills(query) : fetchOnlineSkills(query, ONLINE_SKILL_SOURCES);
   }
 
   async function runOnlineSearch(): Promise<void> {
@@ -6658,6 +6394,83 @@ export function SkillsPage({
       setOnlineResults([]);
     } finally {
       setOnlineSearching(false);
+    }
+  }
+
+  function buildFindSkillPrompt(userText: string, candidates: OnlineSkillResult[]): string {
+    const onlineSkills =
+      candidates.length > 0
+        ? candidates
+            .map((skill, index) => {
+              const install = skill.installCommand ? ` install_cmd: ${skill.installCommand}` : "";
+              const url = skill.url ? ` url: ${skill.url}` : "";
+              return `${index + 1}. ${skillDisplayName(skill)} - ${skillDisplayDescription(skill)} source: ${skill.sourceLabel}${install}${url}`;
+            })
+            .join("\n")
+        : "No online skill candidates were found for this query.";
+    return [
+      "You are the Find skill assistant embedded in the Multi Agent Chat Skills page.",
+      "Your only job is to help the user find installable skills online.",
+      "You must not answer general chat, coding help, workflow questions, or unrelated requests. If the user asks anything unrelated to finding a skill, briefly decline and ask what skill capability they want to search for.",
+      "Use only the online candidates provided below. Do not invent skills or install commands.",
+      "Recommend the best 1-3 candidates. For each candidate include: skill name, why it matches, source, and install_cmd when present.",
+      "If no candidate fits, say no matching online skill was found and suggest 2-3 better search terms.",
+      "Reply in the user's language.",
+      "",
+      "Online skill candidates from skills.sh find API:",
+      onlineSkills,
+      "",
+      "User request:",
+      userText,
+    ].join("\n");
+  }
+
+  async function sendFindSkillMessage(): Promise<void> {
+    const text = findSkillInput.trim();
+    if (!text || findSkillRunning) return;
+    setFindSkillInput("");
+    const userMessage = { id: `find-skill-user-${Date.now()}`, role: "user" as const, content: text };
+    setFindSkillMessages((current) => [...current, userMessage]);
+    setFindSkillRunning(true);
+    let candidates: OnlineSkillResult[] = [];
+    try {
+      setOnlineStatus(searchingText);
+      candidates = await searchOnlineSkills(findSkillSearchQuery(text));
+      setOnlineResults(candidates);
+      setOnlineStatus(candidates.length === 0 ? noOnlineResults : `${candidates.length} skills`);
+      if (candidates[0]) {
+        setSelectedOnlineSkillKey(`online:${candidates[0].id}`);
+        setSelectedSkillKey(undefined);
+        setShowTranslatedSkill(false);
+        setTranslationStatus("");
+      }
+      if (!codexAgent) {
+        setFindSkillMessages((current) => [
+          ...current,
+          { id: `find-skill-assistant-${Date.now()}`, role: "assistant", content: findSkillFallbackMessage(candidates, language, language === "zh" ? "没有可用的 Codex agent 配置" : "No Codex agent configuration is available") },
+        ]);
+        return;
+      }
+      const requestId = `find-skill-${Date.now()}-${Math.random().toString(36).slice(2)}`;
+      const request = {
+        requestId,
+        prompt: buildFindSkillPrompt(text, candidates),
+        configuredAgentId: codexAgent.id,
+        modelId: codexAgent.modelId,
+      };
+      const response = await window.multiAgentChat.askWorkflowAgent(findSkillSessionId ? { ...request, sessionId: findSkillSessionId } : request);
+      setFindSkillSessionId(response.sessionId);
+      setFindSkillMessages((current) => [
+        ...current,
+        { id: `find-skill-assistant-${Date.now()}`, role: "assistant", content: response.content.trim() || (language === "zh" ? "Codex 没有返回内容。" : "Codex returned no content.") },
+      ]);
+    } catch (error) {
+      setFindSkillMessages((current) => [
+        ...current,
+        { id: `find-skill-assistant-${Date.now()}`, role: "assistant", content: findSkillFallbackMessage(candidates, language, error instanceof Error ? error.message : String(error)) },
+      ]);
+    } finally {
+      setFindSkillRunning(false);
     }
   }
 
@@ -6736,13 +6549,19 @@ export function SkillsPage({
           <h2>{title}</h2>
           <p>{description}</p>
         </div>
-        <button className="control-btn compact" type="button" onClick={() => setSearchDialogOpen(true)}>
-          <Search size={13} />
-          <span>{onlineTitle}</span>
-        </button>
+        <div className="skills-header-actions">
+          <button className="control-btn compact secondary" type="button" onClick={() => setFindSkillChatOpen(true)}>
+            <MessageSquareText size={13} />
+            <span>{findSkillTitle}</span>
+          </button>
+          <button className="control-btn compact" type="button" onClick={() => setSearchDialogOpen(true)}>
+            <Search size={13} />
+            <span>{onlineTitle}</span>
+          </button>
+        </div>
       </header>
 
-      <div className="skills-browser">
+      <div className={`skills-browser ${findSkillChatOpen ? "has-find-chat" : ""}`}>
         <aside className="skill-list-panel">
           <div className="skill-list-head">
             <div>
@@ -6892,6 +6711,65 @@ export function SkillsPage({
             <div className="empty-state config-empty">{text.noSkills}</div>
           )}
         </section>
+        {findSkillChatOpen ? (
+          <aside className="skill-find-chat-panel" aria-label="Find skill assistant">
+            <header className="skill-find-chat-head">
+              <div>
+                <span>Codex</span>
+                <h3>{findSkillTitle}</h3>
+                <p>{findSkillDescription}</p>
+              </div>
+              <button className="icon-btn flat" type="button" onClick={() => setFindSkillChatOpen(false)} aria-label="Close find skill assistant">
+                <X size={14} />
+              </button>
+            </header>
+            <div className="skill-find-chat-messages" aria-label="Find skill conversation">
+              {findSkillMessages.map((message) => (
+                <article key={message.id} className={`skill-find-message is-${message.role}`}>
+                  {message.role === "assistant" ? <Bot size={13} /> : null}
+                  <MarkdownDocument text={message.content} />
+                </article>
+              ))}
+              {findSkillRunning ? (
+                <article className="skill-find-message is-assistant">
+                  <Bot size={13} />
+                  <span>{searchingText}</span>
+                </article>
+              ) : null}
+            </div>
+            <form
+              className="skill-find-chat-composer"
+              onSubmit={(event) => {
+                event.preventDefault();
+                void sendFindSkillMessage();
+              }}
+            >
+              <textarea
+                aria-label="Find skill message"
+                value={findSkillInput}
+                placeholder={findSkillPlaceholder}
+                rows={3}
+                onChange={(event) => setFindSkillInput(event.currentTarget.value)}
+                onKeyDown={(event) => {
+                  if (shouldSendComposerKey({
+                    key: event.key,
+                    shiftKey: event.shiftKey,
+                    metaKey: event.metaKey,
+                    ctrlKey: event.ctrlKey,
+                    isComposing: event.nativeEvent.isComposing,
+                  })) {
+                    event.preventDefault();
+                    void sendFindSkillMessage();
+                  }
+                }}
+              />
+              <button className="send-btn compact" type="submit" disabled={!findSkillInput.trim() || findSkillRunning || !codexAgent}>
+                <Send size={13} />
+                <span>{findSkillRunning ? searchingText : "Send"}</span>
+              </button>
+            </form>
+          </aside>
+        ) : null}
       </div>
       {searchDialogOpen ? (
         <div className="skill-install-modal-backdrop skill-search-modal-backdrop" role="presentation" onClick={() => setSearchDialogOpen(false)}>
@@ -7446,8 +7324,8 @@ export function RuntimePage({
   const runtimeTitle = language === "zh" ? "配置" : "Config";
   const runtimeDescription =
     language === "zh"
-      ? "管理 Codex / Claude / API 执行器、Provider、API Key、插件和模型。Agent 组装页只保留人格和 Prompt。"
-      : "Manage Codex / Claude / API executors, providers, API keys, plugins, and models separately from Agent Assembly.";
+      ? "管理 Codex / Claude / API 执行器、Provider、API Key、插件和模型。"
+      : "Manage Codex / Claude / API executors, providers, API keys, plugins, and models.";
   const channelTitle = language === "zh" ? "配置项" : "Configs";
   const addConfigText = language === "zh" ? "新增配置" : "Add config";
   const deleteConfigText = language === "zh" ? "删除配置" : "Delete config";
@@ -7984,6 +7862,11 @@ export function ConfigPage({
   const selectedConfiguredAgent =
     configuredAgents.find((agent) => agent.id === selectedConfiguredAgentId) ?? configuredAgents[0];
   const selectedAgentChannel = selectedConfiguredAgent ? resolveConfiguredAgentChannel(selectedConfiguredAgent, channels) : undefined;
+  const selectedAgentModels =
+    selectedAgentChannel && selectedAgentChannel.models.length > 0 ? selectedAgentChannel.models : [{ id: DEFAULT_MODEL_ID, label: "Default" }];
+  const selectedAgentModelId = selectedConfiguredAgent && selectedAgentModels.some((model) => model.id === selectedConfiguredAgent.modelId)
+    ? selectedConfiguredAgent.modelId
+    : DEFAULT_MODEL_ID;
 
   return (
     <section className="config-page">
@@ -8062,6 +7945,24 @@ export function ConfigPage({
                         </select>
                       </label>
                       <label className="config-field">
+                        <span>{configText.model}</span>
+                        <select
+                          aria-label="Agent model"
+                          value={selectedAgentModelId}
+                          disabled={!selectedConfiguredAgent || !selectedAgentChannel}
+                          onChange={(event) => {
+                            const modelId = event.currentTarget.value;
+                            onUpdateConfiguredAgent(selectedConfiguredAgent.id, (item) => ({ ...item, modelId }));
+                          }}
+                        >
+                          {selectedAgentModels.map((model) => (
+                            <option key={model.id} value={model.id}>
+                              {model.label || model.id}
+                            </option>
+                          ))}
+                        </select>
+                      </label>
+                      <label className="config-field">
                         <span>{configText.tags}</span>
                         <input
                           aria-label="Agent tags"
@@ -8084,16 +7985,6 @@ export function ConfigPage({
                           value={selectedConfiguredAgent.description}
                           onChange={(event) =>
                             onUpdateConfiguredAgent(selectedConfiguredAgent.id, (item) => ({ ...item, description: event.currentTarget.value }))
-                          }
-                        />
-                      </label>
-                      <label className="config-field config-field-wide">
-                        <span>{configText.prompt}</span>
-                        <textarea
-                          aria-label="Agent prompt"
-                          value={selectedConfiguredAgent.prompt}
-                          onChange={(event) =>
-                            onUpdateConfiguredAgent(selectedConfiguredAgent.id, (item) => ({ ...item, prompt: event.currentTarget.value }))
                           }
                         />
                       </label>

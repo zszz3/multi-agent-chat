@@ -8,6 +8,11 @@ describe("workflow graph tools", () => {
 
     expect(graph.title).toBe("Review the payment service for release risk");
     expect(graph.nodes.map((node) => node.kind)).toEqual(["start", "agent", "agent", "agent", "end"]);
+    for (const node of graph.nodes) {
+      expect(node).not.toHaveProperty("agentId");
+      expect(node).not.toHaveProperty("channelId");
+      expect(node).not.toHaveProperty("modelId");
+    }
     expect(graph.nodes.find((node) => node.id === "plan")?.prompt).toContain("Loop Engineering Agent");
     expect(graph.nodes.find((node) => node.id === "plan")?.prompt).toContain("Review the payment service for release risk");
     expect(validation.valid).toBe(true);
@@ -54,8 +59,8 @@ workflowGraph.upsert({
   objective: "Review ./sample-repo and generate a learning document.",
   nodes: [
     { id: "start", kind: "start", title: "Start", prompt: "" },
-    { id: "repo_inventory", kind: "agent", title: "Repository Inventory Agent", prompt: "Inspect the repo.", agentId: "codex", channelId: "", modelId: "default" },
-    { id: "highlight_mining", kind: "agent", title: "Technical Highlights Agent", prompt: "Mine highlights.", agentId: "claude", channelId: "", modelId: "default" },
+    { id: "repo_inventory", kind: "agent", title: "Repository Inventory Agent", prompt: "Inspect the repo."},
+    { id: "highlight_mining", kind: "agent", title: "Technical Highlights Agent", prompt: "Mine highlights."},
     { id: "end", kind: "end", title: "Done", prompt: "" }
   ],
   edges: [
@@ -68,6 +73,9 @@ workflowGraph.upsert({
 
     expect(graph?.title).toBe("Sample Repo Learning Highlights Review");
     expect(graph?.nodes.map((node) => node.id)).toEqual(["start", "repo_inventory", "highlight_mining", "end"]);
+    expect(graph?.nodes.find((node) => node.id === "repo_inventory")).not.toHaveProperty("agentId");
+    expect(graph?.nodes.find((node) => node.id === "repo_inventory")).not.toHaveProperty("channelId");
+    expect(graph?.nodes.find((node) => node.id === "repo_inventory")).not.toHaveProperty("modelId");
     expect(validateWorkflowGraph(graph!).valid).toBe(true);
   });
 

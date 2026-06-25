@@ -1,8 +1,5 @@
-import { DEFAULT_MODEL_ID, defaultChannelForAgent } from "./models";
-import type { AgentChannel, AgentId, WorkflowGraph, WorkflowGraphEdge, WorkflowGraphNode, WorkflowGraphNodeKind, WorkflowGraphValidation } from "./types";
+import type { WorkflowGraph, WorkflowGraphEdge, WorkflowGraphNode, WorkflowGraphNodeKind, WorkflowGraphValidation } from "./types";
 import { buildWorkflowAgentPrompt } from "./workflow-agent";
-
-const DEFAULT_AGENT: AgentId = "codex";
 
 function edgeId(fromNodeId: string, toNodeId: string): string {
   return `${fromNodeId}->${toNodeId}`;
@@ -21,10 +18,6 @@ function asPosition(value: unknown): { x: number; y: number } | undefined {
   const { x, y } = value;
   if (typeof x !== "number" || typeof y !== "number" || !Number.isFinite(x) || !Number.isFinite(y)) return undefined;
   return { x, y };
-}
-
-function isAgentId(value: unknown): value is AgentId {
-  return value === "codex" || value === "claude";
 }
 
 function isWorkflowNodeKind(value: unknown): value is WorkflowGraphNodeKind {
@@ -152,11 +145,6 @@ function normalizeWorkflowGraph(value: unknown): WorkflowGraph | undefined {
     const prompt = asString(nodeRecord.prompt);
     if (!id || !isWorkflowNodeKind(kind) || nodeTitle === undefined || prompt === undefined) return undefined;
     const node: WorkflowGraphNode = { id, kind, title: nodeTitle, prompt };
-    if (isAgentId(nodeRecord.agentId)) node.agentId = nodeRecord.agentId;
-    const channelId = asString(nodeRecord.channelId);
-    if (channelId !== undefined) node.channelId = channelId;
-    const modelId = asString(nodeRecord.modelId);
-    if (modelId !== undefined) node.modelId = modelId;
     const position = asPosition(nodeRecord.position);
     if (position) node.position = position;
     nodes.push(node);
@@ -189,15 +177,8 @@ export function parseWorkflowGraphUpsert(content: string): WorkflowGraph | undef
   }
 }
 
-export function createWorkflowGraphFromObjective(objective: string, channels: AgentChannel[] = []): WorkflowGraph {
+export function createWorkflowGraphFromObjective(objective: string): WorkflowGraph {
   const text = objective.trim() || "Untitled workflow";
-  const channelId = defaultChannelForAgent(DEFAULT_AGENT, channels);
-  const baseAgent = {
-    agentId: DEFAULT_AGENT,
-    channelId,
-    modelId: DEFAULT_MODEL_ID,
-  };
-
   return {
     title: text,
     objective: text,
@@ -208,21 +189,18 @@ export function createWorkflowGraphFromObjective(objective: string, channels: Ag
         kind: "agent",
         title: "Clarify & Plan",
         prompt: buildWorkflowAgentPrompt({ objective: text }),
-        ...baseAgent,
       },
       {
         id: "work",
         kind: "agent",
         title: "Execute",
         prompt: `Use the plan to produce the main artifact for: ${text}`,
-        ...baseAgent,
       },
       {
         id: "review",
         kind: "agent",
         title: "Review",
         prompt: `Review the artifact, call out gaps, and decide whether it is ready for: ${text}`,
-        ...baseAgent,
       },
       { id: "end", kind: "end", title: "Done", prompt: "" },
     ],

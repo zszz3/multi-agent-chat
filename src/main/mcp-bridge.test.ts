@@ -58,7 +58,6 @@ describe("MCP bridge", () => {
         runtimeAgentId: "codex",
         channelId: "codex-openai",
         modelId: "default",
-        prompt: "Review the repository.",
         tags: ["review"],
         createdAt: 1710000000000,
         updatedAt: 1710000000000,
@@ -77,10 +76,10 @@ describe("MCP bridge", () => {
           id: "repo-reviewer",
           name: "Repo Reviewer",
           runtimeAgentId: "codex",
-          prompt: "Review the repository.",
         },
       ],
     });
+    expect(JSON.stringify(agents)).not.toContain("prompt");
 
     const templates = (await (await bridgeRequest("/mcp/agent-templates/list", bridge.token, {})).json()) as any;
     expect(templates).toMatchObject({
@@ -113,7 +112,6 @@ describe("MCP bridge", () => {
       runtimeAgentId: "codex",
       channelId: "codex-openai",
       modelId: "default",
-      prompt: "Write docs.",
       tags: ["docs"],
     })).json()) as any;
     expect(createdAgent).toMatchObject({
@@ -124,10 +122,10 @@ describe("MCP bridge", () => {
         runtimeAgentId: "codex",
         channelId: "codex-openai",
         modelId: "default",
-        prompt: "Write docs.",
         tags: ["docs"],
       },
     });
+    expect(createdAgent.agent).not.toHaveProperty("prompt");
 
     const updatedAgent = (await (await bridgeRequest("/mcp/agents/update", bridge.token, {
       agentId: "doc-writer",
@@ -155,7 +153,7 @@ describe("MCP bridge", () => {
         objective: "Review example service",
         nodes: [
           { id: "start", kind: "start", title: "Start", prompt: "" },
-          { id: "review", kind: "agent", title: "Review", prompt: "Review code.", agentId: "codex", channelId: "", modelId: "default" },
+          { id: "review", kind: "agent", title: "Review", prompt: "Review code."},
           { id: "end", kind: "end", title: "Done", prompt: "" },
         ],
         edges: [

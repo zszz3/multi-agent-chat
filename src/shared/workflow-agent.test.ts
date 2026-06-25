@@ -31,6 +31,9 @@ describe("workflow agent prompt", () => {
     expect(WORKFLOW_GRAPH_CODE_TEMPLATE).toContain('kind: "start"');
     expect(WORKFLOW_GRAPH_CODE_TEMPLATE).toContain('kind: "agent"');
     expect(WORKFLOW_GRAPH_CODE_TEMPLATE).toContain('kind: "end"');
+    expect(WORKFLOW_GRAPH_CODE_TEMPLATE).not.toContain("agentId");
+    expect(WORKFLOW_GRAPH_CODE_TEMPLATE).not.toContain("channelId");
+    expect(WORKFLOW_GRAPH_CODE_TEMPLATE).not.toContain("modelId");
   });
 
   test("builds the first grill question with a recommended answer from the submitted workflow task", () => {

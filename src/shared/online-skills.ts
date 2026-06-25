@@ -114,10 +114,67 @@ function skillNameFromPath(path: string): string {
   return parts.length >= 2 ? parts[parts.length - 2]! : path.replace(/\/?SKILL\.md$/i, "");
 }
 
+const QUERY_STOP_WORDS = new Set([
+  "a",
+  "an",
+  "the",
+  "and",
+  "or",
+  "to",
+  "for",
+  "of",
+  "with",
+  "skill",
+  "skills",
+  "install",
+  "download",
+  "find",
+  "add",
+  "npx",
+]);
+
+const PROVIDER_TOKENS = new Set(["anthropic", "anthropics", "claude", "openai", "chatgpt"]);
+
+function uniqueValues(values: string[]): string[] {
+  return Array.from(new Set(values.filter(Boolean)));
+}
+
+function queryTokens(query: string): string[] {
+  const lower = query.toLowerCase();
+  const tokens: string[] = lower.match(/[a-z0-9][a-z0-9_-]*/g) ?? [];
+  if (/前端|界面|网页|网站/i.test(query)) tokens.push("frontend", "ui", "web");
+  if (/设计|视觉/i.test(query)) tokens.push("design");
+  if (/(^|[^a-z])a\s*那家|anthropic|anthropics|claude|克劳德/i.test(query)) tokens.push("anthropic");
+  if (/openai|chatgpt|\bgpt\b/i.test(query)) tokens.push("openai");
+  return uniqueValues(tokens.map((token) => token.trim().replace(/^-+|-+$/g, "")).filter((token) => token.length > 1 && !QUERY_STOP_WORDS.has(token)));
+}
+
+function skillMatchTerms(query: string): string[] {
+  return queryTokens(query).filter((token) => !PROVIDER_TOKENS.has(token));
+}
+
+function providerPreference(query: string): "anthropic" | "openai" | undefined {
+  const tokens = queryTokens(query);
+  if (tokens.some((token) => token === "anthropic" || token === "anthropics" || token === "claude")) return "anthropic";
+  if (tokens.some((token) => token === "openai" || token === "chatgpt")) return "openai";
+  return undefined;
+}
+
+function skillNameHints(query: string): string[] {
+  const hints: string[] = [];
+  if (/(前端|frontend|front-end)/i.test(query) && /(设计|design)/i.test(query)) hints.push("frontend-design");
+  return hints;
+}
+
+function scoreTextForTerms(text: string, terms: string[]): number {
+  const normalized = text.toLowerCase();
+  return terms.reduce((score, term) => score + (normalized.includes(term) ? 1 : 0), 0);
+}
+
 function onlineSkillMatches(skill: ParsedSkillMarkdown, query: string): boolean {
-  const normalized = query.trim().toLowerCase();
-  if (!normalized) return true;
-  return [skill.name, skill.description, skill.prompt, skill.path, ...skill.tags].some((value) => value.toLowerCase().includes(normalized));
+  const terms = skillMatchTerms(query);
+  if (terms.length === 0) return true;
+  return scoreTextForTerms([skill.name, skill.description, skill.prompt, skill.path, ...skill.tags].join("\n"), terms) > 0;
 }
 
 function skillsShWebUrl(id: string): string {
@@ -218,6 +275,40 @@ export function skillsShResultFromApiSkill(skill: SkillsShApiSkill): OnlineSkill
   };
 }
 
+function resultMatchesProvider(skill: OnlineSkillResult, provider: "anthropic" | "openai"): boolean {
+  const haystack = [skill.sourceId, skill.sourceLabel, skill.sourcePath, skill.path, skill.repositoryUrl, skill.url, ...skill.tags].join("\n").toLowerCase();
+  return provider === "anthropic" ? /anthropic|anthropics|claude/.test(haystack) : /openai|chatgpt/.test(haystack);
+}
+
+function scoreOnlineSkillResult(skill: OnlineSkillResult, query: string): number {
+  const terms = skillMatchTerms(query);
+  const nameHints = skillNameHints(query);
+  const provider = providerPreference(query);
+  const name = skill.name.toLowerCase();
+  const path = skill.path.toLowerCase();
+  const description = skill.description.toLowerCase();
+  const fullText = [skill.prompt, ...skill.tags].join("\n").toLowerCase();
+  let score = skill.sourceId === SKILLS_SH_SOURCE.id ? 0 : 2;
+  if (provider && resultMatchesProvider(skill, provider)) score += 100;
+  if (nameHints.some((hint) => name === hint || path.includes(`/${hint}/`) || path.includes(`/${hint}.`))) score += 80;
+  for (const term of terms) {
+    if (name === term || name === term.replace(/\s+/g, "-")) score += 12;
+    if (name.includes(term)) score += 6;
+    if (path.includes(term)) score += 5;
+    if (description.includes(term)) score += 3;
+    if (fullText.includes(term)) score += 1;
+  }
+  if (terms.length > 0 && terms.every((term) => name.includes(term) || path.includes(term))) score += 10;
+  return score;
+}
+
+function rankOnlineSkillResults(skills: OnlineSkillResult[], query: string): OnlineSkillResult[] {
+  return skills
+    .map((skill, index) => ({ skill, index, score: scoreOnlineSkillResult(skill, query) }))
+    .sort((left, right) => right.score - left.score || left.index - right.index)
+    .map(({ skill }) => skill);
+}
+
 function skillsShResultsFromPayload(payload: unknown): OnlineSkillResult[] {
   const record = objectValue(payload);
   if (!Array.isArray(record.skills)) return [];
@@ -252,8 +343,12 @@ export async function fetchOnlineSkills(query: string, sources: OnlineSkillSourc
           .map((item) => item.path ?? "")
           .filter((path) => path.endsWith("/SKILL.md") || path === "SKILL.md")
           .filter((path) => !source.basePath || path === source.basePath || path.startsWith(`${source.basePath}/`));
-        const pathMatches = normalizedQuery ? skillPaths.filter((path) => path.toLowerCase().includes(normalizedQuery)) : skillPaths;
-        const candidates = [...pathMatches, ...skillPaths.filter((path) => !pathMatches.includes(path))].slice(0, source.maxFetch ?? 60);
+        const matchTerms = skillMatchTerms(normalizedQuery);
+        const candidates = skillPaths
+          .map((path, index) => ({ path, index, score: scoreTextForTerms(path, matchTerms) }))
+          .sort((left, right) => right.score - left.score || left.index - right.index)
+          .map(({ path }) => path)
+          .slice(0, source.maxFetch ?? 60);
         const parsed = await Promise.all(
           candidates.map(async (path) => {
             const rawUrl = onlineSkillRawUrl(source, path);
@@ -272,6 +367,9 @@ export async function fetchOnlineSkills(query: string, sources: OnlineSkillSourc
               path,
               url: onlineSkillBlobUrl(source, path),
               rawUrl,
+              sourcePath: path,
+              sourceUrl: onlineSkillBlobUrl(source, path),
+              repositoryUrl: source.homepage ?? `https://github.com/${source.owner}/${source.repo}`,
               contentLabel: "SKILL.md",
             };
             return result;
@@ -286,5 +384,5 @@ export async function fetchOnlineSkills(query: string, sources: OnlineSkillSourc
   );
   const merged = [...registryResults, ...results.flat()];
   if (merged.length === 0 && failures.length > 0) throw new Error(failures.join("; "));
-  return merged.slice(0, 80);
+  return rankOnlineSkillResults(merged, query).slice(0, 80);
 }

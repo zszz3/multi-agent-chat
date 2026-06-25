@@ -99,7 +99,6 @@ function agentListPayload(hub: AgentHub): unknown {
       runtimeAgentId: agent.runtimeAgentId,
       channelId: agent.channelId,
       modelId: agent.modelId,
-      prompt: agent.prompt,
       tags: agent.tags,
       updatedAt: agent.updatedAt,
     })),
@@ -151,7 +150,6 @@ function templatePatch(templateId: string | undefined): Partial<ConfiguredAgent>
   return {
     name: template.name,
     description: template.description,
-    prompt: template.prompt,
     tags: [...template.tags],
   };
 }
@@ -179,7 +177,6 @@ function normalizeAgentInput(hub: AgentHub, record: Record<string, unknown>, exi
     runtimeAgentId,
     channelId,
     modelId,
-    prompt: asString(record.prompt) ?? template.prompt ?? existing?.prompt ?? "",
     tags: asTags(record.tags, template.tags ?? existing?.tags ?? []),
     createdAt: existing?.createdAt ?? now,
     updatedAt: now,
@@ -244,10 +241,9 @@ async function routeWorkflowRequest(hub: AgentHub, route: string, body: unknown)
       title: typeof record.title === "string" ? record.title : "",
       objective: typeof record.objective === "string" ? record.objective : "",
       graph: record.graph as WorkflowGraph,
-      agentId: record.agentId === "claude" ? "claude" : record.agentId === "api" ? "api" : "codex",
     };
-    if (typeof record.channelId === "string") request.channelId = record.channelId;
-    if (typeof record.modelId === "string") request.modelId = record.modelId;
+    const configuredAgentId = asString(record.configuredAgentId);
+    if (configuredAgentId) request.configuredAgentId = configuredAgentId;
     return hub.createWorkflow(request);
   }
   if (route === "/mcp/workflow/update") {

@@ -2,7 +2,6 @@ import { contextBridge, ipcRenderer } from "electron";
 import type { OnlineSkillResult } from "../shared/online-skills";
 import type {
   AgentChannel,
-  AgentId,
   AgentTestEvent,
   AgentTestResult,
   AckScheduledWorkflowEventRequest,
@@ -40,10 +39,10 @@ import type {
 const api = {
   getSnapshot: (): Promise<AppSnapshot> => ipcRenderer.invoke("snapshot:get"),
   refreshAgents: (): Promise<AppSnapshot> => ipcRenderer.invoke("agents:refresh"),
-  createChat: (agentId?: AgentId): Promise<AppSnapshot> => ipcRenderer.invoke("chat:create", agentId),
+  createChat: (configuredAgentId?: string): Promise<AppSnapshot> => ipcRenderer.invoke("chat:create", configuredAgentId),
   selectChat: (chatId: string): Promise<AppSnapshot> => ipcRenderer.invoke("chat:select", chatId),
   deleteChat: (chatId: string): Promise<AppSnapshot> => ipcRenderer.invoke("chat:delete", chatId),
-  setChatAgent: (chatId: string, agentId: AgentId): Promise<AppSnapshot> => ipcRenderer.invoke("chat:set-agent", chatId, agentId),
+  setChatAgent: (chatId: string, configuredAgentId: string): Promise<AppSnapshot> => ipcRenderer.invoke("chat:set-agent", chatId, configuredAgentId),
   setChatChannel: (chatId: string, channelId: string): Promise<AppSnapshot> => ipcRenderer.invoke("chat:set-channel", chatId, channelId),
   setChatModel: (chatId: string, modelId: string): Promise<AppSnapshot> => ipcRenderer.invoke("chat:set-model", chatId, modelId),
   saveModelChannels: (channels: AgentChannel[]): Promise<AppSnapshot> => ipcRenderer.invoke("model-channels:save", channels),

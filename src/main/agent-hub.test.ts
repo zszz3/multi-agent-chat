@@ -4,7 +4,35 @@ import path from "node:path";
 import { describe, expect, test, vi } from "vitest";
 import { AgentHub, createWorkflowAgentTimeout } from "./agent-hub";
 import { DEFAULT_MODEL_ID } from "../shared/models";
-import type { AgentChannel } from "../shared/types";
+import type { AgentChannel, AgentId, ConfiguredAgent } from "../shared/types";
+import type { AgentExecutionContext, AgentExecutorFactory } from "./agent-executor";
+
+function configuredAgent(
+  id: string,
+  options: {
+    name?: string;
+    runtimeAgentId?: AgentId;
+    channelId?: string;
+    modelId?: string;
+  } = {},
+): ConfiguredAgent {
+  const runtimeAgentId = options.runtimeAgentId ?? "codex";
+  return {
+    id,
+    name: options.name ?? id,
+    description: "",
+    runtimeAgentId,
+    channelId: options.channelId ?? (runtimeAgentId === "claude" ? "claude-code" : runtimeAgentId === "api" ? "api-openai" : "codex-openai"),
+    modelId: options.modelId ?? DEFAULT_MODEL_ID,
+    tags: [],
+    createdAt: 1710000000000,
+    updatedAt: 1710000000000,
+  };
+}
+
+function addConfiguredAgents(hub: AgentHub, agents: ConfiguredAgent[]): void {
+  hub.updateConfiguredAgents([...hub.snapshot().configuredAgents, ...agents]);
+}
 
 async function writeCodexAppServerFake(dir: string): Promise<{ executable: string; callsPath: string }> {
   const executable = path.join(dir, "codex-fake");
@@ -339,7 +367,6 @@ describe("AgentHub chat sessions", () => {
         runtimeAgentId: "codex",
         channelId: "codex-volcengine",
         modelId: "ep-m-user-owned-endpoint",
-        prompt: "",
         tags: [],
         createdAt: 1710000000000,
         updatedAt: 1710000000000,
@@ -396,27 +423,31 @@ describe("AgentHub chat sessions", () => {
     const activeChat = snapshot.chats.find((chat) => chat.id === snapshot.activeChatId);
 
     expect(snapshot.chats).toHaveLength(1);
-    expect(activeChat?.agentId).toBe("codex");
-    expect(activeChat?.channelId).toBe("codex-openai");
+    expect(activeChat?.configuredAgentId).toBe("default-agent");
+    expect(snapshot.configuredAgents.find((agent) => agent.id === activeChat?.configuredAgentId)).toMatchObject({
+      runtimeAgentId: "codex",
+      channelId: "codex-openai",
+    });
   });
 
   test("creates isolated chats with their own agent provider", () => {
     const hub = new AgentHub({ codex: "missing-codex-for-test", claude: "missing-claude-for-test" });
+    addConfiguredAgents(hub, [configuredAgent("claude-agent", { runtimeAgentId: "claude", name: "Claude Agent" })]);
 
-    const claudeChat = hub.createChat("claude");
+    const claudeChat = hub.createChat("claude-agent");
     const snapshot = hub.snapshot();
     const activeChat = snapshot.chats.find((chat) => chat.id === snapshot.activeChatId);
 
-    expect(claudeChat.agentId).toBe("claude");
+    expect(claudeChat.configuredAgentId).toBe("claude-agent");
     expect(snapshot.chats).toHaveLength(2);
     expect(activeChat?.id).toBe(claudeChat.id);
-    expect(activeChat?.agentId).toBe("claude");
+    expect(activeChat?.configuredAgentId).toBe("claude-agent");
   });
 
   test("deletes a chat session with its local messages and selects the next remaining chat", async () => {
     const hub = new AgentHub({ codex: "missing-codex-for-test", claude: "missing-claude-for-test" });
     const firstChatId = hub.snapshot().activeChatId!;
-    const secondChat = hub.createChat("claude");
+    const secondChat = hub.createChat("default-agent");
     const firstChat = (hub as any).chats.get(firstChatId);
     firstChat.messages.push({ id: "m-1", role: "user", content: "Delete me", timestamp: 1710000000000 });
     hub.selectChat(firstChatId);
@@ -449,34 +480,67 @@ describe("AgentHub chat sessions", () => {
   test("changes the active chat agent without affecting other chats", () => {
     const hub = new AgentHub();
     const firstChatId = hub.snapshot().activeChatId!;
-    const secondChat = hub.createChat("claude");
+    addConfiguredAgents(hub, [configuredAgent("claude-agent", { runtimeAgentId: "claude", name: "Claude Agent" })]);
+    const secondChat = hub.createChat("claude-agent");
 
-    hub.setChatAgent(secondChat.id, "codex");
+    hub.setChatAgent(secondChat.id, "default-agent");
 
     const snapshot = hub.snapshot();
     const firstChat = snapshot.chats.find((chat) => chat.id === firstChatId);
     const activeChat = snapshot.chats.find((chat) => chat.id === snapshot.activeChatId);
 
-    expect(firstChat?.agentId).toBe("codex");
+    expect(firstChat?.configuredAgentId).toBe("default-agent");
     expect(activeChat?.id).toBe(secondChat.id);
-    expect(activeChat?.agentId).toBe("codex");
+    expect(activeChat?.configuredAgentId).toBe("default-agent");
   });
 
-  test("tracks the selected model per chat before a conversation starts", () => {
+  test("tracks the selected configured agent per chat before a conversation starts", () => {
     const hub = new AgentHub();
+    addConfiguredAgents(hub, [
+      configuredAgent("codex-gpt55", { name: "Codex GPT-5.5", modelId: "gpt-5.5" }),
+      configuredAgent("claude-agent", { runtimeAgentId: "claude", name: "Claude Agent" }),
+    ]);
     const chatId = hub.snapshot().activeChatId!;
 
     hub.setChatModel(chatId, "gpt-5.5");
 
     const activeChat = hub.snapshot().chats.find((chat) => chat.id === chatId);
-    expect(activeChat?.modelId).toBe("gpt-5.5");
+    expect(activeChat?.configuredAgentId).toBe("default-agent");
 
-    hub.setChatAgent(chatId, "claude");
+    hub.setChatAgent(chatId, "claude-agent");
 
     const switchedChat = hub.snapshot().chats.find((chat) => chat.id === chatId);
-    expect(switchedChat?.agentId).toBe("claude");
-    expect(switchedChat?.channelId).toBe("claude-code");
-    expect(switchedChat?.modelId).toBe(DEFAULT_MODEL_ID);
+    expect(switchedChat?.configuredAgentId).toBe("claude-agent");
+  });
+
+  test("uses the chat-selected model when sending a prompt", async () => {
+    const contexts: AgentExecutionContext[] = [];
+    const executorFactory: AgentExecutorFactory = {
+      create: (context) => {
+        contexts.push(context);
+        return {
+          start: async () => {
+            context.emit({ type: "completed", content: "ok" });
+          },
+          stop: async () => undefined,
+        };
+      },
+    };
+    const hub = new AgentHub({ codex: "codex-for-test", claude: "missing-claude-for-test" }, executorFactory);
+    (hub as any).runtimes.set("codex", {
+      id: "codex",
+      label: "Codex",
+      command: "codex-for-test",
+      version: "test",
+      available: true,
+    });
+    const chatId = hub.snapshot().activeChatId!;
+
+    hub.setChatModel(chatId, "gpt-5.5");
+    await hub.sendPrompt("Use the selected model", chatId);
+
+    await waitFor(() => contexts, (items) => items.length === 1);
+    expect(contexts[0]?.modelId).toBe("gpt-5.5");
   });
 
   test("changes the selected channel before a conversation starts", async () => {
@@ -509,25 +573,23 @@ describe("AgentHub chat sessions", () => {
     hub.setChatModel(chatId, "gpt-5.4");
 
     const activeChat = hub.snapshot().chats.find((chat) => chat.id === chatId);
-    expect(activeChat?.channelId).toBe("codex-bridge");
-    expect(activeChat?.modelId).toBe("gpt-5.4");
+    expect(activeChat?.configuredAgentId).toBe("default-agent");
   });
 
-  test("does not change agent or model after a conversation has started", () => {
+  test("does not change configured agent after a conversation has started", () => {
     const hub = new AgentHub();
+    addConfiguredAgents(hub, [configuredAgent("claude-agent", { runtimeAgentId: "claude", name: "Claude Agent" })]);
     const chatId = hub.snapshot().activeChatId!;
     const chat = (hub as any).chats.get(chatId);
 
     (hub as any).handleAgentEvent(chat, { type: "delta", content: "Started" });
 
-    hub.setChatAgent(chatId, "claude");
+    hub.setChatAgent(chatId, "claude-agent");
     hub.setChatChannel(chatId, "claude-code");
     hub.setChatModel(chatId, "gpt-5.5");
 
     const activeChat = hub.snapshot().chats.find((item) => item.id === chatId);
-    expect(activeChat?.agentId).toBe("codex");
-    expect(activeChat?.channelId).toBe("codex-openai");
-    expect(activeChat?.modelId).toBe(DEFAULT_MODEL_ID);
+    expect(activeChat?.configuredAgentId).toBe("default-agent");
   });
 
   test("stores agent session ids without adding transcript messages", () => {
@@ -577,13 +639,14 @@ describe("AgentHub chat sessions", () => {
     const dir = await mkdtemp(path.join(os.tmpdir(), "multi-agent-chat-codex-status-"));
     const fake = await writeCodexAppServerFake(dir);
     const hub = new AgentHub({ codex: fake.executable, claude: "missing-claude-for-test" });
+    addConfiguredAgents(hub, [configuredAgent("claude-agent", { runtimeAgentId: "claude", name: "Claude Agent" })]);
     const chatId = hub.snapshot().activeChatId!;
 
     await hub.sendPrompt("/status", chatId);
-    hub.setChatAgent(chatId, "claude");
+    hub.setChatAgent(chatId, "claude-agent");
 
     const activeChat = hub.snapshot().chats.find((item) => item.id === chatId);
-    expect(activeChat?.agentId).toBe("claude");
+    expect(activeChat?.configuredAgentId).toBe("claude-agent");
     expect(activeChat?.running).toBe(false);
     expect(activeChat?.lastError).toBeUndefined();
     expect(activeChat?.messages).toEqual([
@@ -703,9 +766,7 @@ describe("AgentHub chat sessions", () => {
     const response = await (hub as any).askWorkflowAgent({
       requestId: "workflow-test",
       prompt: "You are a Loop Engineering Agent. Ask one question.",
-      agentId: "codex",
-      channelId: "codex-openai",
-      modelId: DEFAULT_MODEL_ID,
+      configuredAgentId: "default-agent",
       workDir: dir,
     }, (event: any) => events.push(event));
 
@@ -723,6 +784,57 @@ describe("AgentHub chat sessions", () => {
     expect(calls.some((call) => call.method === "thread/start" && call.params.developerInstructions.includes("Final User Report"))).toBe(true);
   });
 
+  test("uses the workflow-selected model for workflow agent API requests", async () => {
+    const dir = await mkdtemp(path.join(os.tmpdir(), "multi-agent-chat-workflow-model-"));
+    const hub = new AgentHub({ codex: "missing-codex-for-test", claude: "missing-claude-for-test" });
+    await hub.loadModelChannels(path.join(dir, "model-channels.json"));
+    await hub.saveModelChannels([
+      {
+        id: "deepseek-api",
+        agentId: "api",
+        label: "DeepSeek API",
+        baseUrl: "https://api.deepseek.test/v1",
+        models: [
+          { id: DEFAULT_MODEL_ID, label: "Default" },
+          { id: "deepseek-v4-flash", label: "DeepSeek V4 Flash" },
+          { id: "deepseek-v4-pro", label: "DeepSeek V4 Pro" },
+        ],
+      },
+    ]);
+    hub.updateConfiguredAgents([
+      configuredAgent("api-agent", {
+        runtimeAgentId: "api",
+        channelId: "deepseek-api",
+        modelId: "deepseek-v4-flash",
+      }),
+    ]);
+    (hub as any).runtimes.set("api", {
+      id: "api",
+      label: "API",
+      command: "api",
+      version: "test",
+      available: true,
+    });
+    const fetchImpl = vi.fn(async (_url: string | URL | Request, _init?: RequestInit) =>
+      new Response(JSON.stringify({ choices: [{ message: { content: "workflow-ok" } }] }), {
+        status: 200,
+        headers: { "content-type": "application/json" },
+      }),
+    );
+    vi.stubGlobal("fetch", fetchImpl);
+
+    await (hub as any).askWorkflowAgent({
+      prompt: "Use workflow selected model.",
+      configuredAgentId: "api-agent",
+      modelId: "deepseek-v4-pro",
+    });
+
+    expect(JSON.parse(fetchImpl.mock.calls[0]?.[1]?.body as string)).toMatchObject({
+      model: "deepseek-v4-pro",
+    });
+    vi.unstubAllGlobals();
+  });
+
   test("persists and restores app-owned chat history", async () => {
     const dir = await mkdtemp(path.join(os.tmpdir(), "multi-agent-chat-"));
     const storagePath = path.join(dir, "app-chats.json");
@@ -730,7 +842,8 @@ describe("AgentHub chat sessions", () => {
 
     await hub.loadPersistedState(storagePath);
     hub.setWorkDir("/tmp/project");
-    const chat = hub.createChat("claude");
+    addConfiguredAgents(hub, [configuredAgent("claude-agent", { runtimeAgentId: "claude", name: "Claude Agent" })]);
+    const chat = hub.createChat("claude-agent");
     const chatState = (hub as any).chats.get(chat.id);
     (hub as any).handleAgentEvent(chatState, { type: "meta", content: "→ shell_command\npwd" });
     (hub as any).handleAgentEvent(chatState, { type: "delta", content: "Saved response" });
@@ -750,7 +863,7 @@ describe("AgentHub chat sessions", () => {
 
     expect(snapshot.workDir).toBe("/tmp/project");
     expect(snapshot.activeChatId).toBe(chat.id);
-    expect(restoredChat?.agentId).toBe("claude");
+    expect(restoredChat?.configuredAgentId).toBe("claude-agent");
     expect(restoredChat?.running).toBe(false);
     expect(restoredChat?.messages).toEqual([
       expect.objectContaining({
@@ -918,7 +1031,7 @@ describe("AgentHub chat sessions", () => {
 
     await legacyHub.loadPersistedState(legacyPath);
     legacyHub.setWorkDir("/tmp/legacy-project");
-    const chat = legacyHub.createChat("codex");
+    const chat = legacyHub.createChat("default-agent");
     await legacyHub.flushPersistence();
 
     const migrated = new AgentHub();
@@ -942,9 +1055,7 @@ describe("AgentHub chat sessions", () => {
 
     await hub.loadPersistedState(storagePath);
     const first = (hub as any).createWorkflow({
-      agentId: "codex",
-      channelId: "codex-openai",
-      modelId: DEFAULT_MODEL_ID,
+      configuredAgentId: "default-agent",
       title: "sample repo review",
       objective: "Review sample repo",
       graphReady: true,
@@ -953,7 +1064,7 @@ describe("AgentHub chat sessions", () => {
         objective: "Review sample repo",
         nodes: [
           { id: "start", kind: "start", title: "Start", prompt: "" },
-          { id: "inventory", kind: "agent", title: "Inventory", prompt: "Map repo.", agentId: "codex", channelId: "codex-openai", modelId: DEFAULT_MODEL_ID },
+          { id: "inventory", kind: "agent", title: "Inventory", prompt: "Map repo."},
           { id: "end", kind: "end", title: "Done", prompt: "" },
         ],
         edges: [
@@ -984,7 +1095,7 @@ describe("AgentHub chat sessions", () => {
         objective: "Prepare release",
         nodes: [
           { id: "start", kind: "start", title: "Start", prompt: "" },
-          { id: "plan", kind: "agent", title: "Plan", prompt: "Plan release.", agentId: "codex", channelId: "codex-openai", modelId: DEFAULT_MODEL_ID },
+          { id: "plan", kind: "agent", title: "Plan", prompt: "Plan release."},
           { id: "end", kind: "end", title: "Done", prompt: "" },
         ],
         edges: [
@@ -1047,7 +1158,7 @@ describe("AgentHub chat sessions", () => {
         objective: "Review sample repo",
         nodes: [
           { id: "start", kind: "start", title: "Start", prompt: "" },
-          { id: "inventory", kind: "agent", title: "Inventory", prompt: "Map repo.", agentId: "codex", channelId: "codex-openai", modelId: DEFAULT_MODEL_ID },
+          { id: "inventory", kind: "agent", title: "Inventory", prompt: "Map repo."},
           { id: "end", kind: "end", title: "Done", prompt: "" },
         ],
         edges: [
@@ -1079,7 +1190,7 @@ describe("AgentHub chat sessions", () => {
         objective: "Pin nodes",
         nodes: [
           { id: "start", kind: "start", title: "Start", prompt: "", position: { x: 12, y: 34 } },
-          { id: "inventory", kind: "agent", title: "Inventory", prompt: "Map repo.", agentId: "codex", channelId: "codex-openai", modelId: DEFAULT_MODEL_ID },
+          { id: "inventory", kind: "agent", title: "Inventory", prompt: "Map repo."},
           { id: "end", kind: "end", title: "Done", prompt: "" },
         ],
         edges: [
@@ -1119,7 +1230,7 @@ describe("AgentHub chat sessions", () => {
         objective: "Review sample repo",
         nodes: [
           { id: "start", kind: "start", title: "Start", prompt: "" },
-          { id: "inventory", kind: "agent", title: "Inventory", prompt: "Map repo.", agentId: "codex", channelId: "codex-openai", modelId: DEFAULT_MODEL_ID },
+          { id: "inventory", kind: "agent", title: "Inventory", prompt: "Map repo."},
           { id: "end", kind: "end", title: "Done", prompt: "" },
         ],
         edges: [
@@ -1137,7 +1248,7 @@ describe("AgentHub chat sessions", () => {
         objective: "Prepare release",
         nodes: [
           { id: "start", kind: "start", title: "Start", prompt: "" },
-          { id: "plan", kind: "agent", title: "Plan", prompt: "Plan release.", agentId: "codex", channelId: "codex-openai", modelId: DEFAULT_MODEL_ID },
+          { id: "plan", kind: "agent", title: "Plan", prompt: "Plan release."},
           { id: "end", kind: "end", title: "Done", prompt: "" },
         ],
         edges: [
@@ -1190,9 +1301,6 @@ describe("AgentHub chat sessions", () => {
         kind: "agent",
         title: `Agent ${index}`,
         prompt: "Work.",
-        agentId: "codex",
-        channelId: "codex-openai",
-        modelId: DEFAULT_MODEL_ID,
       })),
       { id: "end", kind: "end", title: "Done", prompt: "" },
     ];
@@ -1225,7 +1333,7 @@ describe("AgentHub chat sessions", () => {
         objective: "Run tracked workflow",
         nodes: [
           { id: "start", kind: "start", title: "Start", prompt: "" },
-          { id: "work", kind: "agent", title: "Work", prompt: "Work.", agentId: "codex", channelId: "codex-openai", modelId: DEFAULT_MODEL_ID },
+          { id: "work", kind: "agent", title: "Work", prompt: "Work."},
           { id: "end", kind: "end", title: "Done", prompt: "" },
         ],
         edges: [
@@ -1289,7 +1397,7 @@ describe("AgentHub chat sessions", () => {
         objective: "Review repository changes every morning",
         nodes: [
           { id: "start", kind: "start", title: "Start", prompt: "" },
-          { id: "review", kind: "agent", title: "Review", prompt: "Review recent changes.", agentId: "codex", channelId: "codex-openai", modelId: DEFAULT_MODEL_ID },
+          { id: "review", kind: "agent", title: "Review", prompt: "Review recent changes."},
           { id: "end", kind: "end", title: "Done", prompt: "" },
         ],
         edges: [
@@ -1421,9 +1529,7 @@ describe("AgentHub task runs", () => {
 
     const snapshot = await hub.runTask({
       prompt: "Inspect the repo and summarize risks",
-      agentId: "codex",
-      channelId: "codex-openai",
-      modelId: "gpt-5.5",
+      configuredAgentId: "default-agent",
       workDir: "/tmp/project",
     });
 
@@ -1433,16 +1539,14 @@ describe("AgentHub task runs", () => {
     expect(snapshot.tasks[0]).toMatchObject({
       title: "Inspect the repo and summarize risks",
       prompt: "Inspect the repo and summarize risks",
-      agentId: "codex",
-      channelId: "codex-openai",
-      modelId: "gpt-5.5",
+      configuredAgentId: "default-agent",
       workDir: "/tmp/project",
       progress: "todo",
       status: "failed",
       running: false,
       messages: [
         expect.objectContaining({ role: "user", content: "Inspect the repo and summarize risks" }),
-        expect.objectContaining({ role: "error", content: "codex is not available on this machine." }),
+        expect.objectContaining({ role: "error", content: "Default Agent is not available on this machine." }),
       ],
     });
   });
@@ -1451,9 +1555,7 @@ describe("AgentHub task runs", () => {
     const hub = new AgentHub();
     const task = (hub as any).createTaskState({
       prompt: "Run a focused task",
-      agentId: "codex",
-      channelId: "codex-openai",
-      modelId: DEFAULT_MODEL_ID,
+      configuredAgentId: "default-agent",
       workDir: "/tmp/project",
     });
     (hub as any).tasks.set(task.id, task);
@@ -1485,9 +1587,7 @@ describe("AgentHub task runs", () => {
     const hub = new AgentHub();
     const task = (hub as any).createTaskState({
       prompt: "Run a focused task",
-      agentId: "claude",
-      channelId: "claude-code",
-      modelId: DEFAULT_MODEL_ID,
+      configuredAgentId: "default-agent",
       workDir: "/tmp/project",
     });
     (hub as any).tasks.set(task.id, task);
@@ -1511,16 +1611,12 @@ describe("AgentHub task runs", () => {
     const hub = new AgentHub();
     const first = (hub as any).createTaskState({
       prompt: "First task",
-      agentId: "codex",
-      channelId: "codex-openai",
-      modelId: DEFAULT_MODEL_ID,
+      configuredAgentId: "default-agent",
       workDir: "/tmp/project",
     });
     const second = (hub as any).createTaskState({
       prompt: "Second task",
-      agentId: "codex",
-      channelId: "codex-openai",
-      modelId: DEFAULT_MODEL_ID,
+      configuredAgentId: "default-agent",
       workDir: "/tmp/project",
     });
     (hub as any).tasks.set(first.id, first);
@@ -1543,9 +1639,7 @@ describe("AgentHub task runs", () => {
     const hub = new AgentHub({ codex: executable, claude: "missing-claude-for-test" });
     const task = (hub as any).createTaskState({
       prompt: "Task with session",
-      agentId: "codex",
-      channelId: "codex-openai",
-      modelId: DEFAULT_MODEL_ID,
+      configuredAgentId: "default-agent",
       workDir: "/tmp/project",
     });
     task.sessionId = "019e9143-2451-7612-a62d-e65389574d7d";
@@ -1568,16 +1662,12 @@ describe("AgentHub agent teams", () => {
         {
           roleName: "Reviewer",
           prompt: "Review the implementation for correctness.",
-          agentId: "codex",
-          channelId: "codex-openai",
-          modelId: "gpt-5.5",
+          configuredAgentId: "default-agent",
           canvasPosition: { x: 120, y: 90 },
         },
         {
           roleName: "Verifier",
-          agentId: "claude",
-          channelId: "claude-code",
-          modelId: DEFAULT_MODEL_ID,
+          configuredAgentId: "default-agent",
         },
       ],
     });
@@ -1591,12 +1681,10 @@ describe("AgentHub agent teams", () => {
         expect.objectContaining({
           roleName: "Reviewer",
           prompt: "Review the implementation for correctness.",
-          agentId: "codex",
-          channelId: "codex-openai",
-          modelId: "gpt-5.5",
+          configuredAgentId: "default-agent",
           canvasPosition: { x: 120, y: 90 },
         }),
-        expect.objectContaining({ roleName: "Verifier", agentId: "claude", channelId: "claude-code", modelId: DEFAULT_MODEL_ID }),
+        expect.objectContaining({ roleName: "Verifier"}),
       ],
     });
     const [reviewer, verifier] = snapshot.teams[0]!.members;
@@ -1638,9 +1726,7 @@ describe("AgentHub agent teams", () => {
           id: "member-a",
           roleName: "Planner",
           prompt: "Plan",
-          agentId: "codex",
-          channelId: "codex-openai",
-          modelId: DEFAULT_MODEL_ID,
+          configuredAgentId: "default-agent",
         },
       ],
     });
@@ -1678,16 +1764,12 @@ describe("AgentHub agent teams", () => {
         {
           roleName: "Security",
           prompt: "Check auth and dependency risks.",
-          agentId: "codex",
-          channelId: "codex-openai",
-          modelId: DEFAULT_MODEL_ID,
+          configuredAgentId: "default-agent",
         },
         {
           roleName: "Testing",
           prompt: "Check missing verification and flaky tests.",
-          agentId: "codex",
-          channelId: "codex-openai",
-          modelId: DEFAULT_MODEL_ID,
+          configuredAgentId: "default-agent",
         },
       ],
     });
@@ -1749,23 +1831,17 @@ describe("AgentHub agent teams", () => {
         {
           roleName: "Lead",
           prompt: "Plan the work and coordinate outputs.",
-          agentId: "codex",
-          channelId: "codex-openai",
-          modelId: DEFAULT_MODEL_ID,
+          configuredAgentId: "default-agent",
         },
         {
           roleName: "Reviewer",
           prompt: "Review correctness.",
-          agentId: "codex",
-          channelId: "codex-openai",
-          modelId: DEFAULT_MODEL_ID,
+          configuredAgentId: "default-agent",
         },
         {
           roleName: "Verifier",
           prompt: "Verify test coverage.",
-          agentId: "codex",
-          channelId: "codex-openai",
-          modelId: DEFAULT_MODEL_ID,
+          configuredAgentId: "default-agent",
         },
       ],
     });
@@ -1843,16 +1919,12 @@ describe("AgentHub agent teams", () => {
         {
           roleName: "Planner",
           prompt: "Create a short review plan before touching code.",
-          agentId: "codex",
-          channelId: "codex-openai",
-          modelId: DEFAULT_MODEL_ID,
+          configuredAgentId: "default-agent",
         },
         {
           roleName: "Checker",
           prompt: "Use prior artifacts, then verify risks and missing tests.",
-          agentId: "codex",
-          channelId: "codex-openai",
-          modelId: DEFAULT_MODEL_ID,
+          configuredAgentId: "default-agent",
         },
       ],
     });
