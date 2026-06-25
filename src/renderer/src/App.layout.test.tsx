@@ -27,6 +27,7 @@ import {
   findSkillImportRequest,
   findSkillImportSelection,
   parseFindSkillAgentToolCall,
+  resolveFindSkillConfiguredAgentId,
   onlineSkillTreeUrl,
   parseSkillMarkdown,
   skillPopularityLabel,
@@ -1749,6 +1750,9 @@ describe("SkillsPage", () => {
     expect(html).toContain("skill-find-chat-panel");
     expect(html).toContain("Find skill");
     expect(html).toContain("Online search");
+    expect(html).toContain("aria-label=\"Find skill agent\"");
+    expect(html).toContain("Repo Reviewer");
+    expect(html).toContain("Claude Reviewer");
     expect(html).toContain("aria-label=\"Find skill message\"");
     expect(html).toContain("跟 AI 说你想找什么 skill");
     expect(html).toContain("本软件技能库");
@@ -1781,6 +1785,12 @@ describe("SkillsPage", () => {
       candidateIndex: 1,
     });
     expect(parseFindSkillAgentToolCall("可以，我再看看。")).toBeUndefined();
+  });
+
+  test("resolves the selected find-skill agent config", () => {
+    expect(resolveFindSkillConfiguredAgentId("claude-reviewer", configuredAgents)).toBe("claude-reviewer");
+    expect(resolveFindSkillConfiguredAgentId("missing-agent", configuredAgents)).toBe("repo-reviewer");
+    expect(resolveFindSkillConfiguredAgentId(undefined, [])).toBe("");
   });
 
   test("keeps find-skill useful without leaking Codex errors when summarization fails", () => {

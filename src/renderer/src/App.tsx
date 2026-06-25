@@ -1089,6 +1089,11 @@ function defaultConfiguredAgentId(configuredAgents: ConfiguredAgent[]): string {
   return configuredAgents[0]?.id ?? "";
 }
 
+export function resolveFindSkillConfiguredAgentId(configuredAgentId: string | undefined, configuredAgents: ConfiguredAgent[]): string {
+  if (configuredAgentId && configuredAgents.some((agent) => agent.id === configuredAgentId)) return configuredAgentId;
+  return defaultConfiguredAgentId(configuredAgents);
+}
+
 function configuredAgentModel(
   agent: ConfiguredAgent | undefined,
   channel: AgentChannel | undefined,
@@ -6592,6 +6597,7 @@ export function SkillsPage({
   const [translationStatus, setTranslationStatus] = useState("");
   const [showTranslatedSkill, setShowTranslatedSkill] = useState(false);
   const [findSkillChatOpen, setFindSkillChatOpen] = useState(defaultFindSkillChatOpen);
+  const [findSkillConfiguredAgentId, setFindSkillConfiguredAgentId] = useState(() => resolveFindSkillConfiguredAgentId(undefined, configuredAgents));
   const [findSkillInput, setFindSkillInput] = useState("");
   const [findSkillRunning, setFindSkillRunning] = useState(false);
   const [findSkillAgentSessionId, setFindSkillAgentSessionId] = useState<string | undefined>();
@@ -6613,6 +6619,14 @@ export function SkillsPage({
   const selectedSkillRepositoryUrl = selectedSkill?.kind === "online" ? selectedSkill.repositoryUrl : undefined;
   const selectedSkillInstallCommand = selectedSkill?.kind === "online" ? selectedSkill.installCommand : undefined;
   const selectedSkillContentLabel = selectedSkill?.kind === "online" ? (selectedSkill.contentLabel ?? "SKILL.md") : "SKILL.md";
+  const activeFindSkillConfiguredAgentId = resolveFindSkillConfiguredAgentId(findSkillConfiguredAgentId, configuredAgents);
+
+  useEffect(() => {
+    const nextConfiguredAgentId = resolveFindSkillConfiguredAgentId(findSkillConfiguredAgentId, configuredAgents);
+    if (nextConfiguredAgentId === findSkillConfiguredAgentId) return;
+    setFindSkillConfiguredAgentId(nextConfiguredAgentId);
+    setFindSkillAgentSessionId(undefined);
+  }, [configuredAgents, findSkillConfiguredAgentId]);
 
   async function searchOnlineSkills(query: string): Promise<OnlineSkillResult[]> {
     const api = window.multiAgentChat as typeof window.multiAgentChat & {
@@ -6622,7 +6636,7 @@ export function SkillsPage({
   }
 
   async function askFindSkillAgent(text: string, candidates: OnlineSkillResult[], toolResult?: string): Promise<string | undefined> {
-    const configuredAgentId = defaultConfiguredAgentId(configuredAgents);
+    const configuredAgentId = resolveFindSkillConfiguredAgentId(findSkillConfiguredAgentId, configuredAgents);
     if (!configuredAgentId) return undefined;
     try {
       const request = {
@@ -6636,6 +6650,13 @@ export function SkillsPage({
     } catch {
       return undefined;
     }
+  }
+
+  function selectFindSkillConfiguredAgent(configuredAgentId: string): void {
+    const nextConfiguredAgentId = resolveFindSkillConfiguredAgentId(configuredAgentId, configuredAgents);
+    if (nextConfiguredAgentId === findSkillConfiguredAgentId) return;
+    setFindSkillConfiguredAgentId(nextConfiguredAgentId);
+    setFindSkillAgentSessionId(undefined);
   }
 
   function updateFindSkillCandidates(candidates: OnlineSkillResult[]): void {
@@ -7011,6 +7032,24 @@ export function SkillsPage({
                 <span>Online search</span>
                 <h3>{findSkillTitle}</h3>
                 <p>{findSkillDescription}</p>
+                <label className="skill-find-agent-select">
+                  <select
+                    aria-label="Find skill agent"
+                    value={activeFindSkillConfiguredAgentId}
+                    disabled={findSkillRunning || configuredAgents.length === 0}
+                    onChange={(event) => selectFindSkillConfiguredAgent(event.currentTarget.value)}
+                  >
+                    {configuredAgents.length === 0 ? (
+                      <option value="">{text.noConfiguredAgents}</option>
+                    ) : (
+                      configuredAgents.map((agent) => (
+                        <option key={agent.id} value={agent.id}>
+                          {agent.name || agent.id}
+                        </option>
+                      ))
+                    )}
+                  </select>
+                </label>
               </div>
               <button className="icon-btn flat" type="button" onClick={() => setFindSkillChatOpen(false)} aria-label="Close find skill assistant">
                 <X size={14} />

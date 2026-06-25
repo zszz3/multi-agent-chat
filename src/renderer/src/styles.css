@@ -4647,6 +4647,24 @@ textarea:focus-visible {
   line-height: 1.45;
 }
 
+.skill-find-agent-select {
+  display: block;
+  width: min(100%, 220px);
+  margin-top: 8px;
+}
+
+.skill-find-agent-select select {
+  width: 100%;
+  min-width: 0;
+  border: 1px solid var(--line);
+  border-radius: 8px;
+  background: var(--panel-soft);
+  color: var(--text);
+  padding: 6px 8px;
+  font: inherit;
+  font-size: 12px;
+}
+
 .skill-find-chat-messages {
   display: grid;
   align-content: start;
