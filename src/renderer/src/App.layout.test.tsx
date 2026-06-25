@@ -23,6 +23,7 @@ import {
   fetchOnlineSkills,
   buildFindSkillAgentPrompt,
   findSkillAgentPrompt,
+  findSkillAgentImportSelection,
   findSkillFallbackMessage,
   findSkillImportRequest,
   findSkillImportSelection,
@@ -1766,6 +1767,7 @@ describe("SkillsPage", () => {
     expect(prompt).toContain("本软件技能库");
     expect(prompt).toContain("app userData/bundled-skills");
     expect(prompt).toContain("实际导入由应用完成");
+    expect(prompt).toContain("<!-- import-skill:N -->");
   });
 
   test("keeps find-skill useful without leaking Codex errors when summarization fails", () => {
@@ -1903,9 +1905,12 @@ describe("SkillsPage", () => {
     expect(findSkillImportSelection("下载一个前端设计skill，A那家公司的", [candidate])).toBeUndefined();
     expect(findSkillImportSelection("1", [candidate])).toBe(candidate);
     expect(findSkillImportSelection("导入 1", [candidate])).toBe(candidate);
-    expect(findSkillImportSelection("就第一个吧", [candidate])).toBe(candidate);
-    expect(findSkillImportSelection("可以，就它", [candidate])).toBe(candidate);
+    expect(findSkillImportSelection("就第一个吧", [candidate])).toBeUndefined();
+    expect(findSkillImportSelection("可以，就它", [candidate])).toBeUndefined();
+    expect(findSkillImportSelection("可以的", [candidate])).toBeUndefined();
+    expect(findSkillImportSelection("好的", [candidate])).toBeUndefined();
     expect(findSkillImportSelection("下载 frontend-design", [candidate])).toBe(candidate);
+    expect(findSkillAgentImportSelection("好，那就装第 1 个。\n<!-- import-skill:1 -->", [candidate])).toBe(candidate);
     expect(
       findSkillImportSelection("导入官方那个", [
         { ...candidate, id: "skills-sh:someone/frontend-design", sourceId: "skills-sh", sourceLabel: "skills.sh Find", repositoryUrl: "https://github.com/someone/frontend-design" },

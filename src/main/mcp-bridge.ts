@@ -4,8 +4,10 @@ import http from "node:http";
 import path from "node:path";
 import type { AddressInfo } from "node:net";
 import type { AgentHub } from "./agent-hub";
-import type { AgentChannel, AgentId, ConfiguredAgent, CreateWorkflowRequest, UpdateWorkflowRequest, WorkflowArtifactReference, WorkflowGraph, AppendWorkflowRunContextRequest } from "../shared/types";
+import type { AgentChannel, AgentId, ConfiguredAgent, CreateWorkflowRequest, UpdateWorkflowRequest, WorkflowArtifactReference, WorkflowGraph, AppendWorkflowRunContextRequest, ImportOnlineSkillRequest } from "../shared/types";
 import { SKILL_TEMPLATES } from "../shared/skill-templates";
+import { importOnlineSkillToLibrary, listImportedSkillTemplates } from "./skill-installer";
+import { fetchOnlineSkills, ONLINE_SKILL_SOURCES } from "../shared/online-skills";
 import { validateWorkflowGraph } from "../shared/workflow-graph";
 import { DEFAULT_MODEL_ID, defaultChannelForAgent, defaultModelForAgent, isModelForChannel } from "../shared/models";
 
@@ -19,6 +21,13 @@ export interface McpBridgeServer {
 
 export interface StartMcpBridgeOptions {
   discoveryPath: string;
+  bundledSkillsRoot?: string;
+  fetcher?: typeof fetch;
+}
+
+interface McpBridgeRuntimeOptions {
+  bundledSkillsRoot?: string;
+  fetcher?: typeof fetch;
 }
 
 function jsonResponse(response: http.ServerResponse, statusCode: number, payload: unknown): void {
@@ -143,6 +152,34 @@ function skillTemplateListPayload(): unknown {
   };
 }
 
+function onlineSkillImportRequestFromRecord(record: Record<string, unknown>): ImportOnlineSkillRequest | { ok: false; error: string } {
+  const id = asString(record.id);
+  const name = asString(record.name);
+  const description = asString(record.description) ?? "";
+  const prompt = asString(record.prompt);
+  if (!id) return { ok: false, error: "skills_import_online requires id." };
+  if (!name) return { ok: false, error: "skills_import_online requires name." };
+  if (!prompt) return { ok: false, error: "skills_import_online requires prompt." };
+  const request: ImportOnlineSkillRequest = {
+    id,
+    name,
+    description,
+    prompt,
+    tags: asTags(record.tags),
+  };
+  const sourceLabel = asString(record.sourceLabel);
+  const sourcePath = asString(record.sourcePath) ?? asString(record.path);
+  const sourceUrl = asString(record.sourceUrl) ?? asString(record.url);
+  if (sourceLabel) request.sourceLabel = sourceLabel;
+  if (sourcePath) request.sourcePath = sourcePath;
+  if (sourceUrl) request.sourceUrl = sourceUrl;
+  return request;
+}
+
+function isMcpError(value: unknown): value is { ok: false; error: string } {
+  return Boolean(value && typeof value === "object" && "ok" in value && (value as { ok?: unknown }).ok === false);
+}
+
 function templatePatch(templateId: string | undefined): Partial<ConfiguredAgent> {
   if (!templateId) return {};
   const template = SKILL_TEMPLATES.find((item) => item.id === templateId);
@@ -196,9 +233,25 @@ function upsertAgent(hub: AgentHub, agent: ConfiguredAgent, existingId?: string)
   return { ok: true, agent, agents: snapshot.configuredAgents };
 }
 
-async function routeWorkflowRequest(hub: AgentHub, route: string, body: unknown): Promise<unknown> {
+async function routeWorkflowRequest(hub: AgentHub, route: string, body: unknown, options: McpBridgeRuntimeOptions = {}): Promise<unknown> {
   const record = asRecord(body);
   if (route === "/mcp/agent-templates/list" || route === "/mcp/skill-templates/list") return skillTemplateListPayload();
+  if (route === "/mcp/skills/search-online") {
+    const query = asString(record.query) ?? "";
+    if (!query) return { ok: false, error: "skills_search_online requires query." };
+    return { ok: true, results: await fetchOnlineSkills(query, ONLINE_SKILL_SOURCES, options.fetcher ?? fetch) };
+  }
+  if (route === "/mcp/skills/imported/list") {
+    if (!options.bundledSkillsRoot) return { ok: false, error: "MCP bridge was not configured with a bundled skill root." };
+    return { ok: true, templates: await listImportedSkillTemplates(options.bundledSkillsRoot) };
+  }
+  if (route === "/mcp/skills/import-online") {
+    if (!options.bundledSkillsRoot) return { ok: false, error: "MCP bridge was not configured with a bundled skill root." };
+    const request = onlineSkillImportRequestFromRecord(record);
+    if (isMcpError(request)) return request;
+    const result = await importOnlineSkillToLibrary(request, options.bundledSkillsRoot);
+    return { ok: true, ...result };
+  }
   if (route === "/mcp/agents/list") return agentListPayload(hub);
   if (route === "/mcp/channels/list") return channelsListPayload(hub, record);
   if (route === "/mcp/models/list") return modelsListPayload(hub, record);
@@ -301,7 +354,10 @@ export async function startMcpBridge(hub: AgentHub, options: StartMcpBridgeOptio
       }
       try {
         const body = await readJsonBody(request);
-        const payload = await routeWorkflowRequest(hub, request.url ?? "", body);
+        const runtimeOptions: McpBridgeRuntimeOptions = {};
+        if (options.bundledSkillsRoot) runtimeOptions.bundledSkillsRoot = options.bundledSkillsRoot;
+        if (options.fetcher) runtimeOptions.fetcher = options.fetcher;
+        const payload = await routeWorkflowRequest(hub, request.url ?? "", body, runtimeOptions);
         jsonResponse(response, 200, payload);
       } catch (error) {
         jsonResponse(response, 400, { ok: false, error: error instanceof Error ? error.message : String(error) });

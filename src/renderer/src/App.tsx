@@ -386,14 +386,14 @@ export function findSkillAgentPrompt(language: Language): string {
         "用自然对话帮用户找合适的 skill；可以追问需求、解释候选差异、建议换关键词，也可以根据我提供的候选做排序和总结。",
         "中文回复时必须用中文解释候选；候选描述如果是英文，不要照抄英文 description。",
         "如果用户想安装某个候选，说明应用会导入到本软件技能库：app userData/bundled-skills（macOS 通常是 ~/Library/Application Support/Multi Agent Chat/bundled-skills）。",
-        "不要说已经安装成功，实际导入由应用完成；导入成功后应用会显示结果。",
+        "当你判断用户已经明确要导入某个候选时，在回复末尾单独加一行 <!-- import-skill:N -->，N 是候选序号；实际导入由应用完成，导入成功后应用会显示结果。",
         "回复尽量简洁，优先让用户能判断下一步。",
       ].join("\n")
     : [
         "You are the find-skill assistant inside Multi Agent Chat.",
         "Help the user find suitable skills in a natural conversation. You may ask follow-up questions, compare candidates, suggest better search terms, and summarize the candidates I provide.",
         "If the user wants to install a candidate, explain that the app imports it into this app's skill library: app userData/bundled-skills.",
-        "Do not claim the skill is installed; the app performs the actual import and reports success.",
+        "When you determine the user clearly wants to import a candidate, add a separate final line <!-- import-skill:N --> where N is the candidate number. The app performs the actual import and reports success.",
         "Keep replies concise and useful for the user's next decision.",
       ].join("\n");
 }
@@ -465,6 +465,16 @@ function shouldSearchForFindSkillMessage(input: string, hasCandidates: boolean):
   return /找|搜|搜索|下载|安装|导入|换|重新|别的|其他|更多|skill|skills|find|search|install|download|frontend|design|前端|设计|官方|anthropic|openai/i.test(input);
 }
 
+export function stripFindSkillAgentImportDirective(content: string): string {
+  return content.replace(/^\s*<!--\s*import-skill\s*:\s*[1-9]\d*\s*-->\s*$/gim, "").trim();
+}
+
+export function findSkillAgentImportSelection(content: string, candidates: OnlineSkillResult[]): OnlineSkillResult | undefined {
+  const match = content.match(/<!--\s*import-skill\s*:\s*([1-9]\d*)\s*-->/i);
+  if (!match) return undefined;
+  return candidates[Number(match[1]) - 1];
+}
+
 function chineseOrdinalIndex(value: string): number | undefined {
   const normalized = value.trim();
   const map: Record<string, number> = { 一: 0, 二: 1, 两: 1, 三: 2, 四: 3, 五: 4, 六: 5, 七: 6, 八: 7, 九: 8, 十: 9 };
@@ -477,7 +487,6 @@ export function findSkillImportSelection(input: string, candidates: OnlineSkillR
   const numeric = trimmed.match(/^(?:#\s*)?([1-9]\d*)$/);
   const actionNumeric = trimmed.match(/^(?:导入|下载|安装|install|download|import)\s*(?:第\s*)?([1-9]\d*)\s*(?:个)?$/i);
   const actionChinese = trimmed.match(/^(?:导入|下载|安装)\s*第\s*([一二两三四五六七八九十])\s*个?$/);
-  const casualChinese = trimmed.match(/^(?:就|选|要|用|导入|下载|安装)?\s*(?:第\s*)?([一二两三四五六七八九十])\s*个?\s*(?:吧|就行|可以)?$/);
   const index =
     numeric?.[1] !== undefined
       ? Number(numeric[1]) - 1
@@ -485,13 +494,8 @@ export function findSkillImportSelection(input: string, candidates: OnlineSkillR
         ? Number(actionNumeric[1]) - 1
         : actionChinese?.[1] !== undefined
           ? chineseOrdinalIndex(actionChinese[1])
-          : casualChinese?.[1] !== undefined
-            ? chineseOrdinalIndex(casualChinese[1])
           : undefined;
   if (index !== undefined) return candidates[index];
-
-  const compact = trimmed.toLowerCase().replace(/[\s,，.。!！]/g, "");
-  if (/^(?:可以)?(?:就它|就这个|这个|确认|可以|好|行|装吧|导入吧|下载吧|就这个吧)$/.test(compact)) return candidates[0];
 
   const broadSearchRequest =
     /找|搜|搜索|一个|哪类|什么|推荐|前端|设计|skill|skills|能力/i.test(trimmed) &&
@@ -6714,9 +6718,40 @@ export function SkillsPage({
         setTranslationStatus("");
       }
       const agentContent = await askFindSkillAgent(text, candidates);
+      const agentSelectedImportCandidate = agentContent ? findSkillAgentImportSelection(agentContent, candidates) : undefined;
+      if (agentSelectedImportCandidate) {
+        const importAgentContent = agentContent ?? "";
+        if (!onImportOnlineSkill) throw new Error(language === "zh" ? "技能导入能力需要重启应用后生效。" : "Skill import requires restarting the app.");
+        let result: ImportedSkillResult;
+        try {
+          result = await onImportOnlineSkill(agentSelectedImportCandidate);
+        } catch (error) {
+          const message = error instanceof Error ? error.message : String(error);
+          setFindSkillMessages((current) => [
+            ...current,
+            {
+              id: `find-skill-assistant-${Date.now()}`,
+              role: "assistant",
+              content: `${stripFindSkillAgentImportDirective(importAgentContent)}\n\n${language === "zh" ? "导入失败" : "Import failed"}：${message}`.trim(),
+            },
+          ]);
+          return;
+        }
+        setSelectedSkillKey(`local:${result.template.id}`);
+        setSelectedOnlineSkillKey(undefined);
+        setFindSkillMessages((current) => [
+          ...current,
+          {
+            id: `find-skill-assistant-${Date.now()}`,
+            role: "assistant",
+            content: findSkillImportSuccessMessage(result, language),
+          },
+        ]);
+        return;
+      }
       setFindSkillMessages((current) => [
         ...current,
-        { id: `find-skill-assistant-${Date.now()}`, role: "assistant", content: agentContent ?? findSkillFallbackMessage(candidates, language) },
+        { id: `find-skill-assistant-${Date.now()}`, role: "assistant", content: agentContent ? stripFindSkillAgentImportDirective(agentContent) : findSkillFallbackMessage(candidates, language) },
       ]);
     } catch (error) {
       setFindSkillMessages((current) => [

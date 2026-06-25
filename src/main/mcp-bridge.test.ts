@@ -49,6 +49,7 @@ describe("MCP bridge", () => {
 
   test("requires bearer token and exposes workflow tools", async () => {
     const dir = await mkdtemp(path.join(os.tmpdir(), "multi-agent-chat-mcp-"));
+    const bundledSkillsRoot = path.join(dir, "bundled-skills");
     const hub = new AgentHub();
     hub.updateConfiguredAgents([
       {
@@ -63,7 +64,36 @@ describe("MCP bridge", () => {
         updatedAt: 1710000000000,
       },
     ]);
-    bridge = await startMcpBridge(hub, { discoveryPath: path.join(dir, "bridge.json") });
+    const fetcher = async (url: string | URL | Request) => {
+      const href = String(url);
+      if (href.startsWith("https://skills.sh/api/search")) return new Response(JSON.stringify({ skills: [] }));
+      if (href === "https://api.github.com/repos/anthropics/skills") return new Response(JSON.stringify({ stargazers_count: 13200 }));
+      if (href === "https://api.github.com/repos/anthropics/skills/git/trees/main?recursive=1") {
+        return new Response(
+          JSON.stringify({
+            tree: [
+              {
+                path: "skills/frontend-design/SKILL.md",
+                type: "blob",
+              },
+            ],
+          }),
+        );
+      }
+      if (href === "https://raw.githubusercontent.com/anthropics/skills/main/skills/frontend-design/SKILL.md") {
+        return new Response(
+          [
+            "---",
+            "name: frontend-design",
+            "description: Guidance for distinctive, intentional visual design.",
+            "---",
+            "# Frontend Design",
+          ].join("\n"),
+        );
+      }
+      return new Response("not found", { status: 404 });
+    };
+    bridge = await startMcpBridge(hub, { discoveryPath: path.join(dir, "bridge.json"), bundledSkillsRoot, fetcher });
 
     const unauthorized = await fetch(`http://${bridge.host}:${bridge.port}/mcp/workflow/list`, { method: "POST" });
     expect(unauthorized.status).toBe(401);
@@ -90,6 +120,24 @@ describe("MCP bridge", () => {
     expect(skillTemplates).toMatchObject({
       ok: true,
       templates: expect.arrayContaining([expect.objectContaining({ id: "brainstorming", sourcePath: "src/shared/bundled-skills/brainstorming/SKILL.md" })]),
+    });
+
+    const skillSearch = (await (await bridgeRequest("/mcp/skills/search-online", bridge.token, { query: "frontend design anthropic" })).json()) as any;
+    expect(skillSearch).toMatchObject({
+      ok: true,
+      results: expect.arrayContaining([expect.objectContaining({ name: "frontend-design", sourceLabel: "Anthropic Skills" })]),
+    });
+    const onlineSkill = skillSearch.results.find((skill: any) => skill.name === "frontend-design");
+    const importedSkill = (await (await bridgeRequest("/mcp/skills/import-online", bridge.token, onlineSkill)).json()) as any;
+    expect(importedSkill).toMatchObject({
+      ok: true,
+      template: expect.objectContaining({ id: "frontend-design", name: "frontend-design" }),
+    });
+    expect(importedSkill.path).toContain(path.join("bundled-skills", "frontend-design", "SKILL.md"));
+    const importedSkillList = (await (await bridgeRequest("/mcp/skills/imported/list", bridge.token, {})).json()) as any;
+    expect(importedSkillList).toMatchObject({
+      ok: true,
+      templates: expect.arrayContaining([expect.objectContaining({ id: "frontend-design", name: "frontend-design" })]),
     });
 
     const channels = (await (await bridgeRequest("/mcp/channels/list", bridge.token, { agentId: "codex" })).json()) as any;

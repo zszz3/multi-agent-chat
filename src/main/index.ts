@@ -232,6 +232,7 @@ async function bootstrap(): Promise<void> {
   setCodexChatRouterBaseUrl(codexChatRouter.baseUrl);
   mcpBridge = await startMcpBridge(hub, {
     discoveryPath: process.env.MULTI_AGENT_CHAT_MCP_BRIDGE || path.join(app.getPath("appData"), "multi-agent-chat", MCP_BRIDGE_FILE),
+    bundledSkillsRoot: path.join(app.getPath("userData"), "bundled-skills"),
   });
 
   registerIpcHandlers();
