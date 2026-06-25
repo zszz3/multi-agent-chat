@@ -22,6 +22,8 @@ import {
   shouldRefreshBalances,
   fetchOnlineSkills,
   findSkillFallbackMessage,
+  findSkillImportRequest,
+  findSkillRequestsImport,
   findSkillSearchQuery,
   onlineSkillTreeUrl,
   parseSkillMarkdown,
@@ -1722,7 +1724,7 @@ describe("SkillsPage", () => {
     expect(html).not.toContain("Online skill search results");
   });
 
-  test("renders a Codex assistant for finding skills online", () => {
+  test("renders an online assistant for finding skills", () => {
     const html = renderToStaticMarkup(
       <SkillsPage
         language="zh"
@@ -1735,14 +1737,14 @@ describe("SkillsPage", () => {
     expect(html).toContain("skills-browser");
     expect(html).toContain("skill-find-chat-panel");
     expect(html).toContain("Find skill");
-    expect(html).toContain("Codex");
+    expect(html).toContain("Online search");
     expect(html).toContain("aria-label=\"Find skill message\"");
     expect(html).toContain("网上找 skill");
-    expect(html).toContain("skills.sh find API");
+    expect(html).toContain("下载链接");
     expect(html).not.toContain("优先从当前页面里的技能里找");
   });
 
-  test("keeps find-skill useful when Codex cannot summarize online candidates", () => {
+  test("keeps find-skill useful without leaking Codex errors when summarization fails", () => {
     const message = findSkillFallbackMessage(
       [
         {
@@ -1770,7 +1772,39 @@ describe("SkillsPage", () => {
     expect(message).toContain("已找到在线候选");
     expect(message).toContain("front-end-design");
     expect(message).toContain("npx skills add anthropics/skills@front-end-design");
-    expect(message).toContain("Codex 暂时无法总结");
+    expect(message).not.toContain("Codex");
+    expect(message).not.toContain("Error invoking remote method");
+  });
+
+  test("shows a download URL for official online skills without inventing install commands", () => {
+    const message = findSkillFallbackMessage(
+      [
+        {
+          id: "anthropic-skills:skills/frontend-design/SKILL.md",
+          name: "frontend-design",
+          description: "Guidance for distinctive, intentional visual design.",
+          prompt: "# Frontend Design",
+          tags: ["frontend-design"],
+          sourceId: "anthropic-skills",
+          sourceLabel: "Anthropic Skills",
+          sourcePath: "skills/frontend-design/SKILL.md",
+          sourceUrl: "https://github.com/anthropics/skills/blob/main/skills/frontend-design/SKILL.md",
+          path: "skills/frontend-design/SKILL.md",
+          url: "https://github.com/anthropics/skills/blob/main/skills/frontend-design/SKILL.md",
+          rawUrl: "https://raw.githubusercontent.com/anthropics/skills/main/skills/frontend-design/SKILL.md",
+          repositoryUrl: "https://github.com/anthropics/skills",
+          contentLabel: "SKILL.md",
+        },
+      ],
+      "zh",
+      "Codex error",
+    );
+
+    expect(message).toContain("frontend-design");
+    expect(message).toContain("source: Anthropic Skills");
+    expect(message).toContain("download_url: https://raw.githubusercontent.com/anthropics/skills/main/skills/frontend-design/SKILL.md");
+    expect(message).not.toContain("install_cmd");
+    expect(message).not.toContain("Codex");
   });
 
   test("normalizes Chinese find-skill requests for Anthropic frontend design skills", () => {
@@ -1778,6 +1812,35 @@ describe("SkillsPage", () => {
 
     expect(query).toContain("frontend design");
     expect(query).toContain("anthropic");
+  });
+
+  test("detects import intent and builds an app-managed skill import request", () => {
+    expect(findSkillRequestsImport("下载一个前端设计skill，A那家公司的")).toBe(true);
+    expect(findSkillRequestsImport("找一个前端设计skill")).toBe(false);
+
+    expect(
+      findSkillImportRequest({
+        id: "anthropic-skills:skills/frontend-design/SKILL.md",
+        name: "frontend-design",
+        description: "Guidance for distinctive, intentional visual design.",
+        prompt: "# Frontend Design",
+        tags: ["frontend-design"],
+        sourceId: "anthropic-skills",
+        sourceLabel: "Anthropic Skills",
+        sourcePath: "skills/frontend-design/SKILL.md",
+        sourceUrl: "https://github.com/anthropics/skills/blob/main/skills/frontend-design/SKILL.md",
+        path: "skills/frontend-design/SKILL.md",
+        url: "https://github.com/anthropics/skills/blob/main/skills/frontend-design/SKILL.md",
+        rawUrl: "https://raw.githubusercontent.com/anthropics/skills/main/skills/frontend-design/SKILL.md",
+        repositoryUrl: "https://github.com/anthropics/skills",
+        contentLabel: "SKILL.md",
+      }),
+    ).toMatchObject({
+      id: "anthropic-skills:skills/frontend-design/SKILL.md",
+      name: "frontend-design",
+      sourceLabel: "Anthropic Skills",
+      sourceUrl: "https://github.com/anthropics/skills/blob/main/skills/frontend-design/SKILL.md",
+    });
   });
 
   test("builds online skill source URLs and parses SKILL.md frontmatter", () => {

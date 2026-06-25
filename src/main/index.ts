@@ -8,7 +8,7 @@ import { setCodexChatRouterBaseUrl, startCodexChatRouter, type CodexChatRouterSe
 import { createLocalTextFilePreview } from "./local-file-preview";
 import { startMcpBridge, type McpBridgeServer } from "./mcp-bridge";
 import { ScheduledWorkflowCloudClient, type ScheduledWorkflowCloudEventConnection } from "./scheduled-workflow-cloud";
-import { installBundledSkill, uninstallBundledSkill } from "./skill-installer";
+import { importOnlineSkillToLibrary, installBundledSkill, listImportedSkillTemplates, uninstallBundledSkill } from "./skill-installer";
 import { centeredWindowBounds } from "./window-bounds";
 import { fetchOnlineSkills, ONLINE_SKILL_SOURCES } from "../shared/online-skills";
 import { DEFAULT_SCHEDULED_WORKFLOW_CLOUD_BASE_URL } from "../shared/types";
@@ -20,6 +20,7 @@ import type {
   CreateScheduledWorkflowScheduleRequest,
   CreateAgentTeamRequest,
   FinishWorkflowRunRequest,
+  ImportOnlineSkillRequest,
   InstallSkillRequest,
   RunAgentTeamRequest,
   RunTaskRequest,
@@ -304,6 +305,10 @@ function registerIpcHandlers(): void {
   ipcMain.handle("power:get-keep-awake", () => getKeepAwake());
   ipcMain.handle("power:set-keep-awake", (_event, enabled: boolean) => setKeepAwake(Boolean(enabled)));
   ipcMain.handle("skills:search-online", async (_event, query: string) => fetchOnlineSkills(String(query ?? ""), ONLINE_SKILL_SOURCES));
+  ipcMain.handle("skills:list-imported", async () => listImportedSkillTemplates(path.join(app.getPath("userData"), "bundled-skills")));
+  ipcMain.handle("skills:import-online", async (_event, request: ImportOnlineSkillRequest) =>
+    importOnlineSkillToLibrary(request, path.join(app.getPath("userData"), "bundled-skills")),
+  );
   ipcMain.handle("skills:install", async (_event, request: InstallSkillRequest) =>
     installBundledSkill(request, app.getPath("home"), path.join(app.getPath("userData"), "bundled-skills")),
   );

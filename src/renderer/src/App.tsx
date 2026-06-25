@@ -91,6 +91,8 @@ import type {
   ChatSession,
   CodexPluginCatalogItem,
   ConfiguredAgent,
+  ImportedSkillResult,
+  ImportOnlineSkillRequest,
   InstalledSkillResult,
   LocalFilePreview,
   ProviderBalanceResult,
@@ -361,21 +363,42 @@ export function findSkillSearchQuery(input: string): string {
   return [trimmed, ...additions].filter(Boolean).join(" ");
 }
 
-export function findSkillFallbackMessage(candidates: OnlineSkillResult[], language: Language, codexError?: string): string {
+export function findSkillRequestsImport(input: string): boolean {
+  return /下载|安装|导入|装一下|装进|install|download|import/i.test(input);
+}
+
+export function findSkillImportRequest(skill: OnlineSkillResult): ImportOnlineSkillRequest {
+  return {
+    id: skill.id,
+    name: skillDisplayName(skill),
+    description: skillDisplayDescription(skill),
+    prompt: skill.prompt,
+    tags: skill.tags,
+    sourceLabel: skill.sourceLabel,
+    sourcePath: skill.path,
+    sourceUrl: skill.url,
+  };
+}
+
+export function findSkillImportSuccessMessage(result: ImportedSkillResult, language: Language): string {
+  return language === "zh"
+    ? `已导入到软件技能库：${result.template.name}\npath: ${result.path}`
+    : `Imported into this app's skill library: ${result.template.name}\npath: ${result.path}`;
+}
+
+export function findSkillFallbackMessage(candidates: OnlineSkillResult[], language: Language, _codexError?: string): string {
   const topCandidates = candidates.slice(0, 3);
   if (topCandidates.length === 0) {
     return language === "zh"
       ? "没有找到匹配的在线 skill。可以换一个更具体的能力描述再搜，例如平台名、工具名或任务类型。"
       : "No matching online skill was found. Try a more specific capability, platform, tool, or task type.";
   }
-  const intro =
-    language === "zh"
-      ? `已找到在线候选。${codexError ? `Codex 暂时无法总结：${codexError}。` : ""}你可以先看这些结果：`
-      : `Online candidates found. ${codexError ? `Codex could not summarize them: ${codexError}. ` : ""}Review these results first:`;
+  const intro = language === "zh" ? "已找到在线候选：" : "Online candidates found:";
   const lines = topCandidates.map((skill, index) => {
     const install = skill.installCommand ? `\n   install_cmd: \`${skill.installCommand}\`` : "";
+    const download = !skill.installCommand && skill.rawUrl && skill.rawUrl !== skill.url ? `\n   download_url: ${skill.rawUrl}` : "";
     const source = skill.repositoryUrl ?? skill.url;
-    return `${index + 1}. ${skillDisplayName(skill)} - ${skillDisplayDescription(skill)}\n   source: ${skill.sourceLabel}${source ? ` · ${source}` : ""}${install}`;
+    return `${index + 1}. ${skillDisplayName(skill)} - ${skillDisplayDescription(skill)}\n   source: ${skill.sourceLabel}${source ? ` · ${source}` : ""}${install}${download}`;
   });
   return [intro, "", ...lines].join("\n");
 }
@@ -1732,6 +1755,7 @@ export function workflowCanvasLayout(graph: WorkflowGraph, variant: WorkflowCanv
 export function App() {
   const initialWorkflowGraph = useMemo(() => createWorkflowGraphFromObjective(""), []);
   const [snapshot, setSnapshot] = useState<AppSnapshot>(DEFAULT_SNAPSHOT);
+  const [importedSkillTemplates, setImportedSkillTemplates] = useState<SkillTemplate[]>([]);
   const [prompt, setPrompt] = useState("");
   const [slashCommandIndex, setSlashCommandIndex] = useState(0);
   const [taskPrompt, setTaskPrompt] = useState("");
@@ -1971,6 +1995,14 @@ export function App() {
   }, []);
 
   useEffect(() => {
+    const api = window.multiAgentChat as typeof window.multiAgentChat & {
+      listImportedSkills?: () => Promise<SkillTemplate[]>;
+    };
+    if (!api.listImportedSkills) return;
+    void api.listImportedSkills().then(setImportedSkillTemplates).catch(() => undefined);
+  }, []);
+
+  useEffect(() => {
     if (workflowDraftHydratedRef.current || snapshot.detectedAt === 0) return;
     workflowDraftHydratedRef.current = true;
     if (snapshot.workflowDraft) applyPersistedWorkflowDraft(snapshot.workflowDraft);
@@ -2128,6 +2160,10 @@ export function App() {
     () => (taskStatusFilter === "all" ? snapshot.tasks : snapshot.tasks.filter((task) => task.progress === taskStatusFilter)),
     [snapshot.tasks, taskStatusFilter],
   );
+  const skillTemplates = useMemo(() => {
+    const importedIds = new Set(importedSkillTemplates.map((template) => template.id));
+    return [...importedSkillTemplates, ...SKILL_TEMPLATES.filter((template) => !importedIds.has(template.id))];
+  }, [importedSkillTemplates]);
   const activeChatConfiguredAgent = activeChat ? configuredAgentById(activeChat.configuredAgentId, snapshot.configuredAgents) : undefined;
   const activeChatChannel = resolveConfiguredAgentChannel(activeChatConfiguredAgent, snapshot.channels);
   const activeChatRuntimeId = configuredAgentRuntimeId(activeChatConfiguredAgent, activeChatChannel);
@@ -2623,6 +2659,26 @@ export function App() {
     };
     if (!api.readLocalFile) throw new Error("文件预览能力需要重启应用后生效。");
     return api.readLocalFile(filePath);
+  }
+
+  async function refreshImportedSkills(): Promise<SkillTemplate[]> {
+    const api = window.multiAgentChat as typeof window.multiAgentChat & {
+      listImportedSkills?: () => Promise<SkillTemplate[]>;
+    };
+    if (!api.listImportedSkills) return [];
+    const templates = await api.listImportedSkills();
+    setImportedSkillTemplates(templates);
+    return templates;
+  }
+
+  async function importOnlineSkill(skill: OnlineSkillResult): Promise<ImportedSkillResult> {
+    const api = window.multiAgentChat as typeof window.multiAgentChat & {
+      importOnlineSkill?: (request: ImportOnlineSkillRequest) => Promise<ImportedSkillResult>;
+    };
+    if (!api.importOnlineSkill) throw new Error("技能导入能力需要重启应用后生效。");
+    const result = await api.importOnlineSkill(findSkillImportRequest(skill));
+    await refreshImportedSkills();
+    return result;
   }
 
   async function installSkill(templateId: string, target: SkillInstallTarget): Promise<InstalledSkillResult> {
@@ -3748,10 +3804,10 @@ export function App() {
               <Wand2 size={14} />
             </div>
             <div className="skills-nav-list">
-              {SKILL_TEMPLATES.length === 0 ? (
+              {skillTemplates.length === 0 ? (
                 <div className="empty-state config-empty">{text.chrome.noSkills}</div>
               ) : (
-                SKILL_TEMPLATES.map((template) => (
+                skillTemplates.map((template) => (
                   <div key={template.id} className="skills-nav-row">
                     <strong>{template.name}</strong>
                     <span>{template.tags.join(", ")}</span>
@@ -3872,8 +3928,9 @@ export function App() {
         ) : activeFeature === "skills" ? (
           <SkillsPage
             language={language}
-            templates={SKILL_TEMPLATES}
+            templates={skillTemplates}
             configuredAgents={snapshot.configuredAgents}
+            onImportOnlineSkill={importOnlineSkill}
             onInstallSkill={installSkill}
             onUninstallSkill={uninstallSkill}
           />
@@ -6284,6 +6341,7 @@ export function SkillsPage({
   language,
   templates,
   configuredAgents = [],
+  onImportOnlineSkill,
   onInstallSkill,
   onUninstallSkill,
   defaultFindSkillChatOpen = false,
@@ -6291,6 +6349,7 @@ export function SkillsPage({
   language: Language;
   templates: SkillTemplate[];
   configuredAgents?: ConfiguredAgent[];
+  onImportOnlineSkill?: (skill: OnlineSkillResult) => Promise<ImportedSkillResult>;
   onInstallSkill?: (templateId: string, target: SkillInstallTarget) => Promise<InstalledSkillResult>;
   onUninstallSkill?: (templateId: string, target: SkillInstallTarget) => Promise<UninstalledSkillResult>;
   defaultFindSkillChatOpen?: boolean;
@@ -6329,13 +6388,13 @@ export function SkillsPage({
   const findSkillTitle = "Find skill";
   const findSkillDescription =
     language === "zh"
-      ? "用 Codex 网上找 skill，只回答 skill 候选、用途和安装命令。"
-      : "Use Codex to find skills online. It only answers with skill candidates, use cases, and install commands.";
+      ? "网上找 skill，只回答 skill 候选、下载链接和安装命令。"
+      : "Find skills online. It only answers with skill candidates, download links, and install commands.";
   const findSkillPlaceholder = language === "zh" ? "描述你想网上找哪类 skill..." : "Describe what kind of skill to find online...";
   const findSkillWelcome =
     language === "zh"
-      ? "告诉我你要什么能力，我会通过 skills.sh find API 网上找 skill，并只返回匹配的候选和安装方式。"
-      : "Tell me what capability you need. I will search online through the skills.sh find API and only return matching skill candidates and install steps.";
+      ? "告诉我你要什么能力，我会搜索线上 skill 源，并只返回匹配的候选、下载链接和安装方式。"
+      : "Tell me what capability you need. I will search online skill sources and only return matching candidates, download links, and install steps.";
   const [query, setQuery] = useState("");
   const [onlineResults, setOnlineResults] = useState<OnlineSkillResult[]>([]);
   const [onlineStatus, setOnlineStatus] = useState("");
@@ -6354,7 +6413,6 @@ export function SkillsPage({
   const [findSkillChatOpen, setFindSkillChatOpen] = useState(defaultFindSkillChatOpen);
   const [findSkillInput, setFindSkillInput] = useState("");
   const [findSkillRunning, setFindSkillRunning] = useState(false);
-  const [findSkillSessionId, setFindSkillSessionId] = useState<string | undefined>();
   const [findSkillMessages, setFindSkillMessages] = useState<Array<{ id: string; role: "assistant" | "user" | "error"; content: string }>>(() => [
     { id: "find-skill-welcome", role: "assistant", content: findSkillWelcome },
   ]);
@@ -6373,7 +6431,6 @@ export function SkillsPage({
   const selectedSkillRepositoryUrl = selectedSkill?.kind === "online" ? selectedSkill.repositoryUrl : undefined;
   const selectedSkillInstallCommand = selectedSkill?.kind === "online" ? selectedSkill.installCommand : undefined;
   const selectedSkillContentLabel = selectedSkill?.kind === "online" ? (selectedSkill.contentLabel ?? "SKILL.md") : "SKILL.md";
-  const codexAgent = configuredAgents.find((agent) => agent.runtimeAgentId === "codex") ?? configuredAgents[0];
 
   async function searchOnlineSkills(query: string): Promise<OnlineSkillResult[]> {
     const api = window.multiAgentChat as typeof window.multiAgentChat & {
@@ -6397,34 +6454,6 @@ export function SkillsPage({
     }
   }
 
-  function buildFindSkillPrompt(userText: string, candidates: OnlineSkillResult[]): string {
-    const onlineSkills =
-      candidates.length > 0
-        ? candidates
-            .map((skill, index) => {
-              const install = skill.installCommand ? ` install_cmd: ${skill.installCommand}` : "";
-              const url = skill.url ? ` url: ${skill.url}` : "";
-              return `${index + 1}. ${skillDisplayName(skill)} - ${skillDisplayDescription(skill)} source: ${skill.sourceLabel}${install}${url}`;
-            })
-            .join("\n")
-        : "No online skill candidates were found for this query.";
-    return [
-      "You are the Find skill assistant embedded in the Multi Agent Chat Skills page.",
-      "Your only job is to help the user find installable skills online.",
-      "You must not answer general chat, coding help, workflow questions, or unrelated requests. If the user asks anything unrelated to finding a skill, briefly decline and ask what skill capability they want to search for.",
-      "Use only the online candidates provided below. Do not invent skills or install commands.",
-      "Recommend the best 1-3 candidates. For each candidate include: skill name, why it matches, source, and install_cmd when present.",
-      "If no candidate fits, say no matching online skill was found and suggest 2-3 better search terms.",
-      "Reply in the user's language.",
-      "",
-      "Online skill candidates from skills.sh find API:",
-      onlineSkills,
-      "",
-      "User request:",
-      userText,
-    ].join("\n");
-  }
-
   async function sendFindSkillMessage(): Promise<void> {
     const text = findSkillInput.trim();
     if (!text || findSkillRunning) return;
@@ -6444,25 +6473,38 @@ export function SkillsPage({
         setShowTranslatedSkill(false);
         setTranslationStatus("");
       }
-      if (!codexAgent) {
+      if (findSkillRequestsImport(text) && candidates[0]) {
+        if (!onImportOnlineSkill) throw new Error(language === "zh" ? "技能导入能力需要重启应用后生效。" : "Skill import requires restarting the app.");
+        let result: ImportedSkillResult;
+        try {
+          result = await onImportOnlineSkill(candidates[0]);
+        } catch (error) {
+          const message = error instanceof Error ? error.message : String(error);
+          setFindSkillMessages((current) => [
+            ...current,
+            {
+              id: `find-skill-assistant-${Date.now()}`,
+              role: "assistant",
+              content: `${language === "zh" ? "导入失败" : "Import failed"}：${message}\n\n${findSkillFallbackMessage(candidates, language)}`,
+            },
+          ]);
+          return;
+        }
+        setSelectedSkillKey(`local:${result.template.id}`);
+        setSelectedOnlineSkillKey(undefined);
         setFindSkillMessages((current) => [
           ...current,
-          { id: `find-skill-assistant-${Date.now()}`, role: "assistant", content: findSkillFallbackMessage(candidates, language, language === "zh" ? "没有可用的 Codex agent 配置" : "No Codex agent configuration is available") },
+          {
+            id: `find-skill-assistant-${Date.now()}`,
+            role: "assistant",
+            content: `${findSkillImportSuccessMessage(result, language)}\n\n${findSkillFallbackMessage(candidates, language)}`,
+          },
         ]);
         return;
       }
-      const requestId = `find-skill-${Date.now()}-${Math.random().toString(36).slice(2)}`;
-      const request = {
-        requestId,
-        prompt: buildFindSkillPrompt(text, candidates),
-        configuredAgentId: codexAgent.id,
-        modelId: codexAgent.modelId,
-      };
-      const response = await window.multiAgentChat.askWorkflowAgent(findSkillSessionId ? { ...request, sessionId: findSkillSessionId } : request);
-      setFindSkillSessionId(response.sessionId);
       setFindSkillMessages((current) => [
         ...current,
-        { id: `find-skill-assistant-${Date.now()}`, role: "assistant", content: response.content.trim() || (language === "zh" ? "Codex 没有返回内容。" : "Codex returned no content.") },
+        { id: `find-skill-assistant-${Date.now()}`, role: "assistant", content: findSkillFallbackMessage(candidates, language) },
       ]);
     } catch (error) {
       setFindSkillMessages((current) => [
@@ -6715,7 +6757,7 @@ export function SkillsPage({
           <aside className="skill-find-chat-panel" aria-label="Find skill assistant">
             <header className="skill-find-chat-head">
               <div>
-                <span>Codex</span>
+                <span>Online search</span>
                 <h3>{findSkillTitle}</h3>
                 <p>{findSkillDescription}</p>
               </div>
@@ -6763,7 +6805,7 @@ export function SkillsPage({
                   }
                 }}
               />
-              <button className="send-btn compact" type="submit" disabled={!findSkillInput.trim() || findSkillRunning || !codexAgent}>
+              <button className="send-btn compact" type="submit" disabled={!findSkillInput.trim() || findSkillRunning}>
                 <Send size={13} />
                 <span>{findSkillRunning ? searchingText : "Send"}</span>
               </button>

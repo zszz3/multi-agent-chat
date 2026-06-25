@@ -75,6 +75,17 @@ export interface InstallSkillRequest {
   target: SkillInstallTarget;
 }
 
+export interface ImportOnlineSkillRequest {
+  id: string;
+  name: string;
+  description: string;
+  prompt: string;
+  tags: string[];
+  sourceLabel?: string;
+  sourcePath?: string;
+  sourceUrl?: string;
+}
+
 export interface UninstallSkillRequest {
   templateId: string;
   target: SkillInstallTarget;
@@ -85,6 +96,12 @@ export interface InstalledSkillResult {
   target: SkillInstallTarget;
   path: string;
   sourcePath: string;
+  existed: boolean;
+}
+
+export interface ImportedSkillResult {
+  template: SkillTemplate;
+  path: string;
   existed: boolean;
 }
 

@@ -2,7 +2,7 @@ import { lstat, mkdtemp, readFile } from "node:fs/promises";
 import os from "node:os";
 import path from "node:path";
 import { describe, expect, test } from "vitest";
-import { installBundledSkill, uninstallBundledSkill } from "./skill-installer";
+import { importOnlineSkillToLibrary, installBundledSkill, listImportedSkillTemplates, uninstallBundledSkill } from "./skill-installer";
 
 describe("installBundledSkill", () => {
   test("links a bundled skill into the Codex skills directory", async () => {
@@ -74,5 +74,82 @@ describe("installBundledSkill", () => {
     });
     await expect(lstat(path.dirname(installed.path))).rejects.toThrow();
     await expect(readFile(installed.sourcePath, "utf8")).resolves.toContain("name: paper-writing");
+  });
+});
+
+describe("importOnlineSkillToLibrary", () => {
+  test("downloads an online skill into this app's managed skill library", async () => {
+    const managedRoot = await mkdtemp(path.join(os.tmpdir(), "multi-agent-chat-managed-skills-"));
+
+    const result = await importOnlineSkillToLibrary(
+      {
+        id: "anthropic-skills:skills/frontend-design/SKILL.md",
+        name: "frontend-design",
+        description: "Guidance for distinctive, intentional visual design.",
+        prompt: [
+          "---",
+          "name: frontend-design",
+          "description: Guidance for distinctive, intentional visual design.",
+          "---",
+          "",
+          "# Frontend Design",
+        ].join("\n"),
+        tags: ["frontend-design"],
+        sourceLabel: "Anthropic Skills",
+        sourcePath: "skills/frontend-design/SKILL.md",
+        sourceUrl: "https://github.com/anthropics/skills/blob/main/skills/frontend-design/SKILL.md",
+      },
+      managedRoot,
+    );
+
+    expect(result).toMatchObject({
+      existed: false,
+      path: path.join(managedRoot, "frontend-design", "SKILL.md"),
+      template: {
+        id: "frontend-design",
+        name: "frontend-design",
+        sourceLabel: "Anthropic Skills",
+        sourceUrl: "https://github.com/anthropics/skills/blob/main/skills/frontend-design/SKILL.md",
+      },
+    });
+    await expect(readFile(result.path, "utf8")).resolves.toContain("name: frontend-design");
+    await expect(readFile(path.join(managedRoot, "frontend-design", "metadata.json"), "utf8")).resolves.toContain("online-import");
+
+    await expect(listImportedSkillTemplates(managedRoot)).resolves.toEqual([
+      expect.objectContaining({
+        id: "frontend-design",
+        name: "frontend-design",
+        sourceLabel: "Anthropic Skills",
+        sourcePath: path.join(managedRoot, "frontend-design", "SKILL.md"),
+      }),
+    ]);
+  });
+
+  test("lets imported skills use the existing target install flow", async () => {
+    const home = await mkdtemp(path.join(os.tmpdir(), "multi-agent-chat-import-install-"));
+    const managedRoot = path.join(home, "managed-skills");
+    await importOnlineSkillToLibrary(
+      {
+        id: "anthropic-skills:skills/frontend-design/SKILL.md",
+        name: "frontend-design",
+        description: "Guidance for distinctive, intentional visual design.",
+        prompt: "---\nname: frontend-design\ndescription: Guidance for distinctive, intentional visual design.\n---\n\n# Frontend Design\n",
+        tags: ["frontend-design"],
+        sourceLabel: "Anthropic Skills",
+        sourcePath: "skills/frontend-design/SKILL.md",
+        sourceUrl: "https://github.com/anthropics/skills/blob/main/skills/frontend-design/SKILL.md",
+      },
+      managedRoot,
+    );
+
+    const result = await installBundledSkill({ templateId: "frontend-design", target: "codex" }, home, managedRoot);
+
+    expect(result).toMatchObject({
+      templateId: "frontend-design",
+      path: path.join(home, ".codex", "skills", "frontend-design", "SKILL.md"),
+      sourcePath: path.join(managedRoot, "frontend-design", "SKILL.md"),
+    });
+    expect((await lstat(path.dirname(result.path))).isSymbolicLink()).toBe(true);
+    await expect(readFile(result.path, "utf8")).resolves.toContain("name: frontend-design");
   });
 });
