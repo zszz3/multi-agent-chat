@@ -23,12 +23,10 @@ import {
   fetchOnlineSkills,
   buildFindSkillAgentPrompt,
   findSkillAgentPrompt,
-  findSkillAgentImportSelection,
   findSkillFallbackMessage,
   findSkillImportRequest,
   findSkillImportSelection,
-  findSkillRequestsImport,
-  findSkillSearchQuery,
+  parseFindSkillAgentToolCall,
   onlineSkillTreeUrl,
   parseSkillMarkdown,
   skillPopularityLabel,
@@ -1767,7 +1765,22 @@ describe("SkillsPage", () => {
     expect(prompt).toContain("本软件技能库");
     expect(prompt).toContain("app userData/bundled-skills");
     expect(prompt).toContain("实际导入由应用完成");
-    expect(prompt).toContain("<!-- import-skill:N -->");
+    expect(prompt).toContain("skills.search_online");
+    expect(prompt).toContain("skills.import_online");
+  });
+
+  test("parses find-skill agent tool calls", () => {
+    expect(
+      parseFindSkillAgentToolCall('```json\n{"tool":"skills.search_online","query":"backend engineer resume optimization skill"}\n```'),
+    ).toEqual({
+      tool: "skills.search_online",
+      query: "backend engineer resume optimization skill",
+    });
+    expect(parseFindSkillAgentToolCall('{"tool":"skills.import_online","candidateIndex":1}')).toEqual({
+      tool: "skills.import_online",
+      candidateIndex: 1,
+    });
+    expect(parseFindSkillAgentToolCall("可以，我再看看。")).toBeUndefined();
   });
 
   test("keeps find-skill useful without leaking Codex errors when summarization fails", () => {
@@ -1875,11 +1888,12 @@ describe("SkillsPage", () => {
     expect(prompt).not.toContain("Guidance for distinctive");
   });
 
-  test("normalizes Chinese find-skill requests for Anthropic frontend design skills", () => {
-    const query = findSkillSearchQuery("下载一个前端设计skill，A那家公司的");
+  test("asks the agent to choose online search terms when no candidates exist", () => {
+    const prompt = buildFindSkillAgentPrompt("后端简历优化的skill", [], "zh");
 
-    expect(query).toContain("frontend design");
-    expect(query).toContain("anthropic");
+    expect(prompt).toContain("当前还没有候选");
+    expect(prompt).toContain("调用 skills.search_online 搜索");
+    expect(prompt).toContain('"query":"你自己判断出的搜索关键词"');
   });
 
   test("requires explicit candidate confirmation before importing online skills", () => {
@@ -1901,7 +1915,6 @@ describe("SkillsPage", () => {
       contentLabel: "SKILL.md",
     };
 
-    expect(findSkillRequestsImport("下载一个前端设计skill，A那家公司的")).toBe(true);
     expect(findSkillImportSelection("下载一个前端设计skill，A那家公司的", [candidate])).toBeUndefined();
     expect(findSkillImportSelection("1", [candidate])).toBe(candidate);
     expect(findSkillImportSelection("导入 1", [candidate])).toBe(candidate);
@@ -1910,13 +1923,12 @@ describe("SkillsPage", () => {
     expect(findSkillImportSelection("可以的", [candidate])).toBeUndefined();
     expect(findSkillImportSelection("好的", [candidate])).toBeUndefined();
     expect(findSkillImportSelection("下载 frontend-design", [candidate])).toBe(candidate);
-    expect(findSkillAgentImportSelection("好，那就装第 1 个。\n<!-- import-skill:1 -->", [candidate])).toBe(candidate);
     expect(
       findSkillImportSelection("导入官方那个", [
         { ...candidate, id: "skills-sh:someone/frontend-design", sourceId: "skills-sh", sourceLabel: "skills.sh Find", repositoryUrl: "https://github.com/someone/frontend-design" },
         candidate,
       ]),
-    ).toBe(candidate);
+    ).toBeUndefined();
     expect(skillPopularityLabel(candidate)).toBe("13.2K GitHub stars");
 
     expect(

@@ -354,19 +354,6 @@ function skillDisplayDescription(skill: Pick<SkillTemplate, "description" | "pro
   return skillFrontmatterValue(skill.prompt, "description") || skill.description;
 }
 
-export function findSkillSearchQuery(input: string): string {
-  const trimmed = input.trim();
-  const additions: string[] = [];
-  if (/(^|[^a-z])a\s*那家|anthropic|anthropics|claude|克劳德/i.test(trimmed)) additions.push("anthropic");
-  if (/前端|frontend|front-end|界面|ui|设计|design/i.test(trimmed)) additions.push("frontend design");
-  if (/下载|安装|install|装一个|skill/i.test(trimmed)) additions.push("skill");
-  return [trimmed, ...additions].filter(Boolean).join(" ");
-}
-
-export function findSkillRequestsImport(input: string): boolean {
-  return /下载|安装|导入|装一下|装进|install|download|import/i.test(input);
-}
-
 function compactCount(value: number): string {
   if (value >= 1_000_000) return `${(value / 1_000_000).toFixed(value >= 10_000_000 ? 0 : 1).replace(/\.0$/, "")}M`;
   if (value >= 1_000) return `${(value / 1_000).toFixed(1).replace(/\.0$/, "")}K`;
@@ -379,21 +366,31 @@ export function skillPopularityLabel(skill: Pick<OnlineSkillResult, "repositoryS
   return undefined;
 }
 
+export type FindSkillAgentToolCall =
+  | { tool: "skills.search_online"; query: string }
+  | { tool: "skills.import_online"; candidateIndex: number };
+
 export function findSkillAgentPrompt(language: Language): string {
   return language === "zh"
     ? [
         "你是 Multi Agent Chat 里的 find-skill 助手。",
-        "用自然对话帮用户找合适的 skill；可以追问需求、解释候选差异、建议换关键词，也可以根据我提供的候选做排序和总结。",
+        "用自然对话帮用户找合适的 skill；可以追问需求、解释候选差异，也可以调用工具搜索和导入。",
         "中文回复时必须用中文解释候选；候选描述如果是英文，不要照抄英文 description。",
-        "如果用户想安装某个候选，说明应用会导入到本软件技能库：app userData/bundled-skills（macOS 通常是 ~/Library/Application Support/Multi Agent Chat/bundled-skills）。",
-        "当你判断用户已经明确要导入某个候选时，在回复末尾单独加一行 <!-- import-skill:N -->，N 是候选序号；实际导入由应用完成，导入成功后应用会显示结果。",
+        "可用工具（以 MCP 工具的方式思考，但在这个 UI 里必须返回 JSON 让应用执行）：",
+        "- skills.search_online: 搜索线上 skill。参数：{\"tool\":\"skills.search_online\",\"query\":\"你自己判断出的搜索关键词\"}。query 可以是英文、多关键词，不要要求用户自己翻译。",
+        "- skills.import_online: 导入当前候选。参数：{\"tool\":\"skills.import_online\",\"candidateIndex\":1}。candidateIndex 是当前候选序号，从 1 开始。",
+        "如果需要调用工具，你的整条回复只能是一个 JSON 对象，不要加解释文字，不要放 markdown 以外的内容。",
+        "如果用户想安装某个候选，调用 skills.import_online；实际导入由应用完成，会导入到本软件技能库：app userData/bundled-skills（macOS 通常是 ~/Library/Application Support/Multi Agent Chat/bundled-skills）。",
         "回复尽量简洁，优先让用户能判断下一步。",
       ].join("\n")
     : [
         "You are the find-skill assistant inside Multi Agent Chat.",
-        "Help the user find suitable skills in a natural conversation. You may ask follow-up questions, compare candidates, suggest better search terms, and summarize the candidates I provide.",
-        "If the user wants to install a candidate, explain that the app imports it into this app's skill library: app userData/bundled-skills.",
-        "When you determine the user clearly wants to import a candidate, add a separate final line <!-- import-skill:N --> where N is the candidate number. The app performs the actual import and reports success.",
+        "Help the user find suitable skills in a natural conversation. You may ask follow-up questions, compare candidates, and call tools to search or import.",
+        "Available tools. Think of them as MCP tools, but in this UI you must return JSON for the app to execute:",
+        '- skills.search_online: search online skills. Args: {"tool":"skills.search_online","query":"your best search query"}. Choose the query yourself; do not ask the user to translate.',
+        '- skills.import_online: import a current candidate. Args: {"tool":"skills.import_online","candidateIndex":1}. candidateIndex is 1-based.',
+        "If you need a tool, your entire reply must be one JSON object and no prose.",
+        "If the user wants to install a candidate, call skills.import_online. The app imports it into this app's skill library: app userData/bundled-skills.",
         "Keep replies concise and useful for the user's next decision.",
       ].join("\n");
 }
@@ -441,38 +438,49 @@ function findSkillCandidateSummary(skill: OnlineSkillResult, index: number, lang
   return pieces.filter((line): line is string => Boolean(line)).join("\n");
 }
 
-export function buildFindSkillAgentPrompt(input: string, candidates: OnlineSkillResult[], language: Language): string {
+export function buildFindSkillAgentPrompt(input: string, candidates: OnlineSkillResult[], language: Language, toolResult?: string): string {
   const topCandidates = candidates.slice(0, 5);
   const candidateBlock =
     topCandidates.length > 0
       ? topCandidates.map((skill, index) => findSkillCandidateSummary(skill, index, language)).join("\n\n")
       : language === "zh"
-        ? "这次搜索没有找到候选。你可以继续和用户澄清需求或建议换关键词。"
-        : "This search did not find candidates. You can ask a follow-up question or suggest better keywords.";
+        ? "当前还没有候选。你可以调用 skills.search_online 搜索。"
+        : "There are no candidates yet. You can call skills.search_online.";
   return [
     findSkillAgentPrompt(language),
     "",
     language === "zh" ? "用户消息：" : "User message:",
     input,
+    ...(toolResult ? ["", language === "zh" ? "工具结果：" : "Tool result:", toolResult] : []),
     "",
     language === "zh" ? "当前搜索候选：" : "Current search candidates:",
     candidateBlock,
   ].join("\n");
 }
 
-function shouldSearchForFindSkillMessage(input: string, hasCandidates: boolean): boolean {
-  if (!hasCandidates) return true;
-  return /找|搜|搜索|下载|安装|导入|换|重新|别的|其他|更多|skill|skills|find|search|install|download|frontend|design|前端|设计|官方|anthropic|openai/i.test(input);
+function findSkillAgentJsonPayload(content: string): unknown {
+  const trimmed = content.trim();
+  const fenced = trimmed.match(/^```(?:json)?\s*([\s\S]*?)\s*```$/i)?.[1]?.trim();
+  const candidate = fenced || trimmed.match(/\{[\s\S]*\}/)?.[0];
+  if (!candidate) return undefined;
+  try {
+    return JSON.parse(candidate) as unknown;
+  } catch {
+    return undefined;
+  }
 }
 
-export function stripFindSkillAgentImportDirective(content: string): string {
-  return content.replace(/^\s*<!--\s*import-skill\s*:\s*[1-9]\d*\s*-->\s*$/gim, "").trim();
-}
-
-export function findSkillAgentImportSelection(content: string, candidates: OnlineSkillResult[]): OnlineSkillResult | undefined {
-  const match = content.match(/<!--\s*import-skill\s*:\s*([1-9]\d*)\s*-->/i);
-  if (!match) return undefined;
-  return candidates[Number(match[1]) - 1];
+export function parseFindSkillAgentToolCall(content: string): FindSkillAgentToolCall | undefined {
+  const payload = findSkillAgentJsonPayload(content);
+  if (!payload || typeof payload !== "object" || Array.isArray(payload)) return undefined;
+  const record = payload as Record<string, unknown>;
+  if (record.tool === "skills.search_online" && typeof record.query === "string" && record.query.trim()) {
+    return { tool: "skills.search_online", query: record.query.trim() };
+  }
+  if (record.tool === "skills.import_online" && typeof record.candidateIndex === "number" && Number.isInteger(record.candidateIndex) && record.candidateIndex > 0) {
+    return { tool: "skills.import_online", candidateIndex: record.candidateIndex };
+  }
+  return undefined;
 }
 
 function chineseOrdinalIndex(value: string): number | undefined {
@@ -496,24 +504,6 @@ export function findSkillImportSelection(input: string, candidates: OnlineSkillR
           ? chineseOrdinalIndex(actionChinese[1])
           : undefined;
   if (index !== undefined) return candidates[index];
-
-  const broadSearchRequest =
-    /找|搜|搜索|一个|哪类|什么|推荐|前端|设计|skill|skills|能力/i.test(trimmed) &&
-    !/那个|这个|第\s*(?:[1-9]\d*|[一二两三四五六七八九十])|官方|official/i.test(trimmed);
-  if (!broadSearchRequest) {
-    if (/官方|official/i.test(trimmed)) {
-      const official = candidates.find((skill) => skill.sourceId !== "skills-sh" || /openai|anthropic|anthropics/i.test(`${skill.sourceLabel} ${skill.repositoryUrl ?? ""}`));
-      if (official) return official;
-    }
-    if (/(^|[^a-z])a\s*那家|anthropic|anthropics|claude|克劳德/i.test(trimmed)) {
-      const anthropic = candidates.find((skill) => /anthropic|anthropics|claude/i.test(`${skill.sourceId} ${skill.sourceLabel} ${skill.repositoryUrl ?? ""} ${skill.url}`));
-      if (anthropic) return anthropic;
-    }
-    if (/openai|chatgpt|\bgpt\b/i.test(trimmed)) {
-      const openai = candidates.find((skill) => /openai|chatgpt/i.test(`${skill.sourceId} ${skill.sourceLabel} ${skill.repositoryUrl ?? ""} ${skill.url}`));
-      if (openai) return openai;
-    }
-  }
 
   const named = trimmed.match(/^(?:导入|下载|安装|install|download|import)\s+(.+)$/i)?.[1]?.trim().toLowerCase();
   if (!named) return undefined;
@@ -6631,13 +6621,13 @@ export function SkillsPage({
     return api.searchOnlineSkills ? api.searchOnlineSkills(query) : fetchOnlineSkills(query, ONLINE_SKILL_SOURCES);
   }
 
-  async function askFindSkillAgent(text: string, candidates: OnlineSkillResult[]): Promise<string | undefined> {
+  async function askFindSkillAgent(text: string, candidates: OnlineSkillResult[], toolResult?: string): Promise<string | undefined> {
     const configuredAgentId = defaultConfiguredAgentId(configuredAgents);
     if (!configuredAgentId) return undefined;
     try {
       const request = {
         requestId: `find-skill-${Date.now()}-${Math.random().toString(36).slice(2)}`,
-        prompt: buildFindSkillAgentPrompt(text, candidates, language),
+        prompt: buildFindSkillAgentPrompt(text, candidates, language, toolResult),
         configuredAgentId,
       };
       const response = await window.multiAgentChat.askWorkflowAgent(findSkillAgentSessionId ? { ...request, sessionId: findSkillAgentSessionId } : request);
@@ -6646,6 +6636,38 @@ export function SkillsPage({
     } catch {
       return undefined;
     }
+  }
+
+  function updateFindSkillCandidates(candidates: OnlineSkillResult[]): void {
+    setOnlineResults(candidates);
+    setOnlineStatus(candidates.length === 0 ? noOnlineResults : `${candidates.length} skills`);
+    if (candidates[0]) {
+      setSelectedOnlineSkillKey(`online:${candidates[0].id}`);
+      setSelectedSkillKey(undefined);
+      setShowTranslatedSkill(false);
+      setTranslationStatus("");
+    }
+  }
+
+  function findSkillSearchToolResult(query: string, candidates: OnlineSkillResult[]): string {
+    return language === "zh"
+      ? `skills.search_online 已执行。query: ${query}。返回 ${candidates.length} 个候选。候选已放在“当前搜索候选”里。请用中文自然总结候选；如果用户已经明确要安装某个候选，再调用 skills.import_online。`
+      : `skills.search_online executed. query: ${query}. Returned ${candidates.length} candidate(s). The candidates are in "Current search candidates". Summarize them naturally; if the user clearly wants one installed, call skills.import_online.`;
+  }
+
+  async function importFindSkillCandidate(candidate: OnlineSkillResult): Promise<void> {
+    if (!onImportOnlineSkill) throw new Error(language === "zh" ? "技能导入能力需要重启应用后生效。" : "Skill import requires restarting the app.");
+    const result = await onImportOnlineSkill(candidate);
+    setSelectedSkillKey(`local:${result.template.id}`);
+    setSelectedOnlineSkillKey(undefined);
+    setFindSkillMessages((current) => [
+      ...current,
+      {
+        id: `find-skill-assistant-${Date.now()}`,
+        role: "assistant",
+        content: findSkillImportSuccessMessage(result, language),
+      },
+    ]);
   }
 
   async function runOnlineSearch(): Promise<void> {
@@ -6670,14 +6692,39 @@ export function SkillsPage({
     const userMessage = { id: `find-skill-user-${Date.now()}`, role: "user" as const, content: text };
     setFindSkillMessages((current) => [...current, userMessage]);
     setFindSkillRunning(true);
-    let candidates: OnlineSkillResult[] = [];
+    let candidates: OnlineSkillResult[] = onlineResults;
     try {
-      const selectedImportCandidate = findSkillImportSelection(text, onlineResults);
-      if (selectedImportCandidate) {
-        if (!onImportOnlineSkill) throw new Error(language === "zh" ? "技能导入能力需要重启应用后生效。" : "Skill import requires restarting the app.");
-        let result: ImportedSkillResult;
+      let finalContent: string | undefined;
+      let toolResult: string | undefined;
+      for (let step = 0; step < 4; step += 1) {
+        const agentContent = await askFindSkillAgent(text, candidates, toolResult);
+        const toolCall = agentContent ? parseFindSkillAgentToolCall(agentContent) : undefined;
+        if (!toolCall) {
+          finalContent = agentContent;
+          break;
+        }
+        if (toolCall.tool === "skills.search_online") {
+          setOnlineSearching(true);
+          setOnlineStatus(searchingText);
+          try {
+            candidates = await searchOnlineSkills(toolCall.query);
+          } finally {
+            setOnlineSearching(false);
+          }
+          updateFindSkillCandidates(candidates);
+          toolResult = findSkillSearchToolResult(toolCall.query, candidates);
+          continue;
+        }
+        const importCandidate = candidates[toolCall.candidateIndex - 1];
+        if (!importCandidate) {
+          finalContent =
+            language === "zh"
+              ? `当前没有第 ${toolCall.candidateIndex} 个候选。可以先让我继续搜索，或者换一个更具体的描述。`
+              : `There is no candidate #${toolCall.candidateIndex}. Ask me to search first, or use a more specific description.`;
+          break;
+        }
         try {
-          result = await onImportOnlineSkill(selectedImportCandidate);
+          await importFindSkillCandidate(importCandidate);
         } catch (error) {
           const message = error instanceof Error ? error.message : String(error);
           setFindSkillMessages((current) => [
@@ -6688,70 +6735,12 @@ export function SkillsPage({
               content: `${language === "zh" ? "导入失败" : "Import failed"}：${message}`,
             },
           ]);
-          return;
         }
-        setSelectedSkillKey(`local:${result.template.id}`);
-        setSelectedOnlineSkillKey(undefined);
-        setFindSkillMessages((current) => [
-          ...current,
-          {
-            id: `find-skill-assistant-${Date.now()}`,
-            role: "assistant",
-            content: findSkillImportSuccessMessage(result, language),
-          },
-        ]);
-        return;
-      }
-      const shouldSearch = shouldSearchForFindSkillMessage(text, onlineResults.length > 0);
-      if (shouldSearch) {
-        setOnlineStatus(searchingText);
-        candidates = await searchOnlineSkills(findSkillSearchQuery(text));
-        setOnlineResults(candidates);
-        setOnlineStatus(candidates.length === 0 ? noOnlineResults : `${candidates.length} skills`);
-      } else {
-        candidates = onlineResults;
-      }
-      if (shouldSearch && candidates[0]) {
-        setSelectedOnlineSkillKey(`online:${candidates[0].id}`);
-        setSelectedSkillKey(undefined);
-        setShowTranslatedSkill(false);
-        setTranslationStatus("");
-      }
-      const agentContent = await askFindSkillAgent(text, candidates);
-      const agentSelectedImportCandidate = agentContent ? findSkillAgentImportSelection(agentContent, candidates) : undefined;
-      if (agentSelectedImportCandidate) {
-        const importAgentContent = agentContent ?? "";
-        if (!onImportOnlineSkill) throw new Error(language === "zh" ? "技能导入能力需要重启应用后生效。" : "Skill import requires restarting the app.");
-        let result: ImportedSkillResult;
-        try {
-          result = await onImportOnlineSkill(agentSelectedImportCandidate);
-        } catch (error) {
-          const message = error instanceof Error ? error.message : String(error);
-          setFindSkillMessages((current) => [
-            ...current,
-            {
-              id: `find-skill-assistant-${Date.now()}`,
-              role: "assistant",
-              content: `${stripFindSkillAgentImportDirective(importAgentContent)}\n\n${language === "zh" ? "导入失败" : "Import failed"}：${message}`.trim(),
-            },
-          ]);
-          return;
-        }
-        setSelectedSkillKey(`local:${result.template.id}`);
-        setSelectedOnlineSkillKey(undefined);
-        setFindSkillMessages((current) => [
-          ...current,
-          {
-            id: `find-skill-assistant-${Date.now()}`,
-            role: "assistant",
-            content: findSkillImportSuccessMessage(result, language),
-          },
-        ]);
         return;
       }
       setFindSkillMessages((current) => [
         ...current,
-        { id: `find-skill-assistant-${Date.now()}`, role: "assistant", content: agentContent ? stripFindSkillAgentImportDirective(agentContent) : findSkillFallbackMessage(candidates, language) },
+        { id: `find-skill-assistant-${Date.now()}`, role: "assistant", content: finalContent ?? findSkillFallbackMessage(candidates, language) },
       ]);
     } catch (error) {
       setFindSkillMessages((current) => [
