@@ -21,6 +21,7 @@ import {
   rememberProviderKeyFromChannel,
   shouldRefreshBalances,
   fetchOnlineSkills,
+  buildFindSkillAgentPrompt,
   findSkillAgentPrompt,
   findSkillFallbackMessage,
   findSkillImportRequest,
@@ -1760,6 +1761,7 @@ describe("SkillsPage", () => {
 
     expect(prompt).toContain("自然对话");
     expect(prompt).toContain("找合适的 skill");
+    expect(prompt).toContain("中文回复时必须用中文解释候选");
     expect(prompt).toContain("用户想安装");
     expect(prompt).toContain("本软件技能库");
     expect(prompt).toContain("app userData/bundled-skills");
@@ -1829,7 +1831,7 @@ describe("SkillsPage", () => {
     expect(message).toContain("我找到了 1 个候选，先没动本地文件");
     expect(message).toContain("第 1 个最像");
     expect(message).toContain("frontend-design");
-    expect(message).toContain("做什么：Guidance for distinctive, intentional visual design.");
+    expect(message).toContain("做什么：用于前端和界面设计指导");
     expect(message).toContain("来源和热度：Anthropic Skills · 13.2K GitHub stars");
     expect(message).toContain("可以继续问我区别");
     expect(message).toContain("就第一个");
@@ -1837,7 +1839,38 @@ describe("SkillsPage", () => {
     expect(message).not.toContain("回复 1 或 导入 1");
     expect(message).not.toContain("download_url");
     expect(message).not.toContain("install_cmd");
+    expect(message).not.toContain("Guidance for distinctive");
     expect(message).not.toContain("Codex");
+  });
+
+  test("passes Chinese candidate summaries to the find-skill agent", () => {
+    const prompt = buildFindSkillAgentPrompt(
+      "下载一个前端设计skill，A那家公司的",
+      [
+        {
+          id: "anthropic-skills:skills/frontend-design/SKILL.md",
+          name: "frontend-design",
+          description: "Guidance for distinctive, intentional visual design when building new UI or reshaping an existing one.",
+          prompt: "# Frontend Design",
+          tags: ["frontend-design"],
+          sourceId: "anthropic-skills",
+          sourceLabel: "Anthropic Skills",
+          sourcePath: "skills/frontend-design/SKILL.md",
+          sourceUrl: "https://github.com/anthropics/skills/blob/main/skills/frontend-design/SKILL.md",
+          path: "skills/frontend-design/SKILL.md",
+          url: "https://github.com/anthropics/skills/blob/main/skills/frontend-design/SKILL.md",
+          rawUrl: "https://raw.githubusercontent.com/anthropics/skills/main/skills/frontend-design/SKILL.md",
+          repositoryUrl: "https://github.com/anthropics/skills",
+          repositoryStars: 13200,
+          contentLabel: "SKILL.md",
+        },
+      ],
+      "zh",
+    );
+
+    expect(prompt).toContain("中文回复时必须用中文解释候选");
+    expect(prompt).toContain("做什么：用于前端和界面设计指导");
+    expect(prompt).not.toContain("Guidance for distinctive");
   });
 
   test("normalizes Chinese find-skill requests for Anthropic frontend design skills", () => {

@@ -384,6 +384,7 @@ export function findSkillAgentPrompt(language: Language): string {
     ? [
         "你是 Multi Agent Chat 里的 find-skill 助手。",
         "用自然对话帮用户找合适的 skill；可以追问需求、解释候选差异、建议换关键词，也可以根据我提供的候选做排序和总结。",
+        "中文回复时必须用中文解释候选；候选描述如果是英文，不要照抄英文 description。",
         "如果用户想安装某个候选，说明应用会导入到本软件技能库：app userData/bundled-skills（macOS 通常是 ~/Library/Application Support/Multi Agent Chat/bundled-skills）。",
         "不要说已经安装成功，实际导入由应用完成；导入成功后应用会显示结果。",
         "回复尽量简洁，优先让用户能判断下一步。",
@@ -397,6 +398,27 @@ export function findSkillAgentPrompt(language: Language): string {
       ].join("\n");
 }
 
+function readableSkillDescription(skill: Pick<OnlineSkillResult, "name" | "description" | "prompt" | "tags">, language: Language): string {
+  const description = skillDisplayDescription(skill).trim();
+  if (language !== "zh") return description || "No description";
+  const name = skillDisplayName(skill).toLowerCase();
+  const text = [name, description, ...skill.tags].join("\n").toLowerCase();
+  if (/front[- ]?end|frontend|ui|visual|typography|界面/.test(text) && /design|设计/.test(text)) {
+    return "用于前端和界面设计指导，帮你判断视觉方向、排版和审美选择，避免做成模板感很强的默认 UI。";
+  }
+  if (/web[- ]?artifacts|html artifacts|react|tailwind|shadcn/.test(text)) {
+    return "用于构建复杂 Web 或 HTML artifacts，适合需要 React、Tailwind 或 shadcn/ui 的交互页面。";
+  }
+  if (/webapp[- ]?testing|playwright|browser logs|screenshots/.test(text)) {
+    return "用于测试本地 Web 应用，支持 Playwright 交互验证、截图、调试和查看浏览器日志。";
+  }
+  if (/software[- ]?design|architecture|架构|方案/.test(text)) {
+    return "用于软件设计和方案梳理，帮助拆分模块、接口、数据流和实现取舍。";
+  }
+  if (/[\u4e00-\u9fff]/.test(description)) return description || "暂无描述";
+  return "线上元数据没有中文说明；建议根据名称、来源和仓库热度先判断，再打开来源确认具体内容。";
+}
+
 function findSkillCandidateSummary(skill: OnlineSkillResult, index: number, language: Language): string {
   const popularity = skillPopularityLabel(skill);
   const source = skill.repositoryUrl ?? skill.url;
@@ -404,7 +426,7 @@ function findSkillCandidateSummary(skill: OnlineSkillResult, index: number, lang
     language === "zh"
       ? [
           `${index + 1}. ${skillDisplayName(skill)}`,
-          `做什么：${skillDisplayDescription(skill) || "暂无描述"}`,
+          `做什么：${readableSkillDescription(skill, language)}`,
           `来源：${skill.sourceLabel}`,
           popularity ? `热度：${popularity}` : undefined,
           source ? `链接：${source}` : undefined,
@@ -534,7 +556,7 @@ export function findSkillFallbackMessage(candidates: OnlineSkillResult[], langua
     if (language === "zh") {
       const lines = [
         `${index + 1}. ${skillDisplayName(skill)}${index === 0 ? "（推荐）" : ""}`,
-        `   做什么：${skillDisplayDescription(skill) || "暂无描述"}`,
+        `   做什么：${readableSkillDescription(skill, language)}`,
         `   来源和热度：${skill.sourceLabel}${popularity ? ` · ${popularity}` : ""}`,
         source ? `   链接：${source}` : undefined,
         "   确认后会导入到本软件技能库。",
