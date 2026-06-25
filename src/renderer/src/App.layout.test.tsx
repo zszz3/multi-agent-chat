@@ -21,6 +21,7 @@ import {
   rememberProviderKeyFromChannel,
   shouldRefreshBalances,
   fetchOnlineSkills,
+  findSkillAgentPrompt,
   findSkillFallbackMessage,
   findSkillImportRequest,
   findSkillImportSelection,
@@ -1749,9 +1750,20 @@ describe("SkillsPage", () => {
     expect(html).toContain("Find skill");
     expect(html).toContain("Online search");
     expect(html).toContain("aria-label=\"Find skill message\"");
-    expect(html).toContain("网上找 skill");
-    expect(html).toContain("下载链接");
+    expect(html).toContain("跟 AI 说你想找什么 skill");
+    expect(html).toContain("本软件技能库");
     expect(html).not.toContain("优先从当前页面里的技能里找");
+  });
+
+  test("uses a conversational find-skill agent prompt with the managed install destination", () => {
+    const prompt = findSkillAgentPrompt("zh");
+
+    expect(prompt).toContain("自然对话");
+    expect(prompt).toContain("找合适的 skill");
+    expect(prompt).toContain("用户想安装");
+    expect(prompt).toContain("本软件技能库");
+    expect(prompt).toContain("app userData/bundled-skills");
+    expect(prompt).toContain("实际导入由应用完成");
   });
 
   test("keeps find-skill useful without leaking Codex errors when summarization fails", () => {
@@ -1780,15 +1792,16 @@ describe("SkillsPage", () => {
       "Codex error",
     );
 
-    expect(message).toContain("已找到在线候选");
+    expect(message).toContain("我找到了 1 个候选，先没动本地文件");
     expect(message).toContain("front-end-design");
-    expect(message).toContain("popularity: 22 installs");
-    expect(message).toContain("npx skills add anthropics/skills@front-end-design");
+    expect(message).toContain("来源和热度：skills.sh Find · 22 installs");
+    expect(message).toContain("确认后会导入到本软件技能库");
+    expect(message).not.toContain("install_cmd");
     expect(message).not.toContain("Codex");
     expect(message).not.toContain("Error invoking remote method");
   });
 
-  test("shows a download URL for official online skills without inventing install commands", () => {
+  test("renders readable online skill candidates without raw command fields", () => {
     const message = findSkillFallbackMessage(
       [
         {
@@ -1813,11 +1826,16 @@ describe("SkillsPage", () => {
       "Codex error",
     );
 
+    expect(message).toContain("我找到了 1 个候选，先没动本地文件");
+    expect(message).toContain("第 1 个最像");
     expect(message).toContain("frontend-design");
-    expect(message).toContain("source: Anthropic Skills");
-    expect(message).toContain("popularity: 13.2K GitHub stars");
-    expect(message).toContain("download_url: https://raw.githubusercontent.com/anthropics/skills/main/skills/frontend-design/SKILL.md");
-    expect(message).toContain("回复 1 或 导入 1");
+    expect(message).toContain("做什么：Guidance for distinctive, intentional visual design.");
+    expect(message).toContain("来源和热度：Anthropic Skills · 13.2K GitHub stars");
+    expect(message).toContain("可以继续问我区别");
+    expect(message).toContain("就第一个");
+    expect(message).toContain("导入官方那个");
+    expect(message).not.toContain("回复 1 或 导入 1");
+    expect(message).not.toContain("download_url");
     expect(message).not.toContain("install_cmd");
     expect(message).not.toContain("Codex");
   });
@@ -1852,7 +1870,15 @@ describe("SkillsPage", () => {
     expect(findSkillImportSelection("下载一个前端设计skill，A那家公司的", [candidate])).toBeUndefined();
     expect(findSkillImportSelection("1", [candidate])).toBe(candidate);
     expect(findSkillImportSelection("导入 1", [candidate])).toBe(candidate);
+    expect(findSkillImportSelection("就第一个吧", [candidate])).toBe(candidate);
+    expect(findSkillImportSelection("可以，就它", [candidate])).toBe(candidate);
     expect(findSkillImportSelection("下载 frontend-design", [candidate])).toBe(candidate);
+    expect(
+      findSkillImportSelection("导入官方那个", [
+        { ...candidate, id: "skills-sh:someone/frontend-design", sourceId: "skills-sh", sourceLabel: "skills.sh Find", repositoryUrl: "https://github.com/someone/frontend-design" },
+        candidate,
+      ]),
+    ).toBe(candidate);
     expect(skillPopularityLabel(candidate)).toBe("13.2K GitHub stars");
 
     expect(
