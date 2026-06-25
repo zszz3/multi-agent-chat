@@ -6554,8 +6554,8 @@ export function SkillsPage({
   const onlineTitle = language === "zh" ? "搜索网上 Skills" : "Search online skills";
   const onlineDescription =
     language === "zh"
-      ? "默认使用 skills.sh find API 读取公开 skill 元数据。第三方 skill 只当作未审查内容展示。"
-      : "Read public skill metadata from the skills.sh find API by default. Treat third-party skills as untrusted content.";
+      ? "默认搜索 skills.sh、官方 skill 仓库和 GitHub 仓库。第三方 skill 只当作未审查内容展示。"
+      : "Search skills.sh, official skill repositories, and GitHub repositories. Treat third-party skills as untrusted content.";
   const localTitle = language === "zh" ? "内置技能" : "Bundled skills";
   const searchPlaceholder = language === "zh" ? "搜索 code review、testing、pdf、docs..." : "Search code review, testing, pdf, docs...";
   const searchButton = language === "zh" ? "搜索" : "Search";

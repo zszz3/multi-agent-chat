@@ -61,6 +61,11 @@ export const SKILLS_SH_SOURCE = {
   apiBase: "https://skills.sh",
 };
 
+const GITHUB_SEARCH_SOURCE = {
+  id: "github-search",
+  label: "GitHub Search",
+};
+
 export function onlineSkillTreeUrl(source: OnlineSkillSource): string {
   return `https://api.github.com/repos/${source.owner}/${source.repo}/git/trees/${source.branch}?recursive=1`;
 }
@@ -81,12 +86,26 @@ export function skillsShSearchUrl(query: string, limit = 10): string {
   return `${SKILLS_SH_SOURCE.apiBase}/api/search?q=${encodeURIComponent(query.trim())}&limit=${limit}`;
 }
 
+function githubRepositorySearchUrl(query: string, limit = 10): string {
+  const terms = skillMatchTerms(query);
+  const searchText = terms.length > 0 ? terms.join(" ") : query.trim();
+  return `https://api.github.com/search/repositories?q=${encodeURIComponent(`${searchText} skill`)}&sort=stars&order=desc&per_page=${limit}`;
+}
+
 interface SkillsShApiSkill {
   id?: unknown;
   skillId?: unknown;
   name?: unknown;
   installs?: unknown;
   source?: unknown;
+}
+
+interface GitHubRepositorySearchItem {
+  full_name?: unknown;
+  description?: unknown;
+  html_url?: unknown;
+  stargazers_count?: unknown;
+  default_branch?: unknown;
 }
 
 function objectValue(value: unknown): Record<string, unknown> {
@@ -307,9 +326,11 @@ function scoreOnlineSkillResult(skill: OnlineSkillResult, query: string): number
   const path = skill.path.toLowerCase();
   const description = skill.description.toLowerCase();
   const fullText = [skill.prompt, ...skill.tags].join("\n").toLowerCase();
-  let score = skill.sourceId === SKILLS_SH_SOURCE.id ? 0 : 2;
+  let score = skill.sourceId === SKILLS_SH_SOURCE.id ? 0 : skill.sourceId === GITHUB_SEARCH_SOURCE.id ? 1 : 2;
   if (provider && resultMatchesProvider(skill, provider)) score += 100;
   if (nameHints.some((hint) => name === hint || path.includes(`/${hint}/`) || path.includes(`/${hint}.`))) score += 80;
+  if (skill.repositoryStars !== undefined) score += Math.min(35, Math.log10(skill.repositoryStars + 1) * 7);
+  if (skill.installs !== undefined) score += Math.min(12, Math.log10(skill.installs + 1) * 3);
   for (const term of terms) {
     if (name === term || name === term.replace(/\s+/g, "-")) score += 12;
     if (name.includes(term)) score += 6;
@@ -343,12 +364,96 @@ async function fetchSkillsShFindResults(query: string, fetcher: typeof fetch = f
   return skillsShResultsFromPayload(await response.json());
 }
 
+function githubRepositoryTreeUrl(fullName: string, branch: string): string {
+  return `https://api.github.com/repos/${fullName}/git/trees/${encodeURIComponent(branch)}?recursive=1`;
+}
+
+function githubRepositoryBlobUrl(fullName: string, branch: string, filePath: string): string {
+  return `https://github.com/${fullName}/blob/${branch}/${filePath}`;
+}
+
+function githubRepositoryRawUrl(fullName: string, branch: string, filePath: string): string {
+  return `https://raw.githubusercontent.com/${fullName}/${branch}/${filePath}`;
+}
+
+function githubRepositorySearchItems(payload: unknown): GitHubRepositorySearchItem[] {
+  const record = objectValue(payload);
+  if (!Array.isArray(record.items)) return [];
+  return record.items.map((item) => objectValue(item) as GitHubRepositorySearchItem);
+}
+
+async function fetchGitHubRepositorySkillResults(query: string, fetcher: typeof fetch = fetch): Promise<OnlineSkillResult[]> {
+  if (!query.trim()) return [];
+  const response = await fetcher(githubRepositorySearchUrl(query), { headers: { Accept: "application/vnd.github+json" } });
+  if (!response.ok) throw new Error(`${GITHUB_SEARCH_SOURCE.label}: ${response.status}`);
+  const repos = githubRepositorySearchItems(await response.json()).slice(0, 10);
+  const matchTerms = skillMatchTerms(query);
+  const results = await Promise.all(
+    repos.map(async (repo) => {
+      const fullName = stringValue(repo.full_name);
+      if (!fullName) return [];
+      const branch = stringValue(repo.default_branch) ?? "main";
+      const repositoryUrl = stringValue(repo.html_url) ?? `https://github.com/${fullName}`;
+      const repositoryStars = numberValue(repo.stargazers_count);
+      try {
+        const treeResponse = await fetcher(githubRepositoryTreeUrl(fullName, branch), { headers: { Accept: "application/vnd.github+json" } });
+        if (!treeResponse.ok) return [];
+        const treePayload = (await treeResponse.json()) as { tree?: Array<{ path?: string; type?: string }> };
+        const skillPaths = (treePayload.tree ?? [])
+          .map((item) => item.path ?? "")
+          .filter((path) => path.endsWith("/SKILL.md") || path === "SKILL.md")
+          .map((path, index) => ({ path, index, score: scoreTextForTerms(path, matchTerms) }))
+          .sort((left, right) => right.score - left.score || left.index - right.index)
+          .map(({ path }) => path)
+          .slice(0, 3);
+        const parsed = await Promise.all(
+          skillPaths.map(async (filePath) => {
+            const rawUrl = githubRepositoryRawUrl(fullName, branch, filePath);
+            const rawResponse = await fetcher(rawUrl);
+            if (!rawResponse.ok) return undefined;
+            const skill = parseSkillMarkdown(await rawResponse.text(), filePath);
+            if (!onlineSkillMatches(skill, query)) return undefined;
+            const result: OnlineSkillResult = {
+              id: `${GITHUB_SEARCH_SOURCE.id}:${fullName}:${filePath}`,
+              name: skill.name,
+              description: skill.description || stringValue(repo.description) || "",
+              prompt: skill.prompt,
+              tags: [...skill.tags, fullName],
+              sourceId: GITHUB_SEARCH_SOURCE.id,
+              sourceLabel: GITHUB_SEARCH_SOURCE.label,
+              path: `${fullName}/${filePath}`,
+              sourcePath: `${fullName}/${filePath}`,
+              url: githubRepositoryBlobUrl(fullName, branch, filePath),
+              sourceUrl: githubRepositoryBlobUrl(fullName, branch, filePath),
+              rawUrl,
+              repositoryUrl,
+              contentLabel: "SKILL.md",
+            };
+            if (repositoryStars !== undefined) result.repositoryStars = repositoryStars;
+            return result;
+          }),
+        );
+        return parsed.filter((skill): skill is OnlineSkillResult => Boolean(skill));
+      } catch {
+        return [];
+      }
+    }),
+  );
+  return results.flat();
+}
+
 export async function fetchOnlineSkills(query: string, sources: OnlineSkillSource[] = [], fetcher: typeof fetch = fetch): Promise<OnlineSkillResult[]> {
   const normalizedQuery = query.trim().toLowerCase();
   const failures: string[] = [];
   let registryResults: OnlineSkillResult[] = [];
   try {
     registryResults = await fetchSkillsShFindResults(query, fetcher);
+  } catch (error) {
+    failures.push(error instanceof Error ? error.message : String(error));
+  }
+  let githubResults: OnlineSkillResult[] = [];
+  try {
+    githubResults = await fetchGitHubRepositorySkillResults(query, fetcher);
   } catch (error) {
     failures.push(error instanceof Error ? error.message : String(error));
   }
@@ -403,7 +508,7 @@ export async function fetchOnlineSkills(query: string, sources: OnlineSkillSourc
       }
     }),
   );
-  const merged = [...registryResults, ...results.flat()];
+  const merged = [...registryResults, ...githubResults, ...results.flat()];
   if (merged.length === 0 && failures.length > 0) throw new Error(failures.join("; "));
   return rankOnlineSkillResults(merged, query).slice(0, 80);
 }

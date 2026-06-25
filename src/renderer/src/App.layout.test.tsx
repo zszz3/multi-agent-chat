@@ -1976,7 +1976,7 @@ describe("SkillsPage", () => {
     });
   });
 
-  test("searches skills.sh find results before GitHub skill sources", async () => {
+  test("searches skills.sh and GitHub repository results", async () => {
     const calls: string[] = [];
     const fakeFetch = async (input: RequestInfo | URL) => {
       const url = String(input);
@@ -2007,12 +2007,18 @@ describe("SkillsPage", () => {
           { status: 200, headers: { "content-type": "application/json" } },
         );
       }
+      if (url.startsWith("https://api.github.com/search/repositories")) {
+        return new Response(JSON.stringify({ items: [] }), { status: 200, headers: { "content-type": "application/json" } });
+      }
       throw new Error(`Unexpected URL: ${url}`);
     };
 
     const results = await fetchOnlineSkills("resume", undefined, fakeFetch as typeof fetch);
 
-    expect(calls).toEqual(["https://skills.sh/api/search?q=resume&limit=10"]);
+    expect(calls).toEqual([
+      "https://skills.sh/api/search?q=resume&limit=10",
+      "https://api.github.com/search/repositories?q=resume%20skill&sort=stars&order=desc&per_page=10",
+    ]);
     expect(results.map((skill) => skill.name)).toEqual(["tailored-resume-generator", "resume-tailor"]);
     expect(results[0]).toMatchObject({
       sourceLabel: "skills.sh Find",
