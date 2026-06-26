@@ -33,6 +33,7 @@ import {
   skillPopularityLabel,
   skillsShResultFromApiSkill,
   skillsShSearchUrl,
+  syncKeepAwakeIfAvailable,
   missingAppCapabilityMessage,
   shouldSendComposerKey,
   SlashCommandSuggestions,
@@ -1698,8 +1699,8 @@ describe("SkillsPage", () => {
     expect(html).toContain("skill-detail-panel");
     expect(html).toContain("技能库");
     expect(html).toContain("内置技能");
-    expect(html).toContain("搜索网上 Skills");
-    expect(html).toContain("skills.sh");
+    expect(html).not.toContain("搜索网上 Skills");
+    expect(html).not.toContain("skills.sh 上的公开 Skills");
     expect(html).not.toContain("OpenAgentSkill");
     expect(html).not.toContain("OpenAI Skills");
     expect(html).not.toContain("Anthropic Skills");
@@ -1710,14 +1711,19 @@ describe("SkillsPage", () => {
     expect(html).toContain("refactor-review-knowledge");
     expect(html).toContain("conducting thorough code reviews");
     expect(html).toContain("review");
-    expect(html).toContain("出处");
-    expect(html).toContain("skill-source-pills");
+    expect(html).not.toContain("出处");
+    expect(html).not.toContain("skill-source-pills");
     expect(html).toContain("GitHub");
     expect(html).toContain("bundled original skill");
-    expect(html).toContain("src/shared/bundled-skills/brainstorming/SKILL.md");
+    expect(html).not.toContain("src/shared/bundled-skills/brainstorming/SKILL.md");
     expect(html).not.toContain("src/shared/bundled-skill-prompts.ts");
     expect(html).toContain("https://github.com/obra/superpowers/blob/main/skills/brainstorming/SKILL.md");
-    expect(html).toContain("SKILL.md");
+    expect(html).toContain("class=\"control-btn compact secondary skill-source-link\"");
+    expect(html).toContain("class=\"control-btn compact skill-install-trigger\"");
+    expect(html).not.toContain("skill-install-actions");
+    expect(html).toContain("role=\"status\"");
+    expect(html).toContain("aria-live=\"polite\"");
+    expect(html).not.toContain("SKILL.md</span>");
     expect(html).toContain("本地安装");
     expect(html).toContain("Finder");
     expect(html).toContain("查看中文");
@@ -2182,6 +2188,10 @@ describe("TaskPage", () => {
 });
 
 describe("App chrome", () => {
+  test("skips keep-awake sync when an older preload has not exposed the API", async () => {
+    await expect(syncKeepAwakeIfAvailable({} as Window["multiAgentChat"], true)).resolves.toBeUndefined();
+  });
+
   test("uses the rail footer for settings instead of clearing all history", () => {
     const originalWindow = globalThis.window;
     const storage = new Map<string, string>();

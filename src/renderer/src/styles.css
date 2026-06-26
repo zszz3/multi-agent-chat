@@ -4753,8 +4753,7 @@ textarea:focus-visible {
   min-width: 0;
 }
 
-.skill-detail-head span,
-.skill-detail-source span {
+.skill-detail-head span {
   color: var(--muted);
   font-size: 10px;
   font-weight: 800;
@@ -4768,16 +4767,7 @@ textarea:focus-visible {
   line-height: 1.25;
 }
 
-.skill-detail-source {
-  display: flex;
-  align-items: center;
-  justify-content: space-between;
-  gap: 10px;
-  min-height: 18px;
-}
-
-.skill-detail-body-head,
-.skill-install-actions {
+.skill-detail-body-head {
   display: flex;
   align-items: center;
   gap: 8px;
@@ -4785,27 +4775,16 @@ textarea:focus-visible {
 }
 
 .skill-detail-body-head {
-  justify-content: space-between;
+  justify-content: flex-end;
 }
 
 .skill-detail-body-head > div {
   display: inline-flex;
   min-width: 0;
   align-items: center;
-  gap: 8px;
-}
-
-.skill-install-actions {
+  justify-content: flex-end;
   flex-wrap: wrap;
-}
-
-.skill-install-actions small {
-  min-width: 0;
-  overflow: hidden;
-  color: var(--muted);
-  text-overflow: ellipsis;
-  white-space: nowrap;
-  font-size: 11px;
+  gap: 8px;
 }
 
 .skill-install-feedback {
@@ -4843,6 +4822,10 @@ textarea:focus-visible {
   font-size: 11px;
   font-weight: 800;
   text-decoration: none;
+}
+
+.skill-detail-body-head .skill-source-link {
+  color: var(--accent);
 }
 
 .skill-translation-note {
@@ -4902,110 +4885,6 @@ textarea:focus-visible {
   font-size: 11px;
 }
 
-.skill-search-modal-backdrop {
-  z-index: 40;
-}
-
-.skill-search-modal {
-  display: grid;
-  grid-template-rows: auto auto auto auto minmax(0, 1fr);
-  width: min(820px, 100%);
-  max-height: min(760px, 100%);
-  gap: 12px;
-  padding: 14px;
-  border: 1px solid var(--line);
-  border-radius: 10px;
-  background: var(--panel-raised);
-  box-shadow: 0 24px 80px color-mix(in srgb, var(--ink) 24%, transparent);
-}
-
-.skill-search-modal-head {
-  display: flex;
-  align-items: flex-start;
-  justify-content: space-between;
-  gap: 10px;
-}
-
-.skill-search-modal-head > div {
-  display: grid;
-  min-width: 0;
-  gap: 3px;
-}
-
-.skill-search-modal-head strong {
-  color: var(--text);
-  font-size: 14px;
-}
-
-.skill-search-modal-head span {
-  color: var(--muted);
-  font-size: 11.5px;
-}
-
-.skill-search-results {
-  display: grid;
-  align-content: start;
-  gap: 8px;
-  min-height: 0;
-  overflow: auto;
-  padding-right: 2px;
-}
-
-.skill-search-result {
-  display: grid;
-  grid-template-columns: minmax(0, 1fr) auto;
-  align-items: center;
-  gap: 12px;
-  padding: 10px;
-  border: 1px solid var(--line);
-  border-radius: 8px;
-  background: var(--panel-soft);
-}
-
-.skill-search-result > div:first-child {
-  display: grid;
-  min-width: 0;
-  gap: 3px;
-}
-
-.skill-search-result strong,
-.skill-search-result small,
-.skill-search-result span {
-  overflow: hidden;
-  text-overflow: ellipsis;
-  white-space: nowrap;
-}
-
-.skill-search-result strong {
-  color: var(--text);
-  font-size: 12.5px;
-}
-
-.skill-search-result small {
-  color: var(--muted);
-  font-size: 11.5px;
-}
-
-.skill-search-result span {
-  color: var(--subtle);
-  font-size: 10.5px;
-}
-
-.skill-search-result-actions {
-  display: inline-flex;
-  flex-wrap: wrap;
-  align-items: center;
-  justify-content: flex-end;
-  gap: 8px;
-}
-
-.skill-search-result-actions a {
-  color: var(--accent);
-  font-size: 11px;
-  font-weight: 800;
-  text-decoration: none;
-}
-
 .skill-install-targets {
   display: grid;
   gap: 7px;
@@ -5042,69 +4921,6 @@ textarea:focus-visible {
   text-overflow: ellipsis;
   white-space: nowrap;
   font-size: 11px;
-}
-
-.skill-detail-source > div {
-  display: flex;
-  min-width: 0;
-  align-items: center;
-  gap: 8px;
-}
-
-.skill-source-pills {
-  justify-content: flex-end;
-  flex-wrap: wrap;
-}
-
-.skill-source-pill {
-  max-width: 280px;
-  min-width: 0;
-  overflow: hidden;
-  padding: 3px 7px;
-  border: 1px solid var(--line);
-  border-radius: 999px;
-  background: var(--panel-soft);
-  color: var(--muted);
-  text-overflow: ellipsis;
-  white-space: nowrap;
-  font-size: 10.5px;
-  font-weight: 800;
-  text-decoration: none;
-}
-
-.skill-source-pill.strong {
-  color: var(--text);
-}
-
-.skill-source-pill.link {
-  color: var(--accent);
-}
-
-.skill-detail-source strong,
-.skill-detail-source small {
-  overflow: hidden;
-  text-overflow: ellipsis;
-  white-space: nowrap;
-}
-
-.skill-detail-source strong {
-  color: var(--text);
-  font-size: 11px;
-}
-
-.skill-detail-source small {
-  color: var(--muted);
-  font-size: 11px;
-}
-
-.skill-detail-source a {
-  overflow: hidden;
-  text-overflow: ellipsis;
-  white-space: nowrap;
-  color: var(--accent);
-  font-size: 11px;
-  font-weight: 800;
-  text-decoration: none;
 }
 
 .skill-detail-body {
