@@ -5,6 +5,10 @@ import { Markdown } from "./Markdown";
 import { MarkdownDocument } from "./ui/MarkdownDocument";
 import { FeatureRail } from "./app/FeatureRail";
 import { ResourceSidebar } from "./app/ResourceSidebar";
+import { AppProviders } from "./app/providers/AppProviders";
+import { multiAgentChatService } from "./app/services/multi-agent-chat-service";
+import { snapshotService } from "./app/services/snapshot-service";
+import { workflowService } from "./app/services/workflow-service";
 import {
   agentAccent,
   agentLabel,
@@ -716,6 +720,9 @@ export function workflowProgressAfterFailure(progress: WorkflowRunProgressItem[]
 
 export function AppShell() {
   const initialWorkflowGraph = useMemo(() => createWorkflowGraphFromObjective(""), []);
+  const chatApi = useMemo(() => multiAgentChatService(), []);
+  const snapshots = useMemo(() => snapshotService(), []);
+  const workflows = useMemo(() => workflowService(), []);
   const [snapshot, setSnapshot] = useState<AppSnapshot>(DEFAULT_SNAPSHOT);
   const [importedSkillTemplates, setImportedSkillTemplates] = useState<SkillTemplate[]>([]);
   const [prompt, setPrompt] = useState("");
@@ -805,10 +812,10 @@ export function AppShell() {
 
   useEffect(() => {
     window.localStorage.setItem(KEEP_AWAKE_STORAGE_KEY, String(keepAwake));
-    void syncKeepAwakeIfAvailable(window.multiAgentChat, keepAwake).catch((error) => {
+    void syncKeepAwakeIfAvailable(chatApi, keepAwake).catch((error) => {
       console.warn("Failed to update keep-awake state", error);
     });
-  }, [keepAwake]);
+  }, [chatApi, keepAwake]);
 
   useEffect(() => {
     if (!testingAgentId) return undefined;
@@ -817,7 +824,7 @@ export function AppShell() {
   }, [testingAgentId]);
 
   useEffect(() => {
-    return window.multiAgentChat.onAgentTestEvent((event) => {
+    return chatApi.onAgentTestEvent((event) => {
       setAgentTestResults((current) => {
         const existing = current[event.agentId];
         if (!existing) return current;
@@ -838,7 +845,7 @@ export function AppShell() {
         };
       });
     });
-  }, []);
+  }, [chatApi]);
 
   useEffect(() => {
     if (snapshot.configuredAgents.length === 0) {
@@ -948,21 +955,21 @@ export function AppShell() {
   }
 
   useEffect(() => {
-    void window.multiAgentChat.getSnapshot().then((value) => {
+    void snapshots.getSnapshot().then((value) => {
       setSnapshot(value);
     });
-    return window.multiAgentChat.onSnapshot((value) => {
+    return snapshots.subscribe((value) => {
       setSnapshot(value);
     });
-  }, []);
+  }, [snapshots]);
 
   useEffect(() => {
-    const api = window.multiAgentChat as typeof window.multiAgentChat & {
+    const api = chatApi as typeof chatApi & {
       listImportedSkills?: () => Promise<SkillTemplate[]>;
     };
     if (!api.listImportedSkills) return;
     void api.listImportedSkills().then(setImportedSkillTemplates).catch(() => undefined);
-  }, []);
+  }, [chatApi]);
 
   useEffect(() => {
     if (workflowDraftHydratedRef.current || snapshot.detectedAt === 0) return;
@@ -984,7 +991,7 @@ export function AppShell() {
       workflowDraftSaveTimerRef.current = undefined;
       const draft = buildWorkflowDraft();
       if (!draft) return;
-      void window.multiAgentChat.updateWorkflowDraft(draft).then(setSnapshot);
+      void workflows.updateDraft(draft).then(setSnapshot);
     }, 300);
     return () => {
       if (workflowDraftSaveTimerRef.current) window.clearTimeout(workflowDraftSaveTimerRef.current);
@@ -1074,13 +1081,13 @@ export function AppShell() {
   }, [selectedTaskDetailId, snapshot.tasks]);
 
   useEffect(() => {
-    return window.multiAgentChat.onScheduledWorkflowEvent((event) => {
+    return chatApi.onScheduledWorkflowEvent((event) => {
       void handleScheduledWorkflowEvent(event);
     });
-  }, []);
+  }, [chatApi]);
 
   useEffect(() => {
-    return window.multiAgentChat.onWorkflowAgentEvent((event) => {
+    return workflows.onAgentEvent((event) => {
       if (event.requestId !== workflowRequestIdRef.current) return;
       const assistantMessageId = workflowAssistantMessageIdRef.current;
       if (!assistantMessageId) return;
@@ -1110,7 +1117,7 @@ export function AppShell() {
         );
       }
     });
-  }, []);
+  }, [workflows]);
 
   const runtimeMap = useMemo(() => new Map(snapshot.runtimes.map((runtime) => [runtime.id, runtime])), [snapshot.runtimes]);
   const activeChat = useMemo(() => activeChatFrom(snapshot), [snapshot]);
@@ -1280,31 +1287,31 @@ export function AppShell() {
   );
 
   async function refresh(): Promise<void> {
-    const next = await window.multiAgentChat.refreshAgents();
+    const next = await chatApi.refreshAgents();
     setSnapshot(next);
   }
 
   async function createChat(configuredAgentId = activeChat?.configuredAgentId ?? defaultConfiguredAgentId(snapshot.configuredAgents)): Promise<void> {
-    const next = await window.multiAgentChat.createChat(configuredAgentId);
+    const next = await chatApi.createChat(configuredAgentId);
     setSnapshot(next);
     setPrompt("");
   }
 
   async function selectChat(chatId: string): Promise<void> {
-    const next = await window.multiAgentChat.selectChat(chatId);
+    const next = await chatApi.selectChat(chatId);
     setSnapshot(next);
     setPrompt("");
   }
 
   async function setActiveChatConfiguredAgent(configuredAgentId: string): Promise<void> {
     if (!activeChat || activeChatLocked || activeChat.configuredAgentId === configuredAgentId) return;
-    const next = await window.multiAgentChat.setChatAgent(activeChat.id, configuredAgentId);
+    const next = await chatApi.setChatAgent(activeChat.id, configuredAgentId);
     setSnapshot(next);
   }
 
   async function setActiveChatModel(modelId: string): Promise<void> {
     if (!activeChat || activeChatLocked || activeChat.modelId === modelId) return;
-    const next = await window.multiAgentChat.setChatModel(activeChat.id, modelId);
+    const next = await chatApi.setChatModel(activeChat.id, modelId);
     setSnapshot(next);
   }
 
@@ -1368,7 +1375,7 @@ export function AppShell() {
   }
 
   async function persistChannelConfig(): Promise<AppSnapshot> {
-    const next = await window.multiAgentChat.saveModelChannels(configChannels);
+    const next = await chatApi.saveModelChannels(configChannels);
     setConfigChannels(next.channels);
     setConfigDirty(false);
     setSelectedConfigChannelId((current) => {
@@ -1388,7 +1395,7 @@ export function AppShell() {
   }
 
   async function saveConfiguredAgents(agents: ConfiguredAgent[]): Promise<void> {
-    const next = await window.multiAgentChat.saveConfiguredAgents(agents);
+    const next = await chatApi.saveConfiguredAgents(agents);
     setSnapshot(next);
   }
 
@@ -1403,11 +1410,11 @@ export function AppShell() {
 
   async function deleteChat(chatId: string): Promise<void> {
     setChatContextMenu(undefined);
-    if (typeof window.multiAgentChat.deleteChat !== "function") {
+    if (typeof chatApi.deleteChat !== "function") {
       window.alert?.(missingAppCapabilityMessage("Delete chat"));
       return;
     }
-    const next = await window.multiAgentChat.deleteChat(chatId);
+    const next = await chatApi.deleteChat(chatId);
     setSnapshot(next);
     if (activeChat?.id === chatId) setPrompt("");
   }
@@ -1454,11 +1461,11 @@ export function AppShell() {
     if (!workflowRenameDraft) return;
     const title = workflowRenameDraft.title.trim();
     if (!title) return;
-    if (typeof window.multiAgentChat.renameWorkflow !== "function") {
+    if (typeof chatApi.renameWorkflow !== "function") {
       window.alert?.(missingAppCapabilityMessage("Rename workflow"));
       return;
     }
-    const next = await window.multiAgentChat.renameWorkflow(workflowRenameDraft.workflowId, title);
+    const next = await workflows.renameWorkflow(workflowRenameDraft.workflowId, title);
     setWorkflowRenameDraft(undefined);
     setSnapshot(next);
     if (next.workflowDraft) applyPersistedWorkflowDraft(next.workflowDraft);
@@ -1467,7 +1474,7 @@ export function AppShell() {
   async function deleteWorkflow(targetWorkflowId: string): Promise<void> {
     setWorkflowContextMenu(undefined);
     if (workflowRunning && targetWorkflowId === workflowId) return;
-    if (typeof window.multiAgentChat.deleteWorkflow !== "function") {
+    if (typeof chatApi.deleteWorkflow !== "function") {
       window.alert?.(missingAppCapabilityMessage("Delete workflow"));
       return;
     }
@@ -1475,7 +1482,7 @@ export function AppShell() {
     const confirmed =
       typeof window.confirm === "function" ? window.confirm(`Delete workflow "${workflow?.title ?? targetWorkflowId}" and its run data?`) : true;
     if (!confirmed) return;
-    const next = await window.multiAgentChat.deleteWorkflow(targetWorkflowId);
+    const next = await workflows.deleteWorkflow(targetWorkflowId);
     setSnapshot(next);
     if (next.workflowDraft) {
       applyPersistedWorkflowDraft(next.workflowDraft);
@@ -1523,7 +1530,7 @@ export function AppShell() {
           message: `Starting ${agentLabel(channel?.agentId ?? "codex")} with ${baseState.providerLabel}.`,
         },
       }));
-      const result = await window.multiAgentChat.testRuntimeChannel(channelId);
+      const result = await chatApi.testRuntimeChannel(channelId);
       setAgentTestResults((current) => ({
         ...current,
         [channelId]: {
@@ -1561,7 +1568,7 @@ export function AppShell() {
   }
 
   async function queryRuntimeChannelBalance(channelId: string, options: { persistBeforeQuery?: boolean; quiet?: boolean } = {}): Promise<void> {
-    const api = window.multiAgentChat as typeof window.multiAgentChat & {
+    const api = chatApi as typeof chatApi & {
       queryRuntimeChannelBalance?: (targetChannelId: string) => Promise<ProviderBalanceResult>;
     };
     if (typeof api.queryRuntimeChannelBalance !== "function") {
@@ -1625,7 +1632,7 @@ export function AppShell() {
   async function loadCodexPluginCatalog(): Promise<void> {
     setPluginCatalogStatus("Loading plugins...");
     try {
-      const plugins = await window.multiAgentChat.listCodexPlugins();
+      const plugins = await chatApi.listCodexPlugins();
       setCodexPluginCatalog(plugins);
       setPluginCatalogStatus(`Loaded ${plugins.length} plugins`);
     } catch (error) {
@@ -1665,12 +1672,12 @@ export function AppShell() {
   }
 
   async function chooseWorkDir(): Promise<void> {
-    const next = await window.multiAgentChat.chooseWorkDir();
+    const next = await chatApi.chooseWorkDir();
     setSnapshot(next);
   }
 
   async function readLocalFile(filePath: string): Promise<LocalFilePreview> {
-    const api = window.multiAgentChat as typeof window.multiAgentChat & {
+    const api = chatApi as typeof chatApi & {
       readLocalFile?: (path: string) => Promise<LocalFilePreview>;
     };
     if (!api.readLocalFile) throw new Error("文件预览能力需要重启应用后生效。");
@@ -1678,7 +1685,7 @@ export function AppShell() {
   }
 
   async function revealSkillInFinder(filePath: string): Promise<void> {
-    const api = window.multiAgentChat as typeof window.multiAgentChat & {
+    const api = chatApi as typeof chatApi & {
       revealPathInFinder?: (path: string) => Promise<string>;
     };
     if (!api.revealPathInFinder) throw new Error("Finder 打开能力需要重启应用后生效。");
@@ -1686,7 +1693,7 @@ export function AppShell() {
   }
 
   async function refreshImportedSkills(): Promise<SkillTemplate[]> {
-    const api = window.multiAgentChat as typeof window.multiAgentChat & {
+    const api = chatApi as typeof chatApi & {
       listImportedSkills?: () => Promise<SkillTemplate[]>;
     };
     if (!api.listImportedSkills) return [];
@@ -1696,7 +1703,7 @@ export function AppShell() {
   }
 
   async function importOnlineSkill(skill: OnlineSkillResult): Promise<ImportedSkillResult> {
-    const api = window.multiAgentChat as typeof window.multiAgentChat & {
+    const api = chatApi as typeof chatApi & {
       importOnlineSkill?: (request: ImportOnlineSkillRequest) => Promise<ImportedSkillResult>;
     };
     if (!api.importOnlineSkill) throw new Error("技能导入能力需要重启应用后生效。");
@@ -1706,7 +1713,7 @@ export function AppShell() {
   }
 
   async function installSkill(templateId: string, target: SkillInstallTarget): Promise<InstalledSkillResult> {
-    const api = window.multiAgentChat as typeof window.multiAgentChat & {
+    const api = chatApi as typeof chatApi & {
       installSkill?: (request: { templateId: string; target: SkillInstallTarget }) => Promise<InstalledSkillResult>;
     };
     if (!api.installSkill) throw new Error("技能安装能力需要重启应用后生效。");
@@ -1714,7 +1721,7 @@ export function AppShell() {
   }
 
   async function uninstallSkill(templateId: string, target: SkillInstallTarget): Promise<UninstalledSkillResult> {
-    const api = window.multiAgentChat as typeof window.multiAgentChat & {
+    const api = chatApi as typeof chatApi & {
       uninstallSkill?: (request: { templateId: string; target: SkillInstallTarget }) => Promise<UninstalledSkillResult>;
     };
     if (!api.uninstallSkill) throw new Error("技能卸载能力需要重启应用后生效。");
@@ -1722,7 +1729,7 @@ export function AppShell() {
   }
 
   async function clearHistory(): Promise<void> {
-    const next = await window.multiAgentChat.clearHistory();
+    const next = await chatApi.clearHistory();
     setSnapshot(next);
     setPrompt("");
     setTaskPrompt("");
@@ -1801,7 +1808,7 @@ export function AppShell() {
       updatedAt: now,
     };
     applyPersistedWorkflowDraft(draft);
-    const next = await window.multiAgentChat.updateWorkflowDraft(draft);
+    const next = await workflows.updateDraft(draft);
     setSnapshot(next);
     setActiveFeature("workflow");
   }
@@ -1821,7 +1828,7 @@ export function AppShell() {
     setWorkflowRunProgress([]);
     setWorkflowRunContextDocument("");
     setWorkflowAgentSessionId(undefined);
-    const next = await window.multiAgentChat.updateWorkflowDraft(undefined);
+    const next = await workflows.updateDraft(undefined);
     setSnapshot(next);
   }
 
@@ -1829,7 +1836,7 @@ export function AppShell() {
     if (!activeChat || !canSend) return;
     const text = prompt.trim();
     setPrompt("");
-    const next = await window.multiAgentChat.sendPrompt(text, activeChat.id);
+    const next = await chatApi.sendPrompt(text, activeChat.id);
     setSnapshot(next);
   }
 
@@ -1840,14 +1847,14 @@ export function AppShell() {
 
   async function stopActiveChat(): Promise<void> {
     if (!activeChat) return;
-    const next = await window.multiAgentChat.stopChat(activeChat.id);
+    const next = await chatApi.stopChat(activeChat.id);
     setSnapshot(next);
   }
 
   async function runTask(): Promise<void> {
     const text = taskPrompt.trim();
     if (!text) return;
-    const next = await window.multiAgentChat.runTask({
+    const next = await chatApi.runTask({
       prompt: text,
       configuredAgentId: taskConfiguredAgentId || defaultConfiguredAgentId(snapshot.configuredAgents),
       modelId: configuredAgentModelId(taskConfiguredAgentId || defaultConfiguredAgentId(snapshot.configuredAgents), taskModelId, snapshot.configuredAgents, snapshot.channels),
@@ -1858,23 +1865,23 @@ export function AppShell() {
   }
 
   async function connectScheduledRunner(): Promise<void> {
-    const next = await window.multiAgentChat.connectScheduledWorkflowRunner();
+    const next = await chatApi.connectScheduledWorkflowRunner();
     setSnapshot(next);
   }
 
   async function disconnectScheduledRunner(): Promise<void> {
-    const next = await window.multiAgentChat.disconnectScheduledWorkflowRunner();
+    const next = await chatApi.disconnectScheduledWorkflowRunner();
     setSnapshot(next);
   }
 
   async function refreshScheduledWorkflows(): Promise<void> {
-    const next = await window.multiAgentChat.refreshScheduledWorkflowSchedules();
+    const next = await chatApi.refreshScheduledWorkflowSchedules();
     setSnapshot(next);
   }
 
   async function selectScheduledWorkflowSchedule(scheduleId: string): Promise<void> {
     setScheduledWorkflowMode("detail");
-    const next = await window.multiAgentChat.selectScheduledWorkflowSchedule(scheduleId);
+    const next = await chatApi.selectScheduledWorkflowSchedule(scheduleId);
     setSnapshot(next);
   }
 
@@ -1887,7 +1894,7 @@ export function AppShell() {
   async function createScheduledWorkflow(): Promise<void> {
     const workflow = snapshot.workflowStore.workflows.find((item) => item.workflowId === scheduledWorkflowDraft.workflowId);
     if (!workflow) return;
-    const next = await window.multiAgentChat.createScheduledWorkflowSchedule({
+    const next = await chatApi.createScheduledWorkflowSchedule({
       workflowId: workflow.workflowId,
       title: scheduledWorkflowDraft.title.trim() || workflow.title,
       enabled: scheduledWorkflowDraft.enabled,
@@ -1906,23 +1913,23 @@ export function AppShell() {
     schedule: ScheduledWorkflowSchedule,
     update: Partial<Pick<ScheduledWorkflowSchedule, "enabled" | "title" | "intervalSeconds" | "frequency" | "timeOfDay" | "timezone" | "weekdays" | "dayOfMonth">>,
   ): Promise<void> {
-    const next = await window.multiAgentChat.updateScheduledWorkflowSchedule(schedule.scheduleId, update);
+    const next = await chatApi.updateScheduledWorkflowSchedule(schedule.scheduleId, update);
     setSnapshot(next);
   }
 
   async function deleteScheduledWorkflow(scheduleId: string): Promise<void> {
-    const next = await window.multiAgentChat.deleteScheduledWorkflowSchedule(scheduleId);
+    const next = await chatApi.deleteScheduledWorkflowSchedule(scheduleId);
     setSnapshot(next);
   }
 
   async function triggerScheduledWorkflow(scheduleId: string): Promise<void> {
-    await window.multiAgentChat.triggerScheduledWorkflowSchedule(scheduleId);
+    await chatApi.triggerScheduledWorkflowSchedule(scheduleId);
   }
 
   async function handleScheduledWorkflowEvent(event: ScheduledWorkflowDueEvent): Promise<void> {
     const target = scheduledWorkflowEventTarget(event);
     if (!target) {
-      await window.multiAgentChat.ackScheduledWorkflowEvent(event.eventId, {
+      await chatApi.ackScheduledWorkflowEvent(event.eventId, {
         status: "failed",
         message: "Scheduled event payload is missing scheduleId or workflowId.",
       });
@@ -1932,7 +1939,7 @@ export function AppShell() {
     const workflow = currentSnapshot.workflowStore.workflows.find((item) => item.workflowId === target.workflowId);
     const runId = `scheduled_run_${event.eventId}`;
     if (!workflow) {
-      const failedSnapshot = await window.multiAgentChat.recordScheduledWorkflowRun({
+      const failedSnapshot = await chatApi.recordScheduledWorkflowRun({
         runId,
         scheduleId: target.scheduleId,
         workflowId: target.workflowId,
@@ -1944,14 +1951,14 @@ export function AppShell() {
         message: `Workflow ${target.workflowId} was not found locally.`,
       });
       setSnapshot(failedSnapshot);
-      await window.multiAgentChat.ackScheduledWorkflowEvent(event.eventId, {
+      await chatApi.ackScheduledWorkflowEvent(event.eventId, {
         status: "failed",
         message: `Workflow ${target.workflowId} was not found locally.`,
       });
       return;
     }
 
-    const runningSnapshot = await window.multiAgentChat.recordScheduledWorkflowRun({
+    const runningSnapshot = await chatApi.recordScheduledWorkflowRun({
       runId,
       scheduleId: target.scheduleId,
       workflowId: workflow.workflowId,
@@ -1967,14 +1974,14 @@ export function AppShell() {
     const result = await runWorkflowGraphInternal(workflow);
     const finalStatus = result.ok ? "completed" : "failed";
     const message = result.ok ? "Workflow completed." : result.error || "Workflow failed.";
-    const finishedSnapshot = await window.multiAgentChat.finishScheduledWorkflowRun(runId, {
+    const finishedSnapshot = await chatApi.finishScheduledWorkflowRun(runId, {
       status: finalStatus,
       ...(result.workflowRunId !== undefined ? { workflowRunId: result.workflowRunId } : {}),
       message,
       finishedAt: Date.now(),
     });
     setSnapshot(finishedSnapshot);
-    await window.multiAgentChat.ackScheduledWorkflowEvent(event.eventId, {
+    await chatApi.ackScheduledWorkflowEvent(event.eventId, {
       status: finalStatus,
       ...(result.workflowRunId !== undefined ? { workflowRunId: result.workflowRunId } : {}),
       message,
@@ -2026,7 +2033,7 @@ export function AppShell() {
       modelId,
       workDir: snapshotRef.current.workDir,
     };
-    const response = await window.multiAgentChat.askWorkflowAgent(sessionId ? { ...request, sessionId } : request);
+    const response = await workflows.askAgent(sessionId ? { ...request, sessionId } : request);
     setWorkflowAgentSessionId(response.sessionId);
     return response.content.trim() || "Workflow agent returned an empty response.";
   }
@@ -2103,7 +2110,7 @@ export function AppShell() {
   }
 
   async function selectWorkflow(workflowId: string): Promise<void> {
-    const next = await window.multiAgentChat.selectWorkflow(workflowId);
+    const next = await workflows.selectWorkflow(workflowId);
     setSnapshot(next);
   }
 
@@ -2153,7 +2160,7 @@ export function AppShell() {
       let latestSnapshot = snapshotRef.current;
       const storagePlan = workflowStoragePlanFor(runWorkflowId);
       const baseWorkflowContextDocument = [initialWorkflowContextDocument.trim(), workflowStoragePlanDocument(storagePlan)].filter(Boolean).join("\n\n");
-      latestSnapshot = await window.multiAgentChat.startWorkflowRun({
+      latestSnapshot = await workflows.startRun({
         workflowId: runWorkflowId,
         contextDocument: baseWorkflowContextDocument,
       });
@@ -2187,7 +2194,7 @@ export function AppShell() {
       };
       const cleanupWorkflowTask = async (taskId: string): Promise<void> => {
         try {
-          latestSnapshot = await window.multiAgentChat.deleteTask(taskId);
+          latestSnapshot = await chatApi.deleteTask(taskId);
           setSnapshot(latestSnapshot);
         } catch (error) {
           console.warn("Failed to clean up workflow task", taskId, error);
@@ -2213,7 +2220,7 @@ export function AppShell() {
         workDir: string;
       }): Promise<TaskRun> => {
         const existingTaskIds = new Set(latestSnapshot.tasks.map((task) => task.id));
-        latestSnapshot = await window.multiAgentChat.runTask(request);
+        latestSnapshot = await chatApi.runTask(request);
         setSnapshot(latestSnapshot);
         const task = latestSnapshot.tasks
           .filter((item) => !existingTaskIds.has(item.id))
@@ -2228,7 +2235,7 @@ export function AppShell() {
       const waitForTask = async (taskId: string, onTaskUpdate?: (task: TaskRun) => void): Promise<TaskRun> => {
         const startedAt = Date.now();
         while (Date.now() - startedAt < WORKFLOW_TASK_TIMEOUT_MS) {
-          const polledSnapshot = await window.multiAgentChat.getSnapshot();
+          const polledSnapshot = await snapshots.getSnapshot();
           latestSnapshot = polledSnapshot;
           setSnapshot(polledSnapshot);
           const task = polledSnapshot.tasks.find((item) => item.id === taskId);
@@ -2473,7 +2480,7 @@ export function AppShell() {
         status: "completed",
         detail: "Main agent report ready",
       });
-      latestSnapshot = await window.multiAgentChat.finishWorkflowRun({
+      latestSnapshot = await workflows.finishRun({
         workflowId: runWorkflowId,
         runId: activeWorkflowRunId,
         status: "completed",
@@ -2490,7 +2497,7 @@ export function AppShell() {
       setWorkflowRunProgress(latestRunProgress);
       if (activeWorkflowRunId) {
         try {
-          const failedSnapshot = await window.multiAgentChat.finishWorkflowRun({
+          const failedSnapshot = await workflows.finishRun({
             workflowId: runWorkflowId,
             runId: activeWorkflowRunId,
             status: "failed",
@@ -2520,7 +2527,7 @@ export function AppShell() {
 
   async function rerunTask(task: TaskRun): Promise<void> {
     if (task.running) return;
-    const next = await window.multiAgentChat.runTask({
+    const next = await chatApi.runTask({
       prompt: task.prompt,
       configuredAgentId: task.configuredAgentId,
       modelId: task.modelId,
@@ -2530,7 +2537,7 @@ export function AppShell() {
   }
 
   async function selectTask(taskId: string): Promise<void> {
-    const next = await window.multiAgentChat.selectTask(taskId);
+    const next = await chatApi.selectTask(taskId);
     setSnapshot(next);
   }
 
@@ -2540,23 +2547,23 @@ export function AppShell() {
   }
 
   async function stopTask(taskId: string): Promise<void> {
-    const next = await window.multiAgentChat.stopTask(taskId);
+    const next = await chatApi.stopTask(taskId);
     setSnapshot(next);
   }
 
   async function updateTaskProgress(taskId: string, progress: TaskProgress): Promise<void> {
-    const next = await window.multiAgentChat.updateTaskProgress(taskId, progress);
+    const next = await chatApi.updateTaskProgress(taskId, progress);
     setSnapshot(next);
   }
 
   async function deleteTask(taskId: string): Promise<void> {
-    const next = await window.multiAgentChat.deleteTask(taskId);
+    const next = await chatApi.deleteTask(taskId);
     setSnapshot(next);
   }
 
   async function createTeam(): Promise<void> {
     const configuredAgentId = defaultConfiguredAgentId(snapshot.configuredAgents);
-    const next = await window.multiAgentChat.createTeam({
+    const next = await chatApi.createTeam({
       name: `Agent Team ${snapshot.teams.length + 1}`,
       mode: "pipeline",
       sharedContext: "",
@@ -2581,29 +2588,29 @@ export function AppShell() {
     teamId: string,
     update: { name?: string; mode?: AgentTeamMode; sharedContext?: string; members?: AgentTeamMember[] },
   ): Promise<void> {
-    const next = await window.multiAgentChat.updateTeam(teamId, update);
+    const next = await chatApi.updateTeam(teamId, update);
     setSnapshot(next);
   }
 
   async function deleteTeam(teamId: string): Promise<void> {
-    const next = await window.multiAgentChat.deleteTeam(teamId);
+    const next = await chatApi.deleteTeam(teamId);
     setSnapshot(next);
   }
 
   async function selectTeam(teamId: string): Promise<void> {
-    const next = await window.multiAgentChat.selectTeam(teamId);
+    const next = await chatApi.selectTeam(teamId);
     setSnapshot(next);
   }
 
   async function selectTeamRun(teamRunId: string): Promise<void> {
-    const next = await window.multiAgentChat.selectTeamRun(teamRunId);
+    const next = await chatApi.selectTeamRun(teamRunId);
     setSnapshot(next);
   }
 
   async function runTeam(teamId: string): Promise<void> {
     const text = teamPrompt.trim();
     if (!text) return;
-    const next = await window.multiAgentChat.runTeam({
+    const next = await chatApi.runTeam({
       teamId,
       prompt: text,
       target: { kind: "workspace", label: "Workspace", value: snapshot.workDir },
@@ -2614,39 +2621,50 @@ export function AppShell() {
   }
 
   async function stopTeamRun(teamRunId: string): Promise<void> {
-    const next = await window.multiAgentChat.stopTeamRun(teamRunId);
+    const next = await chatApi.stopTeamRun(teamRunId);
     setSnapshot(next);
   }
 
+  const providerSnapshot = useMemo(() => ({ snapshot, setSnapshot }), [snapshot]);
+  const providerPreferences = useMemo(
+    () => ({ theme, setTheme, language, setLanguage, keepAwake, setKeepAwake, providerKeys, setProviderKeys }),
+    [theme, language, keepAwake, providerKeys],
+  );
+  const providerNavigation = useMemo(
+    () => ({ activeFeature, setActiveFeature, paletteOpen, setPaletteOpen }),
+    [activeFeature, paletteOpen],
+  );
+
   return (
-    <div className={appShellClass(activeFeature)}>
-      <FeatureRail activeFeature={activeFeature} theme={theme} text={text} onSelectFeature={setActiveFeature} onToggleTheme={toggleTheme} />
+    <AppProviders snapshot={providerSnapshot} preferences={providerPreferences} navigation={providerNavigation}>
+      <div className={appShellClass(activeFeature)}>
+        <FeatureRail activeFeature={activeFeature} theme={theme} text={text} onSelectFeature={setActiveFeature} onToggleTheme={toggleTheme} />
 
-      <ResourceSidebar
-        activeFeature={activeFeature}
-        language={language}
-        text={text}
-        model={sidebarModel}
-        onOpenPalette={() => setPaletteOpen(true)}
-        onCreateChat={createChat}
-        onSelectChat={selectChat}
-        onOpenChatContextMenu={openChatContextMenu}
-        onDeleteChat={deleteChat}
-        onTaskStatusFilterChange={setTaskStatusFilter}
-        onSelectTask={selectTask}
-        onNewWorkflow={createNewWorkflow}
-        onSelectWorkflow={selectWorkflow}
-        onOpenWorkflowContextMenu={openWorkflowContextMenu}
-        onStartWorkflowRename={startWorkflowRename}
-        onWorkflowRenameDraftChange={(title) => setWorkflowRenameDraft((current) => (current ? { ...current, title } : current))}
-        onConfirmWorkflowRename={confirmWorkflowRename}
-        onCancelWorkflowRename={() => setWorkflowRenameDraft(undefined)}
-        onDeleteWorkflow={deleteWorkflow}
-        onStartCreatingScheduledWorkflow={startCreatingScheduledWorkflow}
-        onSelectScheduledWorkflowSchedule={selectScheduledWorkflowSchedule}
-      />
+        <ResourceSidebar
+          activeFeature={activeFeature}
+          language={language}
+          text={text}
+          model={sidebarModel}
+          onOpenPalette={() => setPaletteOpen(true)}
+          onCreateChat={createChat}
+          onSelectChat={selectChat}
+          onOpenChatContextMenu={openChatContextMenu}
+          onDeleteChat={deleteChat}
+          onTaskStatusFilterChange={setTaskStatusFilter}
+          onSelectTask={selectTask}
+          onNewWorkflow={createNewWorkflow}
+          onSelectWorkflow={selectWorkflow}
+          onOpenWorkflowContextMenu={openWorkflowContextMenu}
+          onStartWorkflowRename={startWorkflowRename}
+          onWorkflowRenameDraftChange={(title) => setWorkflowRenameDraft((current) => (current ? { ...current, title } : current))}
+          onConfirmWorkflowRename={confirmWorkflowRename}
+          onCancelWorkflowRename={() => setWorkflowRenameDraft(undefined)}
+          onDeleteWorkflow={deleteWorkflow}
+          onStartCreatingScheduledWorkflow={startCreatingScheduledWorkflow}
+          onSelectScheduledWorkflowSchedule={selectScheduledWorkflowSchedule}
+        />
 
-      <main className={appContentClass(activeFeature)}>
+        <main className={appContentClass(activeFeature)}>
         {activeFeature === "tasks" ? (
           <TaskPage
             prompt={taskPrompt}
@@ -2813,9 +2831,10 @@ export function AppShell() {
             onRefresh={refresh}
           />
         )}
-      </main>
+        </main>
 
-      <CommandPalette open={paletteOpen} commands={paletteCommands} onClose={() => setPaletteOpen(false)} />
-    </div>
+        <CommandPalette open={paletteOpen} commands={paletteCommands} onClose={() => setPaletteOpen(false)} />
+      </div>
+    </AppProviders>
   );
 }
