@@ -1,6 +1,7 @@
 # Renderer Refactor Progress
 
 Date: 2026-06-28
+Last updated: 2026-06-29
 Branch: `refactor/workflow-main-runner-boundaries`
 Scope: renderer shell decomposition, app-level provider/service boundaries, and workflow/runtime boundary cleanup
 
@@ -89,6 +90,35 @@ Current effect:
 - snapshot subscription and workflow IPC are routed through services
 - most future feature extraction can happen without expanding direct preload coupling again
 
+### 7. Workflow runner hook extraction
+
+Committed in `598761a` (`refactor: extract workflow runner hook`):
+
+- `src/renderer/src/pages/workflow/hooks/useWorkflowRunner.ts` now owns `runWorkflowGraphInternal`
+- `AppShell` now consumes the workflow runner through a dedicated hook boundary instead of keeping the full runner implementation inline
+- `useScheduledWorkflowRunner` continues to trigger workflow execution through the extracted runner interface
+
+Current effect:
+
+- the longest imperative workflow execution path no longer lives directly inside `AppShell`
+- workflow execution behavior now has a concrete feature hook boundary that can be reduced further without re-expanding the shell
+
+### 8. Compatibility helper reuse started
+
+Committed incrementally in:
+
+- `6bd0198` (`refactor: reuse app state helpers in shell exports`)
+- `4784aa2` (`refactor: reuse workflow domain helpers in shell exports`)
+- `e919445` (`refactor: reuse workflow artifact helpers in shell exports`)
+- `05be3f7` (`refactor: reuse workflow draft state helpers in shell exports`)
+- `4243272` (`refactor: narrow app compatibility helper exports`)
+
+Current effect:
+
+- `AppShell` compatibility exports have started delegating to `src/renderer/src/app/app-state.ts` and `src/renderer/src/pages/workflow/workflow-domain.ts` instead of keeping duplicate implementations inline
+- `App.tsx` still preserves the legacy `./App` surface, but a subset of pure helpers now explicitly re-export from their real ownership modules
+- this reduces duplicate logic while preserving the current test/import compatibility layer
+
 ## Files Most Affected So Far
 
 - `src/renderer/src/App.tsx`
@@ -104,6 +134,9 @@ Current effect:
 - `src/renderer/src/app/services/snapshot-service.ts`
 - `src/renderer/src/app/services/workflow-service.ts`
 - `src/renderer/src/app/state/*.tsx`
+- `src/renderer/src/pages/workflow/hooks/useWorkflowDraft.ts`
+- `src/renderer/src/pages/workflow/hooks/useWorkflowRunner.ts`
+- `src/renderer/src/pages/workflow/hooks/useScheduledWorkflowRunner.ts`
 - `src/renderer/src/pages/workflow/workflow-domain.ts`
 - `src/renderer/src/ARCHITECTURE.md`
 
@@ -112,6 +145,7 @@ Current effect:
 ### Passed
 
 - `npm run typecheck`
+  - re-run and passing after the workflow runner extraction and each compatibility-helper reuse slice through `05be3f7`
 
 ### Still Failing
 
@@ -170,27 +204,25 @@ Still pending:
 Current state:
 
 - workflow pure/domain helpers have started moving into dedicated modules
+- `useWorkflowDraft`, `useWorkflowRunner`, and `useScheduledWorkflowRunner` now exist and are wired into `AppShell`
+- workflow sidebar rename/context-menu state already has its own hook boundary in `useWorkflowSidebarState`
 - workflow IPC now has a dedicated service entrypoint
-- actual workflow orchestration still lives in `AppShell`
+- `runWorkflowGraphInternal` no longer lives directly in `AppShell`
+- some compatibility-only workflow helpers in `AppShell` now delegate to `app/app-state.ts` and `workflow-domain.ts`
+- `AppShell` still owns too much workflow composition and too many workflow controller inputs/outputs
 
 Still pending:
 
-- create `pages/workflow/hooks/useWorkflowDraft`
-- move workflow draft hydrate / persist / reset logic out of `AppShell`
-- move workflow-local UI state out of `AppShell`
-  - workflow context menu
-  - workflow rename draft
-  - other workflow-only interaction state
-- create `pages/workflow/hooks/useWorkflowRunner`
-- move `runWorkflowGraphInternal` out of `AppShell`
-- move node scheduling, judge/retry flow, progress accumulation, context document updates, and final review handling out of `AppShell`
+- keep shrinking `useWorkflowDraft` / `useWorkflowRunner` / `useScheduledWorkflowRunner` option surfaces so they stop depending on large shell-local setter bags
+- move any remaining workflow-only interaction state that is still local to `AppShell` behind feature-owned hooks/controllers
+- reduce the amount of workflow orchestration state that is still assembled in `AppShell` before being passed down
 - reduce `WorkflowPage` props from a large primitive/callback surface toward `controller` or `viewModel + actions`
-- create `pages/workflow/hooks/useScheduledWorkflowRunner` or equivalent workflow/schedules boundary for due-event handling and ack flow
+- decide whether the workflow hooks should collapse into a higher-level workflow controller boundary for the page and sidebar
 
 Reason this remains first priority:
 
 - workflow is still the heaviest domain in `AppShell`
-- it contains the longest imperative path and the most renderer-owned orchestration
+- even after the hook extraction, it still contains the most renderer-owned orchestration and the widest shell-to-feature prop surface
 
 ### D. Runtime and configuration are only split at the navigation level
 
@@ -304,22 +336,24 @@ Still pending:
 Current state:
 
 - `App.tsx` remains a compatibility wrapper and re-export surface for tests and existing imports
+- `AppShell` still contains compatibility exports for a number of helpers, but several pure helpers now delegate to `app/app-state.ts` and `pages/workflow/workflow-domain.ts`
+- `App.tsx` has started explicitly re-exporting a subset of pure helpers from those real ownership modules while still keeping `export * from "./AppShell"` for broad compatibility
 
 Still pending:
 
 - identify every remaining helper still imported from `./App`
 - migrate those imports to feature-local or app-local modules
-- reduce compatibility re-exports only after replacement imports and tests are in place
+- replace broad star-based compatibility exposure with a smaller explicit export surface once replacement imports and tests are in place
+- remove the remaining duplicate compatibility wrappers from `AppShell` after direct `./App` consumers stop depending on them
 - keep `App.tsx` thin until the migration is complete, then simplify it further
 
 ## Recommended Next Sequence
 
-1. Extract workflow draft + workflow runner ownership from `AppShell`.
-2. Move scheduled workflow event handling behind workflow/schedules domain boundaries.
-3. Split runtime diagnostics and config editor ownership into dedicated hooks/controllers.
-4. Extract chat, task, team, and schedules feature controllers.
-5. Migrate tests off the legacy `App.tsx` surface and keep only a minimal shell integration test layer.
-6. Split feature styles and then shrink the compatibility layer.
+1. Keep shrinking the remaining workflow composition surface in `AppShell` now that the workflow hooks exist.
+2. Split runtime diagnostics and config editor ownership into dedicated hooks/controllers.
+3. Extract chat, task, team, and schedules feature controllers.
+4. Migrate tests off the legacy `App.tsx` surface and then replace broad compatibility re-exports with an explicit minimal surface.
+5. Split feature styles after JSX/controller boundaries stabilize.
 
 ## Definition Of Done For This Goal
 
