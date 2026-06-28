@@ -795,7 +795,18 @@ export function AppShell() {
     workflowRunIds,
     workflowAgentSessionId,
     workflowCreatedAt,
+    resetWorkflowLocalDraft,
+    stopWorkflowGrill,
+    createNewWorkflow,
+    resetWorkflowSession,
+    draftWorkflowGraph,
+    sendWorkflowReply,
+    updateWorkflowNode,
+    selectWorkflow,
     applyPersistedWorkflowDraft,
+    askWorkflowAgentFor,
+    beginWorkflowAssistantRequest,
+    hasWorkflowAssistantStreamed,
     setWorkflowId,
     setWorkflowTitle,
     setWorkflowStatus,
@@ -1297,7 +1308,7 @@ export function AppShell() {
     setWorkflowContextMenu({ workflowId, x: event.clientX, y: event.clientY });
   }
 
-  function resetWorkflowLocalDraft(): void {
+  function legacyResetWorkflowLocalDraft(): void {
     abandonWorkflowGrillRequest();
     setWorkflowRunning(false);
     setWorkflowObjective("");
@@ -1356,7 +1367,7 @@ export function AppShell() {
     if (next.workflowDraft) {
       applyPersistedWorkflowDraft(next.workflowDraft);
     } else if (targetWorkflowId === workflowId) {
-      resetWorkflowLocalDraft();
+      legacyResetWorkflowLocalDraft();
     }
   }
 
@@ -1627,7 +1638,7 @@ export function AppShell() {
     workflowAssistantContentRef.current = "";
   }
 
-  function stopWorkflowGrill(): void {
+  function legacyStopWorkflowGrill(): void {
     if (!workflowRunning) return;
     const assistantMessageId = workflowAssistantMessageIdRef.current;
     const partial = workflowAssistantContentRef.current.trim();
@@ -1645,7 +1656,7 @@ export function AppShell() {
     }
   }
 
-  async function createNewWorkflow(): Promise<void> {
+  async function legacyCreateNewWorkflow(): Promise<void> {
     abandonWorkflowGrillRequest();
     setWorkflowRunning(false);
     const now = Date.now();
@@ -1682,7 +1693,7 @@ export function AppShell() {
     setActiveFeature("workflow");
   }
 
-  async function resetWorkflowSession(): Promise<void> {
+  async function legacyResetWorkflowSession(): Promise<void> {
     workflowRequestIdRef.current = undefined;
     workflowAssistantMessageIdRef.current = undefined;
     workflowStreamingStartedRef.current = false;
@@ -1881,14 +1892,14 @@ export function AppShell() {
     setWorkflowRunProgress((current) => current.map((item) => (item.nodeId === nodeId ? { ...item, ...update } : item)));
   }
 
-  function draftWorkflowGraph(): void {
+  function legacyDraftWorkflowGraph(): void {
     const nextGraph = createWorkflowGraphFromObjective(workflowObjective);
     syncWorkflowGraph(nextGraph);
     setWorkflowGraphReady(true);
     setWorkflowError(undefined);
   }
 
-  async function askWorkflowAgentFor(
+  async function legacyAskWorkflowAgentFor(
     promptText: string,
     sessionId: string | undefined,
     requestId: string,
@@ -1909,7 +1920,7 @@ export function AppShell() {
 
   async function askSelectedWorkflowAgent(promptText: string, sessionId: string | undefined, requestId: string): Promise<string> {
     const configuredAgentId = workflowConfiguredAgentId || defaultConfiguredAgentId(snapshot.configuredAgents);
-    return askWorkflowAgentFor(
+    return legacyAskWorkflowAgentFor(
       promptText,
       sessionId,
       requestId,
@@ -1918,7 +1929,7 @@ export function AppShell() {
     );
   }
 
-  async function sendWorkflowReply(): Promise<void> {
+  async function legacySendWorkflowReply(): Promise<void> {
     if (workflowRunning) return;
     const starting = workflowMessages.length === 0;
     const text = (starting ? workflowObjective : workflowReply).trim();
@@ -1970,7 +1981,7 @@ export function AppShell() {
     }
   }
 
-  function updateWorkflowNode(nodeId: string, update: Partial<WorkflowGraphNode>): void {
+  function legacyUpdateWorkflowNode(nodeId: string, update: Partial<WorkflowGraphNode>): void {
     const nextGraph = {
       ...workflowGraph,
       nodes: workflowGraph.nodes.map((node) => (node.id === nodeId ? { ...node, ...update } : node)),
@@ -1978,7 +1989,7 @@ export function AppShell() {
     syncWorkflowGraph(nextGraph);
   }
 
-  async function selectWorkflow(workflowId: string): Promise<void> {
+  async function legacySelectWorkflow(workflowId: string): Promise<void> {
     const next = await workflows.selectWorkflow(workflowId);
     setSnapshot(next);
   }
@@ -2309,10 +2320,7 @@ export function AppShell() {
       const finalReviewPrompt = workflowFinalReviewPrompt(runGraph, nodeArtifacts, runContextDocument, completedNodeProgress, storagePlan);
       const finalReviewRequestId = `workflow-final-${Date.now()}-${Math.random().toString(36).slice(2)}`;
       const finalAssistantMessageId = `workflow-final-assistant-${Date.now()}`;
-      workflowRequestIdRef.current = finalReviewRequestId;
-      workflowAssistantMessageIdRef.current = finalAssistantMessageId;
-      workflowStreamingStartedRef.current = false;
-      workflowAssistantContentRef.current = "";
+      beginWorkflowAssistantRequest(finalReviewRequestId, finalAssistantMessageId);
       setWorkflowMessages((current) => [...current, { id: finalAssistantMessageId, role: "assistant", content: WORKFLOW_THINKING_MESSAGE }]);
       updateWorkflowRunProgress(WORKFLOW_FINAL_REVIEW_NODE_ID, {
         status: "running",
@@ -2320,7 +2328,7 @@ export function AppShell() {
       });
       try {
         finalReport = await askWorkflowAgentFor(finalReviewPrompt, runAgentSessionId, finalReviewRequestId, runConfiguredAgentId, runModelId);
-        if (!workflowStreamingStartedRef.current && finalReport) {
+        if (!hasWorkflowAssistantStreamed() && finalReport) {
           setWorkflowMessages((current) =>
             current.map((message) => (message.id === finalAssistantMessageId ? { ...message, content: finalReport } : message)),
           );

@@ -75,12 +75,12 @@ export interface WorkflowDraftController {
   resetWorkflowLocalDraft: () => void;
   abandonWorkflowGrillRequest: () => void;
   stopWorkflowGrill: () => void;
-  createNewWorkflow: () => Promise<AppSnapshot>;
-  resetWorkflowSession: () => Promise<AppSnapshot>;
+  createNewWorkflow: () => Promise<void>;
+  resetWorkflowSession: () => Promise<void>;
   draftWorkflowGraph: () => void;
   sendWorkflowReply: () => Promise<void>;
   updateWorkflowNode: (nodeId: string, update: Partial<WorkflowGraphNode>) => void;
-  selectWorkflow: (workflowId: string) => Promise<AppSnapshot>;
+  selectWorkflow: (workflowId: string) => Promise<void>;
   applyPersistedWorkflowDraft: (draft: WorkflowDraftState) => void;
   syncWorkflowGraph: (nextGraph: WorkflowGraph) => void;
   applyWorkflowGraphFromAgentContent: (content: string) => boolean;
@@ -434,7 +434,7 @@ export function useWorkflowDraft({
     }
   }, [abandonWorkflowGrillRequest]);
 
-  const createNewWorkflow = useCallback(async (): Promise<AppSnapshot> => {
+  const createNewWorkflow = useCallback(async (): Promise<void> => {
     abandonWorkflowGrillRequest();
     setWorkflowRunning(false);
     const now = Date.now();
@@ -469,7 +469,6 @@ export function useWorkflowDraft({
     const next = await workflows.updateDraft(draft);
     setSnapshot(next);
     onCreateNewWorkflow?.();
-    return next;
   }, [
     abandonWorkflowGrillRequest,
     applyPersistedWorkflowDraft,
@@ -482,7 +481,7 @@ export function useWorkflowDraft({
     workflows,
   ]);
 
-  const resetWorkflowSession = useCallback(async (): Promise<AppSnapshot> => {
+  const resetWorkflowSession = useCallback(async (): Promise<void> => {
     abandonWorkflowGrillRequest();
     setWorkflowObjective("");
     setWorkflowReply("");
@@ -496,7 +495,6 @@ export function useWorkflowDraft({
     setWorkflowAgentSessionId(undefined);
     const next = await workflows.updateDraft(undefined);
     setSnapshot(next);
-    return next;
   }, [abandonWorkflowGrillRequest, setSnapshot, workflows]);
 
   const draftWorkflowGraph = useCallback((): void => {
@@ -598,9 +596,10 @@ export function useWorkflowDraft({
     syncWorkflowGraph(nextGraph);
   }, [syncWorkflowGraph, workflowGraph]);
 
-  const selectWorkflow = useCallback((selectedWorkflowId: string): Promise<AppSnapshot> => {
-    return workflows.selectWorkflow(selectedWorkflowId);
-  }, [workflows]);
+  const selectWorkflow = useCallback(async (selectedWorkflowId: string): Promise<void> => {
+    const next = await workflows.selectWorkflow(selectedWorkflowId);
+    setSnapshot(next);
+  }, [setSnapshot, workflows]);
 
   const updateWorkflowRunProgress = useCallback((nodeId: string, update: Partial<WorkflowRunProgressItem>): void => {
     setWorkflowRunProgress((current) => current.map((item) => (item.nodeId === nodeId ? { ...item, ...update } : item)));
