@@ -16,6 +16,8 @@ import {
   shouldRefreshBalances as shouldRefreshBalancesFromAppState,
   workflowArtifactSummary as workflowArtifactSummaryFromAppState,
   workflowContextDocumentFromArtifacts as workflowContextDocumentFromArtifactsFromAppState,
+  workflowDraftShouldPersist as workflowDraftShouldPersistFromAppState,
+  workflowTaskLiveDetail as workflowTaskLiveDetailFromAppState,
 } from "./app/app-state";
 import {
   agentAccent,
@@ -358,49 +360,8 @@ function taskArtifact(task: TaskRun): string {
   return `${task.title} completed without assistant output.`;
 }
 
-function compactWorkflowActivity(content: string, limit = 140): string {
-  const normalized = content.replace(/\s+/g, " ").trim();
-  if (normalized.length <= limit) return normalized;
-  return `${normalized.slice(0, Math.max(0, limit - 3)).trim()}...`;
-}
-
-function workflowToolResultDisplayContent(content: string): string {
-  const lines = content.replace(/\r\n/g, "\n").split("\n");
-  const filtered = lines.filter((line) => {
-    const trimmed = line.trim();
-    if (!trimmed) return false;
-    if (/^Chunk ID:/i.test(trimmed)) return false;
-    if (/^Wall time:/i.test(trimmed)) return false;
-    if (/^Process exited with code\b/i.test(trimmed)) return false;
-    if (/^Original token count:/i.test(trimmed)) return false;
-    if (/^Output:$/i.test(trimmed)) return false;
-    return true;
-  });
-  return filtered.join("\n").trim() || content;
-}
-
 export function workflowTaskLiveDetail(task: TaskRun): string {
-  const latestEvent = task.messages
-    .flatMap((message) => message.events ?? [])
-    .sort((left, right) => left.timestamp - right.timestamp)
-    .at(-1);
-
-  if (latestEvent) {
-    const name = latestEvent.name ?? "tool";
-    const eventContent = latestEvent.type === "tool_result" ? workflowToolResultDisplayContent(latestEvent.content) : latestEvent.content;
-    const content = compactWorkflowActivity(eventContent);
-    if (latestEvent.type === "tool_call") return content ? `Tool ${name}: ${content}` : `Tool ${name} started`;
-    if (latestEvent.type === "tool_result") return content ? `Tool ${name} done: ${content}` : `Tool ${name} done`;
-    if (latestEvent.type === "system") return content ? `System: ${content}` : "System event";
-    if (latestEvent.type === "handoff") return content ? `Handoff: ${content}` : "Handoff received";
-    if (latestEvent.type === "error") return content ? `Error: ${content}` : "Agent error";
-    return content || "Agent event";
-  }
-
-  const latestAssistant = [...task.messages].reverse().find((message) => message.role === "assistant" && message.content.trim());
-  if (latestAssistant) return `Output: ${compactWorkflowActivity(latestAssistant.content)}`;
-  if (task.sessionId) return `Session ${task.sessionId}`;
-  return "Starting agent...";
+  return workflowTaskLiveDetailFromAppState(task);
 }
 
 interface WorkflowDraftPersistInput {
@@ -420,19 +381,7 @@ interface WorkflowDraftPersistInput {
 }
 
 export function workflowDraftShouldPersist(input: WorkflowDraftPersistInput): boolean {
-  const hasContent = Boolean(
-    input.objective.trim() ||
-      input.messages.length > 0 ||
-      input.graphReady ||
-      input.reply.trim() ||
-      input.error ||
-      input.runProgress.length > 0 ||
-      input.runContextDocument.trim() ||
-      input.contextDocument.trim() ||
-      input.finalReport.trim() ||
-      input.agentSessionId,
-  );
-  return hasContent || input.activeWorkflowId === input.workflowId || input.workflowIds.includes(input.workflowId);
+  return workflowDraftShouldPersistFromAppState(input);
 }
 
 interface BalanceRefreshInput {
