@@ -10,6 +10,12 @@ import { multiAgentChatService } from "./app/services/multi-agent-chat-service";
 import { snapshotService } from "./app/services/snapshot-service";
 import { workflowService } from "./app/services/workflow-service";
 import {
+  DEFAULT_SNAPSHOT as APP_STATE_DEFAULT_SNAPSHOT,
+  applyProviderModelIdToAgentConfig as applyProviderModelIdToAgentConfigFromAppState,
+  applyProviderPresetToConfiguredAgent as applyProviderPresetToConfiguredAgentFromAppState,
+  shouldRefreshBalances as shouldRefreshBalancesFromAppState,
+} from "./app/app-state";
+import {
   agentAccent,
   agentLabel,
   configuredAgentById,
@@ -108,7 +114,6 @@ import {
   type OnlineSkillResult,
 } from "../../shared/online-skills";
 import {
-  DEFAULT_SCHEDULED_WORKFLOW_CLOUD_BASE_URL,
   DEFAULT_SCHEDULED_WORKFLOW_TIMEZONE,
 } from "../../shared/types";
 import { WORKFLOW_TOTAL_QUESTION_COUNT } from "../../shared/workflow-agent";
@@ -236,34 +241,7 @@ function targetLabel(target: SkillInstallTarget): string {
 
 type MaybePromise = void | Promise<void>;
 
-const DEFAULT_SNAPSHOT: AppSnapshot = {
-  detectedAt: 0,
-  activeChatId: undefined,
-  activeTaskId: undefined,
-  activeTeamId: undefined,
-  activeTeamRunId: undefined,
-  workDir: "",
-  runtimes: [],
-  channels: [],
-  configuredAgents: [],
-  chats: [],
-  tasks: [],
-  teams: [],
-  teamRuns: [],
-  workflowStore: {
-    activeWorkflowId: undefined,
-    workflows: [],
-    runs: [],
-  },
-  scheduledWorkflowStore: {
-    activeScheduleId: undefined,
-    runnerConfig: { baseUrl: DEFAULT_SCHEDULED_WORKFLOW_CLOUD_BASE_URL },
-    runnerStatus: { connected: false, connecting: false },
-    schedules: [],
-    runs: [],
-  },
-  workflowDraft: undefined,
-};
+const DEFAULT_SNAPSHOT = APP_STATE_DEFAULT_SNAPSHOT;
 
 function activeChatFrom(snapshot: AppSnapshot): ChatSession | undefined {
   return snapshot.chats.find((chat) => chat.id === snapshot.activeChatId) ?? snapshot.chats[0];
@@ -305,12 +283,7 @@ function createChannel(agentId: AgentId, existingIds: string[]): AgentChannel {
 }
 
 export function applyProviderPresetToConfiguredAgent(agent: ConfiguredAgent, channel: AgentChannel, preset: AgentProviderPreset): ConfiguredAgent {
-  return {
-    ...agent,
-    channelId: channel.id,
-    runtimeAgentId: preset.runtimeAgentId,
-    modelId: DEFAULT_MODEL_ID,
-  };
+  return applyProviderPresetToConfiguredAgentFromAppState(agent, channel, preset);
 }
 
 export function applyProviderModelIdToAgentConfig(
@@ -318,22 +291,7 @@ export function applyProviderModelIdToAgentConfig(
   channel: AgentChannel,
   rawModelId: string,
 ): { agent: ConfiguredAgent; channel: AgentChannel } {
-  const modelId = rawModelId.trim();
-  if (!modelId) {
-    return {
-      agent: { ...agent, modelId: DEFAULT_MODEL_ID },
-      channel,
-    };
-  }
-
-  const models = channel.models.some((model) => model.id === modelId)
-    ? channel.models.map((model) => (model.id === modelId ? { ...model, label: model.label || modelId } : model))
-    : [...channel.models, { id: modelId, label: modelId }];
-
-  return {
-    agent: { ...agent, modelId },
-    channel: { ...channel, models },
-  };
+  return applyProviderModelIdToAgentConfigFromAppState(agent, channel, rawModelId);
 }
 
 function createConfiguredAgent(channels: AgentChannel[], existingIds: string[]): ConfiguredAgent {
@@ -478,10 +436,7 @@ interface BalanceRefreshInput {
 }
 
 export function shouldRefreshBalances(input: BalanceRefreshInput): boolean {
-  if (input.channels.length === 0) return false;
-  if (input.configDirty) return false;
-  if (input.refreshInFlight) return false;
-  return input.lastRefreshAt === undefined || input.now - input.lastRefreshAt >= input.intervalMs;
+  return shouldRefreshBalancesFromAppState(input);
 }
 
 function extractWorkflowSection(content: string, headings: string[]): string | undefined {
