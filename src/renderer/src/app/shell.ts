@@ -1,9 +1,14 @@
 import type { ScheduledWorkflowDueEvent } from "../../../shared/types";
 
-export type ActiveFeature = "chat" | "tasks" | "workflow" | "schedules" | "skills" | "runtimes" | "settings";
+export type ActiveFeature = "chat" | "tasks" | "workflow" | "schedules" | "skills" | "configuration" | "runtimes" | "settings";
 
 export function appShellClass(activeFeature: ActiveFeature): string {
-  return activeFeature === "tasks" || activeFeature === "workflow" || activeFeature === "schedules" || activeFeature === "skills" || activeFeature === "runtimes"
+  return activeFeature === "tasks" ||
+    activeFeature === "workflow" ||
+    activeFeature === "schedules" ||
+    activeFeature === "skills" ||
+    activeFeature === "configuration" ||
+    activeFeature === "runtimes"
     ? `shell ${activeFeature}-shell`
     : "shell";
 }
@@ -14,9 +19,10 @@ export function appContentClass(activeFeature: ActiveFeature): string {
   if (activeFeature === "workflow") return "content workflow-content";
   if (activeFeature === "schedules") return "content scheduled-content";
   if (activeFeature === "skills") return "content skills-content";
+  if (activeFeature === "configuration") return "content config-content";
   if (activeFeature === "runtimes") return "content runtime-content";
   if (activeFeature === "settings") return "content settings-content";
-  return "content config-content";
+  return "content chat-content";
 }
 
 export function missingAppCapabilityMessage(action: string): string {

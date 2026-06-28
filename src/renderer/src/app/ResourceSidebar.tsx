@@ -1,8 +1,7 @@
 import type { MouseEvent } from "react";
-import { CalendarClock, ClipboardList, Plus, Search, Settings, Wand2 } from "lucide-react";
+import { CalendarClock, ClipboardList, Plus, Search, Settings, SlidersHorizontal, Wand2 } from "lucide-react";
 import type {
   AgentChannel,
-  AppSnapshot,
   ChatSession,
   ConfiguredAgent,
   ScheduledWorkflowSchedule,
@@ -31,21 +30,54 @@ interface ResourceSidebarText {
   };
 }
 
+export interface ChatSidebarModel {
+  chats: ChatSession[];
+  configuredAgents: ConfiguredAgent[];
+  channels: AgentChannel[];
+  activeChatId: string | undefined;
+  contextMenu: { chatId: string; x: number; y: number } | undefined;
+}
+
+export interface TaskSidebarModel {
+  tasks: TaskRun[];
+  visibleTasks: TaskRun[];
+  activeTask: TaskRun | undefined;
+  taskStatusFilter: TaskStatusFilterValue;
+  configuredAgents: ConfiguredAgent[];
+  channels: AgentChannel[];
+}
+
+export interface WorkflowSidebarModel {
+  workflows: WorkflowDraftState[];
+  activeWorkflowId: string | undefined;
+  running: boolean;
+  contextMenu: { workflowId: string; x: number; y: number } | undefined;
+  renameDraft: { workflowId: string; title: string } | undefined;
+}
+
+export interface ScheduleSidebarModel {
+  schedules: ScheduledWorkflowSchedule[];
+  activeScheduleId: string | undefined;
+  mode: "detail" | "create";
+}
+
+export interface SkillsSidebarModel {
+  skillTemplates: SkillTemplate[];
+}
+
+export interface SidebarViewModel {
+  chat?: ChatSidebarModel;
+  tasks?: TaskSidebarModel;
+  workflow?: WorkflowSidebarModel;
+  schedules?: ScheduleSidebarModel;
+  skills?: SkillsSidebarModel;
+}
+
 interface ResourceSidebarProps {
   activeFeature: ActiveFeature;
   language: Language;
   text: ResourceSidebarText;
-  snapshot: AppSnapshot;
-  activeChat: ChatSession | undefined;
-  activeTask: TaskRun | undefined;
-  visibleTasks: TaskRun[];
-  taskStatusFilter: TaskStatusFilterValue;
-  workflowRunning: boolean;
-  workflowContextMenu: { workflowId: string; x: number; y: number } | undefined;
-  workflowRenameDraft: { workflowId: string; title: string } | undefined;
-  scheduledWorkflowMode: "detail" | "create";
-  skillTemplates: SkillTemplate[];
-  chatContextMenu: { chatId: string; x: number; y: number } | undefined;
+  model: SidebarViewModel;
   onOpenPalette: () => void;
   onCreateChat: () => MaybePromise;
   onSelectChat: (chatId: string) => MaybePromise;
@@ -71,26 +103,17 @@ function resourceFeatureLabel(activeFeature: ActiveFeature, text: ResourceSideba
   if (activeFeature === "workflow") return text.nav.workflow;
   if (activeFeature === "schedules") return text.nav.schedules;
   if (activeFeature === "skills") return text.nav.skills;
+  if (activeFeature === "configuration") return text.nav.configuration;
   if (activeFeature === "runtimes") return text.nav.runtimes;
   if (activeFeature === "settings") return text.nav.settings;
-  return text.nav.configuration;
+  return text.nav.chat;
 }
 
 export function ResourceSidebar({
   activeFeature,
   language,
   text,
-  snapshot,
-  activeChat,
-  activeTask,
-  visibleTasks,
-  taskStatusFilter,
-  workflowRunning,
-  workflowContextMenu,
-  workflowRenameDraft,
-  scheduledWorkflowMode,
-  skillTemplates,
-  chatContextMenu,
+  model,
   onOpenPalette,
   onCreateChat,
   onSelectChat,
@@ -109,6 +132,12 @@ export function ResourceSidebar({
   onStartCreatingScheduledWorkflow,
   onSelectScheduledWorkflowSchedule,
 }: ResourceSidebarProps) {
+  const chatModel = model.chat;
+  const taskModel = model.tasks;
+  const workflowModel = model.workflow;
+  const scheduleModel = model.schedules;
+  const skillsModel = model.skills;
+
   return (
     <aside className="resource-sidebar">
       <div className="brand resource-brand">
@@ -121,16 +150,16 @@ export function ResourceSidebar({
       <button className="sidebar-search-btn" onClick={onOpenPalette} aria-label="Open command palette">
         <Search size={13} />
         <span>{text.chrome.search}</span>
-        <kbd>⌘K</kbd>
+        <kbd>Ctrl/Cmd+K</kbd>
       </button>
 
-      {activeFeature === "chat" ? (
+      {activeFeature === "chat" && chatModel ? (
         <ChatHistoryPanel
-          chats={snapshot.chats}
-          configuredAgents={snapshot.configuredAgents}
-          channels={snapshot.channels}
-          activeChatId={activeChat?.id}
-          contextMenu={chatContextMenu}
+          chats={chatModel.chats}
+          configuredAgents={chatModel.configuredAgents}
+          channels={chatModel.channels}
+          activeChatId={chatModel.activeChatId}
+          contextMenu={chatModel.contextMenu}
           newChatLabel={text.chrome.newChat}
           runningLabel={language === "zh" ? "运行中" : "Running"}
           onCreateChat={onCreateChat}
@@ -138,24 +167,24 @@ export function ResourceSidebar({
           onOpenContextMenu={onOpenChatContextMenu}
           onDeleteChat={onDeleteChat}
         />
-      ) : activeFeature === "tasks" ? (
+      ) : activeFeature === "tasks" && taskModel ? (
         <TaskResourcePanel
-          tasks={snapshot.tasks}
-          visibleTasks={visibleTasks}
-          activeTask={activeTask}
-          taskStatusFilter={taskStatusFilter}
-          configuredAgents={snapshot.configuredAgents}
-          channels={snapshot.channels}
+          tasks={taskModel.tasks}
+          visibleTasks={taskModel.visibleTasks}
+          activeTask={taskModel.activeTask}
+          taskStatusFilter={taskModel.taskStatusFilter}
+          configuredAgents={taskModel.configuredAgents}
+          channels={taskModel.channels}
           onTaskStatusFilterChange={onTaskStatusFilterChange}
           onSelectTask={onSelectTask}
         />
-      ) : activeFeature === "workflow" ? (
+      ) : activeFeature === "workflow" && workflowModel ? (
         <WorkflowHistoryPanel
-          workflows={snapshot.workflowStore.workflows}
-          activeWorkflowId={snapshot.workflowStore.activeWorkflowId}
-          running={workflowRunning}
-          contextMenu={workflowContextMenu}
-          renameDraft={workflowRenameDraft}
+          workflows={workflowModel.workflows}
+          activeWorkflowId={workflowModel.activeWorkflowId}
+          running={workflowModel.running}
+          contextMenu={workflowModel.contextMenu}
+          renameDraft={workflowModel.renameDraft}
           onNewWorkflow={onNewWorkflow}
           onSelectWorkflow={onSelectWorkflow}
           onOpenContextMenu={onOpenWorkflowContextMenu}
@@ -165,27 +194,27 @@ export function ResourceSidebar({
           onCancelRename={onCancelWorkflowRename}
           onDeleteWorkflow={onDeleteWorkflow}
         />
-      ) : activeFeature === "schedules" ? (
+      ) : activeFeature === "schedules" && scheduleModel ? (
         <ScheduledResourcePanel
           language={language}
-          schedules={snapshot.scheduledWorkflowStore.schedules}
-          activeScheduleId={snapshot.scheduledWorkflowStore.activeScheduleId}
-          scheduledWorkflowMode={scheduledWorkflowMode}
+          schedules={scheduleModel.schedules}
+          activeScheduleId={scheduleModel.activeScheduleId}
+          scheduledWorkflowMode={scheduleModel.mode}
           label={text.nav.schedules}
           onStartCreatingScheduledWorkflow={onStartCreatingScheduledWorkflow}
           onSelectScheduledWorkflowSchedule={onSelectScheduledWorkflowSchedule}
         />
-      ) : activeFeature === "skills" ? (
+      ) : activeFeature === "skills" && skillsModel ? (
         <section className="resource-panel skills-nav-panel">
           <div className="panel-header">
             <span>{text.chrome.skillLibrary}</span>
             <Wand2 size={14} />
           </div>
           <div className="skills-nav-list">
-            {skillTemplates.length === 0 ? (
+            {skillsModel.skillTemplates.length === 0 ? (
               <div className="empty-state config-empty">{text.chrome.noSkills}</div>
             ) : (
-              skillTemplates.map((template) => (
+              skillsModel.skillTemplates.map((template) => (
                 <div key={template.id} className="skills-nav-row">
                   <strong>{template.name}</strong>
                   <span>{template.tags.join(", ")}</span>
@@ -193,6 +222,17 @@ export function ResourceSidebar({
               ))
             )}
           </div>
+        </section>
+      ) : activeFeature === "configuration" ? (
+        <section className="resource-panel settings-nav-panel">
+          <div className="panel-header">
+            <span>{text.nav.configuration}</span>
+            <SlidersHorizontal size={14} />
+          </div>
+          <button className="settings-nav-row is-active" type="button">
+            <SlidersHorizontal size={13} />
+            <span>{language === "zh" ? "Agent 组装" : "Agent assembly"}</span>
+          </button>
         </section>
       ) : activeFeature === "settings" ? (
         <section className="resource-panel settings-nav-panel">
@@ -295,7 +335,7 @@ function ScheduledResourcePanel({
           onClick={onStartCreatingScheduledWorkflow}
         >
           <Plus size={13} />
-          <span>{language === "zh" ? "新增定时任务" : "New schedule"}</span>
+          <span>{language === "zh" ? "新建定时任务" : "New schedule"}</span>
         </button>
       </div>
       <div className="config-nav-list">
@@ -309,7 +349,7 @@ function ScheduledResourcePanel({
               onClick={() => void onSelectScheduledWorkflowSchedule(schedule.scheduleId)}
             >
               <span className={`agent-badge mini ${schedule.enabled ? "agent-api" : "agent-claude"}`}>
-                {schedule.enabled ? (language === "zh" ? "启用" : "On") : (language === "zh" ? "暂停" : "Off")}
+                {schedule.enabled ? (language === "zh" ? "启用" : "On") : language === "zh" ? "暂停" : "Off"}
               </span>
               <strong>{schedule.title}</strong>
               <span>{formatScheduleRecurrence(schedule, language)}</span>
