@@ -14,6 +14,8 @@ import {
   applyProviderModelIdToAgentConfig as applyProviderModelIdToAgentConfigFromAppState,
   applyProviderPresetToConfiguredAgent as applyProviderPresetToConfiguredAgentFromAppState,
   shouldRefreshBalances as shouldRefreshBalancesFromAppState,
+  workflowArtifactSummary as workflowArtifactSummaryFromAppState,
+  workflowContextDocumentFromArtifacts as workflowContextDocumentFromArtifactsFromAppState,
 } from "./app/app-state";
 import {
   agentAccent,
@@ -92,7 +94,6 @@ import {
 } from "./pages/workflow/workflow-domain";
 import {
   WORKFLOW_THINKING_MESSAGE,
-  truncateWorkflowContext,
   workflowStoragePlanDocument,
   workflowStoragePlanFor,
   type WorkflowStoragePlan,
@@ -447,68 +448,12 @@ export function shouldRefreshBalances(input: BalanceRefreshInput): boolean {
   return shouldRefreshBalancesFromAppState(input);
 }
 
-function extractWorkflowSection(content: string, headings: string[]): string | undefined {
-  const headingSet = new Set(headings.map((heading) => heading.toLowerCase()));
-  const lines = content.replace(/\r\n/g, "\n").split("\n");
-  let startIndex = -1;
-  for (let index = 0; index < lines.length; index += 1) {
-    const match = lines[index]?.match(/^#{1,6}\s+(.+?)\s*$/);
-    if (!match) continue;
-    const heading = match[1]!.trim().toLowerCase();
-    if (headingSet.has(heading)) {
-      startIndex = index + 1;
-      break;
-    }
-  }
-  if (startIndex < 0) return undefined;
-  const sectionLines: string[] = [];
-  for (let index = startIndex; index < lines.length; index += 1) {
-    const line = lines[index] ?? "";
-    if (/^#{1,6}\s+/.test(line)) break;
-    sectionLines.push(line);
-  }
-  const section = sectionLines.join("\n").trim();
-  return section || undefined;
-}
-
-function extractWorkflowHandoffSection(content: string): string | undefined {
-  return extractWorkflowSection(content, ["handoff", "summary", "key context", "context"]);
-}
-
-function workflowStringField(content: string, field: string): string | undefined {
-  const match = new RegExp(`["']?${field}["']?\\s*:\\s*("([^"\\\\]|\\\\.)*"|'([^'\\\\]|\\\\.)*'|\`([^\`\\\\]|\\\\.)*\`)`, "s").exec(content);
-  if (!match) return undefined;
-  const raw = match[1]!;
-  const body = raw.slice(1, -1);
-  return body
-    .replace(/\\n/g, "\n")
-    .replace(/\\r/g, "\r")
-    .replace(/\\t/g, "\t")
-    .replace(/\\"/g, `"`)
-    .replace(/\\'/g, `'`)
-    .replace(/\\`/g, "`")
-    .replace(/\\\\/g, "\\")
-    .trim();
-}
-
 export function workflowArtifactSummary(artifact: string): string {
-  const report = extractWorkflowSection(artifact, ["work completion report", "completion report"]);
-  const handoff = extractWorkflowSection(artifact, ["handoff"]);
-  if (report && handoff) {
-    return truncateWorkflowContext(["### Work Completion Report", report, "", "### Handoff", handoff].join("\n"));
-  }
-  return truncateWorkflowContext(report ?? extractWorkflowHandoffSection(artifact) ?? artifact);
+  return workflowArtifactSummaryFromAppState(artifact);
 }
 
 export function workflowContextDocumentFromArtifacts(artifacts: Array<{ nodeId: string; title: string; summary: string }>): string {
-  if (artifacts.length === 0) return "";
-  return [
-    "# Workflow Context",
-    "",
-    ...artifacts.flatMap((artifact) => [`## ${artifact.title} (${artifact.nodeId})`, artifact.summary.trim() || "No handoff summary produced.", ""]),
-  ]
-    .join("\n")
-    .trim();
+  return workflowContextDocumentFromArtifactsFromAppState(artifacts);
 }
 
 export function workflowNodeRunPrompt(
