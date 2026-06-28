@@ -110,10 +110,9 @@ import {
   DEFAULT_SCHEDULED_WORKFLOW_CLOUD_BASE_URL,
   DEFAULT_SCHEDULED_WORKFLOW_TIMEZONE,
 } from "../../shared/types";
-import { buildWorkflowAgentPrompt, WORKFLOW_TOTAL_QUESTION_COUNT } from "../../shared/workflow-agent";
+import { WORKFLOW_TOTAL_QUESTION_COUNT } from "../../shared/workflow-agent";
 import {
   createWorkflowGraphFromObjective,
-  parseWorkflowGraphUpsert,
   validateWorkflowGraph,
   workflowGraphExecutionLevels,
 } from "../../shared/workflow-graph";
@@ -738,10 +737,6 @@ export function AppShell() {
     defaultScheduledWorkflowDraft(DEFAULT_SNAPSHOT.workflowStore.workflows, DEFAULT_SNAPSHOT.workflowStore.activeWorkflowId),
   );
   const [scheduledWorkflowMode, setScheduledWorkflowMode] = useState<"detail" | "create">("detail");
-  const workflowRequestIdRef = useRef<string | undefined>(undefined);
-  const workflowAssistantMessageIdRef = useRef<string | undefined>(undefined);
-  const workflowStreamingStartedRef = useRef(false);
-  const workflowAssistantContentRef = useRef("");
   const snapshotRef = useRef(snapshot);
   const workflowRunningRef = useRef(false);
   const [taskStatusFilter, setTaskStatusFilter] = useState<TaskStatusFilterValue>("all");
@@ -807,15 +802,10 @@ export function AppShell() {
     askWorkflowAgentFor,
     beginWorkflowAssistantRequest,
     hasWorkflowAssistantStreamed,
-    setWorkflowId,
-    setWorkflowTitle,
     setWorkflowStatus,
-    setWorkflowRevision,
     setWorkflowConfiguredAgentId,
     setWorkflowModelId,
     setWorkflowObjective,
-    setWorkflowGraph,
-    setWorkflowGraphReady,
     setWorkflowMessages,
     setWorkflowReply,
     setWorkflowError,
@@ -826,7 +816,6 @@ export function AppShell() {
     setWorkflowFinalReport,
     setWorkflowRunIds,
     setWorkflowAgentSessionId,
-    setWorkflowCreatedAt,
   } = useWorkflowDraft({
     snapshot,
     setSnapshot,
@@ -1579,102 +1568,7 @@ export function AppShell() {
     setPrompt("");
     setTaskPrompt("");
     setTeamPrompt("");
-    setWorkflowObjective("");
-    setWorkflowReply("");
-    setWorkflowMessages(initialWorkflowMessages());
-    setWorkflowGraphReady(false);
-    setWorkflowRunProgress([]);
-    setWorkflowRunContextDocument("");
-    setWorkflowContextDocument("");
-    setWorkflowFinalReport("");
-    setWorkflowRunIds([]);
-    setWorkflowAgentSessionId(undefined);
-    setWorkflowId(createWorkflowId());
-    setWorkflowTitle("Untitled workflow");
-    setWorkflowStatus("draft");
-    setWorkflowRevision(1);
-    setWorkflowCreatedAt(Date.now());
-  }
-
-  function abandonWorkflowGrillRequest(): void {
-    workflowRequestIdRef.current = undefined;
-    workflowAssistantMessageIdRef.current = undefined;
-    workflowStreamingStartedRef.current = false;
-    workflowAssistantContentRef.current = "";
-  }
-
-  function legacyStopWorkflowGrill(): void {
-    if (!workflowRunning) return;
-    const assistantMessageId = workflowAssistantMessageIdRef.current;
-    const partial = workflowAssistantContentRef.current.trim();
-    abandonWorkflowGrillRequest();
-    setWorkflowRunning(false);
-    setWorkflowError(undefined);
-    if (assistantMessageId) {
-      setWorkflowMessages((current) =>
-        current.map((message) =>
-          message.id === assistantMessageId
-            ? { ...message, content: partial || "已停止：agent 未返回结果，可重试或新建 workflow。" }
-            : message,
-        ),
-      );
-    }
-  }
-
-  async function legacyCreateNewWorkflow(): Promise<void> {
-    abandonWorkflowGrillRequest();
-    setWorkflowRunning(false);
-    const now = Date.now();
-    const graph = createWorkflowGraphFromObjective("");
-    const draft: WorkflowDraftState = {
-      workflowId: createWorkflowId(),
-      title: "Untitled workflow",
-      status: "draft",
-      revision: 1,
-      configuredAgentId: workflowConfiguredAgentId || defaultConfiguredAgentId(snapshot.configuredAgents),
-      modelId: configuredAgentModelId(
-        workflowConfiguredAgentId || defaultConfiguredAgentId(snapshot.configuredAgents),
-        workflowModelId,
-        snapshot.configuredAgents,
-        snapshot.channels,
-      ),
-      objective: "",
-      graph,
-      graphReady: false,
-      messages: initialWorkflowMessages(),
-      reply: "",
-      error: undefined,
-      runProgress: [],
-      runContextDocument: "",
-      contextDocument: "",
-      runIds: [],
-      agentSessionId: undefined,
-      createdAt: now,
-      updatedAt: now,
-    };
-    applyPersistedWorkflowDraft(draft);
-    const next = await workflows.updateDraft(draft);
-    setSnapshot(next);
-    setActiveFeature("workflow");
-  }
-
-  async function legacyResetWorkflowSession(): Promise<void> {
-    workflowRequestIdRef.current = undefined;
-    workflowAssistantMessageIdRef.current = undefined;
-    workflowStreamingStartedRef.current = false;
-    workflowAssistantContentRef.current = "";
-    setWorkflowObjective("");
-    setWorkflowReply("");
-    setWorkflowError(undefined);
-    setWorkflowRunning(false);
-    setWorkflowMessages(initialWorkflowMessages());
-    setWorkflowGraph(createWorkflowGraphFromObjective(""));
-    setWorkflowGraphReady(false);
-    setWorkflowRunProgress([]);
-    setWorkflowRunContextDocument("");
-    setWorkflowAgentSessionId(undefined);
-    const next = await workflows.updateDraft(undefined);
-    setSnapshot(next);
+    resetWorkflowLocalDraft();
   }
 
   async function send(): Promise<void> {
@@ -1702,7 +1596,12 @@ export function AppShell() {
     const next = await chatApi.runTask({
       prompt: text,
       configuredAgentId: taskConfiguredAgentId || defaultConfiguredAgentId(snapshot.configuredAgents),
-      modelId: configuredAgentModelId(taskConfiguredAgentId || defaultConfiguredAgentId(snapshot.configuredAgents), taskModelId, snapshot.configuredAgents, snapshot.channels),
+      modelId: configuredAgentModelId(
+        taskConfiguredAgentId || defaultConfiguredAgentId(snapshot.configuredAgents),
+        taskModelId,
+        snapshot.configuredAgents,
+        snapshot.channels,
+      ),
       workDir: snapshot.workDir,
     });
     setSnapshot(next);
@@ -1769,132 +1668,6 @@ export function AppShell() {
 
   async function triggerScheduledWorkflow(scheduleId: string): Promise<void> {
     await chatApi.triggerScheduledWorkflowSchedule(scheduleId);
-  }
-
-  function syncWorkflowGraph(nextGraph: WorkflowGraph): void {
-    setWorkflowGraph(nextGraph);
-    setWorkflowTitle(nextGraph.title);
-    setWorkflowObjective(nextGraph.objective);
-    setWorkflowRevision((current) => current + 1);
-    setWorkflowStatus("draft");
-    setWorkflowRunProgress([]);
-    setWorkflowRunContextDocument("");
-    setWorkflowFinalReport("");
-  }
-
-  function applyWorkflowGraphFromAgentContent(content: string): boolean {
-    const nextGraph = parseWorkflowGraphUpsert(content);
-    if (!nextGraph) return false;
-    syncWorkflowGraph(nextGraph);
-    setWorkflowGraphReady(true);
-    setWorkflowError(undefined);
-    return true;
-  }
-
-  function updateWorkflowRunProgress(nodeId: string, update: Partial<WorkflowRunProgressItem>): void {
-    setWorkflowRunProgress((current) => current.map((item) => (item.nodeId === nodeId ? { ...item, ...update } : item)));
-  }
-
-  function legacyDraftWorkflowGraph(): void {
-    const nextGraph = createWorkflowGraphFromObjective(workflowObjective);
-    syncWorkflowGraph(nextGraph);
-    setWorkflowGraphReady(true);
-    setWorkflowError(undefined);
-  }
-
-  async function legacyAskWorkflowAgentFor(
-    promptText: string,
-    sessionId: string | undefined,
-    requestId: string,
-    configuredAgentId: string,
-    modelId: string,
-  ): Promise<string> {
-    const request = {
-      requestId,
-      prompt: promptText,
-      configuredAgentId,
-      modelId,
-      workDir: snapshotRef.current.workDir,
-    };
-    const response = await workflows.askAgent(sessionId ? { ...request, sessionId } : request);
-    setWorkflowAgentSessionId(response.sessionId);
-    return response.content.trim() || "Workflow agent returned an empty response.";
-  }
-
-  async function askSelectedWorkflowAgent(promptText: string, sessionId: string | undefined, requestId: string): Promise<string> {
-    const configuredAgentId = workflowConfiguredAgentId || defaultConfiguredAgentId(snapshot.configuredAgents);
-    return legacyAskWorkflowAgentFor(
-      promptText,
-      sessionId,
-      requestId,
-      configuredAgentId,
-      configuredAgentModelId(configuredAgentId, workflowModelId, snapshot.configuredAgents, snapshot.channels),
-    );
-  }
-
-  async function legacySendWorkflowReply(): Promise<void> {
-    if (workflowRunning) return;
-    const starting = workflowMessages.length === 0;
-    const text = (starting ? workflowObjective : workflowReply).trim();
-    if (!text) return;
-    setWorkflowReply("");
-    setWorkflowError(undefined);
-    if (starting) {
-      setWorkflowObjective(text);
-      setWorkflowGraphReady(false);
-      setWorkflowAgentSessionId(undefined);
-    }
-    const requestId = `workflow-${Date.now()}-${Math.random().toString(36).slice(2)}`;
-    const assistantMessageId = `grill-assistant-${Date.now()}`;
-    workflowRequestIdRef.current = requestId;
-    workflowAssistantMessageIdRef.current = assistantMessageId;
-    workflowStreamingStartedRef.current = false;
-    workflowAssistantContentRef.current = "";
-    const nextMessages: WorkflowGrillMessage[] = [
-      ...workflowMessages,
-      { id: `grill-user-${Date.now()}`, role: "user", content: text },
-      { id: assistantMessageId, role: "assistant", content: WORKFLOW_THINKING_MESSAGE },
-    ];
-    setWorkflowMessages(nextMessages);
-    setWorkflowRunning(true);
-    try {
-      const assistantContent = await askSelectedWorkflowAgent(
-        starting ? buildWorkflowAgentPrompt({ objective: text }) : text,
-        starting ? undefined : workflowAgentSessionId,
-        requestId,
-      );
-      // request was stopped / superseded while awaiting — drop its result
-      if (workflowRequestIdRef.current !== requestId) return;
-      if (!workflowStreamingStartedRef.current && assistantContent) {
-        setWorkflowMessages((current) =>
-          current.map((message) => (message.id === assistantMessageId ? { ...message, content: assistantContent } : message)),
-        );
-      }
-      applyWorkflowGraphFromAgentContent(assistantContent);
-    } catch (error) {
-      if (workflowRequestIdRef.current !== requestId) return;
-      const message = error instanceof Error ? error.message : String(error);
-      setWorkflowError(message);
-      setWorkflowMessages((current) =>
-        current.map((item) => (item.id === assistantMessageId ? { ...item, content: `Workflow agent error: ${message}` } : item)),
-      );
-    } finally {
-      // only clear running if this is still the active request (avoid turning off a newer run)
-      if (workflowRequestIdRef.current === requestId) setWorkflowRunning(false);
-    }
-  }
-
-  function legacyUpdateWorkflowNode(nodeId: string, update: Partial<WorkflowGraphNode>): void {
-    const nextGraph = {
-      ...workflowGraph,
-      nodes: workflowGraph.nodes.map((node) => (node.id === nodeId ? { ...node, ...update } : node)),
-    };
-    syncWorkflowGraph(nextGraph);
-  }
-
-  async function legacySelectWorkflow(workflowId: string): Promise<void> {
-    const next = await workflows.selectWorkflow(workflowId);
-    setSnapshot(next);
   }
 
   async function runWorkflowGraph(): Promise<void> {
