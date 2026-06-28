@@ -1,7 +1,8 @@
 import { DEFAULT_MODEL_ID } from "../../../../shared/models";
-import type { AgentChannel, AgentPluginConfig, ProviderBalanceResult } from "../../../../shared/types";
-import type { AgentProviderPreset } from "../../../../shared/provider-presets";
+import type { AgentChannel, AgentModelOption, AgentPluginConfig, CodexDefaultConfig, ProviderBalanceResult } from "../../../../shared/types";
+import { CODEX_DEFAULT_PRESET_ID, type AgentProviderPreset } from "../../../../shared/provider-presets";
 import type { Language } from "../../app/language";
+import { missingAppCapabilityMessage } from "../../app/shell";
 import type { AgentTestUiState } from "./runtime-types";
 
 export function formatBalanceNumber(value: number): string {
@@ -37,6 +38,7 @@ export function applyProviderPresetToChannel(channel: AgentChannel, preset: Agen
   const next: AgentChannel = {
     ...channel,
     agentId: preset.runtimeAgentId,
+    presetId: preset.id,
     models: [...preset.models.map((model) => ({ ...model })), ...customModels.map((model) => ({ ...model }))],
   };
   delete next.providerName;
@@ -62,6 +64,98 @@ export function applyProviderPresetToChannel(channel: AgentChannel, preset: Agen
     };
   }
   return next;
+}
+
+function cloneChannelModels(models: AgentModelOption[]): AgentModelOption[] {
+  return models.map((model) => ({ ...model }));
+}
+
+function defaultModelsForCodexConfig(modelId: string | null): AgentModelOption[] {
+  const models: AgentModelOption[] = [{ id: DEFAULT_MODEL_ID, label: "Default" }];
+  const normalizedModelId = modelId?.trim();
+  if (normalizedModelId && normalizedModelId !== DEFAULT_MODEL_ID) {
+    models.push({ id: normalizedModelId, label: normalizedModelId });
+  }
+  return models;
+}
+
+function cloneOptionalHeaders(headers: Record<string, string> | null): Record<string, string> | undefined {
+  return headers ? { ...headers } : undefined;
+}
+
+function cloneOptionalPlugins(plugins: AgentPluginConfig[] | null): AgentPluginConfig[] | undefined {
+  return plugins?.map((plugin) => ({ ...plugin }));
+}
+
+export function applyCodexDefaultConfigToChannel(channel: AgentChannel, config: CodexDefaultConfig): AgentChannel {
+  const next: AgentChannel = {
+    ...channel,
+    agentId: "codex",
+    presetId: CODEX_DEFAULT_PRESET_ID,
+    models: defaultModelsForCodexConfig(config.modelId),
+  };
+
+  delete next.modelProvider;
+  delete next.providerName;
+  delete next.baseUrl;
+  delete next.wireApi;
+  delete next.httpHeaders;
+  delete next.modelCatalogJson;
+  delete next.modelReasoningEffort;
+  delete next.plugins;
+
+  if (config.modelProvider) next.modelProvider = config.modelProvider;
+  if (config.providerName) next.providerName = config.providerName;
+  if (config.baseUrl) next.baseUrl = config.baseUrl;
+  if (config.wireApi) next.wireApi = config.wireApi;
+  if (config.modelCatalogJson) next.modelCatalogJson = config.modelCatalogJson;
+  if (config.modelReasoningEffort) next.modelReasoningEffort = config.modelReasoningEffort;
+
+  const headers = cloneOptionalHeaders(config.httpHeaders) ?? {};
+  if (config.apiKey) headers.Authorization = `Bearer ${config.apiKey}`;
+  if (Object.keys(headers).length > 0) next.httpHeaders = headers;
+
+  const plugins = cloneOptionalPlugins(config.plugins);
+  if (plugins && plugins.length > 0) next.plugins = plugins;
+
+  return next;
+}
+
+export function applyProviderApiKeyToChannel(channel: AgentChannel, preset: AgentProviderPreset, apiKey = ""): AgentChannel {
+  const next: AgentChannel = {
+    ...channel,
+    presetId: preset.id,
+    models: cloneChannelModels(channel.models),
+  };
+  const normalizedApiKey = apiKey.trim();
+  const headerName = preset.apiKeyHeaderName ?? "Authorization";
+  const prefix = preset.apiKeyPrefix ?? "Bearer ";
+  const headers = { ...(channel.httpHeaders ?? {}) };
+
+  if (normalizedApiKey) {
+    headers[headerName] = `${prefix}${normalizedApiKey}`;
+  } else {
+    for (const key of Object.keys(headers)) {
+      if (key.toLowerCase() === headerName.toLowerCase()) delete headers[key];
+    }
+  }
+
+  if (Object.keys(headers).length > 0) next.httpHeaders = headers;
+  else delete next.httpHeaders;
+  return next;
+}
+
+export function resolveProviderPresetId(channel: AgentChannel | undefined, presets: AgentProviderPreset[]): string | undefined {
+  if (!channel) return undefined;
+  if (channel.presetId && presets.some((preset) => preset.id === channel.presetId)) return channel.presetId;
+  return (
+    presets.find(
+      (preset) =>
+        preset.runtimeAgentId === channel.agentId &&
+        (preset.modelProvider ?? "") === (channel.modelProvider ?? "") &&
+        (preset.baseUrl ?? "") === (channel.baseUrl ?? ""),
+    )?.id ?? (channel.agentId === "codex" ? "custom" : undefined)
+  );
 }
 
 function headerValue(headers: Record<string, string> | undefined, headerName: string): string {
@@ -93,6 +187,15 @@ export function rememberProviderKeyFromChannel(
   const apiKey = apiKeyFromChannelHeaders(channel, preset);
   if (!apiKey || providerKeys[preset.id] === apiKey) return providerKeys;
   return { ...providerKeys, [preset.id]: apiKey };
+}
+
+export async function loadCodexDefaultConfigFromRuntimeApi(
+  api: { loadCodexDefaultConfig?: () => Promise<CodexDefaultConfig> },
+): Promise<CodexDefaultConfig> {
+  if (typeof api.loadCodexDefaultConfig !== "function") {
+    throw new Error(missingAppCapabilityMessage("Codex Default import"));
+  }
+  return api.loadCodexDefaultConfig();
 }
 
 export function headersToText(headers: Record<string, string> | undefined): string {

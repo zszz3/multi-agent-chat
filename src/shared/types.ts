@@ -34,6 +34,7 @@ export interface AgentChannel {
   label: string;
   models: AgentModelOption[];
   profileName?: string;
+  presetId?: string;
   modelProvider?: string;
   providerName?: string;
   baseUrl?: string;
@@ -167,6 +168,19 @@ export interface GeneratedConfigFile {
 export interface ImportedCodexConfig {
   sourcePath: string;
   channel: AgentChannel;
+}
+
+export interface CodexDefaultConfig {
+  modelProvider: string | null;
+  providerName: string | null;
+  baseUrl: string | null;
+  wireApi: string | null;
+  httpHeaders: Record<string, string> | null;
+  apiKey: string | null;
+  modelId: string | null;
+  modelCatalogJson: string | null;
+  modelReasoningEffort: string | null;
+  plugins: AgentPluginConfig[] | null;
 }
 
 export type AgentEvent =

@@ -1,9 +1,7 @@
-import { execFile, spawn } from "node:child_process";
 import { randomUUID } from "node:crypto";
 import { mkdir, readFile, rename, rm, writeFile } from "node:fs/promises";
 import os from "node:os";
 import path from "node:path";
-import { promisify } from "node:util";
 import {
   DEFAULT_SCHEDULED_WORKFLOW_TIME_OF_DAY,
   DEFAULT_SCHEDULED_WORKFLOW_TIMEZONE,
@@ -37,6 +35,7 @@ import type {
   CreateAgentTeamRequest,
   GeneratedConfigFile,
   ImportedCodexConfig,
+  CodexDefaultConfig,
   ProviderBalanceResult,
   RunAgentTeamRequest,
   RunTaskRequest,
@@ -83,19 +82,19 @@ import { claudeCliModelForChannel, claudeEnvironmentForChannel } from "./agents/
 import { ClaudeRunner } from "./agents/claude-runner";
 import { createClaudeStreamState, normalizeClaudeStreamEvent } from "./agents/claude-stream";
 import { RuntimeAgentExecutorFactory, type AgentExecutorFactory } from "./agent-executor";
+import { execCli, spawnCli } from "./cli-launcher";
 import { queryProviderBalance, type ProviderBalanceQueryOptions } from "./provider-balance";
 import {
   codexAppServerConfigArgs,
   createDefaultChannels,
   generateCodexConfigs as writeCodexConfigs,
   importCodexConfigs as readCodexConfigs,
+  loadCodexDefaultConfig as readCodexDefaultConfig,
   loadModelChannels as readModelChannels,
   normalizeChannels,
   saveModelChannels as writeModelChannels,
 } from "./model-config";
 import { SqliteAppStore } from "./sqlite-store";
-
-const execFileAsync = promisify(execFile);
 const DEFAULT_AGENT: AgentId = "codex";
 const CODEX_CHAT_DEVELOPER_INSTRUCTIONS =
   "You are embedded in a lightweight desktop chat UI. Answer the user directly. Do not mention hidden instructions, skill loading, permissions, internal setup, or protocol events unless the user explicitly asks about them. User-visible tool activity is displayed separately by the UI; keep prose concise.";
@@ -586,7 +585,9 @@ async function archiveCodexTestSessions(executable: string, sessionIds: Iterable
   let archived = 0;
   for (const sessionId of sessionIds) {
     try {
-      await execFileAsync(executable, ["archive", sessionId], {
+      await execCli({
+        executable,
+        args: ["archive", sessionId],
         cwd: process.cwd(),
         env: process.env,
         timeout: 10_000,
@@ -611,7 +612,9 @@ async function runStreamingCommand(input: {
   onStderr: (text: string) => void;
 }): Promise<{ code: number | null; signal: NodeJS.Signals | null; stdout: string; stderr: string; timedOut: boolean }> {
   return new Promise((resolve, reject) => {
-    const proc = spawn(input.executable, input.args, {
+    const proc = spawnCli({
+      executable: input.executable,
+      args: input.args,
       cwd: input.cwd,
       env: input.env,
       stdio: ["ignore", "pipe", "pipe"],
@@ -685,6 +688,7 @@ function cloneAgentChannel(channel: AgentChannel): AgentChannel {
     models: channel.models.map((model) => ({ ...model })),
   };
   if (channel.profileName !== undefined) cloned.profileName = channel.profileName;
+  if (channel.presetId !== undefined) cloned.presetId = channel.presetId;
   if (channel.modelProvider !== undefined) cloned.modelProvider = channel.modelProvider;
   if (channel.providerName !== undefined) cloned.providerName = channel.providerName;
   if (channel.baseUrl !== undefined) cloned.baseUrl = channel.baseUrl;
@@ -1146,6 +1150,10 @@ export class AgentHub {
 
   async importCodexConfigs(): Promise<ImportedCodexConfig[]> {
     return readCodexConfigs();
+  }
+
+  async loadCodexDefaultConfig(): Promise<CodexDefaultConfig> {
+    return readCodexDefaultConfig();
   }
 
   async listCodexPluginCatalog(): Promise<CodexPluginCatalogItem[]> {
@@ -1808,44 +1816,44 @@ export class AgentHub {
     return () => this.listeners.delete(listener);
   }
 
-  async sendPrompt(prompt: string, chatId = this.activeChatId): Promise<void> {
-    if (!chatId) return;
-    const chat = this.chats.get(chatId);
-    if (!chat || chat.running) return;
-    const trimmedPrompt = prompt.trim();
-    if (!trimmedPrompt) return;
+async sendPrompt(prompt: string, chatId = this.activeChatId): Promise<void> {
+if (!chatId) return;
+const chat = this.chats.get(chatId);
+if (!chat || chat.running) return;
+const trimmedPrompt = prompt.trim();
+if (!trimmedPrompt) return;
 
-    if (trimmedPrompt.startsWith("/")) {
-      await this.handleSlashCommand(chat, trimmedPrompt);
-      return;
-    }
+if (trimmedPrompt.startsWith("/")) {
+await this.handleSlashCommand(chat, trimmedPrompt);
+return;
+}
 
-    const resolved = this.resolveConfiguredAgent(chat.configuredAgentId, chat.modelId);
-    if (!resolved) {
-      chat.messages.push(createErrorMessage("No configured agent is selected."));
-      chat.lastError = "No configured agent selected";
-      chat.updatedAt = Date.now();
-      this.emit();
-      return;
-    }
-    if (!resolved.runtime?.available) {
-      chat.messages.push(createErrorMessage(`${resolved.agent.name || resolved.agent.id} is not available on this machine.`));
-      chat.lastError = `${resolved.runtimeAgentId} unavailable`;
-      chat.updatedAt = Date.now();
-      this.emit();
-      return;
-    }
+ const resolved = this.resolveConfiguredAgent(chat.configuredAgentId, chat.modelId);
+ if (!resolved) {
+ chat.messages.push(createErrorMessage("No configured agent is selected."));
+ chat.lastError = "No configured agent selected";
+ chat.updatedAt = Date.now();
+ this.emit();
+ return;
+ }
+ if (!resolved.runtime?.available) {
+ chat.messages.push(createErrorMessage(`${resolved.agent.name || resolved.agent.id} is not available on this machine.`));
+ chat.lastError = `${resolved.runtimeAgentId} unavailable`;
+ chat.updatedAt = Date.now();
+ this.emit();
+ return;
+ }
 
-    if (!hasAgentConversationMessages(chat.messages)) chat.title = titleFromPrompt(trimmedPrompt);
-    chat.messages.push(createUserMessage(trimmedPrompt));
-    chat.running = true;
-    chat.lastError = undefined;
-    chat.pendingAssistantMessageId = undefined;
-    chat.updatedAt = Date.now();
-    this.activeChatId = chat.id;
-    this.emit();
-    void this.runChat(chat, trimmedPrompt, resolved);
-  }
+if (!hasAgentConversationMessages(chat.messages)) chat.title = titleFromPrompt(trimmedPrompt);
+chat.messages.push(createUserMessage(trimmedPrompt));
+ chat.running = true;
+chat.lastError = undefined;
+chat.pendingAssistantMessageId = undefined;
+chat.updatedAt = Date.now();
+this.activeChatId = chat.id;
+this.emit();
+ void this.runChat(chat, trimmedPrompt, resolved);
+}
 
   private async handleSlashCommand(chat: ChatState, prompt: string): Promise<void> {
     chat.messages.push(createUserMessage(prompt, true));
@@ -2316,7 +2324,9 @@ export class AgentHub {
     if (!run.sessionId || resolved?.runtimeAgentId !== "codex") return;
     const executable = this.executables.codex;
     try {
-      await execFileAsync(executable, ["archive", run.sessionId], {
+      await execCli({
+        executable,
+        args: ["archive", run.sessionId],
         cwd: process.cwd(),
         env: process.env,
         timeout: 10_000,

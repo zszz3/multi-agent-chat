@@ -1,6 +1,8 @@
 import { DEFAULT_MODEL_ID, FALLBACK_MODEL_OPTIONS } from "./models";
 import type { AgentId, AgentModelOption } from "./types";
 
+export const CODEX_DEFAULT_PRESET_ID = "codex-default";
+
 export interface AgentProviderPreset {
   id: string;
   label: string;
@@ -139,6 +141,13 @@ export const AGENT_PROVIDER_PRESETS: AgentProviderPreset[] = [
     runtimeAgentId: "claude",
     providerName: "Custom",
     modelProvider: "custom-anthropic",
+    usesApiKey: true,
+    models: [{ id: DEFAULT_MODEL_ID, label: "Default" }],
+  },
+  {
+    id: CODEX_DEFAULT_PRESET_ID,
+    label: "Default",
+    runtimeAgentId: "codex",
     usesApiKey: true,
     models: [{ id: DEFAULT_MODEL_ID, label: "Default" }],
   },
