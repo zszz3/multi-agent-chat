@@ -844,8 +844,19 @@ export function AppShell() {
     startWorkflowRename,
     changeWorkflowRenameDraft,
     cancelWorkflowRename,
+    confirmWorkflowRename,
+    deleteWorkflow,
   } = useWorkflowSidebarState({
     workflows: snapshot.workflowStore.workflows,
+    activeWorkflowId: workflowId,
+    workflowRunning,
+    setSnapshot,
+    workflowsService: workflows,
+    applyPersistedWorkflowDraft,
+    resetWorkflowLocalDraft,
+    canRenameWorkflow: typeof chatApi.renameWorkflow === "function",
+    canDeleteWorkflow: typeof chatApi.deleteWorkflow === "function",
+    missingCapabilityMessage: missingAppCapabilityMessage,
   });
 
   configChannelsRef.current = configChannels;
@@ -1316,40 +1327,6 @@ export function AppShell() {
     setChatContextMenu(undefined);
     setConfigContextMenu(undefined);
     openWorkflowSidebarContextMenu(workflowId, event.clientX, event.clientY);
-  }
-
-  async function confirmWorkflowRename(): Promise<void> {
-    if (!workflowRenameDraft) return;
-    const title = workflowRenameDraft.title.trim();
-    if (!title) return;
-    if (typeof chatApi.renameWorkflow !== "function") {
-      window.alert?.(missingAppCapabilityMessage("Rename workflow"));
-      return;
-    }
-    const next = await workflows.renameWorkflow(workflowRenameDraft.workflowId, title);
-    cancelWorkflowRename();
-    setSnapshot(next);
-    if (next.workflowDraft) applyPersistedWorkflowDraft(next.workflowDraft);
-  }
-
-  async function deleteWorkflow(targetWorkflowId: string): Promise<void> {
-    closeWorkflowContextMenu();
-    if (workflowRunning && targetWorkflowId === workflowId) return;
-    if (typeof chatApi.deleteWorkflow !== "function") {
-      window.alert?.(missingAppCapabilityMessage("Delete workflow"));
-      return;
-    }
-    const workflow = snapshot.workflowStore.workflows.find((item) => item.workflowId === targetWorkflowId);
-    const confirmed =
-      typeof window.confirm === "function" ? window.confirm(`Delete workflow "${workflow?.title ?? targetWorkflowId}" and its run data?`) : true;
-    if (!confirmed) return;
-    const next = await workflows.deleteWorkflow(targetWorkflowId);
-    setSnapshot(next);
-    if (next.workflowDraft) {
-      applyPersistedWorkflowDraft(next.workflowDraft);
-    } else if (targetWorkflowId === workflowId) {
-      resetWorkflowLocalDraft();
-    }
   }
 
   async function testRuntimeChannel(channelId: string): Promise<void> {
