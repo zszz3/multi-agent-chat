@@ -72,6 +72,7 @@ import { TeamPage } from "./pages/teams/TeamPage";
 export { reorderTeamMembers } from "./pages/teams/team-utils";
 import { WorkflowPage } from "./pages/workflow/WorkflowPage";
 import { useWorkflowDraft } from "./pages/workflow/hooks/useWorkflowDraft";
+import { useWorkflowSidebarState } from "./pages/workflow/hooks/useWorkflowSidebarState";
 import { workflowCanvasLayout, type WorkflowCanvasLayoutVariant } from "./pages/workflow/workflow-canvas-layout";
 import {
   WORKFLOW_THINKING_MESSAGE,
@@ -768,9 +769,7 @@ export function AppShell() {
   const [paletteOpen, setPaletteOpen] = useState(false);
   const [agentContextMenu, setAgentContextMenu] = useState<{ agentId: string; x: number; y: number } | undefined>();
   const [chatContextMenu, setChatContextMenu] = useState<{ chatId: string; x: number; y: number } | undefined>();
-  const [workflowContextMenu, setWorkflowContextMenu] = useState<{ workflowId: string; x: number; y: number } | undefined>();
   const [configContextMenu, setConfigContextMenu] = useState<{ channelId: string; x: number; y: number } | undefined>();
-  const [workflowRenameDraft, setWorkflowRenameDraft] = useState<{ workflowId: string; title: string } | undefined>();
   const transcriptRef = useRef<HTMLElement>(null);
   const stickToBottomRef = useRef(true);
   const gChordRef = useRef(0);
@@ -836,6 +835,17 @@ export function AppShell() {
     configuredAgents: snapshot.configuredAgents,
     channels: snapshot.channels,
     onCreateNewWorkflow: () => setActiveFeature("workflow"),
+  });
+  const {
+    workflowContextMenu,
+    workflowRenameDraft,
+    openWorkflowContextMenu: openWorkflowSidebarContextMenu,
+    closeWorkflowContextMenu,
+    startWorkflowRename,
+    changeWorkflowRenameDraft,
+    cancelWorkflowRename,
+  } = useWorkflowSidebarState({
+    workflows: snapshot.workflowStore.workflows,
   });
 
   configChannelsRef.current = configChannels;
@@ -903,7 +913,7 @@ export function AppShell() {
     const close = (): void => {
       setAgentContextMenu(undefined);
       setChatContextMenu(undefined);
-      setWorkflowContextMenu(undefined);
+      closeWorkflowContextMenu();
       setConfigContextMenu(undefined);
     };
     const handleKeyDown = (event: globalThis.KeyboardEvent): void => {
@@ -917,7 +927,7 @@ export function AppShell() {
       window.removeEventListener("scroll", close, true);
       window.removeEventListener("keydown", handleKeyDown);
     };
-  }, [agentContextMenu, chatContextMenu, workflowContextMenu, configContextMenu]);
+  }, [agentContextMenu, chatContextMenu, workflowContextMenu, configContextMenu, closeWorkflowContextMenu]);
 
   useEffect(() => {
     void snapshots.getSnapshot().then((value) => {
@@ -1225,7 +1235,7 @@ export function AppShell() {
     event.stopPropagation();
     setAgentContextMenu(undefined);
     setChatContextMenu(undefined);
-    setWorkflowContextMenu(undefined);
+    closeWorkflowContextMenu();
     setSelectedConfigChannelId(channelId);
     setConfigContextMenu({ channelId, x: event.clientX, y: event.clientY });
   }
@@ -1283,7 +1293,7 @@ export function AppShell() {
     event.preventDefault();
     event.stopPropagation();
     setAgentContextMenu(undefined);
-    setWorkflowContextMenu(undefined);
+    closeWorkflowContextMenu();
     setConfigContextMenu(undefined);
     setChatContextMenu({ chatId, x: event.clientX, y: event.clientY });
   }
@@ -1305,36 +1315,7 @@ export function AppShell() {
     setAgentContextMenu(undefined);
     setChatContextMenu(undefined);
     setConfigContextMenu(undefined);
-    setWorkflowContextMenu({ workflowId, x: event.clientX, y: event.clientY });
-  }
-
-  function legacyResetWorkflowLocalDraft(): void {
-    abandonWorkflowGrillRequest();
-    setWorkflowRunning(false);
-    setWorkflowObjective("");
-    setWorkflowReply("");
-    setWorkflowError(undefined);
-    setWorkflowMessages(initialWorkflowMessages());
-    setWorkflowGraph(createWorkflowGraphFromObjective(""));
-    setWorkflowGraphReady(false);
-    setWorkflowRunProgress([]);
-    setWorkflowRunContextDocument("");
-    setWorkflowContextDocument("");
-    setWorkflowFinalReport("");
-    setWorkflowRunIds([]);
-    setWorkflowAgentSessionId(undefined);
-    setWorkflowId(createWorkflowId());
-    setWorkflowTitle("Untitled workflow");
-    setWorkflowStatus("draft");
-    setWorkflowRevision(1);
-    setWorkflowCreatedAt(Date.now());
-  }
-
-  function startWorkflowRename(workflowId: string): void {
-    const workflow = snapshot.workflowStore.workflows.find((item) => item.workflowId === workflowId);
-    if (!workflow) return;
-    setWorkflowContextMenu(undefined);
-    setWorkflowRenameDraft({ workflowId, title: workflow.title });
+    openWorkflowSidebarContextMenu(workflowId, event.clientX, event.clientY);
   }
 
   async function confirmWorkflowRename(): Promise<void> {
@@ -1346,13 +1327,13 @@ export function AppShell() {
       return;
     }
     const next = await workflows.renameWorkflow(workflowRenameDraft.workflowId, title);
-    setWorkflowRenameDraft(undefined);
+    cancelWorkflowRename();
     setSnapshot(next);
     if (next.workflowDraft) applyPersistedWorkflowDraft(next.workflowDraft);
   }
 
   async function deleteWorkflow(targetWorkflowId: string): Promise<void> {
-    setWorkflowContextMenu(undefined);
+    closeWorkflowContextMenu();
     if (workflowRunning && targetWorkflowId === workflowId) return;
     if (typeof chatApi.deleteWorkflow !== "function") {
       window.alert?.(missingAppCapabilityMessage("Delete workflow"));
@@ -1367,7 +1348,7 @@ export function AppShell() {
     if (next.workflowDraft) {
       applyPersistedWorkflowDraft(next.workflowDraft);
     } else if (targetWorkflowId === workflowId) {
-      legacyResetWorkflowLocalDraft();
+      resetWorkflowLocalDraft();
     }
   }
 
@@ -2533,9 +2514,9 @@ export function AppShell() {
           onSelectWorkflow={selectWorkflow}
           onOpenWorkflowContextMenu={openWorkflowContextMenu}
           onStartWorkflowRename={startWorkflowRename}
-          onWorkflowRenameDraftChange={(title) => setWorkflowRenameDraft((current) => (current ? { ...current, title } : current))}
+          onWorkflowRenameDraftChange={changeWorkflowRenameDraft}
           onConfirmWorkflowRename={confirmWorkflowRename}
-          onCancelWorkflowRename={() => setWorkflowRenameDraft(undefined)}
+          onCancelWorkflowRename={cancelWorkflowRename}
           onDeleteWorkflow={deleteWorkflow}
           onStartCreatingScheduledWorkflow={startCreatingScheduledWorkflow}
           onSelectScheduledWorkflowSchedule={selectScheduledWorkflowSchedule}
