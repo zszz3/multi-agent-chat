@@ -72,6 +72,7 @@ import { TeamPage } from "./pages/teams/TeamPage";
 export { reorderTeamMembers } from "./pages/teams/team-utils";
 import { WorkflowPage } from "./pages/workflow/WorkflowPage";
 import { useWorkflowDraft } from "./pages/workflow/hooks/useWorkflowDraft";
+import { useScheduledWorkflowRunner } from "./pages/workflow/hooks/useScheduledWorkflowRunner";
 import { useWorkflowSidebarState } from "./pages/workflow/hooks/useWorkflowSidebarState";
 import { workflowCanvasLayout, type WorkflowCanvasLayoutVariant } from "./pages/workflow/workflow-canvas-layout";
 import {
@@ -857,6 +858,12 @@ export function AppShell() {
     canRenameWorkflow: typeof chatApi.renameWorkflow === "function",
     canDeleteWorkflow: typeof chatApi.deleteWorkflow === "function",
     missingCapabilityMessage: missingAppCapabilityMessage,
+  });
+  const { handleScheduledWorkflowEvent } = useScheduledWorkflowRunner({
+    chatApi,
+    snapshotRef,
+    setSnapshot,
+    runWorkflowGraphInternal,
   });
 
   configChannelsRef.current = configChannels;
@@ -1762,68 +1769,6 @@ export function AppShell() {
 
   async function triggerScheduledWorkflow(scheduleId: string): Promise<void> {
     await chatApi.triggerScheduledWorkflowSchedule(scheduleId);
-  }
-
-  async function handleScheduledWorkflowEvent(event: ScheduledWorkflowDueEvent): Promise<void> {
-    const target = scheduledWorkflowEventTarget(event);
-    if (!target) {
-      await chatApi.ackScheduledWorkflowEvent(event.eventId, {
-        status: "failed",
-        message: "Scheduled event payload is missing scheduleId or workflowId.",
-      });
-      return;
-    }
-    const currentSnapshot = snapshotRef.current;
-    const workflow = currentSnapshot.workflowStore.workflows.find((item) => item.workflowId === target.workflowId);
-    const runId = `scheduled_run_${event.eventId}`;
-    if (!workflow) {
-      const failedSnapshot = await chatApi.recordScheduledWorkflowRun({
-        runId,
-        scheduleId: target.scheduleId,
-        workflowId: target.workflowId,
-        eventId: event.eventId,
-        title: event.title,
-        status: "failed",
-        startedAt: Date.now(),
-        finishedAt: Date.now(),
-        message: `Workflow ${target.workflowId} was not found locally.`,
-      });
-      setSnapshot(failedSnapshot);
-      await chatApi.ackScheduledWorkflowEvent(event.eventId, {
-        status: "failed",
-        message: `Workflow ${target.workflowId} was not found locally.`,
-      });
-      return;
-    }
-
-    const runningSnapshot = await chatApi.recordScheduledWorkflowRun({
-      runId,
-      scheduleId: target.scheduleId,
-      workflowId: workflow.workflowId,
-      eventId: event.eventId,
-      title: event.title || workflow.title,
-      status: "running",
-      startedAt: Date.now(),
-      finishedAt: undefined,
-      message: event.message || "Runner started workflow.",
-    });
-    setSnapshot(runningSnapshot);
-
-    const result = await runWorkflowGraphInternal(workflow);
-    const finalStatus = result.ok ? "completed" : "failed";
-    const message = result.ok ? "Workflow completed." : result.error || "Workflow failed.";
-    const finishedSnapshot = await chatApi.finishScheduledWorkflowRun(runId, {
-      status: finalStatus,
-      ...(result.workflowRunId !== undefined ? { workflowRunId: result.workflowRunId } : {}),
-      message,
-      finishedAt: Date.now(),
-    });
-    setSnapshot(finishedSnapshot);
-    await chatApi.ackScheduledWorkflowEvent(event.eventId, {
-      status: finalStatus,
-      ...(result.workflowRunId !== undefined ? { workflowRunId: result.workflowRunId } : {}),
-      message,
-    });
   }
 
   function syncWorkflowGraph(nextGraph: WorkflowGraph): void {
