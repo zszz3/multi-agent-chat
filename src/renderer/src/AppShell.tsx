@@ -71,6 +71,7 @@ import { TaskPage } from "./pages/tasks/TaskPage";
 import { TeamPage } from "./pages/teams/TeamPage";
 export { reorderTeamMembers } from "./pages/teams/team-utils";
 import { WorkflowPage } from "./pages/workflow/WorkflowPage";
+import { useWorkflowDraft } from "./pages/workflow/hooks/useWorkflowDraft";
 import { workflowCanvasLayout, type WorkflowCanvasLayoutVariant } from "./pages/workflow/workflow-canvas-layout";
 import {
   WORKFLOW_THINKING_MESSAGE,
@@ -731,26 +732,6 @@ export function AppShell() {
   const [teamPrompt, setTeamPrompt] = useState("");
   const [taskConfiguredAgentId, setTaskConfiguredAgentId] = useState("");
   const [taskModelId, setTaskModelId] = useState(DEFAULT_MODEL_ID);
-  const [workflowId, setWorkflowId] = useState(() => createWorkflowId());
-  const [workflowTitle, setWorkflowTitle] = useState("Untitled workflow");
-  const [workflowStatus, setWorkflowStatus] = useState<WorkflowStatus>("draft");
-  const [workflowRevision, setWorkflowRevision] = useState(1);
-  const [workflowConfiguredAgentId, setWorkflowConfiguredAgentId] = useState("");
-  const [workflowModelId, setWorkflowModelId] = useState(DEFAULT_MODEL_ID);
-  const [workflowObjective, setWorkflowObjective] = useState("");
-  const [workflowGraph, setWorkflowGraph] = useState<WorkflowGraph>(initialWorkflowGraph);
-  const [workflowGraphReady, setWorkflowGraphReady] = useState(false);
-  const [workflowMessages, setWorkflowMessages] = useState<WorkflowGrillMessage[]>(() => initialWorkflowMessages());
-  const [workflowReply, setWorkflowReply] = useState("");
-  const [workflowError, setWorkflowError] = useState<string | undefined>();
-  const [workflowRunning, setWorkflowRunning] = useState(false);
-  const [workflowRunProgress, setWorkflowRunProgress] = useState<WorkflowRunProgressItem[]>([]);
-  const [workflowRunContextDocument, setWorkflowRunContextDocument] = useState("");
-  const [workflowContextDocument, setWorkflowContextDocument] = useState("");
-  const [workflowFinalReport, setWorkflowFinalReport] = useState("");
-  const [workflowRunIds, setWorkflowRunIds] = useState<string[]>([]);
-  const [workflowAgentSessionId, setWorkflowAgentSessionId] = useState<string | undefined>();
-  const [workflowCreatedAt, setWorkflowCreatedAt] = useState(Date.now());
   const [scheduledWorkflowDraft, setScheduledWorkflowDraft] = useState<ScheduledWorkflowDraft>(() =>
     defaultScheduledWorkflowDraft(DEFAULT_SNAPSHOT.workflowStore.workflows, DEFAULT_SNAPSHOT.workflowStore.activeWorkflowId),
   );
@@ -759,12 +740,8 @@ export function AppShell() {
   const workflowAssistantMessageIdRef = useRef<string | undefined>(undefined);
   const workflowStreamingStartedRef = useRef(false);
   const workflowAssistantContentRef = useRef("");
-  const workflowDraftHydratedRef = useRef(false);
-  const workflowDraftHydratingRef = useRef(false);
-  const workflowDraftSaveTimerRef = useRef<number | undefined>(undefined);
   const snapshotRef = useRef(snapshot);
-  const workflowRunningRef = useRef(workflowRunning);
-  const workflowStoreIds = snapshot.workflowStore.workflows.map((workflow) => workflow.workflowId).join(":");
+  const workflowRunningRef = useRef(false);
   const [taskStatusFilter, setTaskStatusFilter] = useState<TaskStatusFilterValue>("all");
   const [selectedTaskDetailId, setSelectedTaskDetailId] = useState<string | undefined>();
   const [activeFeature, setActiveFeature] = useState<ActiveFeature>("chat");
@@ -797,6 +774,58 @@ export function AppShell() {
   const transcriptRef = useRef<HTMLElement>(null);
   const stickToBottomRef = useRef(true);
   const gChordRef = useRef(0);
+  const {
+    workflowId,
+    workflowTitle,
+    workflowStatus,
+    workflowRevision,
+    workflowConfiguredAgentId,
+    workflowModelId,
+    workflowObjective,
+    workflowGraph,
+    workflowGraphReady,
+    workflowMessages,
+    workflowReply,
+    workflowError,
+    workflowRunning,
+    workflowRunProgress,
+    workflowRunContextDocument,
+    workflowContextDocument,
+    workflowFinalReport,
+    workflowRunIds,
+    workflowAgentSessionId,
+    workflowCreatedAt,
+    applyPersistedWorkflowDraft,
+    setWorkflowId,
+    setWorkflowTitle,
+    setWorkflowStatus,
+    setWorkflowRevision,
+    setWorkflowConfiguredAgentId,
+    setWorkflowModelId,
+    setWorkflowObjective,
+    setWorkflowGraph,
+    setWorkflowGraphReady,
+    setWorkflowMessages,
+    setWorkflowReply,
+    setWorkflowError,
+    setWorkflowRunning,
+    setWorkflowRunProgress,
+    setWorkflowRunContextDocument,
+    setWorkflowContextDocument,
+    setWorkflowFinalReport,
+    setWorkflowRunIds,
+    setWorkflowAgentSessionId,
+    setWorkflowCreatedAt,
+  } = useWorkflowDraft({
+    snapshot,
+    setSnapshot,
+    snapshotRef,
+    initialWorkflowGraph,
+    workflows,
+    configuredAgents: snapshot.configuredAgents,
+    channels: snapshot.channels,
+    onCreateNewWorkflow: () => setActiveFeature("workflow"),
+  });
 
   configChannelsRef.current = configChannels;
   configDirtyRef.current = configDirty;
@@ -879,81 +908,6 @@ export function AppShell() {
     };
   }, [agentContextMenu, chatContextMenu, workflowContextMenu, configContextMenu]);
 
-  function applyPersistedWorkflowDraft(draft: WorkflowDraftState): void {
-    workflowDraftHydratingRef.current = true;
-    setWorkflowId(draft.workflowId);
-    setWorkflowTitle(draft.title);
-    setWorkflowStatus(draft.status);
-    setWorkflowRevision(draft.revision);
-    setWorkflowConfiguredAgentId(draft.configuredAgentId);
-    setWorkflowModelId(draft.modelId);
-    setWorkflowObjective(draft.objective);
-    setWorkflowGraph(draft.graph);
-    setWorkflowGraphReady(draft.graphReady);
-    setWorkflowMessages(draft.messages);
-    setWorkflowReply(draft.reply);
-    setWorkflowError(draft.error);
-    setWorkflowRunProgress(draft.runProgress);
-    setWorkflowRunContextDocument(draft.runContextDocument);
-    setWorkflowContextDocument(draft.contextDocument);
-    setWorkflowFinalReport(draft.finalReport ?? "");
-    setWorkflowRunIds(draft.runIds);
-    setWorkflowAgentSessionId(draft.agentSessionId);
-    setWorkflowCreatedAt(draft.createdAt);
-    window.setTimeout(() => {
-      workflowDraftHydratingRef.current = false;
-    }, 0);
-  }
-
-  function buildWorkflowDraft(): WorkflowDraftState | undefined {
-    if (
-      !workflowDraftShouldPersist({
-        workflowId,
-        activeWorkflowId: snapshot.workflowStore.activeWorkflowId,
-        workflowIds: snapshot.workflowStore.workflows.map((workflow) => workflow.workflowId),
-        objective: workflowObjective,
-        messages: workflowMessages,
-        graphReady: workflowGraphReady,
-        reply: workflowReply,
-        error: workflowError,
-        runProgress: workflowRunProgress,
-        runContextDocument: workflowRunContextDocument,
-        contextDocument: workflowContextDocument,
-        finalReport: workflowFinalReport,
-        agentSessionId: workflowAgentSessionId,
-      })
-    ) {
-      return undefined;
-    }
-    return {
-      workflowId,
-      title: workflowTitle || workflowGraph.title || workflowObjective || "Untitled workflow",
-      status: workflowRunning ? "running" : workflowStatus,
-      revision: workflowRevision,
-      configuredAgentId: workflowConfiguredAgentId || defaultConfiguredAgentId(snapshot.configuredAgents),
-      modelId: configuredAgentModelId(
-        workflowConfiguredAgentId || defaultConfiguredAgentId(snapshot.configuredAgents),
-        workflowModelId,
-        snapshot.configuredAgents,
-        snapshot.channels,
-      ),
-      objective: workflowObjective,
-      graph: workflowGraph,
-      graphReady: workflowGraphReady,
-      messages: workflowMessages,
-      reply: workflowReply,
-      error: workflowError,
-      runProgress: workflowRunProgress,
-      runContextDocument: workflowRunContextDocument,
-      contextDocument: workflowContextDocument,
-      ...(workflowFinalReport.trim() ? { finalReport: workflowFinalReport } : {}),
-      runIds: workflowRunIds,
-      agentSessionId: workflowAgentSessionId,
-      createdAt: workflowCreatedAt,
-      updatedAt: Date.now(),
-    };
-  }
-
   useEffect(() => {
     void snapshots.getSnapshot().then((value) => {
       setSnapshot(value);
@@ -972,55 +926,6 @@ export function AppShell() {
   }, [chatApi]);
 
   useEffect(() => {
-    if (workflowDraftHydratedRef.current || snapshot.detectedAt === 0) return;
-    workflowDraftHydratedRef.current = true;
-    if (snapshot.workflowDraft) applyPersistedWorkflowDraft(snapshot.workflowDraft);
-  }, [snapshot.detectedAt, snapshot.workflowDraft]);
-
-  useEffect(() => {
-    const activeWorkflow = snapshot.workflowDraft;
-    if (!workflowDraftHydratedRef.current || !activeWorkflow) return;
-    if (activeWorkflow.workflowId === workflowId && activeWorkflow.revision === workflowRevision) return;
-    applyPersistedWorkflowDraft(activeWorkflow);
-  }, [snapshot.workflowStore.activeWorkflowId, snapshot.workflowDraft?.workflowId, snapshot.workflowDraft?.revision]);
-
-  useEffect(() => {
-    if (!workflowDraftHydratedRef.current || workflowDraftHydratingRef.current) return;
-    if (workflowDraftSaveTimerRef.current) window.clearTimeout(workflowDraftSaveTimerRef.current);
-    workflowDraftSaveTimerRef.current = window.setTimeout(() => {
-      workflowDraftSaveTimerRef.current = undefined;
-      const draft = buildWorkflowDraft();
-      if (!draft) return;
-      void workflows.updateDraft(draft).then(setSnapshot);
-    }, 300);
-    return () => {
-      if (workflowDraftSaveTimerRef.current) window.clearTimeout(workflowDraftSaveTimerRef.current);
-    };
-  }, [
-    workflowId,
-    workflowTitle,
-    workflowStatus,
-    workflowRevision,
-    workflowConfiguredAgentId,
-    workflowModelId,
-    workflowObjective,
-    workflowGraph,
-    workflowGraphReady,
-    workflowMessages,
-    workflowReply,
-    workflowError,
-    workflowRunProgress,
-    workflowRunContextDocument,
-    workflowContextDocument,
-    workflowFinalReport,
-    workflowRunIds,
-    workflowAgentSessionId,
-    workflowCreatedAt,
-    snapshot.workflowStore.activeWorkflowId,
-    workflowStoreIds,
-  ]);
-
-  useEffect(() => {
     if (configDirty) return;
     setConfigChannels(snapshot.channels);
     setSelectedConfigChannelId((current) => {
@@ -1032,12 +937,9 @@ export function AppShell() {
     const fallbackId = defaultConfiguredAgentId(snapshot.configuredAgents);
     if (!fallbackId) return;
     const nextTaskAgentId = snapshot.configuredAgents.some((agent) => agent.id === taskConfiguredAgentId) ? taskConfiguredAgentId : fallbackId;
-    const nextWorkflowAgentId = snapshot.configuredAgents.some((agent) => agent.id === workflowConfiguredAgentId) ? workflowConfiguredAgentId : fallbackId;
     if (nextTaskAgentId !== taskConfiguredAgentId) setTaskConfiguredAgentId(nextTaskAgentId);
-    if (nextWorkflowAgentId !== workflowConfiguredAgentId) setWorkflowConfiguredAgentId(nextWorkflowAgentId);
     setTaskModelId((current) => configuredAgentModelId(nextTaskAgentId, current, snapshot.configuredAgents, snapshot.channels));
-    setWorkflowModelId((current) => configuredAgentModelId(nextWorkflowAgentId, current, snapshot.configuredAgents, snapshot.channels));
-  }, [snapshot.configuredAgents, snapshot.channels, taskConfiguredAgentId, workflowConfiguredAgentId]);
+  }, [snapshot.configuredAgents, snapshot.channels, taskConfiguredAgentId]);
 
   useEffect(() => {
     snapshotRef.current = snapshot;
@@ -1052,7 +954,7 @@ export function AppShell() {
       if (current.workflowId && snapshot.workflowStore.workflows.some((workflow) => workflow.workflowId === current.workflowId)) return current;
       return defaultScheduledWorkflowDraft(snapshot.workflowStore.workflows, snapshot.workflowStore.activeWorkflowId);
     });
-  }, [snapshot.workflowStore.activeWorkflowId, workflowStoreIds]);
+  }, [snapshot.workflowStore.activeWorkflowId, snapshot.workflowStore.workflows]);
 
   useEffect(() => {
     if (activeFeature !== "runtimes" || pluginCatalogStatus || codexPluginCatalog.length > 0) return;
@@ -1085,39 +987,6 @@ export function AppShell() {
       void handleScheduledWorkflowEvent(event);
     });
   }, [chatApi]);
-
-  useEffect(() => {
-    return workflows.onAgentEvent((event) => {
-      if (event.requestId !== workflowRequestIdRef.current) return;
-      const assistantMessageId = workflowAssistantMessageIdRef.current;
-      if (!assistantMessageId) return;
-      if (event.type === "delta") {
-        workflowAssistantContentRef.current += event.content;
-        setWorkflowMessages((current) =>
-          current.map((message) => (message.id === assistantMessageId ? { ...message, content: workflowAssistantContentRef.current } : message)),
-        );
-        workflowStreamingStartedRef.current = workflowAssistantContentRef.current.length > 0;
-        return;
-      }
-      if (event.type === "completed") {
-        setWorkflowAgentSessionId(event.sessionId);
-        if (event.content) {
-          workflowAssistantContentRef.current = event.content;
-          setWorkflowMessages((current) =>
-            current.map((message) => (message.id === assistantMessageId ? { ...message, content: event.content } : message)),
-          );
-        }
-        applyWorkflowGraphFromAgentContent(workflowAssistantContentRef.current || event.content);
-        return;
-      }
-      if (event.type === "error") {
-        setWorkflowError(event.error);
-        setWorkflowMessages((current) =>
-          current.map((message) => (message.id === assistantMessageId ? { ...message, content: `Workflow agent error: ${event.error}` } : message)),
-        );
-      }
-    });
-  }, [workflows]);
 
   const runtimeMap = useMemo(() => new Map(snapshot.runtimes.map((runtime) => [runtime.id, runtime])), [snapshot.runtimes]);
   const activeChat = useMemo(() => activeChatFrom(snapshot), [snapshot]);
