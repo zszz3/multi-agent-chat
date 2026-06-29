@@ -1,21 +1,13 @@
 import { useCallback, useEffect, useState } from "react";
 import type { AppSnapshot, WorkflowDraftState } from "../../../../../shared/types";
 import type { WorkflowService } from "../../../app/services/workflow-service";
+import type { WorkflowSidebarController, WorkflowSidebarContextMenu, WorkflowSidebarRenameDraft } from "../workflow-controller";
 
-interface WorkflowContextMenuState {
-  workflowId: string;
-  x: number;
-  y: number;
-}
-
-interface WorkflowRenameDraftState {
-  workflowId: string;
-  title: string;
-}
+type MaybePromise = void | Promise<void>;
 
 export interface WorkflowSidebarStateController {
-  workflowContextMenu: WorkflowContextMenuState | undefined;
-  workflowRenameDraft: WorkflowRenameDraftState | undefined;
+  workflowContextMenu: WorkflowSidebarContextMenu | undefined;
+  workflowRenameDraft: WorkflowSidebarRenameDraft | undefined;
   openWorkflowContextMenu: (workflowId: string, x: number, y: number) => void;
   closeWorkflowContextMenu: () => void;
   startWorkflowRename: (workflowId: string) => void;
@@ -23,6 +15,10 @@ export interface WorkflowSidebarStateController {
   cancelWorkflowRename: () => void;
   confirmWorkflowRename: () => Promise<void>;
   deleteWorkflow: (workflowId: string) => Promise<void>;
+}
+
+export interface WorkflowSidebarFeatureController extends WorkflowSidebarController {
+  closeContextMenu: () => void;
 }
 
 interface UseWorkflowSidebarStateOptions {
@@ -50,8 +46,8 @@ export function useWorkflowSidebarState({
   canDeleteWorkflow,
   missingCapabilityMessage,
 }: UseWorkflowSidebarStateOptions): WorkflowSidebarStateController {
-  const [workflowContextMenu, setWorkflowContextMenu] = useState<WorkflowContextMenuState | undefined>();
-  const [workflowRenameDraft, setWorkflowRenameDraft] = useState<WorkflowRenameDraftState | undefined>();
+  const [workflowContextMenu, setWorkflowContextMenu] = useState<WorkflowSidebarContextMenu | undefined>();
+  const [workflowRenameDraft, setWorkflowRenameDraft] = useState<WorkflowSidebarRenameDraft | undefined>();
 
   useEffect(() => {
     if (workflowContextMenu && !workflows.some((workflow) => workflow.workflowId === workflowContextMenu.workflowId)) {
@@ -146,5 +142,45 @@ export function useWorkflowSidebarState({
     cancelWorkflowRename,
     confirmWorkflowRename,
     deleteWorkflow,
+  };
+}
+
+interface BuildWorkflowSidebarControllerOptions {
+  workflows: WorkflowDraftState[];
+  activeWorkflowId?: string;
+  running: boolean;
+  state: WorkflowSidebarStateController;
+  onNewWorkflow: () => MaybePromise;
+  onSelectWorkflow: (workflowId: string) => MaybePromise;
+  onBeforeOpenContextMenu?: () => void;
+}
+
+export function buildWorkflowSidebarController({
+  workflows,
+  activeWorkflowId,
+  running,
+  state,
+  onNewWorkflow,
+  onSelectWorkflow,
+  onBeforeOpenContextMenu,
+}: BuildWorkflowSidebarControllerOptions): WorkflowSidebarFeatureController {
+  return {
+    workflows,
+    running,
+    ...(activeWorkflowId ? { activeWorkflowId } : {}),
+    ...(state.workflowContextMenu ? { contextMenu: state.workflowContextMenu } : {}),
+    ...(state.workflowRenameDraft ? { renameDraft: state.workflowRenameDraft } : {}),
+    onNewWorkflow,
+    onSelectWorkflow,
+    onOpenContextMenu: (workflowId: string, x: number, y: number) => {
+      onBeforeOpenContextMenu?.();
+      state.openWorkflowContextMenu(workflowId, x, y);
+    },
+    onStartRename: state.startWorkflowRename,
+    onRenameDraftChange: state.changeWorkflowRenameDraft,
+    onConfirmRename: state.confirmWorkflowRename,
+    onCancelRename: state.cancelWorkflowRename,
+    onDeleteWorkflow: state.deleteWorkflow,
+    closeContextMenu: state.closeWorkflowContextMenu,
   };
 }

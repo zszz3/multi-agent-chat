@@ -7,7 +7,6 @@ import type {
   ScheduledWorkflowSchedule,
   SkillTemplate,
   TaskRun,
-  WorkflowDraftState,
 } from "../../../shared/types";
 import { agentAccent, agentLabel, configuredAgentById, configuredAgentRuntimeId, resolveConfiguredAgentChannel } from "./agents";
 import { formatTime } from "./format";
@@ -17,6 +16,7 @@ import { ChatHistoryPanel } from "../pages/chat/ChatHistoryPanel";
 import { TaskStatusChip, TaskStatusFilter, taskProgressLabel, type TaskStatusFilterValue } from "../pages/tasks/task-status";
 import { WorkflowHistoryPanel } from "../pages/workflow/WorkflowHistoryPanel";
 import { formatScheduleRecurrence } from "../pages/schedules/schedule-utils";
+import type { WorkflowSidebarController } from "../pages/workflow/workflow-controller";
 
 type MaybePromise = void | Promise<void>;
 
@@ -47,14 +47,6 @@ export interface TaskSidebarModel {
   channels: AgentChannel[];
 }
 
-export interface WorkflowSidebarModel {
-  workflows: WorkflowDraftState[];
-  activeWorkflowId: string | undefined;
-  running: boolean;
-  contextMenu: { workflowId: string; x: number; y: number } | undefined;
-  renameDraft: { workflowId: string; title: string } | undefined;
-}
-
 export interface ScheduleSidebarModel {
   schedules: ScheduledWorkflowSchedule[];
   activeScheduleId: string | undefined;
@@ -68,7 +60,7 @@ export interface SkillsSidebarModel {
 export interface SidebarViewModel {
   chat?: ChatSidebarModel;
   tasks?: TaskSidebarModel;
-  workflow?: WorkflowSidebarModel;
+  workflow?: WorkflowSidebarController;
   schedules?: ScheduleSidebarModel;
   skills?: SkillsSidebarModel;
 }
@@ -85,14 +77,6 @@ interface ResourceSidebarProps {
   onDeleteChat: (chatId: string) => MaybePromise;
   onTaskStatusFilterChange: (value: TaskStatusFilterValue) => void;
   onSelectTask: (taskId: string) => MaybePromise;
-  onNewWorkflow: () => MaybePromise;
-  onSelectWorkflow: (workflowId: string) => MaybePromise;
-  onOpenWorkflowContextMenu: (event: MouseEvent, workflowId: string) => void;
-  onStartWorkflowRename: (workflowId: string) => MaybePromise;
-  onWorkflowRenameDraftChange: (title: string) => void;
-  onConfirmWorkflowRename: () => MaybePromise;
-  onCancelWorkflowRename: () => void;
-  onDeleteWorkflow: (workflowId: string) => MaybePromise;
   onStartCreatingScheduledWorkflow: () => void;
   onSelectScheduledWorkflowSchedule: (scheduleId: string) => MaybePromise;
 }
@@ -121,14 +105,6 @@ export function ResourceSidebar({
   onDeleteChat,
   onTaskStatusFilterChange,
   onSelectTask,
-  onNewWorkflow,
-  onSelectWorkflow,
-  onOpenWorkflowContextMenu,
-  onStartWorkflowRename,
-  onWorkflowRenameDraftChange,
-  onConfirmWorkflowRename,
-  onCancelWorkflowRename,
-  onDeleteWorkflow,
   onStartCreatingScheduledWorkflow,
   onSelectScheduledWorkflowSchedule,
 }: ResourceSidebarProps) {
@@ -185,14 +161,14 @@ export function ResourceSidebar({
           running={workflowModel.running}
           contextMenu={workflowModel.contextMenu}
           renameDraft={workflowModel.renameDraft}
-          onNewWorkflow={onNewWorkflow}
-          onSelectWorkflow={onSelectWorkflow}
-          onOpenContextMenu={onOpenWorkflowContextMenu}
-          onStartRename={onStartWorkflowRename}
-          onRenameDraftChange={onWorkflowRenameDraftChange}
-          onConfirmRename={onConfirmWorkflowRename}
-          onCancelRename={onCancelWorkflowRename}
-          onDeleteWorkflow={onDeleteWorkflow}
+          onNewWorkflow={workflowModel.onNewWorkflow}
+          onSelectWorkflow={workflowModel.onSelectWorkflow}
+          onOpenContextMenu={(event, workflowId) => workflowModel.onOpenContextMenu(workflowId, event.clientX, event.clientY)}
+          onStartRename={workflowModel.onStartRename}
+          onRenameDraftChange={workflowModel.onRenameDraftChange}
+          onConfirmRename={workflowModel.onConfirmRename}
+          onCancelRename={workflowModel.onCancelRename}
+          onDeleteWorkflow={workflowModel.onDeleteWorkflow}
         />
       ) : activeFeature === "schedules" && scheduleModel ? (
         <ScheduledResourcePanel

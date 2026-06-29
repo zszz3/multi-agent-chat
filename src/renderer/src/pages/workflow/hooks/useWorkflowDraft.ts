@@ -4,19 +4,20 @@ import { buildWorkflowAgentPrompt } from "../../../../../shared/workflow-agent";
 import { createWorkflowGraphFromObjective, parseWorkflowGraphUpsert } from "../../../../../shared/workflow-graph";
 import type { AgentChannel, AppSnapshot, ConfiguredAgent, WorkflowDraftState, WorkflowGraph, WorkflowGraphNode, WorkflowGrillMessage, WorkflowRunProgressItem, WorkflowStatus } from "../../../../../shared/types";
 import { configuredAgentModelId, defaultConfiguredAgentId } from "../../../app/agents";
+import {
+  createWorkflowId as createWorkflowIdFromAppState,
+  initialWorkflowMessages as initialWorkflowMessagesFromAppState,
+  workflowDraftShouldPersist as workflowDraftShouldPersistFromAppState,
+} from "../../../app/app-state";
 import type { WorkflowService } from "../../../app/services/workflow-service";
 import { WORKFLOW_THINKING_MESSAGE } from "../workflow-utils";
 
 function initialWorkflowMessages(): WorkflowGrillMessage[] {
-  return [];
+  return initialWorkflowMessagesFromAppState();
 }
 
 function createWorkflowId(): string {
-  const randomPart =
-    typeof crypto !== "undefined" && "randomUUID" in crypto
-      ? crypto.randomUUID()
-      : `${Date.now().toString(36)}-${Math.random().toString(36).slice(2)}`;
-  return `wf_${randomPart}`;
+  return createWorkflowIdFromAppState();
 }
 
 interface WorkflowDraftPersistInput {
@@ -36,19 +37,7 @@ interface WorkflowDraftPersistInput {
 }
 
 function workflowDraftShouldPersist(input: WorkflowDraftPersistInput): boolean {
-  const hasContent = Boolean(
-    input.objective.trim() ||
-      input.messages.length > 0 ||
-      input.graphReady ||
-      input.reply.trim() ||
-      input.error ||
-      input.runProgress.length > 0 ||
-      input.runContextDocument.trim() ||
-      input.contextDocument.trim() ||
-      input.finalReport.trim() ||
-      input.agentSessionId,
-  );
-  return hasContent || input.activeWorkflowId === input.workflowId || input.workflowIds.includes(input.workflowId);
+  return workflowDraftShouldPersistFromAppState(input);
 }
 
 export interface WorkflowDraftController {

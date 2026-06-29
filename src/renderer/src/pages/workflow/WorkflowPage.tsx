@@ -31,6 +31,7 @@ import { MarkdownDocument } from "../../ui/MarkdownDocument";
 import { ChatControls } from "../chat/ChatControls";
 import { TaskStatusChip } from "../tasks/task-status";
 import { WorkflowCanvasBoard } from "./WorkflowCanvasBoard";
+import type { WorkflowController } from "./workflow-controller";
 import {
   WORKFLOW_THINKING_MESSAGE,
   extractWorkflowOutputDocumentsForPlan,
@@ -101,7 +102,7 @@ const WORKFLOW_TEXT = {
   },
 } as const;
 
-interface WorkflowPageProps {
+interface WorkflowPageLegacyProps {
   workflowId?: string;
   title?: string;
   status?: WorkflowStatus;
@@ -138,42 +139,47 @@ interface WorkflowPageProps {
   defaultGraphExpanded?: boolean;
 }
 
-export function WorkflowPage({
-  workflowId,
-  title,
-  status = "draft",
-  graph,
-  graphReady,
-  objective,
-  messages,
-  reply,
-  error,
-  configuredAgentId,
-  modelId = DEFAULT_MODEL_ID,
-  runtimes,
-  channels,
-  configuredAgents = [],
-  workDir,
-  running,
-  runProgress = [],
-  contextDocument = "",
-  finalReport = "",
-  onObjectiveChange,
-  onSelectConfiguredAgent,
-  onSelectModel = () => undefined,
-  onDraftGraph,
-  onReplyChange,
-  onSendReply,
-  onUpdateNode,
-  onRunGraph,
-  onResetSession,
-  onStopGrill = () => undefined,
-  onChooseWorkDir = () => undefined,
-  onRefresh = () => undefined,
-  onReadOutputFile,
-  language = "en",
-  defaultGraphExpanded = false,
-}: WorkflowPageProps) {
+export type WorkflowPageProps = WorkflowPageLegacyProps | { controller: WorkflowController };
+
+function resolveWorkflowPageSource(props: WorkflowPageProps): WorkflowController | WorkflowPageLegacyProps {
+  return "controller" in props ? props.controller : props;
+}
+
+export function WorkflowPage(props: WorkflowPageProps) {
+  const source = resolveWorkflowPageSource(props);
+  const workflowId = source.workflowId;
+  const title = source.title;
+  const status = source.status ?? "draft";
+  const graph = source.graph;
+  const graphReady = source.graphReady;
+  const objective = source.objective;
+  const messages = source.messages;
+  const reply = source.reply;
+  const error = source.error;
+  const configuredAgentId = source.configuredAgentId;
+  const modelId = source.modelId ?? DEFAULT_MODEL_ID;
+  const runtimes = source.runtimes;
+  const channels = source.channels;
+  const configuredAgents = source.configuredAgents ?? [];
+  const workDir = source.workDir;
+  const running = source.running;
+  const runProgress = source.runProgress ?? [];
+  const contextDocument = source.contextDocument ?? "";
+  const finalReport = source.finalReport ?? "";
+  const onObjectiveChange = source.onObjectiveChange;
+  const onSelectConfiguredAgent = source.onSelectConfiguredAgent;
+  const onSelectModel = source.onSelectModel ?? (() => undefined);
+  const onDraftGraph = source.onDraftGraph;
+  const onReplyChange = source.onReplyChange;
+  const onSendReply = source.onSendReply;
+  const onUpdateNode = source.onUpdateNode;
+  const onRunGraph = source.onRunGraph;
+  const onStopGrill = source.onStopGrill ?? (() => undefined);
+  const onChooseWorkDir = source.onChooseWorkDir ?? (() => undefined);
+  const onRefresh = source.onRefresh ?? (() => undefined);
+  const onReadOutputFile = source.onReadOutputFile;
+  const language = source.language ?? "en";
+  const defaultGraphExpanded = source.defaultGraphExpanded ?? false;
   const workflowText = WORKFLOW_TEXT[language];
   const validation = validateWorkflowGraph(graph);
   const workflowStarted = messages.length > 0;

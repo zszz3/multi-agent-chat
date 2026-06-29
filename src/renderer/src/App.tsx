@@ -10,6 +10,7 @@ export {
   workflowDraftShouldPersist,
   workflowTaskLiveDetail,
 } from "./app/app-state";
+export { scheduledWorkflowEventTarget } from "./app/shell";
 export {
   parseWorkflowJudgeResult,
   workflowFinalReviewPrompt,
@@ -17,6 +18,7 @@ export {
   workflowNodeRunPrompt,
   workflowProgressAfterFailure,
 } from "./pages/workflow/workflow-domain";
+export { workflowStoragePlanDocument } from "./pages/workflow/workflow-utils";
 export * from "./AppShell";
 
 export default AppShell;

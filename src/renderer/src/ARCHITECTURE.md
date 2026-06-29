@@ -58,11 +58,23 @@ src/renderer/src/
 3. App-level provider/service/store skeletons exist and can absorb remaining state from `AppShell`.
 4. Workflow domain prompt/judge/report helpers are separated from shell composition.
 5. `ResourceSidebar` now accepts feature-scoped models instead of raw top-level state bags.
+6. Runtime/config and scheduled workflows now each have an initial feature controller hook boundary:
+   - `pages/runtime/hooks/useRuntimeConfigManager.ts`
+   - `pages/config/hooks/useConfiguredAgentsManager.ts`
+   - `pages/schedules/hooks/useScheduledWorkflowManager.ts`
+7. Workflow now has an initial page-level feature controller boundary through:
+   - `pages/workflow/workflow-controller.ts`
+   - `pages/workflow/hooks/useWorkflowFeatureController.ts`
+   - `pages/workflow/WorkflowFeature.tsx`
+8. `WorkflowPage` now accepts either the legacy page prop contract or `controller: WorkflowController`, so the page itself can consume the feature-owned workflow boundary while tests and compatibility callers migrate incrementally.
+9. Workflow sidebar state is no longer only surfaced as a shell-built sidebar model; `ResourceSidebar` now consumes a workflow sidebar controller assembled from workflow feature hooks.
+10. Workflow draft, runner, page-controller, and sidebar-controller composition now has a workflow-owned high-level hook in `pages/workflow/hooks/useWorkflowFeatureManager.ts`, so `AppShell` no longer wires that whole feature stack inline.
+11. Cross-feature context-menu coordination is starting to move out of `AppShell` branches into app-level hooks such as `app/useShellMenuCoordinator.ts`.
 
 ## Remaining Work
 
 1. Move snapshot, preferences, and navigation ownership from `AppShell` local state into the new providers.
-2. Extract feature controllers/hooks for workflow, runtime/config, chat, tasks, and teams.
+2. Keep shrinking workflow controller surfaces and remaining shell coupling such as schedule-runner bridging, then extract the remaining feature controllers/hooks for chat, tasks, and teams.
 3. Finish replacing direct `window.multiAgentChat` usage in pages/shell logic with app services.
 4. Split `styles.css` by feature after JSX boundaries stabilize.
 5. Reduce `App.tsx` compatibility re-exports after tests migrate off the legacy surface.

@@ -119,6 +119,142 @@ Current effect:
 - `App.tsx` still preserves the legacy `./App` surface, but a subset of pure helpers now explicitly re-export from their real ownership modules
 - this reduces duplicate logic while preserving the current test/import compatibility layer
 
+### 9. Runtime/config controller extraction started
+
+Completed on the current branch working tree:
+
+- added `src/renderer/src/pages/runtime/hooks/useRuntimeConfigManager.ts`
+- added `src/renderer/src/pages/config/hooks/useConfiguredAgentsManager.ts`
+- moved runtime/config state and actions out of `AppShell` for:
+  - selected channel and editable channel list
+  - dirty/status handling
+  - Codex plugin catalog loading
+  - runtime test state and transcript subscription
+  - provider balance query and timed refresh
+  - config persistence and model/channel mutation helpers
+- moved configured-agent page state and actions out of `AppShell` for:
+  - selected configured agent tracking
+  - configured-agent save status
+  - add/save/update configured-agent flows
+- `AppShell` now consumes that hook and keeps only a thin provider-key wrapper plus a small context-menu bridge for closing other menus
+
+Current effect:
+
+- runtime/config no longer lives as one large inline block inside `AppShell`
+- the runtime/config split now has a real feature hook boundary, not just separate page mounts
+- `ConfigPage` no longer reuses runtime diagnostic status for configured-agent save feedback
+- this is the second major shell-size reduction after the workflow runner extraction
+
+### 10. Scheduled workflow controller extraction started
+
+Completed on the current branch working tree:
+
+- added `src/renderer/src/pages/schedules/hooks/useScheduledWorkflowManager.ts`
+- moved schedule feature state and actions out of `AppShell` for:
+  - scheduled workflow draft lifecycle
+  - create/detail mode
+  - runner connect / disconnect / refresh actions
+  - selected schedule handling
+  - schedule create / update / delete / trigger actions
+  - scheduled event subscription wiring through the workflow runner bridge
+- `AppShell` now consumes a schedules controller instead of keeping inline scheduled-workflow CRUD and mode management
+- `App.tsx` now explicitly re-exports `scheduledWorkflowEventTarget` and `workflowStoragePlanDocument` so the current compatibility surface remains intact while tests still import from `./App`
+
+Current effect:
+
+- schedules now has a real feature controller boundary instead of living as shell-local state plus page props
+- `AppShell` no longer owns the scheduled workflow feature lifecycle directly
+- the workflow/schedules split is more coherent: workflow execution stays in workflow hooks while schedule orchestration now lives under `pages/schedules`
+
+### 11. Workflow feature controller boundary started
+
+Completed on the current branch working tree:
+
+- added `src/renderer/src/pages/workflow/workflow-controller.ts`
+- added `src/renderer/src/pages/workflow/hooks/useWorkflowFeatureController.ts`
+- added `src/renderer/src/pages/workflow/WorkflowFeature.tsx`
+- `AppShell` now assembles a workflow feature controller and mounts `WorkflowFeature` instead of passing the full workflow prop bag directly into `WorkflowPage`
+- `WorkflowPageProps` is now exported so the feature wrapper can preserve the current page API while reducing the shell-facing interface width
+
+Current effect:
+
+- the first page-level workflow controller boundary now exists
+- the widest `AppShell -> WorkflowPage` prop surface has been collapsed into a feature-owned controller assembly step
+- workflow draft, runner, and page wiring are now closer to a controller/view boundary even though `WorkflowPage` itself still renders against the legacy prop contract internally
+
+### 12. WorkflowPage controller entry adopted
+
+Completed on the current branch working tree:
+
+- `src/renderer/src/pages/workflow/WorkflowPage.tsx` now accepts either:
+  - the legacy page prop contract
+  - or `controller: WorkflowController`
+- `src/renderer/src/pages/workflow/WorkflowFeature.tsx` is now a thin passthrough wrapper:
+  - `<WorkflowPage controller={controller} />`
+- the page now resolves its rendering source from one normalized controller-like object before applying defaults
+
+Current effect:
+
+- the controller boundary is no longer only outside the page; `WorkflowPage` can now consume the feature-owned contract directly
+- `WorkflowFeature` no longer contains a large compatibility prop-mapping layer
+- existing layout tests and any legacy direct page mounts can still keep using the old prop shape during migration
+
+### 13. Workflow sidebar controller assembly extracted
+
+Completed on the current branch working tree:
+
+- `src/renderer/src/pages/workflow/hooks/useWorkflowSidebarState.ts` now also exposes a workflow-sidebar controller builder
+- `src/renderer/src/app/ResourceSidebar.tsx` now consumes a workflow sidebar controller instead of a shell-built workflow model plus many loose workflow callbacks
+- `AppShell` no longer:
+  - builds the workflow sidebar model inline
+  - passes workflow sidebar rename/delete/context-menu handlers one by one into `ResourceSidebar`
+  - owns a dedicated `openWorkflowContextMenu(event, workflowId)` bridge just for the workflow sidebar
+
+Current effect:
+
+- workflow page and workflow sidebar are now closer to sharing one feature-owned controller surface
+- `AppShell` has one less feature-specific sidebar assembly path
+- the remaining workflow shell coupling is narrower and mostly limited to cross-feature menu-closing coordination plus draft/runner composition
+
+### 14. Workflow feature manager extracted
+
+Completed on the current branch working tree:
+
+- added `src/renderer/src/pages/workflow/hooks/useWorkflowFeatureManager.ts`
+- moved the shell-side workflow composition of:
+  - `useWorkflowDraft`
+  - `useWorkflowRunner`
+  - `useWorkflowFeatureController`
+  - `useWorkflowSidebarState`
+  into one workflow-owned high-level feature hook
+- `AppShell` now consumes:
+  - `workflowController`
+  - `workflowSidebarController`
+  - `runWorkflowGraphInternal`
+  - `resetWorkflowLocalDraft`
+  from that manager instead of manually wiring the full draft/runner/sidebar/page graph itself
+
+Current effect:
+
+- the biggest remaining workflow wiring block is no longer assembled inline inside `AppShell`
+- workflow feature composition now lives primarily under `pages/workflow/hooks`
+- `AppShell` is closer to the intended role of shell composition plus cross-feature coordination only
+
+### 15. Shell menu coordination extracted
+
+Completed on the current branch working tree:
+
+- added `src/renderer/src/app/useShellMenuCoordinator.ts`
+- moved shell-level context-menu coordination for chat, workflow, and runtime/config menus out of inline `AppShell` effects and ad hoc open handlers
+- removed the unused shell-local `agentContextMenu` state
+- workflow sidebar context-menu opening now passes through a shell-level coordinator wrapper before delegating to the workflow sidebar controller
+
+Current effect:
+
+- the remaining workflow-related menu coupling is now expressed as generic shell coordination instead of workflow-specific inline logic
+- `AppShell` no longer owns a bespoke global click/scroll/escape close effect just to close feature menus
+- cross-feature context-menu behavior is starting to converge on reusable app-level hooks rather than ad hoc shell code
+
 ## Files Most Affected So Far
 
 - `src/renderer/src/App.tsx`
@@ -126,6 +262,7 @@ Current effect:
 - `src/renderer/src/CommandPalette.tsx`
 - `src/renderer/src/app/FeatureRail.tsx`
 - `src/renderer/src/app/ResourceSidebar.tsx`
+- `src/renderer/src/app/useShellMenuCoordinator.ts`
 - `src/renderer/src/app/shell.ts`
 - `src/renderer/src/app/app-state.ts`
 - `src/renderer/src/app/constants.ts`
@@ -137,7 +274,16 @@ Current effect:
 - `src/renderer/src/pages/workflow/hooks/useWorkflowDraft.ts`
 - `src/renderer/src/pages/workflow/hooks/useWorkflowRunner.ts`
 - `src/renderer/src/pages/workflow/hooks/useScheduledWorkflowRunner.ts`
+- `src/renderer/src/pages/workflow/hooks/useWorkflowFeatureController.ts`
+- `src/renderer/src/pages/workflow/hooks/useWorkflowFeatureManager.ts`
+- `src/renderer/src/pages/workflow/hooks/useWorkflowSidebarState.ts`
+- `src/renderer/src/pages/workflow/workflow-controller.ts`
+- `src/renderer/src/pages/workflow/WorkflowFeature.tsx`
+- `src/renderer/src/pages/workflow/WorkflowPage.tsx`
+- `src/renderer/src/pages/schedules/hooks/useScheduledWorkflowManager.ts`
 - `src/renderer/src/pages/workflow/workflow-domain.ts`
+- `src/renderer/src/pages/config/hooks/useConfiguredAgentsManager.ts`
+- `src/renderer/src/pages/runtime/hooks/useRuntimeConfigManager.ts`
 - `src/renderer/src/ARCHITECTURE.md`
 
 ## Validation Status
@@ -145,7 +291,7 @@ Current effect:
 ### Passed
 
 - `npm run typecheck`
-  - re-run and passing after the workflow runner extraction and each compatibility-helper reuse slice through `05be3f7`
+  - re-run and passing after the workflow runner extraction, compatibility-helper reuse slices, and the runtime/config hook extraction
 
 ### Still Failing
 
@@ -215,30 +361,34 @@ Still pending:
 
 - keep shrinking `useWorkflowDraft` / `useWorkflowRunner` / `useScheduledWorkflowRunner` option surfaces so they stop depending on large shell-local setter bags
 - move any remaining workflow-only interaction state that is still local to `AppShell` behind feature-owned hooks/controllers
-- reduce the amount of workflow orchestration state that is still assembled in `AppShell` before being passed down
-- reduce `WorkflowPage` props from a large primitive/callback surface toward `controller` or `viewModel + actions`
-- decide whether the workflow hooks should collapse into a higher-level workflow controller boundary for the page and sidebar
+- reduce the remaining workflow shell coupling that still lives around schedule-runner bridging and compatibility surface management
+- finish shrinking `WorkflowPage` internals so the page no longer needs to carry both `controller` and legacy prop entrypoints long-term
+- decide whether workflow page + sidebar should share a higher-level workflow feature controller or a split `page controller` + `sidebar model` boundary
+- keep deciding which shell cross-feature behavior belongs in generic app hooks versus feature managers
 
 Reason this remains first priority:
 
 - workflow is still the heaviest domain in `AppShell`
 - even after the hook extraction, it still contains the most renderer-owned orchestration and the widest shell-to-feature prop surface
 
-### D. Runtime and configuration are only split at the navigation level
+### D. Runtime and configuration now have an initial feature hook boundary
 
 Current state:
 
 - `configuration` is a top-level feature in navigation
 - `RuntimePage` and `ConfigPage` are mounted separately
-- ownership is still centralized in `AppShell`
+- `useRuntimeConfigManager` now owns most runtime/config editor and diagnostics state
+- `useConfiguredAgentsManager` now owns the configured-agent selection/save/add/update flow for `ConfigPage`
+- `AppShell` no longer keeps the full runtime/config implementation inline
+- `ConfigPage` save status is no longer coupled to runtime/config diagnostics status
 
 Still pending:
 
-- create `pages/config/hooks/useChannelConfigEditor`
-- move config channel editing, dirty tracking, save/load/reset, and selected-channel state out of `AppShell`
-- move config-specific local UI state such as config context menu out of `AppShell`
-- create `pages/runtime/hooks/useRuntimeDiagnostics`
-- move agent test state, test transcript updates, periodic tick state, provider balance refresh, and plugin catalog loading out of `AppShell`
+- keep shrinking the `useRuntimeConfigManager` public surface so `AppShell` does not pass around low-level runtime/config callbacks individually
+- decide whether runtime/config should stop sharing one hook and split further into:
+  - `useChannelConfigEditor`
+  - `useRuntimeDiagnostics`
+- consider narrowing `useConfiguredAgentsManager` into a tighter page controller so `ConfigPage` no longer consumes a wide callback bag
 - explicitly define which runtime/config data belongs to app-level preference state versus feature-local editor/diagnostic state
 
 ### E. Chat / tasks / teams / skills / schedules still need feature-owned controllers
@@ -259,11 +409,10 @@ Still pending:
   - team run selection
   - execute / stop team run flow
 - keep `skills` self-contained by moving discovery/import interaction state fully into `SkillsPage` or a dedicated `useSkillDiscovery`
-- create `useScheduledWorkflowManager`
-  - draft
-  - create/detail mode
-  - runner connect / disconnect
-  - selected schedule handling
+- keep narrowing `useScheduledWorkflowManager`
+  - decide whether schedule editor state should also move out of `ScheduledWorkflowPage`
+  - reduce any remaining shell-owned schedule sidebar/view-model assembly
+  - decide whether schedule/run selectors belong in dedicated feature-local helpers
 
 ### F. Sidebar and page interfaces are not fully normalized yet
 
@@ -349,9 +498,9 @@ Still pending:
 
 ## Recommended Next Sequence
 
-1. Keep shrinking the remaining workflow composition surface in `AppShell` now that the workflow hooks exist.
-2. Split runtime diagnostics and config editor ownership into dedicated hooks/controllers.
-3. Extract chat, task, team, and schedules feature controllers.
+1. Decide whether workflow should keep the current split of `page controller + sidebar controller + manager`, or collapse further into one higher-level feature controller surface.
+2. Finish the runtime/config follow-up by deciding whether `useRuntimeConfigManager` should stay unified or split into editor vs diagnostics controllers.
+3. Extract chat, task, and team feature controllers, then keep shrinking the remaining workflow/schedules controller surfaces.
 4. Migrate tests off the legacy `App.tsx` surface and then replace broad compatibility re-exports with an explicit minimal surface.
 5. Split feature styles after JSX/controller boundaries stabilize.
 
@@ -371,5 +520,6 @@ The current renderer refactor goal should be treated as complete only when all o
 
 At the time of writing:
 
-- source changes described above are committed
-- only `.idea/` remains as untracked local noise and should stay excluded from commits
+- earlier renderer refactor slices listed above are committed on this branch
+- the runtime/config hook extraction, configured-agent manager extraction, scheduled-workflow manager extraction, workflow feature controller extraction, `WorkflowPage` controller-entry adoption, workflow sidebar controller assembly extraction, workflow feature manager extraction, shell menu coordination extraction, and this progress-note sync are currently present in the working tree and not yet committed
+- `.idea/` remains untracked local noise and should stay excluded from commits

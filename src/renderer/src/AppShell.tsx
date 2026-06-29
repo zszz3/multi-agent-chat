@@ -9,16 +9,7 @@ import { AppProviders } from "./app/providers/AppProviders";
 import { multiAgentChatService } from "./app/services/multi-agent-chat-service";
 import { snapshotService } from "./app/services/snapshot-service";
 import { workflowService } from "./app/services/workflow-service";
-import {
-  DEFAULT_SNAPSHOT as APP_STATE_DEFAULT_SNAPSHOT,
-  applyProviderModelIdToAgentConfig as applyProviderModelIdToAgentConfigFromAppState,
-  applyProviderPresetToConfiguredAgent as applyProviderPresetToConfiguredAgentFromAppState,
-  shouldRefreshBalances as shouldRefreshBalancesFromAppState,
-  workflowArtifactSummary as workflowArtifactSummaryFromAppState,
-  workflowContextDocumentFromArtifacts as workflowContextDocumentFromArtifactsFromAppState,
-  workflowDraftShouldPersist as workflowDraftShouldPersistFromAppState,
-  workflowTaskLiveDetail as workflowTaskLiveDetailFromAppState,
-} from "./app/app-state";
+import { DEFAULT_SNAPSHOT as APP_STATE_DEFAULT_SNAPSHOT, activeChatFrom as activeChatFromAppState, activeTaskFrom as activeTaskFromAppState, activeTeamFrom as activeTeamFromAppState, activeTeamRunFrom as activeTeamRunFromAppState } from "./app/app-state";
 import {
   agentAccent,
   agentLabel,
@@ -34,15 +25,7 @@ import {
 } from "./app/agents";
 import { formatDuration, formatTime } from "./app/format";
 import type { Language } from "./app/language";
-import {
-  appShellClass,
-  appContentClass,
-  missingAppCapabilityMessage,
-  scheduledWorkflowEventTarget,
-  syncKeepAwakeIfAvailable,
-  taskDetailIdFor,
-  type ActiveFeature,
-} from "./app/shell";
+import { appShellClass, appContentClass, missingAppCapabilityMessage, syncKeepAwakeIfAvailable, taskDetailIdFor, type ActiveFeature } from "./app/shell";
 import {
   KEEP_AWAKE_STORAGE_KEY,
   LANGUAGE_STORAGE_KEY,
@@ -54,6 +37,7 @@ import {
   loadStoredTheme,
 } from "./app/storage";
 import { UI_TEXT } from "./app/text";
+import { useShellMenuCoordinator } from "./app/useShellMenuCoordinator";
 import {
   buildFindSkillAgentPrompt,
   findSkillFallbackMessage,
@@ -64,6 +48,7 @@ import {
   skillDisplayName,
 } from "./pages/skills/find-skill";
 import { ConfigPage } from "./pages/config/ConfigPage";
+import { useConfiguredAgentsManager } from "./pages/config/hooks/useConfiguredAgentsManager";
 import { ChatPage } from "./pages/chat/ChatPage";
 import { chatConfigLocked, SlashCommandSuggestions, slashCommandSuggestionsFor } from "./pages/chat/chat-utils";
 export { chatConfigLocked, SlashCommandSuggestions, slashCommandSuggestionsFor } from "./pages/chat/chat-utils";
@@ -71,7 +56,7 @@ import { SkillsPage } from "./pages/skills/SkillsPage";
 import { SettingsPage } from "./pages/settings/SettingsPage";
 import { RuntimePage } from "./pages/runtime/RuntimePage";
 export { RuntimePage } from "./pages/runtime/RuntimePage";
-import type { AgentTestTranscriptItem, AgentTestUiState } from "./pages/runtime/runtime-types";
+import { useRuntimeConfigManager } from "./pages/runtime/hooks/useRuntimeConfigManager";
 export { applyProviderPresetToChannel, rememberProviderKeyFromChannel } from "./pages/runtime/runtime-utils";
 import {
   TASK_STATUS_FILTERS,
@@ -80,40 +65,17 @@ import {
 import { TaskPage } from "./pages/tasks/TaskPage";
 import { TeamPage } from "./pages/teams/TeamPage";
 export { reorderTeamMembers } from "./pages/teams/team-utils";
-import { WorkflowPage } from "./pages/workflow/WorkflowPage";
-import { useWorkflowDraft } from "./pages/workflow/hooks/useWorkflowDraft";
-import { useWorkflowRunner } from "./pages/workflow/hooks/useWorkflowRunner";
-import { useScheduledWorkflowRunner } from "./pages/workflow/hooks/useScheduledWorkflowRunner";
-import { useWorkflowSidebarState } from "./pages/workflow/hooks/useWorkflowSidebarState";
-import { workflowCanvasLayout, type WorkflowCanvasLayoutVariant } from "./pages/workflow/workflow-canvas-layout";
-import {
-  parseWorkflowJudgeResult as parseWorkflowJudgeResultFromDomain,
-  workflowFinalReviewPrompt as workflowFinalReviewPromptFromDomain,
-  workflowJudgePrompt as workflowJudgePromptFromDomain,
-  workflowNodeRunPrompt as workflowNodeRunPromptFromDomain,
-  workflowProgressAfterFailure as workflowProgressAfterFailureFromDomain,
-  type WorkflowJudgeResult,
-} from "./pages/workflow/workflow-domain";
-import {
-  WORKFLOW_THINKING_MESSAGE,
-  workflowStoragePlanDocument,
-  workflowStoragePlanFor,
-  type WorkflowStoragePlan,
-} from "./pages/workflow/workflow-utils";
+import { WorkflowFeature } from "./pages/workflow/WorkflowFeature";
+import { useWorkflowFeatureManager } from "./pages/workflow/hooks/useWorkflowFeatureManager";
+import { workflowCanvasLayout } from "./pages/workflow/workflow-canvas-layout";
 import { ScheduledWorkflowPage } from "./pages/schedules/ScheduledWorkflowPage";
 export { ScheduledWorkflowPage } from "./pages/schedules/ScheduledWorkflowPage";
-import {
-  defaultScheduledWorkflowDraft,
-  intervalSecondsForFrequency,
-  normalizeScheduleDayOfMonth,
-  normalizeScheduleTimeOfDay,
-  normalizeScheduleWeekdays,
-  type ScheduledWorkflowDraft,
-} from "./pages/schedules/schedule-utils";
+import { useScheduledWorkflowManager } from "./pages/schedules/hooks/useScheduledWorkflowManager";
+import type { ScheduledWorkflowDraft } from "./pages/schedules/schedule-utils";
 export type { ScheduledWorkflowDraft } from "./pages/schedules/schedule-utils";
-import { configChannelForSelection, selectConfigChannelsForDisplay } from "../../shared/config-channels";
-import { DEFAULT_MODEL_ID, defaultChannelForAgent, modelsForChannel } from "../../shared/models";
-import { AGENT_PROVIDER_PRESETS, type AgentProviderPreset } from "../../shared/provider-presets";
+import { selectConfigChannelsForDisplay } from "../../shared/config-channels";
+import { DEFAULT_MODEL_ID, modelsForChannel } from "../../shared/models";
+import { AGENT_PROVIDER_PRESETS } from "../../shared/provider-presets";
 import { SKILL_TEMPLATES } from "../../shared/skill-templates";
 import {
   fetchOnlineSkills,
@@ -124,21 +86,11 @@ import {
   parseSkillMarkdown,
   type OnlineSkillResult,
 } from "../../shared/online-skills";
-import {
-  DEFAULT_SCHEDULED_WORKFLOW_TIMEZONE,
-} from "../../shared/types";
-import { WORKFLOW_TOTAL_QUESTION_COUNT } from "../../shared/workflow-agent";
-import {
-  createWorkflowGraphFromObjective,
-  validateWorkflowGraph,
-  workflowGraphExecutionLevels,
-} from "../../shared/workflow-graph";
 import type {
   AgentChannel,
   AgentId,
   AgentModelOption,
   AgentRuntime,
-  AgentTestEvent,
   SkillTemplate,
   AgentTeam,
   AgentTeamMember,
@@ -146,29 +98,15 @@ import type {
   AppSnapshot,
   ChatEvent,
   ChatSession,
-  CodexPluginCatalogItem,
   ConfiguredAgent,
   ImportedSkillResult,
   ImportOnlineSkillRequest,
   InstalledSkillResult,
   LocalFilePreview,
-  ProviderBalanceResult,
-  ScheduledWorkflowDueEvent,
-  ScheduledWorkflowFrequency,
-  ScheduledWorkflowRun,
-  ScheduledWorkflowSchedule,
-  ScheduledWorkflowStoreState,
   SkillInstallTarget,
   TeamRun,
   TaskProgress,
   TaskRun,
-  WorkflowGraph,
-  WorkflowGraphNode,
-  WorkflowDraftState,
-  WorkflowGrillMessage,
-  WorkflowRunNodeStatus,
-  WorkflowRunProgressItem,
-  WorkflowStatus,
   UninstalledSkillResult,
 } from "../../shared/types";
 
@@ -194,7 +132,6 @@ export {
   appShellClass,
   appContentClass,
   missingAppCapabilityMessage,
-  scheduledWorkflowEventTarget,
   syncKeepAwakeIfAvailable,
   taskDetailIdFor,
 } from "./app/shell";
@@ -220,13 +157,9 @@ export {
   extractWorkflowOutputDocumentsForPlan,
   workflowAssistantDisplayContent,
   workflowRunProgressSummary,
-  workflowStoragePlanDocument,
 } from "./pages/workflow/workflow-utils";
 
 const AGENTS: AgentId[] = ["codex", "claude", "api"];
-const BALANCE_REFRESH_INTERVAL_MS = 5 * 60_000;
-
-
 const SKILL_INSTALL_TARGETS: Array<{ id: SkillInstallTarget; label: string; path: string }> = [
   { id: "codex", label: "Codex", path: "~/.codex/skills" },
   { id: "claude", label: "Claude", path: "~/.claude/skills" },
@@ -254,74 +187,6 @@ type MaybePromise = void | Promise<void>;
 
 const DEFAULT_SNAPSHOT = APP_STATE_DEFAULT_SNAPSHOT;
 
-function activeChatFrom(snapshot: AppSnapshot): ChatSession | undefined {
-  return snapshot.chats.find((chat) => chat.id === snapshot.activeChatId) ?? snapshot.chats[0];
-}
-
-function activeTaskFrom(snapshot: AppSnapshot): TaskRun | undefined {
-  return snapshot.tasks.find((task) => task.id === snapshot.activeTaskId) ?? snapshot.tasks[0];
-}
-
-function activeTeamFrom(snapshot: AppSnapshot): AgentTeam | undefined {
-  return snapshot.teams.find((team) => team.id === snapshot.activeTeamId) ?? snapshot.teams[0];
-}
-
-function activeTeamRunFrom(snapshot: AppSnapshot, teamId: string | undefined): TeamRun | undefined {
-  const run = snapshot.teamRuns.find((item) => item.id === snapshot.activeTeamRunId);
-  if (run && (!teamId || run.teamId === teamId)) return run;
-  return snapshot.teamRuns.find((item) => !teamId || item.teamId === teamId);
-}
-
-function uniqueId(base: string, existingIds: string[]): string {
-  const normalized = base
-    .toLowerCase()
-    .replace(/[^a-z0-9]+/g, "-")
-    .replace(/^-+|-+$/g, "") || "channel";
-  if (!existingIds.includes(normalized)) return normalized;
-  let suffix = 2;
-  while (existingIds.includes(`${normalized}-${suffix}`)) suffix += 1;
-  return `${normalized}-${suffix}`;
-}
-
-function createChannel(agentId: AgentId, existingIds: string[]): AgentChannel {
-  const id = uniqueId(`${agentId}-config`, existingIds);
-  return {
-    id,
-    agentId,
-    label: agentId === "codex" ? "New Codex Config" : agentId === "claude" ? "New Claude Config" : "New API Config",
-    models: [{ id: DEFAULT_MODEL_ID, label: "Default" }],
-  };
-}
-
-export function applyProviderPresetToConfiguredAgent(agent: ConfiguredAgent, channel: AgentChannel, preset: AgentProviderPreset): ConfiguredAgent {
-  return applyProviderPresetToConfiguredAgentFromAppState(agent, channel, preset);
-}
-
-export function applyProviderModelIdToAgentConfig(
-  agent: ConfiguredAgent,
-  channel: AgentChannel,
-  rawModelId: string,
-): { agent: ConfiguredAgent; channel: AgentChannel } {
-  return applyProviderModelIdToAgentConfigFromAppState(agent, channel, rawModelId);
-}
-
-function createConfiguredAgent(channels: AgentChannel[], existingIds: string[]): ConfiguredAgent {
-  const runtimeAgentId: AgentId = "codex";
-  const id = uniqueId("agent", existingIds);
-  const channelId = defaultChannelForAgent(runtimeAgentId, channels);
-  return {
-    id,
-    name: "New Agent",
-    description: "",
-    runtimeAgentId,
-    channelId,
-    modelId: DEFAULT_MODEL_ID,
-    tags: [],
-    createdAt: Date.now(),
-    updatedAt: Date.now(),
-  };
-}
-
 export function applySkillTemplate(agent: ConfiguredAgent, template: SkillTemplate): ConfiguredAgent {
   return {
     ...agent,
@@ -331,121 +196,7 @@ export function applySkillTemplate(agent: ConfiguredAgent, template: SkillTempla
   };
 }
 
-function createModel(existingModels: AgentModelOption[]): AgentModelOption {
-  const id = uniqueId("model", existingModels.map((model) => model.id));
-  return { id, label: id };
-}
-
-function initialWorkflowMessages(): WorkflowGrillMessage[] {
-  return [];
-}
-
-function createWorkflowId(): string {
-  const randomPart =
-    typeof crypto !== "undefined" && "randomUUID" in crypto
-      ? crypto.randomUUID()
-      : `${Date.now().toString(36)}-${Math.random().toString(36).slice(2)}`;
-  return `wf_${randomPart}`;
-}
-
-function delay(ms: number): Promise<void> {
-  return new Promise((resolve) => window.setTimeout(resolve, ms));
-}
-
-function taskArtifact(task: TaskRun): string {
-  const assistantMessage = [...task.messages].reverse().find((message) => message.role === "assistant" && message.content.trim());
-  if (assistantMessage) return assistantMessage.content.trim();
-  const errorMessage = [...task.messages].reverse().find((message) => message.role === "error" && message.content.trim());
-  if (errorMessage) return errorMessage.content.trim();
-  return `${task.title} completed without assistant output.`;
-}
-
-export function workflowTaskLiveDetail(task: TaskRun): string {
-  return workflowTaskLiveDetailFromAppState(task);
-}
-
-interface WorkflowDraftPersistInput {
-  workflowId: string;
-  activeWorkflowId?: string | undefined;
-  workflowIds: string[];
-  objective: string;
-  messages: WorkflowGrillMessage[];
-  graphReady: boolean;
-  reply: string;
-  error: string | undefined;
-  runProgress: WorkflowRunProgressItem[];
-  runContextDocument: string;
-  contextDocument: string;
-  finalReport: string;
-  agentSessionId: string | undefined;
-}
-
-export function workflowDraftShouldPersist(input: WorkflowDraftPersistInput): boolean {
-  return workflowDraftShouldPersistFromAppState(input);
-}
-
-interface BalanceRefreshInput {
-  channels: AgentChannel[];
-  configDirty: boolean;
-  refreshInFlight: boolean;
-  lastRefreshAt: number | undefined;
-  now: number;
-  intervalMs: number;
-}
-
-export function shouldRefreshBalances(input: BalanceRefreshInput): boolean {
-  return shouldRefreshBalancesFromAppState(input);
-}
-
-export function workflowArtifactSummary(artifact: string): string {
-  return workflowArtifactSummaryFromAppState(artifact);
-}
-
-export function workflowContextDocumentFromArtifacts(artifacts: Array<{ nodeId: string; title: string; summary: string }>): string {
-  return workflowContextDocumentFromArtifactsFromAppState(artifacts);
-}
-
-export function workflowNodeRunPrompt(
-  graph: WorkflowGraph,
-  node: WorkflowGraphNode,
-  upstreamArtifacts: Array<{ node: WorkflowGraphNode; artifact: string }>,
-  contextDocument = "",
-  storagePlan?: WorkflowStoragePlan,
-): string {
-  return workflowNodeRunPromptFromDomain(graph, node, upstreamArtifacts, contextDocument, storagePlan);
-}
-
-export function workflowJudgePrompt(
-  graph: WorkflowGraph,
-  node: WorkflowGraphNode,
-  artifact: string,
-  contextDocument: string,
-  attempt: number,
-  maxAttempts: number,
-): string {
-  return workflowJudgePromptFromDomain(graph, node, artifact, contextDocument, attempt, maxAttempts);
-}
-
-export function workflowFinalReviewPrompt(
-  graph: WorkflowGraph,
-  nodeArtifacts: Array<{ node: WorkflowGraphNode; artifact: string }>,
-  contextDocument: string,
-  progress: WorkflowRunProgressItem[],
-  storagePlan?: WorkflowStoragePlan,
-): string {
-  return workflowFinalReviewPromptFromDomain(graph, nodeArtifacts, contextDocument, progress, storagePlan);
-}
-
-export function parseWorkflowJudgeResult(content: string): WorkflowJudgeResult | undefined {
-  return parseWorkflowJudgeResultFromDomain(content);
-}
-
-export function workflowProgressAfterFailure(progress: WorkflowRunProgressItem[], errorMessage: string): WorkflowRunProgressItem[] {
-  return workflowProgressAfterFailureFromDomain(progress, errorMessage);
-}
-
 export function AppShell() {
-  const initialWorkflowGraph = useMemo(() => createWorkflowGraphFromObjective(""), []);
   const chatApi = useMemo(() => multiAgentChatService(), []);
   const snapshots = useMemo(() => snapshotService(), []);
   const workflows = useMemo(() => workflowService(), []);
@@ -457,158 +208,121 @@ export function AppShell() {
   const [teamPrompt, setTeamPrompt] = useState("");
   const [taskConfiguredAgentId, setTaskConfiguredAgentId] = useState("");
   const [taskModelId, setTaskModelId] = useState(DEFAULT_MODEL_ID);
-  const [scheduledWorkflowDraft, setScheduledWorkflowDraft] = useState<ScheduledWorkflowDraft>(() =>
-    defaultScheduledWorkflowDraft(DEFAULT_SNAPSHOT.workflowStore.workflows, DEFAULT_SNAPSHOT.workflowStore.activeWorkflowId),
-  );
-  const [scheduledWorkflowMode, setScheduledWorkflowMode] = useState<"detail" | "create">("detail");
   const snapshotRef = useRef(snapshot);
-  const workflowRunningRef = useRef(false);
   const [taskStatusFilter, setTaskStatusFilter] = useState<TaskStatusFilterValue>("all");
   const [selectedTaskDetailId, setSelectedTaskDetailId] = useState<string | undefined>();
   const [activeFeature, setActiveFeature] = useState<ActiveFeature>("chat");
-  const [configChannels, setConfigChannels] = useState<AgentChannel[]>([]);
-  const [selectedConfigChannelId, setSelectedConfigChannelId] = useState("");
-  const [selectedConfiguredAgentId, setSelectedConfiguredAgentId] = useState("");
-  const [configDirty, setConfigDirty] = useState(false);
-  const [configStatus, setConfigStatus] = useState("");
-  const [codexPluginCatalog, setCodexPluginCatalog] = useState<CodexPluginCatalogItem[]>([]);
-  const [pluginCatalogStatus, setPluginCatalogStatus] = useState("");
   const [theme, setTheme] = useState<Theme>(() => loadStoredTheme(window.localStorage));
   const [providerKeys, setProviderKeys] = useState<Record<string, string>>(() => loadStoredProviderKeys(window.localStorage));
   const [language, setLanguage] = useState<Language>(() => loadStoredLanguage(window.localStorage));
   const [keepAwake, setKeepAwake] = useState(() => loadStoredKeepAwake(window.localStorage));
-  const [agentTestResults, setAgentTestResults] = useState<Record<string, AgentTestUiState>>({});
-  const [testingAgentId, setTestingAgentId] = useState<string | undefined>();
-  const [agentTestTick, setAgentTestTick] = useState(0);
-  const [balanceResults, setBalanceResults] = useState<Record<string, ProviderBalanceResult>>({});
-  const [balanceLoadingChannelId, setBalanceLoadingChannelId] = useState<string | undefined>();
-  const balanceRefreshInFlightRef = useRef(false);
-  const lastBalanceRefreshAtRef = useRef<number | undefined>(undefined);
-  const configChannelsRef = useRef<AgentChannel[]>([]);
-  const configDirtyRef = useRef(false);
   const [paletteOpen, setPaletteOpen] = useState(false);
-  const [agentContextMenu, setAgentContextMenu] = useState<{ agentId: string; x: number; y: number } | undefined>();
   const [chatContextMenu, setChatContextMenu] = useState<{ chatId: string; x: number; y: number } | undefined>();
-  const [configContextMenu, setConfigContextMenu] = useState<{ channelId: string; x: number; y: number } | undefined>();
   const transcriptRef = useRef<HTMLElement>(null);
   const stickToBottomRef = useRef(true);
   const gChordRef = useRef(0);
   const {
-    workflowId,
-    workflowTitle,
-    workflowStatus,
-    workflowRevision,
-    workflowConfiguredAgentId,
-    workflowModelId,
-    workflowObjective,
-    workflowGraph,
-    workflowGraphReady,
-    workflowMessages,
-    workflowReply,
-    workflowError,
-    workflowRunning,
-    workflowRunProgress,
-    workflowRunContextDocument,
-    workflowContextDocument,
-    workflowFinalReport,
-    workflowRunIds,
-    workflowAgentSessionId,
-    workflowCreatedAt,
-    resetWorkflowLocalDraft,
-    stopWorkflowGrill,
-    createNewWorkflow,
-    resetWorkflowSession,
-    draftWorkflowGraph,
-    sendWorkflowReply,
-    updateWorkflowNode,
-    selectWorkflow,
-    applyPersistedWorkflowDraft,
-    askWorkflowAgentFor,
-    beginWorkflowAssistantRequest,
-    hasWorkflowAssistantStreamed,
-    setWorkflowStatus,
-    setWorkflowConfiguredAgentId,
-    setWorkflowModelId,
-    setWorkflowObjective,
-    setWorkflowMessages,
-    setWorkflowReply,
-    setWorkflowError,
-    setWorkflowRunning,
-    setWorkflowRunProgress,
-    setWorkflowRunContextDocument,
-    setWorkflowContextDocument,
-    setWorkflowFinalReport,
-    setWorkflowRunIds,
-    setWorkflowAgentSessionId,
-  } = useWorkflowDraft({
+    configChannels,
+    selectedConfigChannelId,
+    configStatus,
+    codexPluginCatalog,
+    pluginCatalogStatus,
+    agentTestResults,
+    testingAgentId,
+    agentTestTick,
+    balanceResults,
+    balanceLoadingChannelId,
+    configContextMenu,
+    setSelectedConfigChannelId,
+    setConfigContextMenu,
+    addConfigChannel,
+    openConfigContextMenu,
+    deleteConfigChannel,
+    saveChannelConfig,
+    updateConfigChannel,
+    addConfigModel,
+    updateConfigModel,
+    removeConfigModel,
+    updateProviderKey: updateProviderKeyInHook,
+    loadCodexPluginCatalog,
+    testRuntimeChannel,
+    queryRuntimeChannelBalance,
+  } = useRuntimeConfigManager({
+    chatApi,
     snapshot,
     setSnapshot,
-    snapshotRef,
-    initialWorkflowGraph,
-    workflows,
-    configuredAgents: snapshot.configuredAgents,
-    channels: snapshot.channels,
-    onCreateNewWorkflow: () => setActiveFeature("workflow"),
+    runtimeViewActive: activeFeature === "runtimes",
   });
   const {
-    workflowContextMenu,
-    workflowRenameDraft,
-    openWorkflowContextMenu: openWorkflowSidebarContextMenu,
-    closeWorkflowContextMenu,
-    startWorkflowRename,
-    changeWorkflowRenameDraft,
-    cancelWorkflowRename,
-    confirmWorkflowRename,
-    deleteWorkflow,
-  } = useWorkflowSidebarState({
-    workflows: snapshot.workflowStore.workflows,
-    activeWorkflowId: workflowId,
-    workflowRunning,
+    selectedConfiguredAgentId,
+    configuredAgentStatus,
+    setSelectedConfiguredAgentId,
+    saveConfiguredAgents,
+    addConfiguredAgent,
+    updateConfiguredAgent,
+  } = useConfiguredAgentsManager({
+    chatApi,
+    snapshot,
     setSnapshot,
-    workflowsService: workflows,
-    applyPersistedWorkflowDraft,
-    resetWorkflowLocalDraft,
-    canRenameWorkflow: typeof chatApi.renameWorkflow === "function",
-    canDeleteWorkflow: typeof chatApi.deleteWorkflow === "function",
-    missingCapabilityMessage: missingAppCapabilityMessage,
   });
-  const { runWorkflowGraph, runWorkflowGraphInternal } = useWorkflowRunner({
+  const {
+    controller: workflowController,
+    sidebarController: workflowSidebarController,
+    closeSidebarContextMenu: closeWorkflowContextMenu,
+    runWorkflowGraphInternal,
+    resetWorkflowLocalDraft,
+  } = useWorkflowFeatureManager({
     chatApi,
     snapshots,
     workflows,
+    snapshot,
     snapshotRef,
     setSnapshot,
-    workflowRunning,
-    workflowId,
-    workflowGraph,
-    workflowConfiguredAgentId,
-    workflowModelId,
-    workflowContextDocument,
-    workflowAgentSessionId,
-    workflowRunIds,
-    applyPersistedWorkflowDraft,
-    askWorkflowAgentFor,
-    beginWorkflowAssistantRequest,
-    hasWorkflowAssistantStreamed,
-    setWorkflowError,
-    setWorkflowRunning,
-    setWorkflowStatus,
-    setWorkflowFinalReport,
-    setWorkflowRunIds,
-    setWorkflowRunProgress,
-    setWorkflowRunContextDocument,
-    setWorkflowMessages,
+    language,
+    onChooseWorkDir: chooseWorkDir,
+    onRefresh: refresh,
+    onReadOutputFile: readLocalFile,
     onEnterWorkflow: () => setActiveFeature("workflow"),
   });
-  const { handleScheduledWorkflowEvent } = useScheduledWorkflowRunner({
+  const menuCoordinator = useShellMenuCoordinator({
+    hasChatContextMenu: chatContextMenu !== undefined,
+    hasWorkflowContextMenu: workflowSidebarController.contextMenu !== undefined,
+    hasConfigContextMenu: configContextMenu !== undefined,
+    clearChatContextMenu: () => setChatContextMenu(undefined),
+    clearWorkflowContextMenu: closeWorkflowContextMenu,
+    clearConfigContextMenu: () => setConfigContextMenu(undefined),
+  });
+  const coordinatedWorkflowSidebarController = useMemo(
+    () => ({
+      ...workflowSidebarController,
+      onOpenContextMenu: (workflowId: string, x: number, y: number) => {
+        menuCoordinator.prepareWorkflowContextMenuOpen();
+        workflowSidebarController.onOpenContextMenu(workflowId, x, y);
+      },
+    }),
+    [menuCoordinator, workflowSidebarController],
+  );
+  const {
+    scheduledWorkflowDraft,
+    scheduledWorkflowMode,
+    setScheduledWorkflowDraft,
+    connectScheduledRunner,
+    disconnectScheduledRunner,
+    refreshScheduledWorkflows,
+    selectScheduledWorkflowSchedule,
+    startCreatingScheduledWorkflow,
+    createScheduledWorkflow,
+    updateScheduledWorkflow,
+    deleteScheduledWorkflow,
+    triggerScheduledWorkflow,
+  } = useScheduledWorkflowManager({
     chatApi,
+    snapshot,
     snapshotRef,
     setSnapshot,
     runWorkflowGraphInternal,
+    onEnterSchedules: () => setActiveFeature("schedules"),
   });
-
-  configChannelsRef.current = configChannels;
-  configDirtyRef.current = configDirty;
 
   useEffect(() => {
     document.documentElement.dataset.theme = theme;
@@ -625,68 +339,6 @@ export function AppShell() {
       console.warn("Failed to update keep-awake state", error);
     });
   }, [chatApi, keepAwake]);
-
-  useEffect(() => {
-    if (!testingAgentId) return undefined;
-    const timer = window.setInterval(() => setAgentTestTick((value) => value + 1), 1000);
-    return () => window.clearInterval(timer);
-  }, [testingAgentId]);
-
-  useEffect(() => {
-    return chatApi.onAgentTestEvent((event) => {
-      setAgentTestResults((current) => {
-        const existing = current[event.agentId];
-        if (!existing) return current;
-        const transcriptItem: AgentTestTranscriptItem = {
-          id: `${event.timestamp}:${existing.transcript.length}:${event.type}`,
-          type: event.type,
-          content: event.content,
-          timestamp: event.timestamp,
-        };
-        return {
-          ...current,
-          [event.agentId]: {
-            ...existing,
-            phase: event.type === "phase" ? event.content : existing.phase,
-            message: event.type === "phase" ? event.content : existing.message,
-            transcript: [...existing.transcript, transcriptItem].slice(-80),
-          },
-        };
-      });
-    });
-  }, [chatApi]);
-
-  useEffect(() => {
-    if (snapshot.configuredAgents.length === 0) {
-      setSelectedConfiguredAgentId("");
-      return;
-    }
-    const firstAgent = snapshot.configuredAgents[0];
-    if (firstAgent && !snapshot.configuredAgents.some((agent) => agent.id === selectedConfiguredAgentId)) {
-      setSelectedConfiguredAgentId(firstAgent.id);
-    }
-  }, [snapshot.configuredAgents, selectedConfiguredAgentId]);
-
-  useEffect(() => {
-    if (!agentContextMenu && !chatContextMenu && !workflowContextMenu && !configContextMenu) return;
-    const close = (): void => {
-      setAgentContextMenu(undefined);
-      setChatContextMenu(undefined);
-      closeWorkflowContextMenu();
-      setConfigContextMenu(undefined);
-    };
-    const handleKeyDown = (event: globalThis.KeyboardEvent): void => {
-      if (event.key === "Escape") close();
-    };
-    window.addEventListener("click", close);
-    window.addEventListener("scroll", close, true);
-    window.addEventListener("keydown", handleKeyDown);
-    return () => {
-      window.removeEventListener("click", close);
-      window.removeEventListener("scroll", close, true);
-      window.removeEventListener("keydown", handleKeyDown);
-    };
-  }, [agentContextMenu, chatContextMenu, workflowContextMenu, configContextMenu, closeWorkflowContextMenu]);
 
   useEffect(() => {
     void snapshots.getSnapshot().then((value) => {
@@ -706,14 +358,6 @@ export function AppShell() {
   }, [chatApi]);
 
   useEffect(() => {
-    if (configDirty) return;
-    setConfigChannels(snapshot.channels);
-    setSelectedConfigChannelId((current) => {
-      return configChannelForSelection(snapshot.channels, current)?.id ?? "";
-    });
-  }, [configDirty, snapshot.channels]);
-
-  useEffect(() => {
     const fallbackId = defaultConfiguredAgentId(snapshot.configuredAgents);
     if (!fallbackId) return;
     const nextTaskAgentId = snapshot.configuredAgents.some((agent) => agent.id === taskConfiguredAgentId) ? taskConfiguredAgentId : fallbackId;
@@ -726,33 +370,6 @@ export function AppShell() {
   }, [snapshot]);
 
   useEffect(() => {
-    workflowRunningRef.current = workflowRunning;
-  }, [workflowRunning]);
-
-  useEffect(() => {
-    setScheduledWorkflowDraft((current) => {
-      if (current.workflowId && snapshot.workflowStore.workflows.some((workflow) => workflow.workflowId === current.workflowId)) return current;
-      return defaultScheduledWorkflowDraft(snapshot.workflowStore.workflows, snapshot.workflowStore.activeWorkflowId);
-    });
-  }, [snapshot.workflowStore.activeWorkflowId, snapshot.workflowStore.workflows]);
-
-  useEffect(() => {
-    if (activeFeature !== "runtimes" || pluginCatalogStatus || codexPluginCatalog.length > 0) return;
-    void loadCodexPluginCatalog();
-  }, [activeFeature, codexPluginCatalog.length, pluginCatalogStatus]);
-
-  useEffect(() => {
-    void refreshRuntimeChannelBalancesIfDue();
-  }, [configChannels, configDirty]);
-
-  useEffect(() => {
-    const timer = window.setInterval(() => {
-      void refreshRuntimeChannelBalancesIfDue();
-    }, BALANCE_REFRESH_INTERVAL_MS);
-    return () => window.clearInterval(timer);
-  }, []);
-
-  useEffect(() => {
     if (activeFeature !== "tasks") setSelectedTaskDetailId(undefined);
   }, [activeFeature]);
 
@@ -762,18 +379,12 @@ export function AppShell() {
     setSelectedTaskDetailId(undefined);
   }, [selectedTaskDetailId, snapshot.tasks]);
 
-  useEffect(() => {
-    return chatApi.onScheduledWorkflowEvent((event) => {
-      void handleScheduledWorkflowEvent(event);
-    });
-  }, [chatApi]);
-
   const runtimeMap = useMemo(() => new Map(snapshot.runtimes.map((runtime) => [runtime.id, runtime])), [snapshot.runtimes]);
-  const activeChat = useMemo(() => activeChatFrom(snapshot), [snapshot]);
-  const activeTask = useMemo(() => activeTaskFrom(snapshot), [snapshot]);
-  const activeTeam = useMemo(() => activeTeamFrom(snapshot), [snapshot]);
+  const activeChat = useMemo(() => activeChatFromAppState(snapshot), [snapshot]);
+  const activeTask = useMemo(() => activeTaskFromAppState(snapshot), [snapshot]);
+  const activeTeam = useMemo(() => activeTeamFromAppState(snapshot), [snapshot]);
   const text = UI_TEXT[language];
-  const activeTeamRun = useMemo(() => activeTeamRunFrom(snapshot, activeTeam?.id), [snapshot, activeTeam?.id]);
+  const activeTeamRun = useMemo(() => activeTeamRunFromAppState(snapshot, activeTeam?.id), [snapshot, activeTeam?.id]);
   const visibleTasks = useMemo(
     () => (taskStatusFilter === "all" ? snapshot.tasks : snapshot.tasks.filter((task) => task.progress === taskStatusFilter)),
     [snapshot.tasks, taskStatusFilter],
@@ -820,13 +431,7 @@ export function AppShell() {
         configuredAgents: snapshot.configuredAgents,
         channels: snapshot.channels,
       },
-      workflow: {
-        workflows: snapshot.workflowStore.workflows,
-        activeWorkflowId: snapshot.workflowStore.activeWorkflowId,
-        running: workflowRunning,
-        contextMenu: workflowContextMenu,
-        renameDraft: workflowRenameDraft,
-      },
+      workflow: coordinatedWorkflowSidebarController,
       schedules: {
         schedules: snapshot.scheduledWorkflowStore.schedules,
         activeScheduleId: snapshot.scheduledWorkflowStore.activeScheduleId,
@@ -841,8 +446,6 @@ export function AppShell() {
       snapshot.configuredAgents,
       snapshot.channels,
       snapshot.tasks,
-      snapshot.workflowStore.workflows,
-      snapshot.workflowStore.activeWorkflowId,
       snapshot.scheduledWorkflowStore.schedules,
       snapshot.scheduledWorkflowStore.activeScheduleId,
       activeChat?.id,
@@ -850,9 +453,7 @@ export function AppShell() {
       visibleTasks,
       activeTask,
       taskStatusFilter,
-      workflowRunning,
-      workflowContextMenu,
-      workflowRenameDraft,
+      coordinatedWorkflowSidebarController,
       scheduledWorkflowMode,
       skillTemplates,
     ],
@@ -969,91 +570,10 @@ export function AppShell() {
     setTaskModelId(configuredAgentModelId(configuredAgentId, undefined, snapshot.configuredAgents, snapshot.channels));
   }
 
-  function setWorkflowConfiguredAgent(configuredAgentId: string): void {
-    setWorkflowConfiguredAgentId(configuredAgentId);
-    setWorkflowModelId(configuredAgentModelId(configuredAgentId, undefined, snapshot.configuredAgents, snapshot.channels));
-  }
-
-  function updateConfigChannels(next: AgentChannel[]): void {
-    setConfigChannels(next);
-    setConfigDirty(true);
-    setConfigStatus("");
-    setSelectedConfigChannelId((current) => {
-      return configChannelForSelection(next, current)?.id ?? "";
-    });
-  }
-
-  function addConfigChannel(): void {
-    const next = [...configChannels, createChannel("codex", configChannels.map((channel) => channel.id))];
-    updateConfigChannels(next);
-    setSelectedConfigChannelId(next[next.length - 1]?.id ?? "");
-  }
-
-  function openConfigContextMenu(event: MouseEvent, channelId: string): void {
-    event.preventDefault();
-    event.stopPropagation();
-    setAgentContextMenu(undefined);
-    setChatContextMenu(undefined);
-    closeWorkflowContextMenu();
-    setSelectedConfigChannelId(channelId);
-    setConfigContextMenu({ channelId, x: event.clientX, y: event.clientY });
-  }
-
-  function deleteConfigChannel(channelId: string): void {
-    setConfigContextMenu(undefined);
-    const referencedAgent = snapshot.configuredAgents.find((agent) => agent.channelId === channelId);
-    if (referencedAgent) {
-      setConfigStatus(`Config is used by ${referencedAgent.name || referencedAgent.id}`);
-      return;
-    }
-    if (configChannels.length <= 1) {
-      setConfigStatus("Keep at least one config");
-      return;
-    }
-    const next = configChannels.filter((channel) => channel.id !== channelId);
-    setConfigChannels(next);
-    setConfigDirty(true);
-    setConfigStatus("");
-    setBalanceResults((current) => {
-      if (!(channelId in current)) return current;
-      const nextResults = { ...current };
-      delete nextResults[channelId];
-      return nextResults;
-    });
-    setSelectedConfigChannelId((current) => (current === channelId ? (next[0]?.id ?? "") : (configChannelForSelection(next, current)?.id ?? next[0]?.id ?? "")));
-  }
-
-  async function persistChannelConfig(): Promise<AppSnapshot> {
-    const next = await chatApi.saveModelChannels(configChannels);
-    setConfigChannels(next.channels);
-    setConfigDirty(false);
-    setSelectedConfigChannelId((current) => {
-      return configChannelForSelection(next.channels, current)?.id ?? "";
-    });
-    setSnapshot(next);
-    return next;
-  }
-
-  async function saveChannelConfig(): Promise<void> {
-    try {
-      await persistChannelConfig();
-      setConfigStatus("Saved");
-    } catch (error) {
-      setConfigStatus(error instanceof Error ? error.message : String(error));
-    }
-  }
-
-  async function saveConfiguredAgents(agents: ConfiguredAgent[]): Promise<void> {
-    const next = await chatApi.saveConfiguredAgents(agents);
-    setSnapshot(next);
-  }
-
   function openChatContextMenu(event: MouseEvent, chatId: string): void {
     event.preventDefault();
     event.stopPropagation();
-    setAgentContextMenu(undefined);
-    closeWorkflowContextMenu();
-    setConfigContextMenu(undefined);
+    menuCoordinator.prepareChatContextMenuOpen();
     setChatContextMenu({ chatId, x: event.clientX, y: event.clientY });
   }
 
@@ -1068,193 +588,13 @@ export function AppShell() {
     if (activeChat?.id === chatId) setPrompt("");
   }
 
-  function openWorkflowContextMenu(event: MouseEvent, workflowId: string): void {
-    event.preventDefault();
-    event.stopPropagation();
-    setAgentContextMenu(undefined);
-    setChatContextMenu(undefined);
-    setConfigContextMenu(undefined);
-    openWorkflowSidebarContextMenu(workflowId, event.clientX, event.clientY);
-  }
-
-  async function testRuntimeChannel(channelId: string): Promise<void> {
-    const channel = configChannels.find((item) => item.id === channelId);
-    const startedAt = Date.now();
-    const baseState: AgentTestUiState = {
-      agentId: channelId,
-      state: "running",
-      phase: "Preparing",
-      message: "Preparing execution config test...",
-      startedAt,
-      testedAt: startedAt,
-      elapsedMs: 0,
-      runtimeAgentId: channel?.agentId ?? "codex",
-      channelId,
-      modelId: DEFAULT_MODEL_ID,
-      providerLabel: channel?.providerName ?? channel?.label ?? "Provider",
-      transcript: [],
-    };
-    setTestingAgentId(channelId);
-    setAgentTestTick((value) => value + 1);
-    setAgentTestResults((current) => ({ ...current, [channelId]: baseState }));
-    setConfigStatus("");
-    try {
-      setAgentTestResults((current) => ({
-        ...current,
-        [channelId]: {
-          ...(current[channelId] ?? baseState),
-          phase: "Saving config",
-          message: "Saving current provider, model, plugin, and credential settings before testing.",
-        },
-      }));
-      await persistChannelConfig();
-      setAgentTestResults((current) => ({
-        ...current,
-        [channelId]: {
-          ...(current[channelId] ?? baseState),
-          phase: "Running test",
-          message: `Starting ${agentLabel(channel?.agentId ?? "codex")} with ${baseState.providerLabel}.`,
-        },
-      }));
-      const result = await chatApi.testRuntimeChannel(channelId);
-      setAgentTestResults((current) => ({
-        ...current,
-        [channelId]: {
-          ...(current[channelId] ?? baseState),
-          agentId: result.agentId,
-          state: result.ok ? "passed" : "failed",
-          phase: result.ok ? "Completed" : "Failed",
-          message: result.message,
-          startedAt,
-          testedAt: result.testedAt,
-          elapsedMs: result.elapsedMs,
-          runtimeAgentId: result.runtimeAgentId,
-          channelId: result.channelId,
-          modelId: result.modelId,
-          providerLabel: baseState.providerLabel,
-          ...(result.output ? { output: result.output } : {}),
-        },
-      }));
-      setConfigStatus(result.ok ? "Config test passed" : "Config test failed");
-    } catch (error) {
-      setAgentTestResults((current) => ({
-        ...current,
-        [channelId]: {
-          ...(current[channelId] ?? baseState),
-          state: "failed",
-          phase: "Failed",
-          message: error instanceof Error ? error.message : String(error),
-          elapsedMs: Date.now() - startedAt,
-        },
-      }));
-      setConfigStatus("Config test failed");
-    } finally {
-      setTestingAgentId(undefined);
-    }
-  }
-
-  async function queryRuntimeChannelBalance(channelId: string, options: { persistBeforeQuery?: boolean; quiet?: boolean } = {}): Promise<void> {
-    const api = chatApi as typeof chatApi & {
-      queryRuntimeChannelBalance?: (targetChannelId: string) => Promise<ProviderBalanceResult>;
-    };
-    if (typeof api.queryRuntimeChannelBalance !== "function") {
-      setConfigStatus(missingAppCapabilityMessage("Provider balance query"));
-      return;
-    }
-    setBalanceLoadingChannelId(channelId);
-    if (!options.quiet) setConfigStatus("");
-    try {
-      if (options.persistBeforeQuery !== false) await persistChannelConfig();
-      const result = await api.queryRuntimeChannelBalance(channelId);
-      setBalanceResults((current) => ({ ...current, [channelId]: result }));
-      if (!options.quiet) setConfigStatus(result.status === "success" ? "Balance updated" : result.message);
-    } catch (error) {
-      if (!options.quiet) setConfigStatus(error instanceof Error ? error.message : String(error));
-    } finally {
-      setBalanceLoadingChannelId(undefined);
-    }
-  }
-
-  async function refreshRuntimeChannelBalances(channelIds: string[]): Promise<void> {
-    for (const channelId of channelIds) {
-      await queryRuntimeChannelBalance(channelId, { persistBeforeQuery: false, quiet: true });
-    }
-  }
-
-  async function refreshRuntimeChannelBalancesIfDue(): Promise<void> {
-    const channels = selectConfigChannelsForDisplay(configChannelsRef.current);
-    if (
-      !shouldRefreshBalances({
-        channels,
-        configDirty: configDirtyRef.current,
-        refreshInFlight: balanceRefreshInFlightRef.current,
-        lastRefreshAt: lastBalanceRefreshAtRef.current,
-        now: Date.now(),
-        intervalMs: BALANCE_REFRESH_INTERVAL_MS,
-      })
-    ) {
-      return;
-    }
-
-    balanceRefreshInFlightRef.current = true;
-    try {
-      await refreshRuntimeChannelBalances(channels.map((channel) => channel.id));
-      lastBalanceRefreshAtRef.current = Date.now();
-    } finally {
-      balanceRefreshInFlightRef.current = false;
-    }
+  function openRuntimeConfigContextMenu(event: MouseEvent, channelId: string): void {
+    menuCoordinator.prepareConfigContextMenuOpen();
+    openConfigContextMenu(event, channelId);
   }
 
   function updateProviderKey(presetId: string, value: string): void {
-    setProviderKeys((current) => {
-      const next = { ...current };
-      if (value.trim()) next[presetId] = value;
-      else delete next[presetId];
-      window.localStorage.setItem(PROVIDER_KEYS_STORAGE_KEY, JSON.stringify(next));
-      return next;
-    });
-  }
-
-  async function loadCodexPluginCatalog(): Promise<void> {
-    setPluginCatalogStatus("Loading plugins...");
-    try {
-      const plugins = await chatApi.listCodexPlugins();
-      setCodexPluginCatalog(plugins);
-      setPluginCatalogStatus(`Loaded ${plugins.length} plugins`);
-    } catch (error) {
-      setPluginCatalogStatus(error instanceof Error ? error.message : String(error));
-    }
-  }
-
-  function updateConfigChannel(channelId: string, updater: (channel: AgentChannel) => AgentChannel): void {
-    setBalanceResults((current) => {
-      if (!(channelId in current)) return current;
-      const next = { ...current };
-      delete next[channelId];
-      return next;
-    });
-    updateConfigChannels(configChannels.map((channel) => (channel.id === channelId ? updater(channel) : channel)));
-  }
-
-  function addConfigModel(channelId: string): void {
-    updateConfigChannel(channelId, (channel) => ({
-      ...channel,
-      models: [...channel.models, createModel(channel.models)],
-    }));
-  }
-
-  function updateConfigModel(channelId: string, modelIndex: number, updater: (model: AgentModelOption) => AgentModelOption): void {
-    updateConfigChannel(channelId, (channel) => ({
-      ...channel,
-      models: channel.models.map((model, index) => (index === modelIndex ? updater(model) : model)),
-    }));
-  }
-
-  function removeConfigModel(channelId: string, modelIndex: number): void {
-    updateConfigChannel(channelId, (channel) => ({
-      ...channel,
-      models: channel.models.filter((_model, index) => index !== modelIndex),
-    }));
+    updateProviderKeyInHook(PROVIDER_KEYS_STORAGE_KEY, setProviderKeys, presetId, value);
   }
 
   async function chooseWorkDir(): Promise<void> {
@@ -1358,68 +698,6 @@ export function AppShell() {
     });
     setSnapshot(next);
     setTaskPrompt("");
-  }
-
-  async function connectScheduledRunner(): Promise<void> {
-    const next = await chatApi.connectScheduledWorkflowRunner();
-    setSnapshot(next);
-  }
-
-  async function disconnectScheduledRunner(): Promise<void> {
-    const next = await chatApi.disconnectScheduledWorkflowRunner();
-    setSnapshot(next);
-  }
-
-  async function refreshScheduledWorkflows(): Promise<void> {
-    const next = await chatApi.refreshScheduledWorkflowSchedules();
-    setSnapshot(next);
-  }
-
-  async function selectScheduledWorkflowSchedule(scheduleId: string): Promise<void> {
-    setScheduledWorkflowMode("detail");
-    const next = await chatApi.selectScheduledWorkflowSchedule(scheduleId);
-    setSnapshot(next);
-  }
-
-  function startCreatingScheduledWorkflow(): void {
-    setActiveFeature("schedules");
-    setScheduledWorkflowMode("create");
-    setScheduledWorkflowDraft(defaultScheduledWorkflowDraft(snapshot.workflowStore.workflows, snapshot.workflowStore.activeWorkflowId));
-  }
-
-  async function createScheduledWorkflow(): Promise<void> {
-    const workflow = snapshot.workflowStore.workflows.find((item) => item.workflowId === scheduledWorkflowDraft.workflowId);
-    if (!workflow) return;
-    const next = await chatApi.createScheduledWorkflowSchedule({
-      workflowId: workflow.workflowId,
-      title: scheduledWorkflowDraft.title.trim() || workflow.title,
-      enabled: scheduledWorkflowDraft.enabled,
-      intervalSeconds: intervalSecondsForFrequency(scheduledWorkflowDraft.frequency),
-      frequency: scheduledWorkflowDraft.frequency,
-      timeOfDay: normalizeScheduleTimeOfDay(scheduledWorkflowDraft.timeOfDay),
-      timezone: scheduledWorkflowDraft.timezone || DEFAULT_SCHEDULED_WORKFLOW_TIMEZONE,
-      ...(scheduledWorkflowDraft.frequency === "weekly" ? { weekdays: normalizeScheduleWeekdays(scheduledWorkflowDraft.weekdays) } : {}),
-      ...(scheduledWorkflowDraft.frequency === "monthly" ? { dayOfMonth: normalizeScheduleDayOfMonth(scheduledWorkflowDraft.dayOfMonth) } : {}),
-    });
-    setScheduledWorkflowMode("detail");
-    setSnapshot(next);
-  }
-
-  async function updateScheduledWorkflow(
-    schedule: ScheduledWorkflowSchedule,
-    update: Partial<Pick<ScheduledWorkflowSchedule, "enabled" | "title" | "intervalSeconds" | "frequency" | "timeOfDay" | "timezone" | "weekdays" | "dayOfMonth">>,
-  ): Promise<void> {
-    const next = await chatApi.updateScheduledWorkflowSchedule(schedule.scheduleId, update);
-    setSnapshot(next);
-  }
-
-  async function deleteScheduledWorkflow(scheduleId: string): Promise<void> {
-    const next = await chatApi.deleteScheduledWorkflowSchedule(scheduleId);
-    setSnapshot(next);
-  }
-
-  async function triggerScheduledWorkflow(scheduleId: string): Promise<void> {
-    await chatApi.triggerScheduledWorkflowSchedule(scheduleId);
   }
 
   async function rerunTask(task: TaskRun): Promise<void> {
@@ -1549,14 +827,6 @@ export function AppShell() {
           onDeleteChat={deleteChat}
           onTaskStatusFilterChange={setTaskStatusFilter}
           onSelectTask={selectTask}
-          onNewWorkflow={createNewWorkflow}
-          onSelectWorkflow={selectWorkflow}
-          onOpenWorkflowContextMenu={openWorkflowContextMenu}
-          onStartWorkflowRename={startWorkflowRename}
-          onWorkflowRenameDraftChange={changeWorkflowRenameDraft}
-          onConfirmWorkflowRename={confirmWorkflowRename}
-          onCancelWorkflowRename={cancelWorkflowRename}
-          onDeleteWorkflow={deleteWorkflow}
           onStartCreatingScheduledWorkflow={startCreatingScheduledWorkflow}
           onSelectScheduledWorkflowSchedule={selectScheduledWorkflowSchedule}
         />
@@ -1587,41 +857,7 @@ export function AppShell() {
             onUpdateTaskProgress={updateTaskProgress}
           />
         ) : activeFeature === "workflow" ? (
-          <WorkflowPage
-            workflowId={workflowId}
-            title={workflowTitle}
-            status={workflowStatus}
-            graph={workflowGraph}
-            graphReady={workflowGraphReady}
-            objective={workflowObjective}
-            messages={workflowMessages}
-            reply={workflowReply}
-            error={workflowError}
-            configuredAgentId={workflowConfiguredAgentId || defaultConfiguredAgentId(snapshot.configuredAgents)}
-            modelId={workflowModelId}
-            runtimes={snapshot.runtimes}
-            channels={snapshot.channels}
-            configuredAgents={snapshot.configuredAgents}
-            workDir={snapshot.workDir}
-            running={workflowRunning}
-            runProgress={workflowRunProgress}
-            contextDocument={workflowRunContextDocument}
-            finalReport={workflowFinalReport}
-            onObjectiveChange={setWorkflowObjective}
-            onSelectConfiguredAgent={setWorkflowConfiguredAgent}
-            onSelectModel={setWorkflowModelId}
-            onDraftGraph={draftWorkflowGraph}
-            onReplyChange={setWorkflowReply}
-            onSendReply={sendWorkflowReply}
-            onUpdateNode={updateWorkflowNode}
-            onRunGraph={runWorkflowGraph}
-            onResetSession={resetWorkflowSession}
-            onStopGrill={stopWorkflowGrill}
-            onChooseWorkDir={chooseWorkDir}
-            onRefresh={refresh}
-            onReadOutputFile={readLocalFile}
-            language={language}
-          />
+          <WorkflowFeature controller={workflowController} />
         ) : activeFeature === "schedules" ? (
           <ScheduledWorkflowPage
             language={language}
@@ -1670,7 +906,7 @@ export function AppShell() {
             onLoadCodexPluginCatalog={loadCodexPluginCatalog}
             onSelectChannel={setSelectedConfigChannelId}
             onAddConfig={addConfigChannel}
-            onOpenContextMenu={openConfigContextMenu}
+            onOpenContextMenu={openRuntimeConfigContextMenu}
             onDeleteConfig={deleteConfigChannel}
             onTestChannel={testRuntimeChannel}
             onQueryBalance={queryRuntimeChannelBalance}
@@ -1682,21 +918,11 @@ export function AppShell() {
             channels={snapshot.channels}
             configuredAgents={snapshot.configuredAgents}
             selectedConfiguredAgentId={selectedConfiguredAgentId}
-            status={configStatus}
+            status={configuredAgentStatus}
             onSave={() => saveConfiguredAgents(snapshot.configuredAgents)}
-            onAddConfiguredAgent={async () => {
-              const nextAgent = createConfiguredAgent(snapshot.channels, snapshot.configuredAgents.map((agent) => agent.id));
-              const nextAgents = [...snapshot.configuredAgents, nextAgent];
-              setSelectedConfiguredAgentId(nextAgent.id);
-              await saveConfiguredAgents(nextAgents);
-            }}
+            onAddConfiguredAgent={addConfiguredAgent}
             onSelectConfiguredAgent={setSelectedConfiguredAgentId}
-            onUpdateConfiguredAgent={(agentId, updater) => {
-              const nextAgents = snapshot.configuredAgents.map((agent) =>
-                agent.id === agentId ? { ...updater(agent), updatedAt: Date.now() } : agent,
-              );
-              void saveConfiguredAgents(nextAgents);
-            }}
+            onUpdateConfiguredAgent={updateConfiguredAgent}
           />
         ) : activeFeature === "settings" ? (
           <SettingsPage language={language} keepAwake={keepAwake} onLanguageChange={setLanguage} onKeepAwakeChange={setKeepAwake} />
