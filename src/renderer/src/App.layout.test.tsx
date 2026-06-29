@@ -16,9 +16,11 @@ import {
   SkillsPage,
   applySkillTemplate,
   applyProviderPresetToChannel,
+  applyCodexDefaultConfigToChannel,
   applyProviderPresetToConfiguredAgent,
   applyProviderModelIdToAgentConfig,
   rememberProviderKeyFromChannel,
+  resolveProviderPresetId,
   shouldRefreshBalances,
   fetchOnlineSkills,
   buildFindSkillAgentPrompt,
@@ -65,9 +67,10 @@ import {
 } from "./App";
 import { DEFAULT_MODEL_ID } from "../../shared/models";
 import { generatedConfigChannels, normalizeConfigChannelsForStorage, selectConfigChannelsForDisplay } from "../../shared/config-channels";
-import { AGENT_PROVIDER_PRESETS } from "../../shared/provider-presets";
+import { AGENT_PROVIDER_PRESETS, CODEX_DEFAULT_PRESET_ID } from "../../shared/provider-presets";
 import { SKILL_TEMPLATES } from "../../shared/skill-templates";
 import { firstWorkflowQuestionForObjective } from "../../shared/workflow-agent";
+import { loadCodexDefaultConfigFromRuntimeApi } from "./pages/runtime/runtime-utils";
 import type {
   AgentChannel,
   AgentRuntime,
@@ -872,6 +875,208 @@ describe("ConfigPage", () => {
 
     expect(html).toContain("value=\"saved-key\"");
     expect(html).not.toContain("value=\"stale-key\"");
+  });
+
+  test("renders the Codex Default preset button", () => {
+    const html = renderToStaticMarkup(
+      <RuntimePage
+        language="en"
+        channels={channels}
+        selectedChannelId="codex-openai"
+        providerKeys={{}}
+        codexPluginCatalog={[]}
+        pluginCatalogStatus=""
+        agentTestResults={{}}
+        testingAgentId={undefined}
+        agentTestTick={0}
+        onUpdateChannel={() => undefined}
+        onAddModel={() => undefined}
+        onUpdateModel={() => undefined}
+        onRemoveModel={() => undefined}
+        onSave={async () => undefined}
+        onLoadCodexPluginCatalog={async () => undefined}
+        onSelectChannel={() => undefined}
+        onAddConfig={() => undefined}
+        onOpenContextMenu={() => undefined}
+        onDeleteConfig={() => undefined}
+        onTestChannel={async () => undefined}
+        onUpdateProviderKey={() => undefined}
+      />,
+    );
+
+    expect(html).toContain(">Default<");
+  });
+
+  test("renders runtime config status messages", () => {
+    const html = renderToStaticMarkup(
+      <RuntimePage
+        language="en"
+        channels={channels}
+        selectedChannelId="codex-openai"
+        providerKeys={{}}
+        codexPluginCatalog={[]}
+        pluginCatalogStatus=""
+        agentTestResults={{}}
+        testingAgentId={undefined}
+        agentTestTick={0}
+        status="Codex Default import needs a full app restart to load the updated Electron API."
+        onUpdateChannel={() => undefined}
+        onAddModel={() => undefined}
+        onUpdateModel={() => undefined}
+        onRemoveModel={() => undefined}
+        onSave={async () => undefined}
+        onLoadCodexPluginCatalog={async () => undefined}
+        onSelectChannel={() => undefined}
+        onAddConfig={() => undefined}
+        onOpenContextMenu={() => undefined}
+        onDeleteConfig={() => undefined}
+        onTestChannel={async () => undefined}
+        onUpdateProviderKey={() => undefined}
+      />,
+    );
+
+    expect(html).toContain("Codex Default import needs a full app restart to load the updated Electron API.");
+    expect(html).toContain("runtime-config-status");
+  });
+
+  test("reports a restart-needed error when the Codex Default preload API is unavailable", async () => {
+    await expect(loadCodexDefaultConfigFromRuntimeApi({})).rejects.toThrow(
+      "Codex Default import needs a full app restart to load the updated Electron API.",
+    );
+  });
+
+  test("prefers persisted preset id when resolving the active runtime preset", () => {
+    const runtimeProviderPresets = AGENT_PROVIDER_PRESETS.filter((preset) => preset.runtimeAgentId === "codex");
+    const channel: AgentChannel = {
+      ...channels[0]!,
+      presetId: CODEX_DEFAULT_PRESET_ID,
+      modelProvider: "bridge",
+      providerName: "Bridge",
+      baseUrl: "https://bridge.example/v1",
+    };
+
+    expect(resolveProviderPresetId(channel, runtimeProviderPresets)).toBe(CODEX_DEFAULT_PRESET_ID);
+  });
+
+  test("shows Codex Default loaded values and blank fallbacks in runtime inputs", () => {
+    const defaultChannel: AgentChannel = {
+      ...channels[0]!,
+      presetId: CODEX_DEFAULT_PRESET_ID,
+      label: "Codex Default",
+      modelProvider: "bridge",
+      providerName: "Bridge",
+      baseUrl: "https://bridge.example/v1",
+      wireApi: "responses",
+      httpHeaders: { Authorization: "Bearer sk-default" },
+      models: [
+        { id: DEFAULT_MODEL_ID, label: "Default" },
+        { id: "gpt-5.5", label: "gpt-5.5" },
+      ],
+    };
+
+    const html = renderToStaticMarkup(
+      <RuntimePage
+        language="en"
+        channels={[defaultChannel]}
+        selectedChannelId="codex-openai"
+        providerKeys={{ [CODEX_DEFAULT_PRESET_ID]: "stale-key" }}
+        codexPluginCatalog={[]}
+        pluginCatalogStatus=""
+        agentTestResults={{}}
+        testingAgentId={undefined}
+        agentTestTick={0}
+        onUpdateChannel={() => undefined}
+        onAddModel={() => undefined}
+        onUpdateModel={() => undefined}
+        onRemoveModel={() => undefined}
+        onSave={async () => undefined}
+        onLoadCodexPluginCatalog={async () => undefined}
+        onSelectChannel={() => undefined}
+        onAddConfig={() => undefined}
+        onOpenContextMenu={() => undefined}
+        onDeleteConfig={() => undefined}
+        onTestChannel={async () => undefined}
+        onUpdateProviderKey={() => undefined}
+      />,
+    );
+
+    expect(html).toContain("value=\"sk-default\"");
+    expect(html).not.toContain("value=\"stale-key\"");
+    expect(html).toContain("value=\"Bridge\"");
+    expect(html).toContain("value=\"bridge\"");
+    expect(html).toContain("value=\"https://bridge.example/v1\"");
+    expect(html).toContain("value=\"responses\"");
+    expect(html).toContain("value=\"\"");
+  });
+
+  test("maps Codex Default loader output onto a channel and clears stale fields", () => {
+    const mapped = applyCodexDefaultConfigToChannel(
+      {
+        ...channels[0]!,
+        presetId: "deepseek",
+        modelProvider: "deepseek",
+        providerName: "DeepSeek",
+        baseUrl: "https://api.deepseek.com",
+        wireApi: "responses",
+        modelCatalogJson: '{"models":[1]}',
+        modelReasoningEffort: "high",
+        httpHeaders: { Authorization: "Bearer stale" },
+        plugins: [{ id: "stale-plugin", enabled: true }],
+        models: [
+          { id: DEFAULT_MODEL_ID, label: "Default" },
+          { id: "deepseek-v4-pro", label: "DeepSeek V4 Pro" },
+        ],
+      },
+      {
+        modelProvider: null,
+        providerName: null,
+        baseUrl: null,
+        wireApi: null,
+        httpHeaders: null,
+        apiKey: null,
+        modelId: null,
+        modelCatalogJson: null,
+        modelReasoningEffort: null,
+        plugins: null,
+      },
+    );
+
+    expect(mapped).toMatchObject({
+      presetId: CODEX_DEFAULT_PRESET_ID,
+      models: [{ id: DEFAULT_MODEL_ID, label: "Default" }],
+    });
+    expect(mapped.modelProvider).toBeUndefined();
+    expect(mapped.providerName).toBeUndefined();
+    expect(mapped.baseUrl).toBeUndefined();
+    expect(mapped.wireApi).toBeUndefined();
+    expect(mapped.httpHeaders).toBeUndefined();
+    expect(mapped.modelCatalogJson).toBeUndefined();
+    expect(mapped.modelReasoningEffort).toBeUndefined();
+    expect(mapped.plugins).toBeUndefined();
+  });
+
+  test("writes Codex Default api key into Authorization while preserving loaded headers", () => {
+    const mapped = applyCodexDefaultConfigToChannel(channels[0]!, {
+      modelProvider: "bridge",
+      providerName: "Bridge",
+      baseUrl: "https://bridge.example/v1",
+      wireApi: "responses",
+      httpHeaders: { "X-Test": "1" },
+      apiKey: "sk-default",
+      modelId: "gpt-5.5",
+      modelCatalogJson: null,
+      modelReasoningEffort: null,
+      plugins: null,
+    });
+
+    expect(mapped.httpHeaders).toEqual({
+      "X-Test": "1",
+      Authorization: "Bearer sk-default",
+    });
+    expect(mapped.models).toEqual([
+      { id: DEFAULT_MODEL_ID, label: "Default" },
+      { id: "gpt-5.5", label: "gpt-5.5" },
+    ]);
   });
 
   test("renders all stored execution configs without legacy cleanup controls", () => {

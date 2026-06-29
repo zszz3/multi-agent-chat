@@ -1,20 +1,20 @@
-import { chmod, mkdtemp, readFile, writeFile } from "node:fs/promises";
+import { mkdtemp, readFile } from "node:fs/promises";
 import os from "node:os";
 import path from "node:path";
 import { describe, expect, test } from "vitest";
+import { writeNodeCliLauncher } from "../test-cli-fixtures";
 import { ClaudeRunner } from "./claude-runner";
 
 async function captureClaudeArgs(options: { sessionId?: string; modelId?: string }): Promise<string[]> {
   const dir = await mkdtemp(path.join(os.tmpdir(), "multi-agent-chat-claude-args-"));
-  const executable = path.join(dir, "claude-echo");
   const argsFile = path.join(dir, "args.txt");
-  // Record each received argument on its own line, then exit cleanly.
-  await writeFile(
-    executable,
-    `#!/bin/sh\nprintf '%s\\n' "$@" > ${JSON.stringify(argsFile)}\nexit 0\n`,
-    "utf8",
+  const executable = await writeNodeCliLauncher(
+    dir,
+    "claude-echo",
+    `const fs = require("fs");
+fs.writeFileSync(${JSON.stringify(argsFile)}, process.argv.slice(2).join("\\n") + "\\n", "utf8");
+`,
   );
-  await chmod(executable, 0o755);
 
   await new Promise<void>((resolve, reject) => {
     const runner = new ClaudeRunner({

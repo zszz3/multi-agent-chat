@@ -1,13 +1,18 @@
-import { execFile } from "node:child_process";
 import { mkdir, readdir, readFile, writeFile } from "node:fs/promises";
 import os from "node:os";
 import path from "node:path";
-import { promisify } from "node:util";
 import { DEFAULT_MODEL_ID, FALLBACK_MODEL_OPTIONS, runtimeModelId } from "../shared/models";
-import type { AgentChannel, AgentId, AgentModelOption, AgentPluginConfig, GeneratedConfigFile, ImportedCodexConfig } from "../shared/types";
+import type {
+  AgentChannel,
+  AgentId,
+  AgentModelOption,
+  AgentPluginConfig,
+  CodexDefaultConfig,
+  GeneratedConfigFile,
+  ImportedCodexConfig,
+} from "../shared/types";
 import { codexChannelNeedsChatRouting, codexChatRouterUrlForChannel } from "./codex-chat-router";
-
-const execFileAsync = promisify(execFile);
+import { execCli } from "./cli-launcher";
 const CONFIG_VERSION = 1;
 const BUILT_IN_CODEX_PROVIDER_IDS = new Set(["openai"]);
 const DEEPSEEK_CLAUDE_MODELS: AgentModelOption[] = [
@@ -19,6 +24,10 @@ const DEEPSEEK_CLAUDE_MODELS: AgentModelOption[] = [
 interface ModelChannelsFile {
   version: typeof CONFIG_VERSION;
   channels: AgentChannel[];
+}
+
+interface CodexAuthFile {
+  OPENAI_API_KEY?: unknown;
 }
 
 function isAgentId(value: unknown): value is AgentId {
@@ -77,6 +86,8 @@ function unquoteTomlKey(value: string): string {
 function parseTomlString(value: string): string | undefined {
   const trimmed = value.trim();
   if (!trimmed) return undefined;
+  if (trimmed.startsWith('"') !== trimmed.endsWith('"')) throw new Error(`Invalid TOML string: ${trimmed}`);
+  if (trimmed.startsWith("'") !== trimmed.endsWith("'")) throw new Error(`Invalid TOML string: ${trimmed}`);
   if (trimmed.startsWith('"') && trimmed.endsWith('"')) {
     try {
       return JSON.parse(trimmed) as string;
@@ -117,6 +128,7 @@ function splitTomlCommaList(value: string): string[] {
 
 function parseTomlInlineTable(value: string): Record<string, string> | undefined {
   const trimmed = value.trim();
+  if (trimmed.startsWith("{") !== trimmed.endsWith("}")) throw new Error(`Invalid TOML inline table: ${trimmed}`);
   if (!trimmed.startsWith("{") || !trimmed.endsWith("}")) return undefined;
   const body = trimmed.slice(1, -1).trim();
   if (!body) return undefined;
@@ -124,7 +136,7 @@ function parseTomlInlineTable(value: string): Record<string, string> | undefined
   const table: Record<string, string> = {};
   for (const entry of splitTomlCommaList(body)) {
     const separator = entry.indexOf("=");
-    if (separator < 0) continue;
+    if (separator < 0) throw new Error(`Invalid TOML inline table entry: ${entry}`);
     const key = unquoteTomlKey(entry.slice(0, separator));
     const parsedValue = parseTomlString(entry.slice(separator + 1));
     if (key && parsedValue !== undefined) table[key] = parsedValue;
@@ -140,16 +152,18 @@ function readKnownToml(raw: string): Record<string, Record<string, unknown>> {
     const line = stripInlineComment(rawLine);
     if (!line) continue;
 
-    const sectionMatch = line.match(/^\[([^\]]+)\]$/);
-    if (sectionMatch?.[1]) {
+    if (line.startsWith("[") || line.endsWith("]")) {
+      const sectionMatch = line.match(/^\[([^\]]+)\]$/);
+      if (!sectionMatch?.[1]) throw new Error(`Invalid TOML section: ${line}`);
       activeSection = sectionMatch[1].trim();
       sections[activeSection] ??= {};
       continue;
     }
 
     const separator = line.indexOf("=");
-    if (separator < 0) continue;
+    if (separator < 0) throw new Error(`Invalid TOML line: ${line}`);
     const key = unquoteTomlKey(line.slice(0, separator));
+    if (!key) throw new Error(`Invalid TOML key: ${line}`);
     const value = line.slice(separator + 1).trim();
     const inlineTable = parseTomlInlineTable(value);
     const section = sections[activeSection] ?? {};
@@ -237,6 +251,8 @@ function normalizeChannel(raw: unknown): AgentChannel | null {
 
   const profileName = asString(record.profileName);
   if (profileName) channel.profileName = profileName;
+  const presetId = asString(record.presetId);
+  if (presetId) channel.presetId = presetId;
   const modelProvider = asString(record.modelProvider);
   if (modelProvider) channel.modelProvider = modelProvider;
   if (channel.agentId === "claude" && modelProvider === "deepseek-anthropic") channel.models = DEEPSEEK_CLAUDE_MODELS;
@@ -293,7 +309,13 @@ export function parseCodexModelCatalog(raw: string): AgentModelOption[] {
 }
 
 export async function detectCodexModels(command = "codex"): Promise<AgentModelOption[]> {
-  const { stdout } = await execFileAsync(command, ["debug", "models"], { timeout: 5_000, maxBuffer: 1024 * 1024 });
+  const { stdout } = await execCli({
+    executable: command,
+    args: ["debug", "models"],
+    timeout: 5_000,
+    maxBuffer: 1024 * 1024,
+    windowsHide: true,
+  });
   return parseCodexModelCatalog(stdout);
 }
 
@@ -358,6 +380,21 @@ export function codexHome(): string {
   return process.env.CODEX_HOME ?? path.join(os.homedir(), ".codex");
 }
 
+function normalizeCodexDefaultConfig(config: Partial<CodexDefaultConfig>): CodexDefaultConfig {
+  return {
+    modelProvider: config.modelProvider ?? null,
+    providerName: config.providerName ?? null,
+    baseUrl: config.baseUrl ?? null,
+    wireApi: config.wireApi ?? null,
+    httpHeaders: config.httpHeaders ?? null,
+    apiKey: config.apiKey ?? null,
+    modelId: config.modelId ?? null,
+    modelCatalogJson: config.modelCatalogJson ?? null,
+    modelReasoningEffort: config.modelReasoningEffort ?? null,
+    plugins: config.plugins ?? null,
+  };
+}
+
 function generatedProfileNameFor(channel: AgentChannel, modelId: string): string {
   return `multi-agent-${sanitizeProfilePart(channel.id)}-${sanitizeProfilePart(modelId)}`;
 }
@@ -418,7 +455,12 @@ export function codexAppServerConfigArgs(channel: AgentChannel | undefined, mode
 }
 
 export function parseCodexProfileConfig(sourcePath: string, raw: string): ImportedCodexConfig | null {
-  const sections = readKnownToml(raw);
+  let sections: Record<string, Record<string, unknown>>;
+  try {
+    sections = readKnownToml(raw);
+  } catch {
+    return null;
+  }
   const root = sections.root ?? {};
   const profileName = profileNameFromPath(sourcePath);
   const modelProvider = asString(root.model_provider);
@@ -464,6 +506,66 @@ export function parseCodexProfileConfig(sourcePath: string, raw: string): Import
     sourcePath,
     channel,
   };
+}
+
+export function parseCodexDefaultConfig(rawConfigToml: string, rawAuthJson: string | undefined): CodexDefaultConfig {
+  const config = normalizeCodexDefaultConfig({});
+
+  try {
+    const sections = readKnownToml(rawConfigToml);
+    const root = sections.root ?? {};
+    const modelProvider = asString(root.model_provider);
+    config.modelProvider = modelProvider ?? null;
+    config.modelId = asString(root.model) ?? null;
+    config.modelCatalogJson = asString(root.model_catalog_json) ?? null;
+    config.modelReasoningEffort = asString(root.model_reasoning_effort) ?? null;
+
+    const providerSectionName = modelProvider ? `model_providers.${modelProvider}` : undefined;
+    const providerSection = providerSectionName ? sections[providerSectionName] ?? {} : {};
+    config.providerName = asString(providerSection.name) ?? null;
+    config.baseUrl = asString(providerSection.base_url) ?? null;
+    config.wireApi = asString(providerSection.wire_api) ?? null;
+    config.httpHeaders = normalizeHeaders(providerSection.http_headers) ?? null;
+
+    const plugins: AgentPluginConfig[] = [];
+    for (const [sectionName, section] of Object.entries(sections)) {
+      const id = pluginIdFromSection(sectionName);
+      if (!id) continue;
+      plugins.push({ id, enabled: asBoolean(section.enabled) ?? true });
+    }
+    config.plugins = plugins.length > 0 ? plugins : null;
+  } catch {
+    // Return null-filled config if TOML parsing fails.
+  }
+
+  if (rawAuthJson !== undefined) {
+    try {
+      const parsed = JSON.parse(rawAuthJson) as CodexAuthFile;
+      config.apiKey = asString(parsed.OPENAI_API_KEY) ?? null;
+    } catch {
+      config.apiKey = null;
+    }
+  }
+
+  return normalizeCodexDefaultConfig(config);
+}
+
+export async function loadCodexDefaultConfig(home = codexHome()): Promise<CodexDefaultConfig> {
+  let rawConfigToml = "";
+  try {
+    rawConfigToml = await readFile(path.join(home, "config.toml"), "utf8");
+  } catch {
+    rawConfigToml = "";
+  }
+
+  let rawAuthJson: string | undefined;
+  try {
+    rawAuthJson = await readFile(path.join(home, "auth.json"), "utf8");
+  } catch {
+    rawAuthJson = undefined;
+  }
+
+  return parseCodexDefaultConfig(rawConfigToml, rawAuthJson);
 }
 
 export async function importCodexConfigs(home = codexHome()): Promise<ImportedCodexConfig[]> {

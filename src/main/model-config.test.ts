@@ -4,7 +4,16 @@ import path from "node:path";
 import { describe, expect, test } from "vitest";
 import type { AgentChannel } from "../shared/types";
 import { setCodexChatRouterBaseUrl } from "./codex-chat-router";
-import { codexAppServerConfigArgs, generateCodexConfigs, importCodexConfigs, normalizeChannels, parseCodexModelCatalog, parseCodexProfileConfig } from "./model-config";
+import {
+  codexAppServerConfigArgs,
+  generateCodexConfigs,
+  importCodexConfigs,
+  loadCodexDefaultConfig,
+  normalizeChannels,
+  parseCodexDefaultConfig,
+  parseCodexModelCatalog,
+  parseCodexProfileConfig,
+} from "./model-config";
 
 describe("model channel config", () => {
   test("parses visible Codex models from the debug catalog", () => {
@@ -356,5 +365,118 @@ enabled = false
     expect(imported.find((item) => item.channel.id === "codex-config-custom-openai")?.channel.plugins).toEqual([
       { id: "browser-use@openai-bundled", enabled: false },
     ]);
+  });
+
+  test("parses the user-level Codex default config and auth key", () => {
+    expect(
+      parseCodexDefaultConfig(
+        `
+model_provider = "bridge"
+model = "gpt-5.5"
+model_reasoning_effort = "high"
+model_catalog_json = "{\\"models\\":[]}"
+
+[model_providers.bridge]
+name = "Bridge"
+base_url = "https://bridge.example/v1"
+wire_api = "responses"
+http_headers = { "X-Test" = "1" }
+
+[plugins."documents@openai-primary-runtime"]
+enabled = true
+`,
+        JSON.stringify({ OPENAI_API_KEY: "sk-test" }),
+      ),
+    ).toEqual({
+      modelProvider: "bridge",
+      providerName: "Bridge",
+      baseUrl: "https://bridge.example/v1",
+      wireApi: "responses",
+      httpHeaders: { "X-Test": "1" },
+      apiKey: "sk-test",
+      modelId: "gpt-5.5",
+      modelCatalogJson: '{"models":[]}',
+      modelReasoningEffort: "high",
+      plugins: [{ id: "documents@openai-primary-runtime", enabled: true }],
+    });
+  });
+
+  test("returns null-filled default config when config.toml is missing", async () => {
+    const dir = await mkdtemp(path.join(os.tmpdir(), "multi-agent-chat-codex-default-missing-config-"));
+    await writeFile(path.join(dir, "auth.json"), JSON.stringify({ OPENAI_API_KEY: "sk-test" }), "utf8");
+
+    await expect(loadCodexDefaultConfig(dir)).resolves.toEqual({
+      modelProvider: null,
+      providerName: null,
+      baseUrl: null,
+      wireApi: null,
+      httpHeaders: null,
+      apiKey: "sk-test",
+      modelId: null,
+      modelCatalogJson: null,
+      modelReasoningEffort: null,
+      plugins: null,
+    });
+  });
+
+  test("returns null api key when auth.json is missing", async () => {
+    const dir = await mkdtemp(path.join(os.tmpdir(), "multi-agent-chat-codex-default-missing-auth-"));
+    await writeFile(path.join(dir, "config.toml"), 'model_provider = "openai"\nmodel = "gpt-5.5"\n', "utf8");
+
+    await expect(loadCodexDefaultConfig(dir)).resolves.toEqual({
+      modelProvider: "openai",
+      providerName: null,
+      baseUrl: null,
+      wireApi: null,
+      httpHeaders: null,
+      apiKey: null,
+      modelId: "gpt-5.5",
+      modelCatalogJson: null,
+      modelReasoningEffort: null,
+      plugins: null,
+    });
+  });
+
+  test("returns null-filled default config when config or auth parsing fails", () => {
+    expect(parseCodexDefaultConfig('model_provider = "bridge', '{"OPENAI_API_KEY":"sk-test"')).toEqual({
+      modelProvider: null,
+      providerName: null,
+      baseUrl: null,
+      wireApi: null,
+      httpHeaders: null,
+      apiKey: null,
+      modelId: null,
+      modelCatalogJson: null,
+      modelReasoningEffort: null,
+      plugins: null,
+    });
+
+    expect(parseCodexDefaultConfig('model_provider = "openai"\n', '{"OPENAI_API_KEY":')).toEqual({
+      modelProvider: "openai",
+      providerName: null,
+      baseUrl: null,
+      wireApi: null,
+      httpHeaders: null,
+      apiKey: null,
+      modelId: null,
+      modelCatalogJson: null,
+      modelReasoningEffort: null,
+      plugins: null,
+    });
+  });
+
+  test("parses built-in OpenAI Codex default config without a provider section", () => {
+    expect(parseCodexDefaultConfig('model_provider = "openai"\nmodel = "gpt-5.5"\n', undefined)).toEqual({
+      modelProvider: "openai",
+      providerName: null,
+      baseUrl: null,
+      wireApi: null,
+      httpHeaders: null,
+      apiKey: null,
+      modelId: "gpt-5.5",
+      modelCatalogJson: null,
+      modelReasoningEffort: null,
+      plugins: null,
+    });
   });
 });

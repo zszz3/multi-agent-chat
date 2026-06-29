@@ -58,7 +58,7 @@ import { SettingsPage } from "./pages/settings/SettingsPage";
 import { RuntimePage } from "./pages/runtime/RuntimePage";
 export { RuntimePage } from "./pages/runtime/RuntimePage";
 import type { AgentTestTranscriptItem, AgentTestUiState } from "./pages/runtime/runtime-types";
-export { applyProviderPresetToChannel, rememberProviderKeyFromChannel } from "./pages/runtime/runtime-utils";
+export { applyCodexDefaultConfigToChannel, applyProviderPresetToChannel, rememberProviderKeyFromChannel, resolveProviderPresetId } from "./pages/runtime/runtime-utils";
 import {
   TASK_STATUS_FILTERS,
   type TaskStatusFilterValue,
@@ -1314,7 +1314,11 @@ export function App() {
   }
 
   async function persistChannelConfig(): Promise<AppSnapshot> {
-    const next = await window.multiAgentChat.saveModelChannels(configChannels);
+    return persistSpecificChannelConfig(configChannels);
+  }
+
+  async function persistSpecificChannelConfig(channels: AgentChannel[]): Promise<AppSnapshot> {
+    const next = await window.multiAgentChat.saveModelChannels(channels);
     setConfigChannels(next.channels);
     setConfigDirty(false);
     setSelectedConfigChannelId((current) => {
@@ -1587,6 +1591,18 @@ export function App() {
       return next;
     });
     updateConfigChannels(configChannels.map((channel) => (channel.id === channelId ? updater(channel) : channel)));
+  }
+
+  async function replaceConfigChannelAndPersist(channelId: string, nextChannel: AgentChannel): Promise<void> {
+    setBalanceResults((current) => {
+      if (!(channelId in current)) return current;
+      const next = { ...current };
+      delete next[channelId];
+      return next;
+    });
+    const nextChannels = configChannelsRef.current.map((channel) => (channel.id === channelId ? nextChannel : channel));
+    await persistSpecificChannelConfig(nextChannels);
+    setConfigStatus("Saved");
   }
 
   function addConfigModel(channelId: string): void {
@@ -2703,6 +2719,7 @@ export function App() {
             balanceResults={balanceResults}
             balanceLoadingChannelId={balanceLoadingChannelId}
             contextMenu={configContextMenu}
+            status={configStatus}
             onUpdateChannel={updateConfigChannel}
             onAddModel={addConfigModel}
             onUpdateModel={updateConfigModel}
@@ -2716,6 +2733,9 @@ export function App() {
             onTestChannel={testRuntimeChannel}
             onQueryBalance={queryRuntimeChannelBalance}
             onUpdateProviderKey={updateProviderKey}
+            onLoadCodexDefaultConfig={() => window.multiAgentChat.loadCodexDefaultConfig()}
+            onReplaceChannelAndPersist={replaceConfigChannelAndPersist}
+            onStatusChange={setConfigStatus}
           />
         ) : activeFeature === "settings" ? (
           <SettingsPage language={language} keepAwake={keepAwake} onLanguageChange={setLanguage} onKeepAwakeChange={setKeepAwake} />

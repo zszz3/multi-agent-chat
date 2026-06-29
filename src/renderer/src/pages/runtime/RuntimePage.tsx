@@ -2,11 +2,12 @@ import { useMemo, type MouseEvent } from "react";
 import { CheckCircle2, Cpu, Plus, RefreshCw, Save, Trash2 } from "lucide-react";
 import { configChannelForSelection, selectConfigChannelsForDisplay } from "../../../../shared/config-channels";
 import { DEFAULT_MODEL_ID } from "../../../../shared/models";
-import { AGENT_PROVIDER_PRESETS, type AgentProviderPreset } from "../../../../shared/provider-presets";
+import { AGENT_PROVIDER_PRESETS, CODEX_DEFAULT_PRESET_ID, type AgentProviderPreset } from "../../../../shared/provider-presets";
 import type {
   AgentChannel,
   AgentId,
   AgentModelOption,
+  CodexDefaultConfig,
   CodexPluginCatalogItem,
   ProviderBalanceResult,
 } from "../../../../shared/types";
@@ -17,12 +18,16 @@ import type { AgentTestUiState } from "./runtime-types";
 import {
   addPluginToChannel,
   agentTestEventLabel,
+  applyCodexDefaultConfigToChannel,
+  applyProviderApiKeyToChannel,
   apiKeyFromChannelHeaders,
   applyProviderPresetToChannel,
   formatBalanceDetail,
   formatBalanceValue,
   headersToText,
+  loadCodexDefaultConfigFromRuntimeApi,
   providerKeyValue,
+  resolveProviderPresetId,
   rememberProviderKeyFromChannel,
   removePluginAt,
   updatePluginAt,
@@ -97,6 +102,10 @@ interface RuntimePageProps {
   onTestChannel: (channelId: string) => Promise<void>;
   onQueryBalance?: (channelId: string) => Promise<void>;
   onUpdateProviderKey: (presetId: string, value: string) => void;
+  onLoadCodexDefaultConfig?: () => Promise<CodexDefaultConfig>;
+  onReplaceChannelAndPersist?: (channelId: string, nextChannel: AgentChannel) => Promise<void>;
+  status?: string;
+  onStatusChange?: (message: string) => void;
 }
 
 export function RuntimePage({
@@ -125,6 +134,10 @@ export function RuntimePage({
   onTestChannel,
   onQueryBalance,
   onUpdateProviderKey,
+  onLoadCodexDefaultConfig,
+  onReplaceChannelAndPersist,
+  status = "",
+  onStatusChange,
 }: RuntimePageProps) {
   const configText = CONFIG_TEXT[language];
   const runtimeTitle = language === "zh" ? "配置" : "Config";
@@ -157,14 +170,7 @@ export function RuntimePage({
     if (!selectedRuntimeChannelRecord) return;
     onUpdateChannel(selectedRuntimeChannelRecord.id, updater);
   };
-  const selectedRuntimePresetId = selectedRuntimeChannelRecord
-    ? (runtimeProviderPresets.find(
-        (preset) =>
-          preset.runtimeAgentId === selectedRuntime &&
-          (preset.modelProvider ?? "") === (selectedRuntimeChannelRecord.modelProvider ?? "") &&
-          (preset.baseUrl ?? "") === (selectedRuntimeChannelRecord.baseUrl ?? ""),
-      )?.id ?? (selectedRuntime === "codex" ? "custom" : undefined))
-    : undefined;
+  const selectedRuntimePresetId = resolveProviderPresetId(selectedRuntimeChannelRecord, runtimeProviderPresets);
   const selectedRuntimePreset = useMemo(
     () => (selectedRuntimePresetId ? AGENT_PROVIDER_PRESETS.find((preset) => preset.id === selectedRuntimePresetId) : undefined),
     [selectedRuntimePresetId],
@@ -185,8 +191,27 @@ export function RuntimePage({
     ? (selectedRuntimeChannelRecord?.models.find((model) => model.id === selectedChannelTestResult.modelId)?.label ?? selectedChannelTestResult.modelId)
     : "";
 
-  const applyRuntimePreset = (preset: AgentProviderPreset): void => {
+  const applyRuntimePreset = async (preset: AgentProviderPreset): Promise<void> => {
     if (!selectedRuntimeChannelRecord) return;
+    if (preset.id === CODEX_DEFAULT_PRESET_ID) {
+      try {
+        onStatusChange?.("");
+        const config = onLoadCodexDefaultConfig
+          ? await onLoadCodexDefaultConfig()
+          : await loadCodexDefaultConfigFromRuntimeApi(window.multiAgentChat);
+        if (config.apiKey !== null) onUpdateProviderKey(CODEX_DEFAULT_PRESET_ID, config.apiKey);
+        else onUpdateProviderKey(CODEX_DEFAULT_PRESET_ID, "");
+        const nextChannel = applyCodexDefaultConfigToChannel(selectedRuntimeChannelRecord, config);
+        if (onReplaceChannelAndPersist) {
+          await onReplaceChannelAndPersist(selectedRuntimeChannelRecord.id, nextChannel);
+        } else {
+          updateSelectedRuntimeChannel(() => nextChannel);
+        }
+      } catch (error) {
+        onStatusChange?.(error instanceof Error ? error.message : String(error));
+      }
+      return;
+    }
     const cachedProviderKeys = rememberProviderKeyFromChannel(providerKeys, selectedRuntimePreset, selectedRuntimeChannelRecord);
     const cachedSelectedProviderKey = selectedRuntimePreset ? cachedProviderKeys[selectedRuntimePreset.id] : undefined;
     if (selectedRuntimePreset?.usesApiKey && cachedSelectedProviderKey && cachedSelectedProviderKey !== providerKeys[selectedRuntimePreset.id]) {
@@ -202,7 +227,11 @@ export function RuntimePage({
   const updateSelectedProviderKey = (value: string): void => {
     if (!selectedRuntimePreset) return;
     onUpdateProviderKey(selectedRuntimePreset.id, value);
-    updateSelectedRuntimeChannel((channel) => applyProviderPresetToChannel(channel, selectedRuntimePreset, value));
+    updateSelectedRuntimeChannel((channel) =>
+      selectedRuntimePreset.id === CODEX_DEFAULT_PRESET_ID
+        ? applyProviderApiKeyToChannel(channel, selectedRuntimePreset, value)
+        : applyProviderPresetToChannel(channel, selectedRuntimePreset, value),
+    );
   };
   const updateSelectedProviderModelId = (value: string): void => {
     const modelId = value.trim();
@@ -301,6 +330,7 @@ export function RuntimePage({
                   <span>{selectedChannelTesting ? runtimeConfigTesting : runtimeConfigTest}</span>
                 </button>
               </div>
+              {status ? <div className="config-status runtime-config-status">{status}</div> : null}
               {selectedChannelTestResult ? (
                 selectedChannelTestResult.state === "passed" ? (
                   <section className="agent-test-result passed collapsed">
@@ -420,7 +450,7 @@ export function RuntimePage({
                       type="button"
                       key={preset.id}
                       className={`agent-provider-preset ${selectedRuntimePresetId === preset.id ? "is-active" : ""}`}
-                      onClick={() => applyRuntimePreset(preset)}
+                      onClick={() => void applyRuntimePreset(preset)}
                     >
                       <strong>{preset.label}</strong>
                     </button>

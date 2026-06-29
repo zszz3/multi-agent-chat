@@ -1,4 +1,4 @@
-import { chmod, mkdtemp, readFile, writeFile } from "node:fs/promises";
+import { mkdtemp, readFile, writeFile } from "node:fs/promises";
 import os from "node:os";
 import path from "node:path";
 import { describe, expect, test, vi } from "vitest";
@@ -6,6 +6,7 @@ import { AgentHub, createWorkflowAgentTimeout } from "./agent-hub";
 import { DEFAULT_MODEL_ID } from "../shared/models";
 import type { AgentChannel, AgentId, ConfiguredAgent } from "../shared/types";
 import type { AgentExecutionContext, AgentExecutorFactory } from "./agent-executor";
+import { writeNodeCliLauncher } from "./test-cli-fixtures";
 
 function configuredAgent(
   id: string,
@@ -35,7 +36,6 @@ function addConfiguredAgents(hub: AgentHub, agents: ConfiguredAgent[]): void {
 }
 
 async function writeCodexAppServerFake(dir: string): Promise<{ executable: string; callsPath: string }> {
-  const executable = path.join(dir, "codex-fake");
   const callsPath = path.join(dir, "calls.jsonl");
   const script = `#!/usr/bin/env node
 const fs = require("fs");
@@ -127,13 +127,11 @@ rl.on("line", (line) => {
   write({ jsonrpc: "2.0", id: message.id, error: { code: -32601, message: "unknown method " + message.method } });
 });
 `;
-  await writeFile(executable, script, "utf8");
-  await chmod(executable, 0o755);
+  const executable = await writeNodeCliLauncher(dir, "codex-fake", script);
   return { executable, callsPath };
 }
 
 async function writeSequentialCodexFake(dir: string): Promise<{ executable: string; callsPath: string }> {
-  const executable = path.join(dir, "codex-sequential-fake");
   const callsPath = path.join(dir, "calls.jsonl");
   const counterPath = path.join(dir, "counter.txt");
   const script = `#!/usr/bin/env node
@@ -198,13 +196,11 @@ rl.on("line", (line) => {
   write({ jsonrpc: "2.0", id: message.id, error: { code: -32601, message: "unknown method " + message.method } });
 });
 `;
-  await writeFile(executable, script, "utf8");
-  await chmod(executable, 0o755);
+  const executable = await writeNodeCliLauncher(dir, "codex-sequential-fake", script);
   return { executable, callsPath };
 }
 
 async function writeCodexExecFake(dir: string): Promise<{ executable: string; callsPath: string; sessionId: string }> {
-  const executable = path.join(dir, "codex-exec-fake");
   const callsPath = path.join(dir, "exec-calls.jsonl");
   const sessionId = "019ed5a0-0000-7000-8000-000000000123";
   const script = `#!/usr/bin/env node
@@ -227,8 +223,7 @@ if (args[0] !== "exec") {
 process.stdout.write(JSON.stringify({ session_id: sessionId }) + "\\n");
 process.stdout.write(JSON.stringify({ type: "item.completed", item: { type: "agent_message", text: "OK" } }) + "\\n");
 `;
-  await writeFile(executable, script, "utf8");
-  await chmod(executable, 0o755);
+  const executable = await writeNodeCliLauncher(dir, "codex-exec-fake", script);
   return { executable, callsPath, sessionId };
 }
 
@@ -461,10 +456,14 @@ describe("AgentHub chat sessions", () => {
 
   test("archives the Codex session when deleting a chat with a session id", async () => {
     const dir = await mkdtemp(path.join(os.tmpdir(), "multi-agent-chat-codex-chat-archive-"));
-    const executable = path.join(dir, "codex-fake");
     const argsPath = path.join(dir, "args.txt");
-    await writeFile(executable, `#!/bin/sh\nprintf '%s\\n' "$@" > '${argsPath}'\n`, "utf8");
-    await chmod(executable, 0o755);
+    const executable = await writeNodeCliLauncher(
+      dir,
+      "codex-fake",
+      `const fs = require("fs");
+fs.writeFileSync(${JSON.stringify(argsPath)}, process.argv.slice(2).join("\\n") + "\\n", "utf8");
+`,
+    );
 
     const hub = new AgentHub({ codex: executable, claude: "missing-claude-for-test" });
     const chatId = hub.snapshot().activeChatId!;
@@ -972,6 +971,47 @@ describe("AgentHub chat sessions", () => {
         id: "deepseek-api-agent-channel",
         providerName: "DeepSeek",
         httpHeaders: { Authorization: "Bearer db-key" },
+      }),
+    ]);
+  });
+
+  test("persists and restores a stored preset id through SQLite-backed app state", async () => {
+    const dir = await mkdtemp(path.join(os.tmpdir(), "multi-agent-chat-preset-id-db-"));
+    const dbPath = path.join(dir, "app.db");
+    const channelPath = path.join(dir, "model-channels.json");
+    const storedChannels: AgentChannel[] = [
+      {
+        id: "codex-default-runtime",
+        agentId: "codex",
+        label: "Codex Default",
+        presetId: "codex-default",
+        modelProvider: "bridge",
+        providerName: "Bridge",
+        baseUrl: "https://bridge.example/v1",
+        wireApi: "responses",
+        models: [
+          { id: DEFAULT_MODEL_ID, label: "Default" },
+          { id: "gpt-5.5", label: "gpt-5.5" },
+        ],
+      },
+    ];
+
+    const hub = new AgentHub({ codex: "missing-codex-for-test" });
+    await hub.loadModelChannels(channelPath);
+    await hub.loadPersistedState(dbPath);
+    await hub.saveModelChannels(storedChannels);
+    await hub.flushPersistence();
+
+    const restored = new AgentHub({ codex: "missing-codex-for-test" });
+    await restored.loadModelChannels(channelPath);
+    await restored.loadPersistedState(dbPath);
+
+    expect(restored.snapshot().channels).toEqual([
+      expect.objectContaining({
+        id: "codex-default-runtime",
+        presetId: "codex-default",
+        modelProvider: "bridge",
+        providerName: "Bridge",
       }),
     ]);
   });
@@ -1631,10 +1671,14 @@ describe("AgentHub task runs", () => {
 
   test("archives the Codex session when deleting a task with a session id", async () => {
     const dir = await mkdtemp(path.join(os.tmpdir(), "multi-agent-chat-codex-archive-"));
-    const executable = path.join(dir, "codex-fake");
     const argsPath = path.join(dir, "args.txt");
-    await writeFile(executable, `#!/bin/sh\nprintf '%s\\n' "$@" > '${argsPath}'\n`, "utf8");
-    await chmod(executable, 0o755);
+    const executable = await writeNodeCliLauncher(
+      dir,
+      "codex-fake",
+      `const fs = require("fs");
+fs.writeFileSync(${JSON.stringify(argsPath)}, process.argv.slice(2).join("\\n") + "\\n", "utf8");
+`,
+    );
 
     const hub = new AgentHub({ codex: executable, claude: "missing-claude-for-test" });
     const task = (hub as any).createTaskState({
