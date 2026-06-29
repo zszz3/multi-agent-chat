@@ -57,7 +57,7 @@ import { SettingsPage } from "./pages/settings/SettingsPage";
 import { RuntimePage } from "./pages/runtime/RuntimePage";
 export { RuntimePage } from "./pages/runtime/RuntimePage";
 import { useRuntimeConfigManager } from "./pages/runtime/hooks/useRuntimeConfigManager";
-export { applyProviderPresetToChannel, rememberProviderKeyFromChannel } from "./pages/runtime/runtime-utils";
+export { applyCodexDefaultConfigToChannel, applyProviderPresetToChannel, rememberProviderKeyFromChannel, resolveProviderPresetId } from "./pages/runtime/runtime-utils";
 import {
   TASK_STATUS_FILTERS,
   type TaskStatusFilterValue,
@@ -244,6 +244,8 @@ export function AppShell() {
     updateConfigModel,
     removeConfigModel,
     updateProviderKey: updateProviderKeyInHook,
+    setConfigStatus,
+    replaceConfigChannelAndPersist,
     loadCodexPluginCatalog,
     testRuntimeChannel,
     queryRuntimeChannelBalance,
@@ -898,6 +900,7 @@ export function AppShell() {
             balanceResults={balanceResults}
             balanceLoadingChannelId={balanceLoadingChannelId}
             contextMenu={configContextMenu}
+            status={configStatus}
             onUpdateChannel={updateConfigChannel}
             onAddModel={addConfigModel}
             onUpdateModel={updateConfigModel}
@@ -911,6 +914,9 @@ export function AppShell() {
             onTestChannel={testRuntimeChannel}
             onQueryBalance={queryRuntimeChannelBalance}
             onUpdateProviderKey={updateProviderKey}
+            onLoadCodexDefaultConfig={() => window.multiAgentChat.loadCodexDefaultConfig()}
+            onReplaceChannelAndPersist={replaceConfigChannelAndPersist}
+            onStatusChange={setConfigStatus}
           />
         ) : activeFeature === "configuration" ? (
           <ConfigPage

@@ -47,6 +47,8 @@ export interface RuntimeConfigManager {
   updateConfigModel: (channelId: string, modelIndex: number, updater: (model: AgentModelOption) => AgentModelOption) => void;
   removeConfigModel: (channelId: string, modelIndex: number) => void;
   updateProviderKey: (providerKeysStorageKey: string, setProviderKeys: React.Dispatch<React.SetStateAction<Record<string, string>>>, presetId: string, value: string) => void;
+  setConfigStatus: React.Dispatch<React.SetStateAction<string>>;
+  replaceConfigChannelAndPersist: (channelId: string, nextChannel: AgentChannel) => Promise<void>;
   loadCodexPluginCatalog: () => Promise<void>;
   testRuntimeChannel: (channelId: string) => Promise<void>;
   queryRuntimeChannelBalance: (channelId: string, options?: { persistBeforeQuery?: boolean; quiet?: boolean }) => Promise<void>;
@@ -172,6 +174,15 @@ export function useRuntimeConfigManager({
     return next;
   }, [chatApi, setSnapshot]);
 
+  const persistSpecificChannelConfig = useCallback(async (channels: AgentChannel[]): Promise<AppSnapshot> => {
+    const next = await chatApi.saveModelChannels(channels);
+    setConfigChannels(next.channels);
+    setConfigDirty(false);
+    setSelectedConfigChannelId((current) => configChannelForSelection(next.channels, current)?.id ?? "");
+    setSnapshot(next);
+    return next;
+  }, [chatApi, setSnapshot]);
+
   const saveChannelConfig = useCallback(async (): Promise<void> => {
     try {
       await persistChannelConfig();
@@ -190,6 +201,18 @@ export function useRuntimeConfigManager({
     });
     updateConfigChannels(configChannelsRef.current.map((channel) => (channel.id === channelId ? updater(channel) : channel)));
   }, [updateConfigChannels]);
+
+  const replaceConfigChannelAndPersist = useCallback(async (channelId: string, nextChannel: AgentChannel): Promise<void> => {
+    setBalanceResults((current) => {
+      if (!(channelId in current)) return current;
+      const next = { ...current };
+      delete next[channelId];
+      return next;
+    });
+    const nextChannels = configChannelsRef.current.map((channel) => (channel.id === channelId ? nextChannel : channel));
+    await persistSpecificChannelConfig(nextChannels);
+    setConfigStatus("Saved");
+  }, [persistSpecificChannelConfig]);
 
   const addConfigModel = useCallback((channelId: string) => {
     updateConfigChannel(channelId, (channel) => ({
@@ -417,6 +440,8 @@ export function useRuntimeConfigManager({
     updateConfigModel,
     removeConfigModel,
     updateProviderKey,
+    setConfigStatus,
+    replaceConfigChannelAndPersist,
     loadCodexPluginCatalog,
     testRuntimeChannel,
     queryRuntimeChannelBalance,

@@ -1,5 +1,10 @@
-import { describe, expect, test } from "vitest";
+import { afterEach, describe, expect, test, vi } from "vitest";
 import { parseCliVersion } from "./detect";
+
+afterEach(() => {
+  vi.restoreAllMocks();
+  vi.unstubAllEnvs();
+});
 
 describe("parseCliVersion", () => {
   test("extracts semver-like versions from common agent output", () => {
@@ -10,5 +15,38 @@ describe("parseCliVersion", () => {
 
   test("falls back to the first trimmed line when output has no semver", () => {
     expect(parseCliVersion("custom build\nmore")).toBe("custom build");
+  });
+});
+
+describe("detectAgentRuntimes", () => {
+  test("treats Windows codex.cmd overrides as available when exec succeeds through the launcher adapter", async () => {
+    vi.resetModules();
+    vi.stubEnv("CODEX_PATH", "C:\\Users\\demo\\AppData\\Roaming\\npm\\codex.cmd");
+
+    const execCli = vi.fn(async (request: { executable: string; args?: string[] }) => {
+      if (request.executable === "C:\\Users\\demo\\AppData\\Roaming\\npm\\codex.cmd") {
+        return { stdout: "codex-cli 0.136.0\n", stderr: "" };
+      }
+      throw new Error(`unexpected executable: ${request.executable}`);
+    });
+
+    vi.doMock("../cli-launcher", () => ({ execCli }));
+    const { detectAgentRuntimes } = await import("./detect");
+
+    const runtimes = await detectAgentRuntimes();
+    const codex = runtimes.find((runtime) => runtime.id === "codex");
+
+    expect(codex).toMatchObject({
+      id: "codex",
+      command: "C:\\Users\\demo\\AppData\\Roaming\\npm\\codex.cmd",
+      available: true,
+      version: "0.136.0",
+    });
+    expect(execCli).toHaveBeenCalledWith(
+      expect.objectContaining({
+        executable: "C:\\Users\\demo\\AppData\\Roaming\\npm\\codex.cmd",
+        args: ["--version"],
+      }),
+    );
   });
 });

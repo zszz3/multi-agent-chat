@@ -1,8 +1,5 @@
-import { execFile } from "node:child_process";
-import { promisify } from "node:util";
 import type { AgentId, AgentRuntime } from "../../shared/types";
-
-const execFileAsync = promisify(execFile);
+import { execCli } from "../cli-launcher";
 
 const AGENT_COMMANDS: Record<Exclude<AgentId, "api">, { label: string; env: string; executable: string }> = {
   codex: { label: "Codex", env: "CODEX_PATH", executable: "codex" },
@@ -30,7 +27,9 @@ async function detectOne(id: AgentId): Promise<AgentRuntime> {
   const command = process.env[spec.env] ?? spec.executable;
 
   try {
-    const { stdout } = await execFileAsync(command, ["--version"], {
+    const { stdout } = await execCli({
+      executable: command,
+      args: ["--version"],
       timeout: 5000,
       windowsHide: true,
       maxBuffer: 1024 * 16,

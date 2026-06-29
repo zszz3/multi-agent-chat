@@ -1,7 +1,8 @@
-import { spawn, type ChildProcessWithoutNullStreams } from "node:child_process";
+import type { ChildProcessWithoutNullStreams } from "node:child_process";
 import { createInterface, type Interface as ReadlineInterface } from "node:readline";
 import { normalizeCodexNotification, createCodexStreamState } from "./codex-events";
 import type { AgentEvent } from "../../shared/types";
+import { spawnCli } from "../cli-launcher";
 
 interface RpcPending {
   resolve: (value: unknown) => void;
@@ -38,27 +39,33 @@ export class CodexRpcClient {
     if (this.proc) throw new Error("Codex client already started");
 
     const args = ["--yolo", ...(this.options.extraArgs ?? []), "app-server", "--listen", "stdio://"];
-    this.proc = spawn(this.options.executable, args, {
+    const proc = spawnCli({
+      executable: this.options.executable,
+      args,
       cwd: this.options.cwd,
       env: this.options.env ?? process.env,
       stdio: ["pipe", "pipe", "pipe"],
     });
+    if (!proc.stdin || !proc.stdout || !proc.stderr) {
+      throw new Error("Codex app-server failed to create stdio pipes");
+    }
+    this.proc = proc as ChildProcessWithoutNullStreams;
 
-    this.proc.stderr.on("data", (chunk: Buffer) => {
+    proc.stderr.on("data", (chunk: Buffer) => {
       const text = chunk.toString();
       this.stderr += text;
       this.options.onStderr?.(text);
     });
 
-    this.proc.on("exit", (code, signal) => {
+    proc.on("exit", (code, signal) => {
       this.teardown(code, signal);
     });
 
-    this.proc.on("error", (error) => {
+    proc.on("error", (error) => {
       this.teardown(null, null, error);
     });
 
-    this.rl = createInterface({ input: this.proc.stdout });
+    this.rl = createInterface({ input: proc.stdout });
     this.rl.on("line", (line) => this.handleLine(line));
 
     await this.request("initialize", {

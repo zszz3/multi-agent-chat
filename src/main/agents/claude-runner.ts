@@ -1,7 +1,8 @@
-import { spawn, type ChildProcess } from "node:child_process";
+import type { ChildProcess } from "node:child_process";
 import { createInterface } from "node:readline";
 import { createClaudeStreamState, normalizeClaudeStreamEvent } from "./claude-stream";
 import type { AgentEvent } from "../../shared/types";
+import { spawnCli } from "../cli-launcher";
 
 export interface ClaudeRunOptions {
   executable: string;
@@ -38,7 +39,9 @@ export class ClaudeRunner {
     }
     args.push(this.options.prompt);
 
-    const proc = spawn(this.options.executable, args, {
+    const proc = spawnCli({
+      executable: this.options.executable,
+      args,
       cwd: this.options.cwd,
       env: this.options.env ?? process.env,
       stdio: ["ignore", "pipe", "pipe"],
