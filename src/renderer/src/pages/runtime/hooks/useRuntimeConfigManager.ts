@@ -17,6 +17,26 @@ import type { AgentTestTranscriptItem, AgentTestUiState } from "../runtime-types
 
 const BALANCE_REFRESH_INTERVAL_MS = 5 * 60_000;
 
+export function codexRuntimeAvailability(runtimes: AppSnapshot["runtimes"]): {
+  detected: boolean;
+  available: boolean;
+  message: string;
+} {
+  const runtime = runtimes.find((item) => item.id === "codex");
+  if (!runtime) {
+    return { detected: false, available: false, message: "" };
+  }
+  if (runtime.available) {
+    return { detected: true, available: true, message: "" };
+  }
+  const detail = runtime.error?.trim();
+  return {
+    detected: true,
+    available: false,
+    message: detail ? `Codex CLI unavailable: ${detail}` : "Codex CLI unavailable on this machine.",
+  };
+}
+
 interface UseRuntimeConfigManagerOptions {
   chatApi: MultiAgentChatApi;
   snapshot: AppSnapshot;
@@ -76,6 +96,7 @@ export function useRuntimeConfigManager({
   const lastBalanceRefreshAtRef = useRef<number | undefined>(undefined);
   const configChannelsRef = useRef<AgentChannel[]>([]);
   const configDirtyRef = useRef(false);
+  const codexRuntime = codexRuntimeAvailability(snapshot.runtimes);
 
   useEffect(() => {
     configChannelsRef.current = configChannels;
@@ -251,6 +272,11 @@ export function useRuntimeConfigManager({
   }, []);
 
   const loadCodexPluginCatalog = useCallback(async () => {
+    if (codexRuntime.detected && !codexRuntime.available) {
+      setCodexPluginCatalog([]);
+      setPluginCatalogStatus(codexRuntime.message);
+      return;
+    }
     setPluginCatalogStatus("Loading plugins...");
     try {
       const plugins = await chatApi.listCodexPlugins();
@@ -259,7 +285,7 @@ export function useRuntimeConfigManager({
     } catch (error) {
       setPluginCatalogStatus(error instanceof Error ? error.message : String(error));
     }
-  }, [chatApi]);
+  }, [chatApi, codexRuntime.available, codexRuntime.detected, codexRuntime.message]);
 
   const testRuntimeChannel = useCallback(async (channelId: string): Promise<void> => {
     const channel = configChannelsRef.current.find((item) => item.id === channelId);
@@ -391,9 +417,22 @@ export function useRuntimeConfigManager({
   }, [configDirty, snapshot.channels, syncChannelsFromSnapshot]);
 
   useEffect(() => {
-    if (!runtimeViewActive || pluginCatalogStatus || codexPluginCatalog.length > 0) return;
+    if (!runtimeViewActive || codexPluginCatalog.length > 0 || !codexRuntime.detected) return;
+    if (!codexRuntime.available) {
+      setPluginCatalogStatus((current) => current || codexRuntime.message);
+      return;
+    }
+    if (pluginCatalogStatus) return;
     void loadCodexPluginCatalog();
-  }, [codexPluginCatalog.length, loadCodexPluginCatalog, pluginCatalogStatus, runtimeViewActive]);
+  }, [
+    codexPluginCatalog.length,
+    codexRuntime.available,
+    codexRuntime.detected,
+    codexRuntime.message,
+    loadCodexPluginCatalog,
+    pluginCatalogStatus,
+    runtimeViewActive,
+  ]);
 
   useEffect(() => {
     void refreshRuntimeChannelBalancesIfDue();

@@ -1157,6 +1157,11 @@ export class AgentHub {
   }
 
   async listCodexPluginCatalog(): Promise<CodexPluginCatalogItem[]> {
+    const runtime = this.runtimes.get("codex");
+    if (runtime && !runtime.available) {
+      const detail = runtime.error?.trim();
+      throw new Error(detail ? `Codex CLI unavailable: ${detail}` : "Codex CLI unavailable on this machine.");
+    }
     const chat = this.createChatState(this.defaultConfiguredAgentIdForRuntime("codex"));
     return this.withCodexAppServer(chat, async (client) => {
       return this.codexPluginSummaries(await client.request("plugin/list", { cwds: [this.workDir] }));
