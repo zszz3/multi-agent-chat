@@ -762,7 +762,13 @@ export function WorkflowPage(props: WorkflowPageProps) {
             </header>
             {filePreview.truncated ? <div className="workflow-file-preview-note">{workflowText.largeFile}</div> : null}
             <div className="workflow-file-preview-content">
-              {isMarkdownFilePath(filePreview.path) ? <MarkdownDocument className="workflow-file-preview-body" text={filePreview.content} /> : <pre>{filePreview.content}</pre>}
+              {/\.html?$/i.test(filePreview.path) ? (
+                <iframe className="workflow-file-preview-frame" title={filePreview.title} sandbox="" srcDoc={filePreview.content} />
+              ) : isMarkdownFilePath(filePreview.path) ? (
+                <MarkdownDocument className="workflow-file-preview-body" text={filePreview.content} />
+              ) : (
+                <pre>{filePreview.content}</pre>
+              )}
             </div>
           </article>
         </section>

@@ -879,9 +879,9 @@ describe("Sidebar history panels", () => {
     );
 
     expect(html).toContain("chat-row-status is-running");
-    expect(html).toContain("Running · 12:00 AM");
+    expect(html).toContain("Running | 12:00 AM");
     expect(html).toContain("chat-row-status is-idle");
-    expect(html).toContain("Idle · 12:00 AM");
+    expect(html).toContain("Idle | 12:00 AM");
     expect(html).not.toContain("Replied");
     expect(html).not.toContain("Stopped");
   });

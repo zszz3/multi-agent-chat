@@ -9,6 +9,7 @@ import { createLocalTextFilePreviewUnderRoots } from "./local-file-preview";
 import { startMcpBridge, type McpBridgeServer } from "./mcp-bridge";
 import { ScheduledWorkflowCloudClient, type ScheduledWorkflowCloudEventConnection } from "./scheduled-workflow-cloud";
 import { importOnlineSkillToLibrary, installBundledSkill, listImportedSkillTemplates, uninstallBundledSkill } from "./skill-installer";
+import { loadBundledWorkflows } from "./bundled-workflows";
 import { centeredWindowBounds } from "./window-bounds";
 import { fetchOnlineSkills, ONLINE_SKILL_SOURCES } from "../shared/online-skills";
 import { DEFAULT_SCHEDULED_WORKFLOW_CLOUD_BASE_URL } from "../shared/types";
@@ -233,6 +234,7 @@ async function bootstrap(): Promise<void> {
   await app.whenReady();
   await hub.loadModelChannels(path.join(app.getPath("userData"), MODEL_CHANNELS_FILE));
   await hub.loadPersistedState(path.join(app.getPath("userData"), APP_DATABASE_FILE), path.join(app.getPath("userData"), CHAT_HISTORY_FILE));
+  hub.ensureBundledWorkflows(await loadBundledWorkflows(path.join(__dirname, "../shared/bundled-workflows")));
   codexChatRouter = await startCodexChatRouter({ channels: () => hub.snapshot().channels });
   setCodexChatRouterBaseUrl(codexChatRouter.baseUrl);
   mcpBridge = await startMcpBridge(hub, {

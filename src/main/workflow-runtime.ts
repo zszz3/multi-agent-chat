@@ -22,7 +22,6 @@ import {
   WORKFLOW_NODE_MAX_ATTEMPTS,
   WORKFLOW_TASK_POLL_MS,
   WORKFLOW_TASK_TIMEOUT_MS,
-  defaultWorkflowWorkDirSuffix,
   extractWorkflowArtifactRefs,
   parseWorkflowGateRequest,
   parseWorkflowJudgeResult,
@@ -68,6 +67,7 @@ function configuredAgentModelId(workflow: WorkflowDraftState, snapshot: AppSnaps
   const agent = snapshot.configuredAgents.find((item) => item.id === workflow.configuredAgentId);
   return workflow.modelId || agent?.modelId || DEFAULT_MODEL_ID;
 }
+
 
 /**
  * Resolve the agent + model an individual agent node runs with. A node may
@@ -410,7 +410,7 @@ export class WorkflowRuntime {
 
     const configuredAgentId = workflow.configuredAgentId || latestSnapshot.configuredAgents[0]?.id || "default-agent";
     const modelId = configuredAgentModelId(workflow, latestSnapshot);
-    const workflowWorkDir = workflow.workDir || path.join(latestSnapshot.workDir, defaultWorkflowWorkDirSuffix(workflow.workflowId));
+    const workflowWorkDir = workflow.workDir || latestSnapshot.workDir;
     await mkdir(path.join(workflowWorkDir, storagePlan.outputDir), { recursive: true }).catch(() => undefined);
     const activeRun = this.activeRuns.get(runId);
     const isNodePaused = (nodeId: string): boolean => Boolean(activeRun?.pausedNodeIds.has(nodeId));
