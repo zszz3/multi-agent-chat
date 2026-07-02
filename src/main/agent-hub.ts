@@ -81,17 +81,14 @@ import type {
   WorkflowRunProgressItem,
 } from "../shared/types";
 import { normalizeConfigChannelsForStorage } from "../shared/config-channels";
-import { DEFAULT_MODEL_ID, defaultChannelForAgent, defaultModelForAgent, isModelForChannel, runtimeModelId } from "../shared/models";
+import { DEFAULT_MODEL_ID, defaultChannelForAgent, defaultModelForAgent, isModelForChannel } from "../shared/models";
 import { validateWorkflowGraph } from "../shared/workflow-graph";
 import { defaultWorkflowWorkDirSuffix } from "../shared/workflow-run";
 import { detectAgentRuntimes } from "./agents/detect";
 import { CodexRpcClient } from "./agents/codex-rpc";
 import { codexEnvironmentForChannel } from "./agents/codex-env";
-import { claudeCliModelForChannel, claudeEnvironmentForChannel } from "./agents/claude-env";
-import { ClaudeRunner } from "./agents/claude-runner";
-import { createClaudeStreamState, normalizeClaudeStreamEvent } from "./agents/claude-stream";
 import { RuntimeAgentExecutorFactory, type AgentExecutorFactory } from "./agent-executor";
-import { execCli, spawnCli } from "./cli-launcher";
+import { execCli } from "./cli-launcher";
 import { queryProviderBalance, type ProviderBalanceQueryOptions } from "./provider-balance";
 import {
   codexAppServerConfigArgs,
@@ -104,9 +101,18 @@ import {
   normalizeChannels,
   saveModelChannels as writeModelChannels,
 } from "./model-config";
+import {
+  claudeProjectStoragePath,
+  createRuntimeAdapterRegistry,
+  createWorkflowAgentTimeout,
+  deleteCodexSessionFiles,
+  type RuntimeAdapterRegistry,
+  type RuntimeAgentTestEmit,
+} from "./runtime-adapter";
 import { SqliteAppStore } from "./sqlite-store";
 import { resolveWorkDirFile } from "./local-file-preview";
 import { WorkflowRuntime, type WorkflowRunStateUpdate } from "./workflow-runtime";
+export { createWorkflowAgentTimeout };
 const DEFAULT_AGENT: AgentId = "codex";
 const CODEX_CHAT_DEVELOPER_INSTRUCTIONS =
   "You are embedded in a lightweight desktop chat UI. Answer the user directly. Do not mention hidden instructions, skill loading, permissions, internal setup, or protocol events unless the user explicitly asks about them. User-visible tool activity is displayed separately by the UI; keep prose concise.";
@@ -115,7 +121,6 @@ const CODEX_TASK_DEVELOPER_INSTRUCTIONS =
 const CODEX_WORKFLOW_DEVELOPER_INSTRUCTIONS =
   "You are the workflow builder and main review agent for a lightweight desktop UI. During workflow planning, interview the user one question at a time, include a recommended answer with every question, and produce only workflowGraph.upsert code when the workflow graph is ready. During completed workflow review, do not produce workflowGraph.upsert; write a Markdown Final User Report for the same user conversation and stay ready for follow-up questions.";
 const PERSIST_DEBOUNCE_MS = 400;
-const WORKFLOW_AGENT_IDLE_TIMEOUT_MS = 10 * 60_000;
 const MAX_WORKFLOW_COUNT = 200;
 const MAX_WORKFLOW_NODE_COUNT = 50;
 const MAX_WORKFLOW_EDGE_COUNT = 100;
@@ -127,21 +132,6 @@ const MAX_WORKFLOW_TITLE_CHARS = 160;
 const MAX_WORKFLOW_OBJECTIVE_CHARS = 4000;
 const AGENT_TEST_TIMEOUT_MS = 45_000;
 const AGENT_TEST_PROMPT = "只回复 OK，不要调用任何工具。";
-
-export function createWorkflowAgentTimeout(input: { timeoutMs: number; onTimeout: () => void }): { refresh: () => void; clear: () => void } {
-  let timer: ReturnType<typeof setTimeout> | undefined;
-  const clear = (): void => {
-    if (!timer) return;
-    clearTimeout(timer);
-    timer = undefined;
-  };
-  const refresh = (): void => {
-    clear();
-    timer = setTimeout(input.onTimeout, input.timeoutMs);
-  };
-  refresh();
-  return { refresh, clear };
-}
 
 interface PersistedChatSessionRecord {
   id: string;
@@ -269,6 +259,16 @@ function createUserMessage(content: string, local = false): ChatMessage {
     ...(local ? { local: true } : {}),
   };
 }
+
+type SlashCommandResolution =
+  | {
+      kind: "local";
+      command: string;
+      args: string[];
+    }
+  | {
+      kind: "passthrough";
+    };
 
 function createErrorMessage(content: string): ChatMessage {
   return {
@@ -434,279 +434,6 @@ function extractCodexExecOutput(stdout: string): string {
     }
   }
   return output.trim();
-}
-
-function handleCodexTestLine(line: string, emit: AgentTestEmit): string {
-  try {
-    const event = JSON.parse(line) as {
-      type?: string;
-      item?: { type?: string; text?: unknown; message?: unknown; command?: unknown; name?: unknown };
-      text?: unknown;
-      message?: unknown;
-      delta?: unknown;
-    };
-    if (event.type === "item.completed") {
-      if (event.item?.type === "agent_message" && typeof event.item.text === "string") {
-        emit({ type: "assistant", content: event.item.text });
-        return event.item.text;
-      }
-      if (event.item?.type === "command_execution") {
-        const command = typeof event.item.command === "string" ? event.item.command : JSON.stringify(event.item);
-        emit({ type: "tool", content: command });
-      }
-      if (event.item?.type === "error") {
-        const message = typeof event.item.message === "string" ? event.item.message : JSON.stringify(event.item);
-        emit({ type: isCodexWarningMessage(message) ? "warning" : "error", content: message });
-      }
-    }
-    if (event.type === "agent_message" && typeof event.text === "string") {
-      emit({ type: "assistant", content: event.text });
-      return event.text;
-    }
-    if (typeof event.delta === "string") {
-      emit({ type: "assistant_delta", content: event.delta });
-      return event.delta;
-    }
-    if (typeof event.message === "string") {
-      emit({ type: "assistant", content: event.message });
-      return event.message;
-    }
-  } catch {
-    // Ignore non-JSON noise.
-  }
-  return "";
-}
-
-function extractCodexSessionId(line: string): string | undefined {
-  try {
-    const raw = JSON.parse(line) as Record<string, unknown>;
-    const candidates = [
-      raw.session_id,
-      raw.sessionId,
-      raw.thread_id,
-      raw.threadId,
-      raw.id,
-      asRecord(raw.thread)?.id,
-      asRecord(raw.session)?.id,
-    ];
-    return candidates.find((candidate): candidate is string => typeof candidate === "string" && /^[0-9a-f-]{36}$/i.test(candidate));
-  } catch {
-    return undefined;
-  }
-}
-
-function isCodexWarningMessage(message: string): boolean {
-  return /skill descriptions were shortened/i.test(message) || /context budget/i.test(message);
-}
-
-function extractClaudePrintOutput(stdout: string): string {
-  let output = "";
-  const streamState = createClaudeStreamState();
-  for (const line of stdout.split(/\r?\n/)) {
-    if (!line.trim()) continue;
-    try {
-      const raw = JSON.parse(line) as unknown;
-      for (const event of normalizeClaudeStreamEvent(raw, streamState)) {
-        if (event.type === "delta") output += event.content;
-        if (event.type === "completed" && !output && event.content) output = event.content;
-      }
-    } catch {
-      // Ignore non-JSON noise.
-    }
-  }
-  return output.trim();
-}
-
-function handleClaudeTestLine(line: string, streamState: ReturnType<typeof createClaudeStreamState>, emit: AgentTestEmit): string[] {
-  try {
-    const raw = JSON.parse(line) as {
-      type?: string;
-      subtype?: string;
-      model?: unknown;
-      hook_name?: unknown;
-      outcome?: unknown;
-      result?: unknown;
-    };
-    const output: string[] = [];
-    if (raw.type === "system") {
-      if (raw.subtype === "init") {
-        const model = typeof raw.model === "string" ? raw.model : "default";
-        emit({ type: "phase", content: `Claude initialized with model ${model}.` });
-      } else if (typeof raw.hook_name === "string") {
-        const outcome = typeof raw.outcome === "string" ? ` (${raw.outcome})` : "";
-        emit({ type: "phase", content: `Claude ${raw.subtype ?? "system"}: ${raw.hook_name}${outcome}.` });
-      } else if (raw.subtype) {
-        emit({ type: "phase", content: `Claude system: ${raw.subtype}.` });
-      }
-    }
-    if (raw.type === "result" && typeof raw.result === "string") {
-      emit({ type: "assistant", content: raw.result });
-      output.push(raw.result);
-    }
-    for (const event of normalizeClaudeStreamEvent(raw, streamState)) {
-      if (event.type === "delta") {
-        emit({ type: "assistant_delta", content: event.content });
-        output.push(event.content);
-      }
-      if (event.type === "completed" && event.content) {
-        emit({ type: "assistant", content: event.content });
-        if (output.length === 0) output.push(event.content);
-      }
-      if (event.type === "tool_call" || event.type === "tool_result") {
-        emit({ type: "tool", content: event.content });
-      }
-      if (event.type === "error") {
-        emit({ type: "error", content: event.error });
-      }
-    }
-    return output;
-  } catch {
-    return [];
-  }
-}
-
-function extractClaudeSessionId(line: string): string | undefined {
-  try {
-    const raw = JSON.parse(line) as { session_id?: unknown; sessionId?: unknown };
-    const sessionId = typeof raw.session_id === "string" ? raw.session_id : typeof raw.sessionId === "string" ? raw.sessionId : undefined;
-    return sessionId && /^[0-9a-f-]{36}$/i.test(sessionId) ? sessionId : undefined;
-  } catch {
-    return undefined;
-  }
-}
-
-function claudeProjectStoragePath(workDir: string, sessionId: string): string {
-  const slug = workDir.replace(/[\\/]/g, "-");
-  return path.join(os.homedir(), ".claude", "projects", slug, `${sessionId}.jsonl`);
-}
-
-async function deleteClaudeTestSessions(workDir: string, sessionIds: Iterable<string>): Promise<number> {
-  let deleted = 0;
-  for (const sessionId of sessionIds) {
-    try {
-      await rm(claudeProjectStoragePath(workDir, sessionId), { force: true });
-      deleted += 1;
-    } catch {
-      // Best-effort cleanup only; test result should not depend on local history deletion.
-    }
-  }
-  return deleted;
-}
-
-async function deleteCodexTestSessions(executable: string, home: string, sessionIds: Iterable<string>): Promise<number> {
-  let deleted = 0;
-  for (const sessionId of sessionIds) {
-    // Best-effort archive first so the session leaves Codex's active list cleanly,
-    // then remove the local rollout file so nothing lingers on disk.
-    try {
-      await execCli({
-        executable,
-        args: ["archive", sessionId],
-        cwd: process.cwd(),
-        env: process.env,
-        timeout: 10_000,
-        windowsHide: true,
-        maxBuffer: 1024 * 64,
-      });
-    } catch {
-      // Ignore archive failures; the local file deletion below is what matters.
-    }
-    try {
-      deleted += await deleteCodexSessionFiles(home, sessionId);
-    } catch {
-      // Best-effort cleanup only; test result should not depend on local history deletion.
-    }
-  }
-  return deleted;
-}
-
-async function deleteCodexSessionFiles(home: string, sessionId: string): Promise<number> {
-  const root = path.join(home, "sessions");
-  let deleted = 0;
-  const visit = async (dir: string): Promise<void> => {
-    let entries: Dirent[];
-    try {
-      entries = await readdir(dir, { withFileTypes: true });
-    } catch {
-      return;
-    }
-    await Promise.all(
-      entries.map(async (entry) => {
-        const entryPath = path.join(dir, entry.name);
-        if (entry.isDirectory()) {
-          await visit(entryPath);
-          return;
-        }
-        if (!entry.isFile() || !entry.name.includes(sessionId)) return;
-        await rm(entryPath, { force: true });
-        deleted += 1;
-      }),
-    );
-  };
-  await visit(root);
-  return deleted;
-}
-
-async function runStreamingCommand(input: {
-  executable: string;
-  args: string[];
-  cwd: string;
-  env: NodeJS.ProcessEnv;
-  timeoutMs: number;
-  onStdoutLine: (line: string) => void;
-  onStderr: (text: string) => void;
-}): Promise<{ code: number | null; signal: NodeJS.Signals | null; stdout: string; stderr: string; timedOut: boolean }> {
-  return new Promise((resolve, reject) => {
-    const proc = spawnCli({
-      executable: input.executable,
-      args: input.args,
-      cwd: input.cwd,
-      env: input.env,
-      stdio: ["ignore", "pipe", "pipe"],
-    });
-    let stdout = "";
-    let stderr = "";
-    let stdoutBuffer = "";
-    let settled = false;
-    let timedOut = false;
-    const timer = setTimeout(() => {
-      timedOut = true;
-      proc.kill("SIGTERM");
-    }, input.timeoutMs);
-
-    const settle = (callback: () => void): void => {
-      if (settled) return;
-      settled = true;
-      clearTimeout(timer);
-      callback();
-    };
-
-    proc.stdout?.on("data", (chunk: Buffer) => {
-      const text = chunk.toString();
-      stdout += text;
-      stdoutBuffer += text;
-      let newline = stdoutBuffer.indexOf("\n");
-      while (newline >= 0) {
-        const line = stdoutBuffer.slice(0, newline).trim();
-        stdoutBuffer = stdoutBuffer.slice(newline + 1);
-        if (line) input.onStdoutLine(line);
-        newline = stdoutBuffer.indexOf("\n");
-      }
-    });
-
-    proc.stderr?.on("data", (chunk: Buffer) => {
-      const text = chunk.toString();
-      stderr += text;
-      const trimmed = text.trim();
-      if (trimmed) input.onStderr(trimmed);
-    });
-
-    proc.on("error", (error) => settle(() => reject(error)));
-    proc.on("close", (code, signal) => {
-      if (stdoutBuffer.trim()) input.onStdoutLine(stdoutBuffer.trim());
-      settle(() => resolve({ code, signal, stdout, stderr, timedOut }));
-    });
-  });
 }
 
 function sanitizeTestError(error: unknown): string {
@@ -1050,7 +777,7 @@ interface ResolvedConfiguredAgent {
   runtime: AgentRuntime | undefined;
 }
 type Listener = (snapshot: AppSnapshot) => void;
-type AgentTestEmit = (event: Omit<AgentTestEvent, "agentId" | "timestamp">) => void;
+type AgentTestEmit = RuntimeAgentTestEmit;
 
 export class AgentHub {
   private runtimes = new Map<AgentId, AgentRuntime>();
@@ -1082,6 +809,7 @@ export class AgentHub {
   private persistTimer: ReturnType<typeof setTimeout> | undefined = undefined;
   private persistInFlight: Promise<void> | undefined = undefined;
   private readonly executorFactory: AgentExecutorFactory;
+  private readonly runtimeAdapterRegistry: RuntimeAdapterRegistry;
   private readonly executables: Record<AgentId, string>;
   private readonly workflowRuntime: WorkflowRuntime;
 
@@ -1094,15 +822,17 @@ export class AgentHub {
       claude: executables.claude ?? process.env.CLAUDE_PATH ?? "claude",
       api: executables.api ?? "api",
     };
+    const runtimeAdapterOptions = {
+      executables: this.executables,
+      channelById: (channelId: string) => this.channelById(channelId),
+      respondToCodexServerRequest: (client: CodexRpcClient, id: number, method: string, params: Record<string, unknown>) => {
+        this.respondToCodexServerRequest(client, id, method, params);
+      },
+    };
     this.executorFactory =
       executorFactory ??
-      new RuntimeAgentExecutorFactory({
-        executables: this.executables,
-        channelById: (channelId) => this.channelById(channelId),
-        respondToCodexServerRequest: (client, id, method, params) => {
-          this.respondToCodexServerRequest(client, id, method, params);
-        },
-      });
+      new RuntimeAgentExecutorFactory(runtimeAdapterOptions);
+    this.runtimeAdapterRegistry = createRuntimeAdapterRegistry(runtimeAdapterOptions);
     this.workflowRuntime = new WorkflowRuntime({
       snapshot: () => this.snapshot(),
       startWorkflowRun: (input) => this.startWorkflowRun(input),
@@ -1312,12 +1042,16 @@ export class AgentHub {
     try {
       emit({ type: "phase", content: `Testing ${agent.name || agent.id} with ${agentLabel(agent.runtimeAgentId)} / ${channel.providerName ?? channel.label}.` });
       emit({ type: "user", content: AGENT_TEST_PROMPT });
-      const output =
-        agent.runtimeAgentId === "api"
-          ? await this.testApiAgent(channel, agent.modelId, emit)
-          : agent.runtimeAgentId === "codex"
-            ? await this.testCodexAgent(channel, agent.modelId, emit)
-            : await this.testClaudeAgent(channel, agent.modelId, emit);
+      const output = await this.runtimeAdapterRegistry.testAgent({
+        agentId: agent.runtimeAgentId,
+        channelId: channel.id,
+        modelId: agent.modelId,
+        workDir: this.workDir,
+        prompt: AGENT_TEST_PROMPT,
+        developerInstructions: "You are testing whether this configured agent can respond.",
+        timeoutMs: AGENT_TEST_TIMEOUT_MS,
+        emit,
+      });
       const elapsedMs = Date.now() - startedAt;
       return {
         ...base,
@@ -1361,12 +1095,16 @@ export class AgentHub {
     try {
       emit({ type: "phase", content: `Testing ${agentLabel(channel.agentId)} / ${channel.providerName ?? channel.label}.` });
       emit({ type: "user", content: AGENT_TEST_PROMPT });
-      const output =
-        channel.agentId === "api"
-          ? await this.testApiAgent(channel, modelId, emit)
-          : channel.agentId === "codex"
-            ? await this.testCodexAgent(channel, modelId, emit)
-            : await this.testClaudeAgent(channel, modelId, emit);
+      const output = await this.runtimeAdapterRegistry.testAgent({
+        agentId: channel.agentId,
+        channelId: channel.id,
+        modelId,
+        workDir: this.workDir,
+        prompt: AGENT_TEST_PROMPT,
+        developerInstructions: "You are testing whether this configured agent can respond.",
+        timeoutMs: AGENT_TEST_TIMEOUT_MS,
+        emit,
+      });
       const elapsedMs = Date.now() - startedAt;
       return {
         ...base,
@@ -2004,66 +1742,100 @@ export class AgentHub {
     return () => this.listeners.delete(listener);
   }
 
-async sendPrompt(prompt: string, chatId = this.activeChatId): Promise<void> {
-if (!chatId) return;
-const chat = this.chats.get(chatId);
-if (!chat || chat.running) return;
-const trimmedPrompt = prompt.trim();
-if (!trimmedPrompt) return;
+  async sendPrompt(prompt: string, chatId = this.activeChatId): Promise<void> {
+    if (!chatId) return;
+    const chat = this.chats.get(chatId);
+    if (!chat || chat.running) return;
+    const trimmedPrompt = prompt.trim();
+    if (!trimmedPrompt) return;
 
-if (trimmedPrompt.startsWith("/")) {
-await this.handleSlashCommand(chat, trimmedPrompt);
-return;
-}
+    if (trimmedPrompt.startsWith("/")) {
+      const handled = await this.handleSlashCommand(chat, trimmedPrompt);
+      if (handled) return;
+    }
 
- const resolved = this.resolveConfiguredAgent(chat.configuredAgentId, chat.modelId);
- if (!resolved) {
- chat.messages.push(createErrorMessage("No configured agent is selected."));
- chat.lastError = "No configured agent selected";
- chat.updatedAt = Date.now();
- this.emit();
- return;
- }
- if (!resolved.runtime?.available) {
- chat.messages.push(createErrorMessage(`${resolved.agent.name || resolved.agent.id} is not available on this machine.`));
- chat.lastError = `${resolved.runtimeAgentId} unavailable`;
- chat.updatedAt = Date.now();
- this.emit();
- return;
- }
+    const resolved = this.resolveConfiguredAgent(chat.configuredAgentId, chat.modelId);
+    if (!resolved) {
+      chat.messages.push(createErrorMessage("No configured agent is selected."));
+      chat.lastError = "No configured agent selected";
+      chat.updatedAt = Date.now();
+      this.emit();
+      return;
+    }
+    if (!resolved.runtime?.available) {
+      chat.messages.push(createErrorMessage(`${resolved.agent.name || resolved.agent.id} is not available on this machine.`));
+      chat.lastError = `${resolved.runtimeAgentId} unavailable`;
+      chat.updatedAt = Date.now();
+      this.emit();
+      return;
+    }
 
-if (!hasAgentConversationMessages(chat.messages)) chat.title = titleFromPrompt(trimmedPrompt);
-chat.messages.push(createUserMessage(trimmedPrompt));
- chat.running = true;
-chat.lastError = undefined;
-chat.pendingAssistantMessageId = undefined;
-chat.updatedAt = Date.now();
-this.activeChatId = chat.id;
-this.emit();
- void this.runChat(chat, trimmedPrompt, resolved);
-}
+    if (!hasAgentConversationMessages(chat.messages)) chat.title = titleFromPrompt(trimmedPrompt);
+    chat.messages.push(createUserMessage(trimmedPrompt));
+    chat.running = true;
+    chat.lastError = undefined;
+    chat.pendingAssistantMessageId = undefined;
+    chat.updatedAt = Date.now();
+    this.activeChatId = chat.id;
+    this.emit();
+    void this.runChat(chat, trimmedPrompt, resolved);
+  }
 
-  private async handleSlashCommand(chat: ChatState, prompt: string): Promise<void> {
+  private async handleSlashCommand(chat: ChatState, prompt: string): Promise<boolean> {
+    const resolution = this.resolveSlashCommand(chat, prompt);
+    if (resolution.kind === "passthrough") return false;
+
     chat.messages.push(createUserMessage(prompt, true));
     chat.lastError = undefined;
     chat.updatedAt = Date.now();
     this.activeChatId = chat.id;
     this.emit();
 
-    const content = await this.runSlashCommand(chat, prompt);
+    const content = await this.runSlashCommand(chat, resolution.command, resolution.args);
     chat.messages.push(createAssistantMessage(content, true));
     chat.updatedAt = Date.now();
     this.emit();
+    return true;
   }
 
-  private async runSlashCommand(chat: ChatState, prompt: string): Promise<string> {
+  private resolveSlashCommand(chat: ChatState, prompt: string): SlashCommandResolution {
     const [command = "", ...args] = prompt.slice(1).trim().split(/\s+/).filter(Boolean);
+    const normalized = command.toLowerCase();
+    if (!normalized) return { kind: "passthrough" };
+    if (normalized === "app") return { kind: "local", command: normalized, args };
+
+    const resolved = this.resolveConfiguredAgent(chat.configuredAgentId, chat.modelId);
+    if (resolved?.runtimeAgentId === "codex") {
+      switch (normalized) {
+        case "help":
+        case "h":
+        case "?":
+        case "status":
+        case "model":
+        case "models":
+        case "plugin":
+        case "plugins":
+          return { kind: "local", command: normalized, args };
+        default:
+          break;
+      }
+    }
+
+    return { kind: "passthrough" };
+  }
+
+  private async runSlashCommand(chat: ChatState, command: string, args: string[]): Promise<string> {
+    if (command === "app") {
+      const [appCommand = "", ...appArgs] = args;
+      return this.runAppSlashCommand(chat, appCommand.toLowerCase(), appArgs);
+    }
+
     switch (command.toLowerCase()) {
       case "":
       case "help":
       case "h":
       case "?":
-        return this.slashHelp();
+        return this.slashHelp(chat);
       case "status":
         return this.slashStatus(chat);
       case "model":
@@ -2073,18 +1845,47 @@ this.emit();
       case "plugins":
         return this.slashPlugins(chat, args);
       default:
-        return `Unknown command: /${command}\nType /help to see available commands.`;
+        return `Unknown command: /${command}\nType /app help to see available commands.`;
     }
   }
 
-  private slashHelp(): string {
-    return [
-      "Slash commands",
-      "/status - read Codex app-server config, model, plugin, and MCP status.",
-      "/models - list models from Codex app-server.",
-      "/plugins - list Codex plugins from app-server marketplaces.",
-      "/help - show this command list.",
-    ].join("\n");
+  private async runAppSlashCommand(chat: ChatState, command: string, args: string[]): Promise<string> {
+    switch (command) {
+      case "":
+      case "help":
+      case "h":
+      case "?":
+        return this.slashHelp(chat);
+      case "status":
+        return this.slashStatus(chat);
+      case "model":
+      case "models":
+        return this.slashModels(chat);
+      case "plugin":
+      case "plugins":
+        return this.slashPlugins(chat, args);
+      default:
+        return `Unknown app command: /app ${command}\nType /app help to see available commands.`;
+    }
+  }
+
+  private slashHelp(chat: ChatState): string {
+    const runtimeAgentId = this.resolveConfiguredAgent(chat.configuredAgentId, chat.modelId)?.runtimeAgentId;
+    const lines = [
+      "App slash commands",
+      "/app help - show this command list.",
+      "/app status - read Codex app-server config, model, plugin, and MCP status.",
+      "/app models - list models from Codex app-server.",
+      "/app plugins - list Codex plugins from app-server marketplaces.",
+    ];
+
+    if (runtimeAgentId === "codex") {
+      lines.push("", "Codex compatibility aliases", "Prefer /app ... as the stable app-local namespace.", "/status", "/models", "/plugins", "/help");
+    } else if (runtimeAgentId === "claude") {
+      lines.push("", "Claude slash commands are forwarded to Claude Code unless they start with /app.");
+    }
+
+    return lines.join("\n");
   }
 
   private async slashStatus(chat: ChatState): Promise<string> {
@@ -2337,13 +2138,18 @@ this.emit();
     const workDir = input.workDir?.trim() || this.workDir;
 
     const requestId = input.requestId ?? randomUUID();
-    if (resolved.runtimeAgentId === "codex") {
-      return this.askCodexWorkflowAgent({ requestId, prompt, runtime, channelId, modelId, workDir, sessionId: input.sessionId, onEvent });
-    }
-    if (resolved.runtimeAgentId === "api") {
-      return this.askApiWorkflowAgent({ requestId, prompt, channelId, modelId, sessionId: input.sessionId, onEvent });
-    }
-    return this.askClaudeWorkflowAgent({ requestId, prompt, runtime, channelId, modelId, workDir, sessionId: input.sessionId, onEvent });
+    return this.runtimeAdapterRegistry.runWorkflow({
+      requestId,
+      agentId: resolved.runtimeAgentId,
+      runtime,
+      channelId,
+      modelId,
+      prompt,
+      sessionId: input.sessionId,
+      workDir,
+      developerInstructions: CODEX_WORKFLOW_DEVELOPER_INSTRUCTIONS,
+      ...(onEvent ? { onEvent } : {}),
+    });
   }
 
   async stopChat(chatId: string): Promise<void> {
@@ -3209,370 +3015,6 @@ this.emit();
     } catch (error) {
       this.markRunFailed(run, error instanceof Error ? error.message : String(error));
     }
-  }
-
-  private async askCodexWorkflowAgent(input: {
-    requestId: string;
-    prompt: string;
-    runtime: AgentRuntime;
-    channelId: string;
-    modelId: string;
-    workDir: string;
-    sessionId: string | undefined;
-    onEvent: ((event: WorkflowAgentEvent) => void) | undefined;
-  }): Promise<WorkflowAgentResponse> {
-    const executable = input.runtime.command || this.executables.codex;
-    const model = runtimeModelId(input.modelId);
-    const channel = this.channelById(input.channelId);
-
-    let settled = false;
-    let content = "";
-    let sessionId = input.sessionId;
-    let timeout: ReturnType<typeof createWorkflowAgentTimeout> | undefined;
-    let client: CodexRpcClient | undefined;
-
-    return new Promise<WorkflowAgentResponse>((resolve, reject) => {
-      const settle = (callback: () => void): void => {
-        if (settled) return;
-        settled = true;
-        timeout?.clear();
-        void client?.shutdown();
-        callback();
-      };
-
-      timeout = createWorkflowAgentTimeout({
-        timeoutMs: WORKFLOW_AGENT_IDLE_TIMEOUT_MS,
-        onTimeout: () => settle(() => reject(new Error("Workflow agent timed out after 10 minutes without activity"))),
-      });
-
-      client = new CodexRpcClient({
-        executable,
-        cwd: input.workDir,
-        extraArgs: codexAppServerConfigArgs(channel, input.modelId),
-        env: codexEnvironmentForChannel(channel),
-        onEvent: (event) => {
-          timeout?.refresh();
-          if (event.type === "delta") {
-            content += event.content;
-            input.onEvent?.({ requestId: input.requestId, type: "delta", content: event.content });
-            return;
-          }
-          if (event.type === "completed") {
-            if (!content && event.content) content = event.content;
-            input.onEvent?.({ requestId: input.requestId, type: "completed", content: content.trim(), sessionId });
-            settle(() => resolve({ content: content.trim(), sessionId }));
-            return;
-          }
-          if (event.type === "error") {
-            input.onEvent?.({ requestId: input.requestId, type: "error", error: event.error });
-            settle(() => reject(new Error(event.error)));
-          }
-        },
-        onRequest: (id, method, params) => {
-          if (client) this.respondToCodexServerRequest(client, id, method, params);
-        },
-        onExit: (_code, _signal, stderr) => {
-          if (settled) return;
-          settle(() => reject(new Error(stderr.trim() || "Workflow Codex agent exited before completing")));
-        },
-      });
-
-      void (async () => {
-        try {
-          await client.start();
-          const threadResult = sessionId
-            ? await client.request("thread/resume", {
-                threadId: sessionId,
-                model,
-                modelProvider: null,
-                cwd: input.workDir,
-                approvalPolicy: "never",
-                config: null,
-                baseInstructions: null,
-                developerInstructions: CODEX_WORKFLOW_DEVELOPER_INSTRUCTIONS,
-              })
-            : await client.request("thread/start", {
-                model,
-                modelProvider: null,
-                profile: null,
-                cwd: input.workDir,
-                approvalPolicy: "never",
-                config: null,
-                baseInstructions: null,
-                developerInstructions: CODEX_WORKFLOW_DEVELOPER_INSTRUCTIONS,
-                compactPrompt: null,
-                includeApplyPatchTool: null,
-                experimentalRawEvents: true,
-                persistExtendedHistory: true,
-              });
-
-          sessionId = (threadResult as { thread?: { id?: string } }).thread?.id ?? sessionId;
-          await client.request("turn/start", {
-            threadId: sessionId,
-            input: [{ type: "text", text: input.prompt, text_elements: [] }],
-          });
-        } catch (error) {
-          settle(() => reject(error instanceof Error ? error : new Error(String(error))));
-        }
-      })();
-    });
-  }
-
-  private async testCodexAgent(channel: AgentChannel, modelId: string, emit: AgentTestEmit): Promise<string> {
-    const args = [
-      "exec",
-      "--ephemeral",
-      "--json",
-      "--skip-git-repo-check",
-      "--sandbox",
-      "read-only",
-      ...codexAppServerConfigArgs(channel, modelId),
-      AGENT_TEST_PROMPT,
-    ];
-    emit({ type: "phase", content: `Launching codex exec --ephemeral with model ${runtimeModelId(modelId) ?? "default"}.` });
-    let output = "";
-    const sessionIds = new Set<string>();
-    const result = await runStreamingCommand({
-      executable: this.executables.codex,
-      args,
-      cwd: this.workDir,
-      env: codexEnvironmentForChannel(channel),
-      timeoutMs: AGENT_TEST_TIMEOUT_MS,
-      onStdoutLine: (line) => {
-        const sessionId = extractCodexSessionId(line);
-        if (sessionId) sessionIds.add(sessionId);
-        const eventOutput = handleCodexTestLine(line, emit);
-        if (eventOutput) output += eventOutput;
-      },
-      onStderr: (text) => emit({ type: "stderr", content: text }),
-    });
-    const deletedSessions = await deleteCodexTestSessions(this.executables.codex, codexHome(), sessionIds);
-    if (deletedSessions > 0) emit({ type: "phase", content: `Deleted ${deletedSessions} Codex test session${deletedSessions === 1 ? "" : "s"}.` });
-    if (result.code !== 0) throw new Error(`Codex test exited with ${result.code ?? result.signal ?? "unknown"}: ${result.stderr.trim().slice(0, 800)}`);
-    if (output.trim()) return output.trim();
-    const stderrText = result.stderr.trim();
-    throw new Error(stderrText ? `Codex completed without assistant text. stderr: ${stderrText}` : "Codex completed without assistant text.");
-  }
-
-  private async testClaudeAgent(channel: AgentChannel, modelId: string, emit: AgentTestEmit): Promise<string> {
-    const cliModel = claudeCliModelForChannel(channel, modelId);
-    const env = claudeEnvironmentForChannel(channel, modelId, process.env);
-    const envModel = typeof env.ANTHROPIC_MODEL === "string" ? env.ANTHROPIC_MODEL : "default";
-    const args = [
-      "--print",
-      "--output-format",
-      "stream-json",
-      "--verbose",
-      "--include-partial-messages",
-      "--permission-mode",
-      "bypassPermissions",
-      ...(cliModel ? ["--model", cliModel] : []),
-      AGENT_TEST_PROMPT,
-    ];
-    emit({ type: "phase", content: `Launching Claude Code with model ${cliModel ?? envModel}.` });
-    let output = "";
-    const sessionIds = new Set<string>();
-    const streamState = createClaudeStreamState();
-    const result = await runStreamingCommand({
-      executable: this.executables.claude,
-      args,
-      cwd: this.workDir,
-      env,
-      timeoutMs: AGENT_TEST_TIMEOUT_MS,
-      onStdoutLine: (line) => {
-        const sessionId = extractClaudeSessionId(line);
-        if (sessionId) sessionIds.add(sessionId);
-        for (const event of handleClaudeTestLine(line, streamState, emit)) output += event;
-      },
-      onStderr: (text) => emit({ type: "stderr", content: text }),
-    });
-    const deletedSessions = await deleteClaudeTestSessions(this.workDir, sessionIds);
-    if (deletedSessions > 0) emit({ type: "phase", content: `Deleted ${deletedSessions} Claude test session${deletedSessions === 1 ? "" : "s"}.` });
-    if (result.timedOut) throw new Error(`Claude test timed out after ${formatElapsed(AGENT_TEST_TIMEOUT_MS)} without producing a final response.`);
-    if (result.code !== 0) {
-      const detail = (result.stderr.trim() || output.trim() || result.stdout.trim()).slice(0, 800);
-      throw new Error(`Claude test exited with ${result.code ?? result.signal ?? "unknown"}: ${detail}`);
-    }
-    if (output.trim()) return output.trim();
-    const stderrText = result.stderr.trim();
-    throw new Error(stderrText ? `Claude completed without assistant text. stderr: ${stderrText}` : "Claude completed without assistant text.");
-  }
-
-  private async testApiAgent(channel: AgentChannel, modelId: string, emit: AgentTestEmit): Promise<string> {
-    if (!channel.baseUrl) throw new Error("API agent requires a provider base URL.");
-    const model = this.resolveApiModel(channel, modelId);
-    if (!model) throw new Error("API agent requires a model.");
-    emit({ type: "phase", content: `Sending HTTP request to ${this.apiRequestUrl(channel)} with model ${model}.` });
-    const response = await fetch(this.apiRequestUrl(channel), {
-      method: "POST",
-      signal: AbortSignal.timeout(AGENT_TEST_TIMEOUT_MS),
-      headers: {
-        "content-type": "application/json",
-        ...(channel.httpHeaders ?? {}),
-      },
-      body: JSON.stringify(this.apiRequestBody(channel, model, AGENT_TEST_PROMPT, "You are testing whether this configured agent can respond.")),
-    });
-    const text = await response.text();
-    if (!response.ok) throw new Error(`API test failed (${response.status}): ${text.slice(0, 800)}`);
-    const output = this.extractApiContent(channel, text).trim();
-    if (!output) throw new Error("API returned an empty response.");
-    emit({ type: "assistant", content: output });
-    return output;
-  }
-
-  private async askApiWorkflowAgent(input: {
-    requestId: string;
-    prompt: string;
-    channelId: string;
-    modelId: string;
-    sessionId: string | undefined;
-    onEvent: ((event: WorkflowAgentEvent) => void) | undefined;
-  }): Promise<WorkflowAgentResponse> {
-    const channel = this.channelById(input.channelId);
-    if (!channel?.baseUrl) throw new Error("API workflow agent requires a provider base URL");
-    const model = this.resolveApiModel(channel, input.modelId);
-    if (!model) throw new Error("API workflow agent requires a model");
-
-    const response = await fetch(this.apiRequestUrl(channel), {
-      method: "POST",
-      headers: {
-        "content-type": "application/json",
-        ...(channel.httpHeaders ?? {}),
-      },
-      body: JSON.stringify(this.apiRequestBody(channel, model, input.prompt, CODEX_WORKFLOW_DEVELOPER_INSTRUCTIONS)),
-    });
-    const text = await response.text();
-    if (!response.ok) throw new Error(`API workflow request failed (${response.status}): ${text.slice(0, 800)}`);
-    const content = this.extractApiContent(channel, text).trim();
-    input.onEvent?.({ requestId: input.requestId, type: "delta", content });
-    input.onEvent?.({ requestId: input.requestId, type: "completed", content, sessionId: input.sessionId });
-    return { content, sessionId: input.sessionId };
-  }
-
-  private async askClaudeWorkflowAgent(input: {
-    requestId: string;
-    prompt: string;
-    runtime: AgentRuntime;
-    channelId: string;
-    modelId: string;
-    workDir: string;
-    sessionId: string | undefined;
-    onEvent: ((event: WorkflowAgentEvent) => void) | undefined;
-  }): Promise<WorkflowAgentResponse> {
-    let content = "";
-    let sessionId = input.sessionId;
-    let errorMessage: string | undefined;
-
-    return new Promise<WorkflowAgentResponse>((resolve, reject) => {
-      let timeout: ReturnType<typeof createWorkflowAgentTimeout> | undefined;
-      let runner: ClaudeRunner | undefined;
-      let settled = false;
-      const settle = (callback: () => void): void => {
-        if (settled) return;
-        settled = true;
-        timeout?.clear();
-        callback();
-      };
-      timeout = createWorkflowAgentTimeout({
-        timeoutMs: WORKFLOW_AGENT_IDLE_TIMEOUT_MS,
-        onTimeout: () => {
-          void runner?.stop();
-          settle(() => reject(new Error("Workflow agent timed out after 10 minutes without activity")));
-        },
-      });
-      const channel = this.channelById(input.channelId);
-      runner = new ClaudeRunner({
-        executable: input.runtime.command || this.executables.claude,
-        cwd: input.workDir,
-        env: claudeEnvironmentForChannel(channel, input.modelId, process.env),
-        prompt: input.prompt,
-        modelId: claudeCliModelForChannel(channel, input.modelId),
-        sessionId,
-        onEvent: (event) => {
-          timeout?.refresh();
-          if (event.type === "delta") {
-            content += event.content;
-            input.onEvent?.({ requestId: input.requestId, type: "delta", content: event.content });
-          }
-          if (event.type === "completed" && !content && event.content) content = event.content;
-          if (event.type === "session") sessionId = event.sessionId;
-          if (event.type === "error") {
-            errorMessage = event.error;
-            input.onEvent?.({ requestId: input.requestId, type: "error", error: event.error });
-          }
-        },
-        onExit: (code) => {
-          if (code !== 0) {
-            settle(() => reject(new Error(errorMessage ?? `Claude exited with code ${code}`)));
-            return;
-          }
-          input.onEvent?.({ requestId: input.requestId, type: "completed", content: content.trim(), sessionId });
-          settle(() => resolve({ content: content.trim(), sessionId }));
-        },
-      });
-      void runner.start().catch((error) => {
-        settle(() => reject(error instanceof Error ? error : new Error(String(error))));
-      });
-    });
-  }
-
-  private resolveApiModel(channel: AgentChannel, modelId: string): string | undefined {
-    const model = runtimeModelId(modelId);
-    if (model) return model;
-    return channel.models.find((item) => item.id !== DEFAULT_MODEL_ID)?.id;
-  }
-
-  private apiRequestUrl(channel: AgentChannel): string {
-    if (channel.modelProvider === "anthropic-api") {
-      const normalized = (channel.baseUrl ?? "").replace(/\/+$/, "");
-      if (normalized.endsWith("/messages")) return normalized;
-      return `${normalized}/messages`;
-    }
-    return this.chatCompletionsUrl(channel.baseUrl ?? "");
-  }
-
-  private apiRequestBody(channel: AgentChannel, model: string, prompt: string, system: string): Record<string, unknown> {
-    if (channel.modelProvider === "anthropic-api") {
-      return {
-        model,
-        max_tokens: 4096,
-        system,
-        messages: [{ role: "user", content: prompt }],
-      };
-    }
-    return {
-      model,
-      messages: [
-        { role: "system", content: system },
-        { role: "user", content: prompt },
-      ],
-      stream: false,
-    };
-  }
-
-  private chatCompletionsUrl(baseUrl: string): string {
-    const normalized = baseUrl.replace(/\/+$/, "");
-    if (normalized.endsWith("/chat/completions")) return normalized;
-    return `${normalized}/chat/completions`;
-  }
-
-  private extractApiContent(channel: AgentChannel, text: string): string {
-    if (channel.modelProvider === "anthropic-api") {
-      const parsed = JSON.parse(text) as { content?: Array<{ type?: string; text?: unknown }> };
-      const content = parsed.content
-        ?.map((item) => (typeof item.text === "string" ? item.text : ""))
-        .filter(Boolean)
-        .join("");
-      if (content) return content;
-      return JSON.stringify(parsed, null, 2);
-    }
-    const parsed = JSON.parse(text) as {
-      choices?: Array<{ message?: { content?: unknown }; text?: unknown }>;
-      output_text?: unknown;
-    };
-    const first = parsed.choices?.[0];
-    const content = first?.message?.content ?? first?.text ?? parsed.output_text;
-    return typeof content === "string" ? content : JSON.stringify(parsed, null, 2);
   }
 
   private handleAgentEvent(run: RunState, event: AgentEvent): void {

@@ -1,8 +1,8 @@
 # Runtime Adapter Refactor Plan
 
-Date: 2026-07-02
+Date: 2026-07-03
 Branch: `feat/claude-interactive-runtime`
-Status: Phase 1 completed on this branch; Phases 2 to 4 planned
+Status: Phases 1 to 4 completed in the working tree
 Scope: unify `codex`, `claude`, and `api` runtime startup behind one main-process adapter entry
 
 ## Goal
@@ -19,13 +19,12 @@ This is a structural refactor. The runtime behaviors and protocols should stay t
 
 ### Already centralized
 
-- `chat` and `task` execution now go through `RuntimeAgentExecutorFactory` backed by the shared registry in `src/main/runtime-adapter.ts`.
+- `chat`, `task`, `workflow agent`, and `runtime test` execution now go through `RuntimeAgentExecutorFactory` plus the shared registry in `src/main/runtime-adapter.ts`.
 
-### Still duplicated
+### Intentionally separate concerns
 
-- `workflow agent` dispatch is still split inside `AgentHub.askWorkflowAgent(...)`.
-- `runtime test` dispatch is still split across `testCodexAgent(...)`, `testClaudeAgent(...)`, and `testApiAgent(...)`.
-- Some API request and response shaping logic is duplicated between workflow and test paths.
+- Runtime detection and one-shot CLI probes stay outside the adapter registry by design.
+- Runtime extension guidance and adapter-focused error-path coverage now live with this plan and `src/main/runtime-adapter.test.ts`.
 
 ## Design Direction
 
@@ -83,6 +82,16 @@ Introduce the shared runtime adapter registry and route `chat` and `task` execut
 - `npm run typecheck`
 - `vitest run src/main/runtime-adapter.test.ts src/main/agents/claude-runner.test.ts src/main/agents/codex-rpc.test.ts`
 
+### Delivery
+
+- Implemented in commit `854a4ef` (`重构: 统一 chat task 运行时适配入口`)
+- Pushed to `origin/feat/claude-interactive-runtime`
+- Files added for Phase 1:
+  - `src/main/runtime-adapter.ts`
+  - `src/main/runtime-adapter.test.ts`
+- Main bridge updated in:
+  - `src/main/agent-executor.ts`
+
 ## Phase 2
 
 ### Goal
@@ -91,9 +100,9 @@ Move workflow-agent startup to the same adapter registry.
 
 ### Todo
 
-- [ ] Replace `askCodexWorkflowAgent(...)`, `askClaudeWorkflowAgent(...)`, and `askApiWorkflowAgent(...)` call-site branching with one registry dispatch
-- [ ] Keep workflow idle-timeout and event forwarding semantics intact
-- [ ] Move shared workflow runtime glue into adapter-owned helpers where duplication exists
+- [x] Replace `askCodexWorkflowAgent(...)`, `askClaudeWorkflowAgent(...)`, and `askApiWorkflowAgent(...)` call-site branching with one registry dispatch
+- [x] Keep workflow idle-timeout and event forwarding semantics intact
+- [x] Move shared workflow runtime glue into adapter-owned helpers where duplication exists
 
 ### Acceptance Criteria
 
@@ -103,6 +112,11 @@ Move workflow-agent startup to the same adapter registry.
 - Claude workflow session resume behavior is preserved
 - API workflow requests still honor the selected model and provider request shape
 
+### Validation
+
+- `npm run typecheck`
+- `vitest run src/main/runtime-adapter.test.ts src/main/agent-hub.test.ts`
+
 ## Phase 3
 
 ### Goal
@@ -111,9 +125,9 @@ Move runtime/config test execution to the same adapter registry.
 
 ### Todo
 
-- [ ] Replace `testCodexAgent(...)`, `testClaudeAgent(...)`, and `testApiAgent(...)` dispatch branching with one registry dispatch
-- [ ] Move shared request and response shaping out of `AgentHub` where appropriate
-- [ ] Keep test-session cleanup behavior unchanged for Codex and Claude
+- [x] Replace `testCodexAgent(...)`, `testClaudeAgent(...)`, and `testApiAgent(...)` dispatch branching with one registry dispatch
+- [x] Move shared request and response shaping out of `AgentHub` where appropriate
+- [x] Keep test-session cleanup behavior unchanged for Codex and Claude
 
 ### Acceptance Criteria
 
@@ -121,6 +135,11 @@ Move runtime/config test execution to the same adapter registry.
 - Existing cleanup behavior for temporary Codex and Claude test sessions is preserved
 - API runtime tests still use the selected model and provider-specific request body
 - `AgentHub` no longer owns three separate runtime-test launch implementations
+
+### Validation
+
+- `npm run typecheck`
+- `vitest run src/main/runtime-adapter.test.ts src/main/agent-hub.test.ts`
 
 ## Phase 4
 
@@ -130,16 +149,46 @@ Reduce remaining launch duplication and make future runtime expansion cheaper.
 
 ### Todo
 
-- [ ] Extract shared request helpers that are still duplicated after Phases 1 to 3
-- [ ] Review whether runtime detection and one-shot CLI probes should reuse the same registry or stay separate
-- [ ] Add adapter-focused tests for registry dispatch and error handling
-- [ ] Document the extension pattern for adding a new runtime
+- [x] Extract shared request helpers that are still duplicated after Phases 1 to 3
+- [x] Review whether runtime detection and one-shot CLI probes should reuse the same registry or stay separate
+- [x] Add adapter-focused tests for registry dispatch and error handling
+- [x] Document the extension pattern for adding a new runtime
 
 ### Acceptance Criteria
 
 - Adding a new runtime only requires one adapter implementation plus registry wiring
 - `AgentHub` remains a business-orchestration layer rather than a runtime-launch layer
 - Runtime-specific code is discoverable from one main entry instead of scattered across `AgentHub`
+
+### Decision: Keep Detect And Probes Separate
+
+`detectAgentRuntimes()` and one-shot probes such as `detectCodexModels()` stay outside the runtime adapter registry.
+
+Reasoning:
+
+- The adapter registry owns startable execution flows with prompts, sessions, event streams, and stop semantics.
+- Runtime detection is a short availability check (`--version`) rather than an agent run.
+- One-shot model or config probes are management-time utilities, not user-visible chat/task/workflow execution.
+- Keeping probes separate avoids overloading `RuntimeAdapter` with lifecycle-free helper calls that do not share execution semantics.
+
+### Extension Pattern
+
+To add a new runtime:
+
+1. Add the runtime identity in shared types and any preset/model metadata it needs.
+2. Add a runtime-specific helper module under `src/main/agents/` only if the adapter needs custom env, CLI, or protocol glue.
+3. Implement the runtime inside `src/main/runtime-adapter.ts` by supporting:
+   - `createExecutor(...)`
+   - `runWorkflow(...)`
+   - `testAgent(...)`
+4. Register the adapter in `createRuntimeAdapterRegistry(...)`.
+5. Add focused coverage in `src/main/runtime-adapter.test.ts` plus any runtime-specific helper tests.
+6. Only extend runtime detection or one-shot probe utilities if the new runtime actually needs machine-local availability checks or setup discovery.
+
+### Validation
+
+- `npm run typecheck`
+- `vitest run src/main/runtime-adapter.test.ts src/main/agent-hub.test.ts src/main/agents/detect.test.ts src/main/agents/claude-runner.test.ts src/main/agents/codex-rpc.test.ts`
 
 ## Implementation Order
 

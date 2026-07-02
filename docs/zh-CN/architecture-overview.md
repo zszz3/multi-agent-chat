@@ -81,6 +81,7 @@ Renderer 触发操作
 - `src/main/index.ts`：主进程启动、窗口创建、IPC 注册、本地服务启动
 - `src/main/agent-hub.ts`：应用状态中心和主要业务编排层
 - `src/main/agent-executor.ts`：不同 Agent Runtime 的统一执行入口
+- `src/main/runtime-adapter.ts`：chat / task / workflow-agent / runtime test 共用的 runtime registry
 - `src/main/sqlite-store.ts`：SQLite 持久化封装
 
 ### `src/preload`
@@ -154,7 +155,7 @@ renderer 基本上把这个 snapshot 当成“唯一业务状态源”。这也�
 - `claude`
 - `api`
 
-统一入口在 `src/main/agent-executor.ts`，由 `RuntimeAgentExecutorFactory` 负责对接执行器；当前 chat / task 启动已经进一步统一到 `src/main/runtime-adapter.ts` 的共享 registry。
+统一入口在 `src/main/agent-executor.ts`，由 `RuntimeAgentExecutorFactory` 负责对接执行器；当前 chat / task / workflow-agent / runtime test 启动都已经统一到 `src/main/runtime-adapter.ts` 的共享 registry。
 
 三个执行后端分别是：
 
@@ -162,7 +163,7 @@ renderer 基本上把这个 snapshot 当成“唯一业务状态源”。这也�
 - Claude：通过 `ClaudeRunner` 包装 CLI 子进程
 - API：直接 `fetch` 到兼容接口
 
-不管是聊天、任务还是 workflow，整体都复用同一套执行抽象。当前 Phase 1 已经统一了 chat / task 的启动入口，workflow 的同层收敛仍在后续阶段。
+不管是聊天、任务、workflow，还是 runtime/config 测试，整体都复用同一套执行抽象。
 
 ## 8. 前端组织方式
 
@@ -231,6 +232,17 @@ MCP 不是直接连 renderer，而是通过本地 bridge 复用桌面应用能�
 - runtime 对应的 env/helper 文件
 - renderer 的配置页面
 
+### 新增一种 Runtime
+
+通常会涉及：
+
+- `src/shared/types.ts`：如果 runtime 身份或 snapshot 契约要扩展
+- `src/shared/provider-presets.ts` 或 `src/shared/models.ts`：如果要补默认元数据
+- `src/main/runtime-adapter.ts`：实现 `createExecutor(...)`、`runWorkflow(...)`、`testAgent(...)`
+- `src/main/agents/*`：如果这个 runtime 需要专门的 CLI、env 或协议 glue
+- `src/main/agents/detect.ts`：只有在需要本机可用性检测时才改
+- `src/main/runtime-adapter.test.ts` 以及对应 runtime helper 的测试
+
 ### 改 Workflow 行为
 
 通常会涉及：
@@ -283,6 +295,7 @@ MCP 不是直接连 renderer，而是通过本地 bridge 复用桌面应用能�
 3. `src/shared/types.ts`
 4. `src/main/index.ts`
 5. `src/main/agent-hub.ts`
-6. `src/preload/index.ts`
-7. `src/renderer/src/App.tsx`
-8. 你这次要修改的具体页面或模块目录
+6. `src/main/runtime-adapter.ts`
+7. `src/preload/index.ts`
+8. `src/renderer/src/App.tsx`
+9. 你这次要修改的具体页面或模块目录
