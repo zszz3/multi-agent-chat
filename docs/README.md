@@ -10,6 +10,7 @@ This directory contains project documentation for the Electron desktop app.
 ## Documents
 
 - `architecture-overview.md`: overall architecture, runtime flow, module boundaries, and data flow
+- `renderer-refactor-progress-2026-06-28.md`: current progress, validation status, and remaining work for the renderer shell/provider/service refactor
 - `modules/main.md`: Electron main process and application state hub
 - `modules/preload.md`: preload bridge and renderer-facing API surface
 - `modules/renderer.md`: React renderer structure, page modules, and UI state flow

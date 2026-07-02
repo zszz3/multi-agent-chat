@@ -813,6 +813,20 @@ fs.writeFileSync(${JSON.stringify(argsPath)}, process.argv.slice(2).join("\\n") 
     expect(calls.map((call) => call.method)).not.toContain("turn/start");
   });
 
+  test("refuses to load the Codex plugin catalog when the Codex runtime is unavailable", async () => {
+    const hub = new AgentHub({ codex: "missing-codex-for-test", claude: "missing-claude-for-test" });
+    (hub as unknown as { runtimes: Map<string, unknown> }).runtimes.set("codex", {
+      id: "codex",
+      label: "Codex",
+      command: "missing-codex-for-test",
+      version: null,
+      available: false,
+      error: "spawn missing-codex-for-test ENOENT",
+    });
+
+    await expect(hub.listCodexPluginCatalog()).rejects.toThrow("Codex CLI unavailable: spawn missing-codex-for-test ENOENT");
+  });
+
   test("lists Codex models through app-server RPC", async () => {
     const dir = await mkdtemp(path.join(os.tmpdir(), "multi-agent-chat-model-list-"));
     const fake = await writeCodexAppServerFake(dir);

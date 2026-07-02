@@ -23,7 +23,7 @@ export default defineConfig({
   main: {
     plugins: [copyBundledSkillsPlugin()],
     build: {
-      outDir: "out/main",
+      outDir: resolve(repoRoot, "out/main"),
       rollupOptions: {
         external: ["electron"],
       },
@@ -31,17 +31,17 @@ export default defineConfig({
   },
   preload: {
     build: {
-      outDir: "out/preload",
+      outDir: resolve(repoRoot, "out/preload"),
       rollupOptions: {
         external: ["electron"],
       },
     },
   },
   renderer: {
-    root: "src/renderer",
+    root: resolve(repoRoot, "src/renderer"),
     plugins: [react()],
     build: {
-      outDir: "../../out/renderer",
+      outDir: resolve(repoRoot, "out/renderer"),
     },
   },
 });
