@@ -140,7 +140,7 @@ The app supports three runtime families:
 - `claude`
 - `api`
 
-Execution is delegated through `RuntimeAgentExecutorFactory` in `src/main/agent-executor.ts`.
+Execution is delegated through `RuntimeAgentExecutorFactory` in `src/main/agent-executor.ts`, with chat and task startup now routed through the shared registry in `src/main/runtime-adapter.ts`.
 
 Each runtime has a different backend:
 
@@ -148,7 +148,7 @@ Each runtime has a different backend:
 - Claude: CLI process wrapper through `ClaudeRunner`
 - API: direct HTTP request to provider-compatible endpoints
 
-The same high-level concepts are reused across chat, task, and workflow execution:
+The same high-level concepts are reused across chat, task, and workflow execution, even though workflow migration to the shared runtime adapter registry is still a later phase:
 
 - configured agent
 - channel
