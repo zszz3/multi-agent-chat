@@ -13,6 +13,8 @@ import type {
   WorkflowOperationResult,
   WorkflowRunProgressItem,
 } from "../shared/types";
+import { mkdir } from "node:fs/promises";
+import path from "node:path";
 import { DEFAULT_MODEL_ID } from "../shared/models";
 import { validateWorkflowGraph, workflowGraphExecutionLevels } from "../shared/workflow-graph";
 import {
@@ -20,6 +22,7 @@ import {
   WORKFLOW_NODE_MAX_ATTEMPTS,
   WORKFLOW_TASK_POLL_MS,
   WORKFLOW_TASK_TIMEOUT_MS,
+  defaultWorkflowWorkDirSuffix,
   extractWorkflowArtifactRefs,
   parseWorkflowGateRequest,
   parseWorkflowJudgeResult,
@@ -190,26 +193,41 @@ export class WorkflowRuntime {
 
     const taskId = activeRun.taskIdByNodeId.get(input.nodeId) ?? progressItem.taskId;
     if (taskId) activeRun.pausedTaskIds.add(taskId);
+    const nextProgress = run.progress.map((item) =>
+      item.nodeId === input.nodeId
+        ? {
+            ...item,
+            status: "paused" as const,
+            detail: "Paused",
+            ...(taskId ? { taskId } : {}),
+          }
+        : item,
+    );
     this.deps.updateWorkflowRunState({
       workflowId: input.workflowId,
       runId: input.runId,
       status: "running",
-      progress: run.progress.map((item) =>
-        item.nodeId === input.nodeId
-          ? {
-              ...item,
-              status: "paused",
-              detail: "Paused",
-              ...(taskId ? { taskId } : {}),
-            }
-          : item,
-      ),
+      progress: nextProgress,
       appendEvents: [{ type: "node_paused", nodeId: input.nodeId, at: Date.now(), ...(taskId ? { taskId } : {}) }],
       contextDocument: run.contextDocument,
       ...(run.finalReport ? { finalReport: run.finalReport } : {}),
     });
 
     if (taskId) await this.deps.stopTask(taskId);
+
+    // If nothing is running anymore, the run has effectively stopped: no node will
+    // make progress until the user resumes one. End the run cleanly.
+    const stillRunning = nextProgress.some((item) => item.status === "running");
+    if (!stillRunning) {
+      this.deps.finishWorkflowRun({
+        workflowId: input.workflowId,
+        runId: input.runId,
+        status: "stopped",
+        progress: nextProgress,
+        contextDocument: run.contextDocument,
+        ...(run.finalReport ? { finalReport: run.finalReport } : {}),
+      });
+    }
     return { ok: true, workflowId: input.workflowId, runId: input.runId };
   }
 
@@ -219,7 +237,9 @@ export class WorkflowRuntime {
     const run = snapshot.workflowStore.runs.find((item) => item.runId === input.runId && item.workflowId === input.workflowId);
     if (!workflow) return { ok: false, error: `Workflow ${input.workflowId} was not found.` };
     if (!run) return { ok: false, workflowId: input.workflowId, error: `Workflow run ${input.runId} was not found.` };
-    if (run.status !== "running") return { ok: false, workflowId: input.workflowId, runId: input.runId, error: "Workflow run is not running." };
+    if (run.status !== "running" && run.status !== "stopped") {
+      return { ok: false, workflowId: input.workflowId, runId: input.runId, error: "Workflow run is not resumable." };
+    }
     const node = run.graphSnapshot.nodes.find((item) => item.id === input.nodeId && item.kind === "agent");
     if (!node) return { ok: false, workflowId: input.workflowId, runId: input.runId, error: `Workflow node ${input.nodeId} was not found.` };
     const progressItem = run.progress.find((item) => item.nodeId === input.nodeId);
@@ -294,7 +314,9 @@ export class WorkflowRuntime {
     const run = snapshot.workflowStore.runs.find((item) => item.runId === input.runId && item.workflowId === input.workflowId);
     if (!workflow) return { ok: false, error: `Workflow ${input.workflowId} was not found.` };
     if (!run) return { ok: false, workflowId: input.workflowId, error: `Workflow run ${input.runId} was not found.` };
-    if (run.status !== "running") return { ok: false, workflowId: input.workflowId, runId: input.runId, error: "Workflow run is not running." };
+    if (run.status !== "running" && run.status !== "stopped") {
+      return { ok: false, workflowId: input.workflowId, runId: input.runId, error: "Workflow run is not resumable." };
+    }
     const node = run.graphSnapshot.nodes.find((item) => item.id === input.nodeId && item.kind === "agent");
     if (!node) return { ok: false, workflowId: input.workflowId, runId: input.runId, error: `Workflow node ${input.nodeId} was not found.` };
     const progressItem = run.progress.find((item) => item.nodeId === input.nodeId);
@@ -388,6 +410,8 @@ export class WorkflowRuntime {
 
     const configuredAgentId = workflow.configuredAgentId || latestSnapshot.configuredAgents[0]?.id || "default-agent";
     const modelId = configuredAgentModelId(workflow, latestSnapshot);
+    const workflowWorkDir = workflow.workDir || path.join(latestSnapshot.workDir, defaultWorkflowWorkDirSuffix(workflow.workflowId));
+    await mkdir(path.join(workflowWorkDir, storagePlan.outputDir), { recursive: true }).catch(() => undefined);
     const activeRun = this.activeRuns.get(runId);
     const isNodePaused = (nodeId: string): boolean => Boolean(activeRun?.pausedNodeIds.has(nodeId));
 
@@ -500,7 +524,7 @@ export class WorkflowRuntime {
           prompt: nodeAttemptPrompt(node, attempt, retryPrompt, contextDocument),
           configuredAgentId: nodeAgent.configuredAgentId,
           modelId: nodeAgent.modelId,
-          workDir: latestSnapshot.workDir,
+          workDir: workflowWorkDir,
         });
         const startDetail = attempt === 1 ? "Task running" : `Retry ${attempt}/${WORKFLOW_NODE_MAX_ATTEMPTS} running`;
         updateWorkflowRunProgress(node.id, {
@@ -569,7 +593,7 @@ export class WorkflowRuntime {
           prompt: workflowJudgePrompt(runGraph, node, artifact, contextDocument, attempt, WORKFLOW_NODE_MAX_ATTEMPTS),
           configuredAgentId,
           modelId,
-          workDir: latestSnapshot.workDir,
+          workDir: workflowWorkDir,
         });
         const completedJudgeTask = await (async (): Promise<TaskRun> => {
           try {
@@ -720,7 +744,7 @@ export class WorkflowRuntime {
         prompt: workflowFinalReviewPrompt(runGraph, nodeArtifacts, runContextDocument, completedNodeProgress, storagePlan),
         configuredAgentId,
         modelId,
-        workDir: latestSnapshot.workDir,
+        workDir: workflowWorkDir,
       });
       const completedFinalReviewTask = await (async (): Promise<TaskRun> => {
         try {

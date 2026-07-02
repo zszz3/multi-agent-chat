@@ -3285,7 +3285,7 @@ describe("WorkflowPage", () => {
     expect(html).toContain("Agent 8");
   });
 
-  test("renders workflow output documents from final report paths", () => {
+  test("extracts workflow output document paths from text", () => {
     expect(extractWorkflowOutputDocuments("产物见 docs/learning-highlights.md 和 [summary](reports/summary.md).")).toEqual([
       { path: "docs/learning-highlights.md", title: "learning-highlights.md" },
       { path: "reports/summary.md", title: "summary.md" },
@@ -3299,39 +3299,6 @@ describe("WorkflowPage", () => {
         "证据包含 README.md；最终产物见 .multi-agent-chat/workflows/wf_review/outputs/learning-highlights.md。",
       ),
     ).toEqual([{ path: ".multi-agent-chat/workflows/wf_review/outputs/learning-highlights.md", title: "learning-highlights.md" }]);
-
-    const html = renderToStaticMarkup(
-      <WorkflowPage
-        workflowId="wf_review"
-        title="qjagents Agent 功能速览"
-        status="completed"
-        graph={graph}
-        graphReady
-        objective="Review qjagents"
-        messages={[]}
-        reply=""
-        error={undefined}
-        configuredAgentId="repo-reviewer"
-        runtimes={runtimes}
-        channels={channels}
-        workDir="/tmp/workspace"
-        running={false}
-        finalReport="## Final User Report\n证据包含 README.md；最终产物见 .multi-agent-chat/workflows/wf_review/outputs/learning-highlights.md。"
-        onObjectiveChange={() => undefined}
-        onSelectConfiguredAgent={() => undefined}
-        onDraftGraph={() => undefined}
-        onReplyChange={() => undefined}
-        onSendReply={() => undefined}
-        onUpdateNode={() => undefined}
-        onRunGraph={async () => undefined}
-        onResetSession={() => undefined}
-      />,
-    );
-
-    expect(html).toContain("Output documents");
-    expect(html).toContain("learning-highlights.md");
-    expect(html).toContain(".multi-agent-chat/workflows/wf_review/outputs/learning-highlights.md");
-    expect(html).not.toContain("README.md</span>");
   });
 
   test("renders workflow history beside the workflow workspace", () => {
@@ -3939,8 +3906,10 @@ workflowGraph.upsert({
     expect(html).toContain("Payment release is ready with one follow-up risk.");
     expect(html).toContain("Workflow transcript");
     expect(html).toContain("Main agent report ready");
-    expect(styles.indexOf(".workflow-result-card .workflow-final-report")).toBeLessThan(styles.indexOf(".workflow-result-card .workflow-graph-board"));
-    expect(styles).toContain(".workflow-result-card .workflow-final-report {\n  order: 1;");
+    // Graph is shown first, then run outputs flow below it.
+    expect(styles).toContain(".workflow-result-card .workflow-graph-board {\n  order: 1;");
+    expect(styles).toContain(".workflow-result-card .workflow-run-progress {\n  order: 2;");
+    expect(styles).toContain(".workflow-result-card .workflow-final-report {\n  order: 3;");
   });
 
   test("shows validation errors and disables execution for cyclic graphs", () => {

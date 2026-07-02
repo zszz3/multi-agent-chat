@@ -721,6 +721,7 @@ export function App() {
   const [workflowRevision, setWorkflowRevision] = useState(1);
   const [workflowConfiguredAgentId, setWorkflowConfiguredAgentId] = useState("");
   const [workflowModelId, setWorkflowModelId] = useState(DEFAULT_MODEL_ID);
+  const [workflowWorkDir, setWorkflowWorkDir] = useState("");
   const [workflowObjective, setWorkflowObjective] = useState("");
   const [workflowGraph, setWorkflowGraph] = useState<WorkflowGraph>(initialWorkflowGraph);
   const [workflowGraphReady, setWorkflowGraphReady] = useState(false);
@@ -874,6 +875,7 @@ export function App() {
     setWorkflowRevision(draft.revision);
     setWorkflowConfiguredAgentId(draft.configuredAgentId);
     setWorkflowModelId(draft.modelId);
+    setWorkflowWorkDir(draft.workDir ?? "");
     setWorkflowObjective(draft.objective);
     setWorkflowGraph(draft.graph);
     setWorkflowGraphReady(draft.graphReady);
@@ -925,6 +927,7 @@ export function App() {
         snapshot.channels,
       ),
       objective: workflowObjective,
+      ...(workflowWorkDir ? { workDir: workflowWorkDir } : {}),
       graph: workflowGraph,
       graphReady: workflowGraphReady,
       messages: workflowMessages,
@@ -997,6 +1000,7 @@ export function App() {
     workflowRevision,
     workflowConfiguredAgentId,
     workflowModelId,
+    workflowWorkDir,
     workflowObjective,
     workflowGraph,
     workflowGraphReady,
@@ -1026,11 +1030,19 @@ export function App() {
     const fallbackId = defaultConfiguredAgentId(snapshot.configuredAgents);
     if (!fallbackId) return;
     const nextTaskAgentId = snapshot.configuredAgents.some((agent) => agent.id === taskConfiguredAgentId) ? taskConfiguredAgentId : fallbackId;
-    const nextWorkflowAgentId = snapshot.configuredAgents.some((agent) => agent.id === workflowConfiguredAgentId) ? workflowConfiguredAgentId : fallbackId;
     if (nextTaskAgentId !== taskConfiguredAgentId) setTaskConfiguredAgentId(nextTaskAgentId);
-    if (nextWorkflowAgentId !== workflowConfiguredAgentId) setWorkflowConfiguredAgentId(nextWorkflowAgentId);
     setTaskModelId((current) => configuredAgentModelId(nextTaskAgentId, current, snapshot.configuredAgents, snapshot.channels));
-    setWorkflowModelId((current) => configuredAgentModelId(nextWorkflowAgentId, current, snapshot.configuredAgents, snapshot.channels));
+    // Only reconcile the workflow agent after the persisted draft has hydrated, and
+    // never replace an empty value here — the draft hydration owns the initial agent,
+    // so reconcile must not race it and clobber the saved agent with the fallback.
+    // Reconcile only fixes the case where a previously-selected agent was deleted.
+    if (!workflowDraftHydratedRef.current || !workflowConfiguredAgentId) return;
+    if (snapshot.configuredAgents.some((agent) => agent.id === workflowConfiguredAgentId)) {
+      setWorkflowModelId((current) => configuredAgentModelId(workflowConfiguredAgentId, current, snapshot.configuredAgents, snapshot.channels));
+      return;
+    }
+    setWorkflowConfiguredAgentId(fallbackId);
+    setWorkflowModelId((current) => configuredAgentModelId(fallbackId, current, snapshot.configuredAgents, snapshot.channels));
   }, [snapshot.configuredAgents, snapshot.channels, taskConfiguredAgentId, workflowConfiguredAgentId]);
 
   useEffect(() => {
@@ -1630,6 +1642,17 @@ export function App() {
   async function chooseWorkDir(): Promise<void> {
     const next = await window.multiAgentChat.chooseWorkDir();
     setSnapshot(next);
+  }
+
+  async function chooseWorkflowWorkDir(): Promise<void> {
+    if (typeof window.multiAgentChat.pickDirectory !== "function") return;
+    const picked = await window.multiAgentChat.pickDirectory(workflowWorkDir || snapshot.workDir);
+    if (picked) setWorkflowWorkDir(picked);
+  }
+
+  async function listWorkflowOutputs(): Promise<Array<{ name: string; path: string }>> {
+    if (typeof window.multiAgentChat.listWorkflowOutputs !== "function") return [];
+    return window.multiAgentChat.listWorkflowOutputs(workflowId);
   }
 
   async function readLocalFile(filePath: string): Promise<LocalFilePreview> {
@@ -2388,7 +2411,7 @@ export function App() {
             runtimes={snapshot.runtimes}
             channels={snapshot.channels}
             configuredAgents={snapshot.configuredAgents}
-            workDir={snapshot.workDir}
+            workDir={workflowWorkDir || snapshot.workDir}
             running={workflowRunning}
             runProgress={workflowRunProgress}
             activeRunId={activeWorkflowRunId()}
@@ -2408,8 +2431,9 @@ export function App() {
             onRunGraph={runWorkflowGraph}
             onResetSession={resetWorkflowSession}
             onStopGrill={stopWorkflowGrill}
-            onChooseWorkDir={chooseWorkDir}
+            onChooseWorkDir={chooseWorkflowWorkDir}
             onReadOutputFile={readLocalFile}
+            onListOutputs={listWorkflowOutputs}
             language={language}
           />
         ) : activeFeature === "schedules" ? (

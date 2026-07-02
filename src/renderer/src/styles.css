@@ -8519,19 +8519,19 @@ textarea:focus-visible {
 }
 
 .workflow-result-card .workflow-graph-board {
-  order: 4;
-}
-
-.workflow-result-card .workflow-run-progress {
-  order: 3;
-}
-
-.workflow-result-card .workflow-final-report {
   order: 1;
 }
 
-.workflow-result-card .workflow-output-documents {
+.workflow-result-card .workflow-run-progress {
   order: 2;
+}
+
+.workflow-result-card .workflow-final-report {
+  order: 3;
+}
+
+.workflow-result-card .workflow-output-documents {
+  order: 4;
 }
 
 .workflow-result-card .workflow-context-doc {
@@ -9096,6 +9096,29 @@ textarea:focus-visible {
   line-height: 1.35;
   text-overflow: ellipsis;
   white-space: nowrap;
+}
+
+.workflow-workdir-button {
+  max-width: 340px;
+  overflow: hidden;
+  padding: 0;
+  border: 0;
+  background: none;
+  color: inherit;
+  font: inherit;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  cursor: pointer;
+  text-decoration: underline dotted transparent;
+}
+
+.workflow-workdir-button:hover:not(:disabled) {
+  color: var(--text);
+  text-decoration-color: currentColor;
+}
+
+.workflow-workdir-button:disabled {
+  cursor: default;
 }
 
 .workflow-node-agent-row {

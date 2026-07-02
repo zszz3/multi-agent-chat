@@ -550,6 +550,12 @@ export interface WorkflowDraftState {
   configuredAgentId: string;
   modelId: string;
   objective: string;
+  /**
+   * Dedicated working directory for this workflow. All node agents run with this
+   * as their cwd, and outputs/memory are written under it. Defaults to a
+   * per-workflow directory; can be pointed at a real project dir when needed.
+   */
+  workDir?: string;
   graph: WorkflowGraph;
   graphReady: boolean;
   messages: WorkflowGrillMessage[];
@@ -700,6 +706,7 @@ export interface CreateWorkflowRequest {
   graph: WorkflowGraph;
   configuredAgentId?: string;
   modelId?: string;
+  workDir?: string;
   graphReady?: boolean;
   messages?: WorkflowGrillMessage[];
   reply?: string;

@@ -119,13 +119,29 @@ export function truncateWorkflowContext(content: string, limit = 2400): string {
   return `${normalized.slice(0, limit).trim()}\n\n[truncated]`;
 }
 
-export function workflowStoragePlanFor(workflowId: string): WorkflowStoragePlan {
+/**
+ * Storage plan relative to the workflow's own working directory. Each workflow
+ * runs in a dedicated dir, so memory/outputs live flat inside it rather than
+ * being namespaced by workflow id. `workflowDir` (when the workflow has a
+ * dedicated dir) makes these relative paths; a legacy nested layout is used only
+ * as a fallback for workflows without their own dir.
+ */
+export function workflowStoragePlanFor(workflowId: string, hasDedicatedDir = true): WorkflowStoragePlan {
+  if (hasDedicatedDir) {
+    return { memoryPath: "memory.md", outputDir: "outputs" };
+  }
   const safeWorkflowId = workflowId.replace(/[^a-zA-Z0-9_-]/g, "_") || "workflow";
   const baseDir = `${WORKFLOW_STORAGE_ROOT}/${safeWorkflowId}`;
   return {
     memoryPath: `${baseDir}/memory.md`,
     outputDir: `${baseDir}/outputs`,
   };
+}
+
+/** Default dedicated working directory (relative to a base) for a workflow. */
+export function defaultWorkflowWorkDirSuffix(workflowId: string): string {
+  const safeWorkflowId = workflowId.replace(/[^a-zA-Z0-9_-]/g, "_") || "workflow";
+  return `${WORKFLOW_STORAGE_ROOT}/${safeWorkflowId}`;
 }
 
 export function workflowStoragePlanDocument(plan: WorkflowStoragePlan): string {

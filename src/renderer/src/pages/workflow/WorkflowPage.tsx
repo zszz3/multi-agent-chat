@@ -35,13 +35,11 @@ import { TaskStatusChip } from "../tasks/task-status";
 import { WorkflowCanvasBoard } from "./WorkflowCanvasBoard";
 import {
   WORKFLOW_THINKING_MESSAGE,
-  extractWorkflowOutputDocumentsForPlan,
   isMarkdownFilePath,
   truncateWorkflowContext,
   workflowAssistantDisplayContent,
   workflowRunProgressSummary,
   workflowRunStatusLabel,
-  workflowStoragePlanFor,
 } from "./workflow-utils";
 
 type MaybePromise = void | Promise<void>;
@@ -166,6 +164,7 @@ interface WorkflowPageProps {
   onStopGrill?: () => void;
   onChooseWorkDir?: () => MaybePromise;
   onReadOutputFile?: (filePath: string) => Promise<LocalFilePreview>;
+  onListOutputs?: () => Promise<Array<{ name: string; path: string }>>;
   language?: Language;
   defaultGraphExpanded?: boolean;
 }
@@ -207,6 +206,7 @@ export function WorkflowPage({
   onStopGrill = () => undefined,
   onChooseWorkDir = () => undefined,
   onReadOutputFile,
+  onListOutputs,
   language = "en",
   defaultGraphExpanded = false,
 }: WorkflowPageProps) {
@@ -232,15 +232,7 @@ export function WorkflowPage({
   const runProgressVisible = runProgress.length > 0;
   const contextDocumentVisible = contextDocument.trim().length > 0;
   const finalReportVisible = finalReport.trim().length > 0;
-  const outputDocuments = workflowId
-    ? extractWorkflowOutputDocumentsForPlan(
-        workflowStoragePlanFor(workflowId),
-        finalReport,
-        contextDocument,
-        messages.map((message) => message.content).join("\n\n"),
-      )
-    : [];
-  const outputDocumentsVisible = outputDocuments.length > 0;
+  const runProgressSignature = runProgress.map((item) => `${item.nodeId}:${item.status}`).join("|");
   const graphVisible = graphReady || runProgressVisible || contextDocumentVisible || finalReportVisible;
   const workflowDisplayTitle = title?.trim() || (graphReady ? graph.title : "New workflow");
   const composerValue = workflowStarted ? reply : objective;
@@ -253,10 +245,13 @@ export function WorkflowPage({
   const composerLocked = workflowStarted || running;
   const [graphExpanded, setGraphExpanded] = useState(defaultGraphExpanded);
   const [gateAnswers, setGateAnswers] = useState<Record<string, string>>({});
+  const [outputFiles, setOutputFiles] = useState<Array<{ name: string; path: string }>>([]);
   const [editingWorkflowNodeId, setEditingWorkflowNodeId] = useState<string | undefined>(undefined);
   const [filePreview, setFilePreview] = useState<LocalFilePreview | undefined>(undefined);
   const [filePreviewError, setFilePreviewError] = useState<string | undefined>(undefined);
   const [filePreviewLoadingPath, setFilePreviewLoadingPath] = useState<string | undefined>(undefined);
+  const outputDocuments = outputFiles.map((file) => ({ path: file.path, title: file.name }));
+  const outputDocumentsVisible = outputDocuments.length > 0;
   const grillTranscriptRef = useRef<HTMLElement>(null);
   const grillStickRef = useRef(true);
   const editingWorkflowNode = graph.nodes.find((node) => node.id === editingWorkflowNodeId);
@@ -266,6 +261,25 @@ export function WorkflowPage({
     if (!transcript || !grillStickRef.current) return;
     transcript.scrollTop = transcript.scrollHeight;
   }, [messages]);
+
+  // List actual files in the workflow's outputs directory, so produced documents
+  // are always visible regardless of run state (not scraped from run text).
+  useEffect(() => {
+    if (typeof onListOutputs !== "function") {
+      setOutputFiles([]);
+      return;
+    }
+    let cancelled = false;
+    void onListOutputs()
+      .then((files) => {
+        if (!cancelled) setOutputFiles(files);
+      })
+      .catch(() => undefined);
+    return () => {
+      cancelled = true;
+    };
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [workflowId, status, finalReport, runProgressSignature]);
 
   useEffect(() => {
     if (!graphExpanded) return;
@@ -469,7 +483,15 @@ export function WorkflowPage({
               {workflowConfiguredAgent?.name || agentLabel(workflowRuntimeId)}
             </span>
             <span>{graphVisible ? `${validation.executableNodeIds.length} ${workflowText.executableNodes}` : status}</span>
-            <span>{workDir || workflowText.noWorkDir}</span>
+            <button
+              type="button"
+              className="workflow-workdir-button"
+              onClick={() => void onChooseWorkDir()}
+              disabled={running}
+              title={workDir || workflowText.noWorkDir}
+            >
+              {workDir || workflowText.noWorkDir}
+            </button>
           </div>
         </div>
         <div className="chat-header-actions workflow-page-actions">
@@ -513,7 +535,7 @@ export function WorkflowPage({
             </div>
           ))
         ) : null}
-        {running ? (
+        {running && !graphVisible ? (
           <div className="cli-status-line">
             <span className="stream-pill">
               <span className="stream-spinner" aria-hidden="true" />
@@ -543,6 +565,18 @@ export function WorkflowPage({
                 ))}
               </div>
             ) : null}
+            {graphExpanded ? (
+              <>
+                <div className="workflow-graph-backdrop" onClick={() => setGraphExpanded(false)} />
+                <button className="workflow-graph-close icon-btn" onClick={() => setGraphExpanded(false)} title="Close graph board" aria-label="Close workflow graph board">
+                  <X size={15} />
+                </button>
+                <WorkflowCanvasBoard graph={graph} expanded onNodePositionChange={(nodeId, position) => onUpdateNode(nodeId, { position })} renderNodeCard={(node) => renderWorkflowNodeCard(node, false)} />
+                {editingWorkflowNode ? renderWorkflowNodeEditor(editingWorkflowNode) : null}
+              </>
+            ) : (
+              <WorkflowCanvasBoard graph={graph} runProgressByNodeId={runProgressByNodeId} onExpand={() => setGraphExpanded(true)} onNodePositionChange={(nodeId, position) => onUpdateNode(nodeId, { position })} renderNodeCard={(node) => renderWorkflowNodeCard(node, true)} />
+            )}
             {runProgressVisible ? (
               <section className="workflow-run-progress" aria-label={workflowText.runProgress}>
                 <div className="workflow-run-progress-head">
@@ -704,18 +738,6 @@ export function WorkflowPage({
                 {filePreviewError ? <div className="workflow-error">{filePreviewError}</div> : null}
               </section>
             ) : null}
-            {graphExpanded ? (
-              <>
-                <div className="workflow-graph-backdrop" onClick={() => setGraphExpanded(false)} />
-                <button className="workflow-graph-close icon-btn" onClick={() => setGraphExpanded(false)} title="Close graph board" aria-label="Close workflow graph board">
-                  <X size={15} />
-                </button>
-                <WorkflowCanvasBoard graph={graph} expanded onNodePositionChange={(nodeId, position) => onUpdateNode(nodeId, { position })} renderNodeCard={(node) => renderWorkflowNodeCard(node, false)} />
-                {editingWorkflowNode ? renderWorkflowNodeEditor(editingWorkflowNode) : null}
-              </>
-            ) : (
-              <WorkflowCanvasBoard graph={graph} runProgressByNodeId={runProgressByNodeId} onExpand={() => setGraphExpanded(true)} onNodePositionChange={(nodeId, position) => onUpdateNode(nodeId, { position })} renderNodeCard={(node) => renderWorkflowNodeCard(node, true)} />
-            )}
           </section>
         ) : null}
       </section>

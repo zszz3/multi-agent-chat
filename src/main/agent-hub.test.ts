@@ -1679,6 +1679,9 @@ fs.writeFileSync(${JSON.stringify(argsPath)}, process.argv.slice(2).join("\\n") 
       expect.objectContaining({ nodeId: "work", status: "paused" }),
       expect.objectContaining({ nodeId: "followup", status: "queued" }),
     ]);
+    // Pausing the only running node leaves nothing in progress, so the run stops.
+    expect(run.status).toBe("stopped");
+    expect(snapshot.workflowStore.workflows.find((w: any) => w.workflowId === created.workflowId).status).toBe("stopped");
     expect(stopCount).toBe(1);
     expect(contexts).toHaveLength(1);
   });

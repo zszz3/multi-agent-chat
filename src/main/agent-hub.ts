@@ -83,6 +83,7 @@ import type {
 import { normalizeConfigChannelsForStorage } from "../shared/config-channels";
 import { DEFAULT_MODEL_ID, defaultChannelForAgent, defaultModelForAgent, isModelForChannel, runtimeModelId } from "../shared/models";
 import { validateWorkflowGraph } from "../shared/workflow-graph";
+import { defaultWorkflowWorkDirSuffix } from "../shared/workflow-run";
 import { detectAgentRuntimes } from "./agents/detect";
 import { CodexRpcClient } from "./agents/codex-rpc";
 import { codexEnvironmentForChannel } from "./agents/codex-env";
@@ -1532,14 +1533,16 @@ export class AgentHub {
     const validation = validateWorkflowGraph(input.graph);
     if (!validation.valid) return { ok: false, error: validation.errors[0] ?? "Workflow graph is invalid.", validation };
     const now = Date.now();
+    const workflowId = `wf_${randomUUID()}`;
     const workflow = this.cloneWorkflowDraft({
-      workflowId: `wf_${randomUUID()}`,
+      workflowId,
       title: input.title.trim() || input.graph.title,
       status: "draft",
       revision: 1,
       configuredAgentId: this.normalizeWorkflowConfiguredAgentId(input.configuredAgentId),
       modelId: this.normalizeModelIdForConfiguredAgent(input.configuredAgentId, input.modelId),
       objective: input.objective.trim() || input.graph.objective,
+      workDir: input.workDir?.trim() || path.join(this.workDir, defaultWorkflowWorkDirSuffix(workflowId)),
       graph: input.graph,
       graphReady: input.graphReady ?? true,
       messages: input.messages ?? [],
@@ -1951,6 +1954,38 @@ export class AgentHub {
     this.artifacts.push(artifact);
     this.emit();
     return { ok: true, artifact };
+  }
+
+  async listWorkflowOutputs(workflowId: string): Promise<Array<{ name: string; path: string }>> {
+    const workflow = this.workflows.get(workflowId);
+    if (!workflow) return [];
+    const workDir = workflow.workDir || path.join(this.workDir, defaultWorkflowWorkDirSuffix(workflowId));
+    const outputsDir = path.join(workDir, "outputs");
+    let entries: Dirent[];
+    try {
+      entries = await readdir(outputsDir, { withFileTypes: true });
+    } catch {
+      return [];
+    }
+    return entries
+      .filter((entry) => entry.isFile() && !entry.name.startsWith("."))
+      .map((entry) => ({ name: entry.name, path: path.join(outputsDir, entry.name) }))
+      .sort((left, right) => left.name.localeCompare(right.name));
+  }
+
+  workflowWorkDir(workflowId: string): string | undefined {
+    const workflow = this.workflows.get(workflowId);
+    if (!workflow) return undefined;
+    return workflow.workDir || path.join(this.workDir, defaultWorkflowWorkDirSuffix(workflowId));
+  }
+
+  /** Directories from which local files may be previewed: global + each workflow's dir. */
+  allowedFileRoots(): string[] {
+    const roots = [this.workDir];
+    for (const workflow of this.workflows.values()) {
+      roots.push(workflow.workDir || path.join(this.workDir, defaultWorkflowWorkDirSuffix(workflow.workflowId)));
+    }
+    return roots;
   }
 
   listArtifacts(target?: string): RegisteredArtifact[] {
@@ -2719,6 +2754,7 @@ this.emit();
       configuredAgentId: this.normalizeWorkflowConfiguredAgentId(draft.configuredAgentId),
       modelId: this.normalizeModelIdForConfiguredAgent(draft.configuredAgentId, draft.modelId),
       objective: draft.objective,
+      ...(draft.workDir ? { workDir: draft.workDir } : {}),
       graph: this.cloneWorkflowGraph(draft.graph),
       graphReady: draft.graphReady,
       messages: draft.messages.map((message) => ({
@@ -4107,6 +4143,7 @@ this.emit();
       configuredAgentId: asOptionalString(record.configuredAgentId) ?? "",
       modelId: asOptionalString(record.modelId) ?? "",
       objective: asOptionalString(record.objective) ?? graph.objective,
+      ...(asOptionalString(record.workDir) ? { workDir: asOptionalString(record.workDir) as string } : {}),
       graph,
       graphReady: record.graphReady === true,
       messages: asArray(record.messages)

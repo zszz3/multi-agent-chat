@@ -5,7 +5,7 @@ import path from "node:path";
 import { fileURLToPath } from "node:url";
 import { AgentHub } from "./agent-hub";
 import { setCodexChatRouterBaseUrl, startCodexChatRouter, type CodexChatRouterServer } from "./codex-chat-router";
-import { createLocalTextFilePreview } from "./local-file-preview";
+import { createLocalTextFilePreviewUnderRoots } from "./local-file-preview";
 import { startMcpBridge, type McpBridgeServer } from "./mcp-bridge";
 import { ScheduledWorkflowCloudClient, type ScheduledWorkflowCloudEventConnection } from "./scheduled-workflow-cloud";
 import { importOnlineSkillToLibrary, installBundledSkill, listImportedSkillTemplates, uninstallBundledSkill } from "./skill-installer";
@@ -308,7 +308,19 @@ function registerIpcHandlers(): void {
     }
     return hub.snapshot();
   });
-  ipcMain.handle("file:read-text", async (_event, filePath: string) => createLocalTextFilePreview(filePath, hub.getWorkDir(), app.getPath("home")));
+  ipcMain.handle("dialog:pick-directory", async (_event, defaultPath?: string) => {
+    const options: OpenDialogOptions = {
+      title: "Choose workflow directory",
+      defaultPath: defaultPath || hub.getWorkDir(),
+      properties: ["openDirectory", "createDirectory"],
+    };
+    const result = mainWindow ? await dialog.showOpenDialog(mainWindow, options) : await dialog.showOpenDialog(options);
+    return result.canceled ? undefined : result.filePaths[0];
+  });
+  ipcMain.handle("workflow:outputs:list", (_event, workflowId: string) => hub.listWorkflowOutputs(workflowId));
+  ipcMain.handle("file:read-text", async (_event, filePath: string) =>
+    createLocalTextFilePreviewUnderRoots(filePath, hub.allowedFileRoots(), app.getPath("home")),
+  );
   ipcMain.handle("file:reveal", async (_event, filePath: string) => {
     const targetPath = String(filePath ?? "").trim();
     if (!targetPath) throw new Error("Missing path to reveal.");
