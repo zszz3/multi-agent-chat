@@ -43,6 +43,7 @@ export const DEFAULT_SNAPSHOT: AppSnapshot = {
     runs: [],
   },
   workflowDraft: undefined,
+  artifacts: [],
 };
 
 export function activeChatFrom(snapshot: AppSnapshot): ChatSession | undefined {

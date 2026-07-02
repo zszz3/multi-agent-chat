@@ -1,9 +1,9 @@
 import { type RefObject } from "react";
-import { CircleStop, Plus, Send, Wand2 } from "lucide-react";
+import { CircleStop, Copy, Plus, Send, Wand2 } from "lucide-react";
 import type { AgentChannel, AgentId, AgentRuntime, ChatMessage, ChatSession, ConfiguredAgent } from "../../../../shared/types";
 import { agentAccent, agentLabel } from "../../app/agents";
 import { shouldSendComposerKey } from "../../app/composer";
-import { formatTime } from "../../app/format";
+import { formatDateTime } from "../../app/format";
 import { Markdown } from "../../Markdown";
 import { ChatControls } from "./ChatControls";
 import { MetaMessage, chatEventDisplayContent } from "./chat-event-display";
@@ -33,7 +33,6 @@ interface ChatPageProps {
   onSelectConfiguredAgent: (configuredAgentId: string) => void;
   onSelectModel: (modelId: string) => void;
   onChooseWorkDir: () => void | Promise<void>;
-  onRefresh: () => void | Promise<void>;
 }
 
 export function ChatPage({
@@ -60,7 +59,6 @@ export function ChatPage({
   onSelectConfiguredAgent,
   onSelectModel,
   onChooseWorkDir,
-  onRefresh,
 }: ChatPageProps) {
   if (!activeChat) {
     return (
@@ -80,16 +78,17 @@ export function ChatPage({
             <span className={`agent-badge mini ${agentAccent(activeChatRuntimeId)}`} title={activeChatConfigTitle}>
               {activeChatConfiguredAgent?.name || agentLabel(activeChatRuntimeId)}
             </span>
-            <span>{activeChat.sessionId ? `session ${activeChat.sessionId}` : "No provider session yet"}</span>
+            {activeChat.sessionId ? (
+              <button className="chat-session-id" type="button" title="Copy session id" onClick={() => copySessionId(activeChat.sessionId!)}>
+                <Copy size={11} />
+                <span>{`session ${activeChat.sessionId}`}</span>
+              </button>
+            ) : (
+              <span>No provider session yet</span>
+            )}
           </div>
         </div>
-        <div className="chat-header-actions">
-          {activeChat.running ? (
-            <button className="icon-btn" onClick={() => void onStopActiveChat()} title="Stop">
-              <CircleStop size={14} />
-            </button>
-          ) : null}
-        </div>
+        <div className="chat-header-actions" />
       </header>
 
       <section className="cli-transcript" ref={transcriptRef} onScroll={onTranscriptScroll}>
@@ -110,10 +109,12 @@ export function ChatPage({
         )}
         {activeChat.running ? (
           <div className="cli-status-line">
-            <span className="stream-pill">
+            <span className="stream-pill compact" title="Running" aria-label="Running">
               <span className="stream-spinner" aria-hidden="true" />
-              <span>{agentLabel(activeChatRuntimeId)} is working…</span>
             </span>
+            <button className="icon-btn cli-status-stop" onClick={() => void onStopActiveChat()} title="Stop" aria-label="Stop response">
+              <CircleStop size={14} />
+            </button>
           </div>
         ) : null}
       </section>
@@ -173,7 +174,6 @@ export function ChatPage({
               onSelectConfiguredAgent={onSelectConfiguredAgent}
               onSelectModel={onSelectModel}
               onChooseWorkDir={onChooseWorkDir}
-              onRefresh={onRefresh}
             />
             <button className="send-btn" onClick={() => void onSend()} disabled={!canSend}>
               <Send size={14} />
@@ -189,13 +189,18 @@ export function ChatPage({
   );
 }
 
+function copySessionId(sessionId: string): void {
+  const write = globalThis.navigator?.clipboard?.writeText(sessionId);
+  if (write) void write.catch(() => undefined);
+}
+
 function CliMessage({ message, agentId, streaming = false }: { message: ChatMessage; agentId: AgentId; streaming?: boolean }) {
   if (message.role === "user") {
     return (
       <div className="cli-message user">
         <div className="cli-prompt-mark">›</div>
         <div className="cli-agent-line">
-          <span>{`You · ${formatTime(message.timestamp)}`}</span>
+          <span>{`You · ${formatDateTime(message.timestamp)}`}</span>
         </div>
         <div className="cli-markdown">
           <Markdown text={message.content} />
@@ -209,7 +214,7 @@ function CliMessage({ message, agentId, streaming = false }: { message: ChatMess
       <div className="cli-message assistant">
         <div className="cli-agent-line">
           <span className={`runtime-dot ${agentAccent(agentId)}`} />
-          <span>{`${agentLabel(agentId)} · ${formatTime(message.timestamp)}`}</span>
+          <span>{`${agentLabel(agentId)} · ${formatDateTime(message.timestamp)}`}</span>
         </div>
         {message.events && message.events.length > 0 ? (
           <div className="cli-message-events">

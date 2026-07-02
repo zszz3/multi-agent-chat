@@ -34,7 +34,6 @@ interface TaskPageProps {
   onSelectConfiguredAgent: (configuredAgentId: string) => MaybePromise;
   onSelectModel?: (modelId: string) => MaybePromise;
   onChooseWorkDir: () => MaybePromise;
-  onRefresh: () => MaybePromise;
   onRunTask: () => MaybePromise;
   onRerunTask: (task: TaskRun) => MaybePromise;
   onSelectTask: (taskId: string) => MaybePromise;
@@ -58,7 +57,6 @@ export function TaskPage({
   onSelectConfiguredAgent,
   onSelectModel = () => undefined,
   onChooseWorkDir,
-  onRefresh,
   onRunTask,
   onRerunTask,
   onSelectTask,
@@ -128,7 +126,6 @@ export function TaskPage({
                       onSelectConfiguredAgent={onSelectConfiguredAgent}
                       onSelectModel={onSelectModel}
                       onChooseWorkDir={onChooseWorkDir}
-                      onRefresh={onRefresh}
                       onRunTask={onRunTask}
                     />
                   ) : null}
@@ -333,7 +330,6 @@ function TaskInlineCreateCard({
   onSelectConfiguredAgent,
   onSelectModel,
   onChooseWorkDir,
-  onRefresh,
   onRunTask,
 }: {
   prompt: string;
@@ -348,7 +344,6 @@ function TaskInlineCreateCard({
   onSelectConfiguredAgent: (configuredAgentId: string) => MaybePromise;
   onSelectModel: (modelId: string) => MaybePromise;
   onChooseWorkDir: () => MaybePromise;
-  onRefresh: () => MaybePromise;
   onRunTask: () => MaybePromise;
 }) {
   return (
@@ -393,7 +388,6 @@ function TaskInlineCreateCard({
           onSelectConfiguredAgent={onSelectConfiguredAgent}
           onSelectModel={onSelectModel}
           onChooseWorkDir={onChooseWorkDir}
-          onRefresh={onRefresh}
         />
       </div>
       <button className="send-btn task-run-btn" onClick={() => void onRunTask()} disabled={!canRun}>

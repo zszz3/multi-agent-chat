@@ -150,6 +150,7 @@ export function useWorkflowFeatureManager({
   );
   const controller = useWorkflowFeatureController({
     snapshot,
+    setSnapshot,
     draft,
     runner,
     language,

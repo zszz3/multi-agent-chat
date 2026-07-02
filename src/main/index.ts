@@ -5,7 +5,7 @@ import path from "node:path";
 import { fileURLToPath } from "node:url";
 import { AgentHub } from "./agent-hub";
 import { setCodexChatRouterBaseUrl, startCodexChatRouter, type CodexChatRouterServer } from "./codex-chat-router";
-import { createLocalTextFilePreview } from "./local-file-preview";
+import { createLocalTextFilePreviewUnderRoots } from "./local-file-preview";
 import { startMcpBridge, type McpBridgeServer } from "./mcp-bridge";
 import { ScheduledWorkflowCloudClient, type ScheduledWorkflowCloudEventConnection } from "./scheduled-workflow-cloud";
 import { importOnlineSkillToLibrary, installBundledSkill, listImportedSkillTemplates, uninstallBundledSkill } from "./skill-installer";
@@ -23,8 +23,12 @@ import type {
   FinishWorkflowRunRequest,
   ImportOnlineSkillRequest,
   InstallSkillRequest,
+  AnswerWorkflowGateRequest,
+  PauseWorkflowNodeRequest,
   RunAgentTeamRequest,
+  RunWorkflowGraphRequest,
   RunTaskRequest,
+  StartWorkflowNodeRequest,
   ScheduledWorkflowRun,
   ScheduledWorkflowRunnerConfig,
   ScheduledWorkflowRunnerStatus,
@@ -304,7 +308,19 @@ function registerIpcHandlers(): void {
     }
     return hub.snapshot();
   });
-  ipcMain.handle("file:read-text", async (_event, filePath: string) => createLocalTextFilePreview(filePath, hub.getWorkDir(), app.getPath("home")));
+  ipcMain.handle("dialog:pick-directory", async (_event, defaultPath?: string) => {
+    const options: OpenDialogOptions = {
+      title: "Choose workflow directory",
+      defaultPath: defaultPath || hub.getWorkDir(),
+      properties: ["openDirectory", "createDirectory"],
+    };
+    const result = mainWindow ? await dialog.showOpenDialog(mainWindow, options) : await dialog.showOpenDialog(options);
+    return result.canceled ? undefined : result.filePaths[0];
+  });
+  ipcMain.handle("workflow:outputs:list", (_event, workflowId: string) => hub.listWorkflowOutputs(workflowId));
+  ipcMain.handle("file:read-text", async (_event, filePath: string) =>
+    createLocalTextFilePreviewUnderRoots(filePath, hub.allowedFileRoots(), app.getPath("home")),
+  );
   ipcMain.handle("file:reveal", async (_event, filePath: string) => {
     const targetPath = String(filePath ?? "").trim();
     if (!targetPath) throw new Error("Missing path to reveal.");
@@ -340,6 +356,10 @@ function registerIpcHandlers(): void {
   ipcMain.handle("workflow:select", (_event, workflowId: string) => hub.selectWorkflow(workflowId));
   ipcMain.handle("workflow:rename", (_event, workflowId: string, title: string) => hub.renameWorkflow(workflowId, title));
   ipcMain.handle("workflow:delete", (_event, workflowId: string) => hub.deleteWorkflow(workflowId));
+  ipcMain.handle("workflow-run:run-graph", (_event, request: RunWorkflowGraphRequest) => hub.runWorkflowGraph(request));
+  ipcMain.handle("workflow-run:pause-node", (_event, request: PauseWorkflowNodeRequest) => hub.pauseWorkflowNode(request));
+  ipcMain.handle("workflow-run:start-node", (_event, request: StartWorkflowNodeRequest) => hub.startWorkflowNode(request));
+  ipcMain.handle("workflow-run:answer-gate", (_event, request: AnswerWorkflowGateRequest) => hub.answerWorkflowGate(request));
   ipcMain.handle("workflow-run:start", (_event, request: StartWorkflowRunRequest) => {
     hub.startWorkflowRun(request);
     return hub.snapshot();

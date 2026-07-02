@@ -3,6 +3,7 @@ import type {
   AgentRuntime,
   ConfiguredAgent,
   LocalFilePreview,
+  RegisteredArtifact,
   WorkflowDraftState,
   WorkflowGraph,
   WorkflowGraphNode,
@@ -59,9 +60,14 @@ export interface WorkflowController {
   workDir: string;
   running: boolean;
   runProgress?: WorkflowRunProgressItem[];
+  activeRunId?: string | undefined;
+  artifacts?: RegisteredArtifact[];
   contextDocument?: string;
   finalReport?: string;
   onObjectiveChange: (value: string) => void;
+  onPauseNode?: (nodeId: string) => MaybePromise;
+  onStartNode?: (nodeId: string) => MaybePromise;
+  onAnswerGate?: (nodeId: string, answer: string) => MaybePromise;
   onSelectConfiguredAgent: (configuredAgentId: string) => void;
   onSelectModel?: (modelId: string) => void;
   onDraftGraph: () => void;
@@ -74,6 +80,7 @@ export interface WorkflowController {
   onChooseWorkDir?: () => MaybePromise;
   onRefresh?: () => MaybePromise;
   onReadOutputFile?: (filePath: string) => Promise<LocalFilePreview>;
+  onListOutputs?: () => Promise<Array<{ name: string; path: string }>>;
   language?: Language;
   defaultGraphExpanded?: boolean;
 }

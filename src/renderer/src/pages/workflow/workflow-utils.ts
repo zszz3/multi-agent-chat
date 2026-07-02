@@ -1,9 +1,21 @@
 import type { WorkflowRunNodeStatus, WorkflowRunProgressItem } from "../../../../shared/types";
 import { parseWorkflowGraphUpsert } from "../../../../shared/workflow-graph";
+import {
+  truncateWorkflowContext,
+  workflowStoragePlanDocument,
+  workflowStoragePlanFor,
+  type WorkflowStoragePlan,
+} from "../../../../shared/workflow-run";
+
+export {
+  truncateWorkflowContext,
+  workflowStoragePlanDocument,
+  workflowStoragePlanFor,
+  type WorkflowStoragePlan,
+} from "../../../../shared/workflow-run";
 
 export const WORKFLOW_THINKING_MESSAGE = "Agent is thinking...";
 const WORKFLOW_OUTPUT_DOCUMENT_EXTENSIONS = "md|markdown|txt|json|yaml|yml|html|htm";
-const WORKFLOW_STORAGE_ROOT = ".multi-agent-chat/workflows";
 
 export function isMarkdownFilePath(path: string): boolean {
   return /\.(md|markdown)$/i.test(path.split(/[?#]/)[0] ?? "");
@@ -14,41 +26,9 @@ export function workflowAssistantDisplayContent(content: string): string {
   return graph ? `Workflow graph ready: ${graph.title}` : content;
 }
 
-export function truncateWorkflowContext(content: string, limit = 2400): string {
-  const normalized = content.replace(/\n{3,}/g, "\n\n").trim();
-  if (normalized.length <= limit) return normalized;
-  return `${normalized.slice(0, limit).trim()}\n\n[truncated]`;
-}
-
 export interface WorkflowOutputDocument {
   path: string;
   title: string;
-}
-
-export interface WorkflowStoragePlan {
-  memoryPath: string;
-  outputDir: string;
-}
-
-export function workflowStoragePlanFor(workflowId: string): WorkflowStoragePlan {
-  const safeWorkflowId = workflowId.replace(/[^a-zA-Z0-9_-]/g, "_") || "workflow";
-  const baseDir = `${WORKFLOW_STORAGE_ROOT}/${safeWorkflowId}`;
-  return {
-    memoryPath: `${baseDir}/memory.md`,
-    outputDir: `${baseDir}/outputs`,
-  };
-}
-
-export function workflowStoragePlanDocument(plan: WorkflowStoragePlan): string {
-  return [
-    "# Workflow Storage Plan",
-    "",
-    `- Shared memory file: ${plan.memoryPath}`,
-    `- Output document directory: ${plan.outputDir}`,
-    "",
-    "All agent nodes should treat the Workflow Context in the app as the source of shared memory.",
-    "If an agent creates user-facing documents, write them under the output document directory and report the exact relative file path.",
-  ].join("\n");
 }
 
 function cleanWorkflowOutputPath(value: string): string {
@@ -119,5 +99,7 @@ export function workflowRunStatusLabel(status: WorkflowRunNodeStatus): string {
   if (status === "completed") return "completed";
   if (status === "running") return "running";
   if (status === "failed") return "failed";
+  if (status === "paused") return "paused";
+  if (status === "awaiting_input") return "needs you";
   return "queued";
 }

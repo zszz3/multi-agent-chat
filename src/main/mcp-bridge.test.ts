@@ -1,4 +1,4 @@
-import { mkdtemp, readFile } from "node:fs/promises";
+import { mkdtemp, readFile, writeFile } from "node:fs/promises";
 import os from "node:os";
 import path from "node:path";
 import { afterEach, describe, expect, test } from "vitest";
@@ -45,6 +45,32 @@ describe("MCP bridge", () => {
       port: bridge.port,
       token: bridge.token,
     });
+  });
+
+  test("registers an artifact for a validated file via the bridge", async () => {
+    const dir = await mkdtemp(path.join(os.tmpdir(), "multi-agent-chat-mcp-artifacts-"));
+    const discoveryPath = path.join(dir, "bridge.json");
+    await writeFile(path.join(dir, "report.md"), "# Report", "utf8");
+    const hub = new AgentHub();
+    hub.setWorkDir(dir);
+    bridge = await startMcpBridge(hub, { discoveryPath });
+
+    const okResponse = await bridgeRequest("/mcp/artifacts/register", bridge.token, {
+      target: "chat-1",
+      path: "report.md",
+      description: "final report",
+    });
+    expect(okResponse.status).toBe(200);
+    const okPayload = (await okResponse.json()) as any;
+    expect(okPayload).toMatchObject({ ok: true, artifact: { target: "chat-1", kind: "file", title: "report.md" } });
+
+    const listResponse = await bridgeRequest("/mcp/artifacts/list", bridge.token, { target: "chat-1" });
+    const listPayload = (await listResponse.json()) as any;
+    expect(listPayload.artifacts).toHaveLength(1);
+
+    const missingResponse = await bridgeRequest("/mcp/artifacts/register", bridge.token, { target: "chat-1", path: "nope.md" });
+    const missingPayload = (await missingResponse.json()) as any;
+    expect(missingPayload.ok).toBe(false);
   });
 
   test("requires bearer token and exposes workflow tools", async () => {

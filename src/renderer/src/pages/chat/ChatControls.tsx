@@ -1,4 +1,4 @@
-import { FolderOpen, RefreshCw } from "lucide-react";
+import { FolderOpen } from "lucide-react";
 import {
   agentAccent,
   configuredAgentById,
@@ -25,7 +25,6 @@ interface ChatControlsProps {
   onSelectConfiguredAgent: (configuredAgentId: string) => MaybePromise;
   onSelectModel?: (modelId: string) => MaybePromise;
   onChooseWorkDir: () => MaybePromise;
-  onRefresh: () => MaybePromise;
 }
 
 export function ChatControls({
@@ -40,7 +39,6 @@ export function ChatControls({
   onSelectConfiguredAgent,
   onSelectModel = () => undefined,
   onChooseWorkDir,
-  onRefresh,
 }: ChatControlsProps) {
   const runtimeMap = new Map(runtimes.map((runtime) => [runtime.id, runtime]));
   const selectedAgent = configuredAgentById(configuredAgentId, configuredAgents);
@@ -98,12 +96,10 @@ export function ChatControls({
         onClick={() => void onChooseWorkDir()}
         title={workDir || "Choose workdir"}
         aria-label="Choose work directory"
+        disabled={selectsDisabled}
       >
         <FolderOpen size={14} />
         <span>{workDir || "Choose workdir"}</span>
-      </button>
-      <button className="icon-btn flat composer-refresh-btn" onClick={() => void onRefresh()} title="Refresh agents">
-        <RefreshCw size={13} />
       </button>
     </div>
   );

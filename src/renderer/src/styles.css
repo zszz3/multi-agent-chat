@@ -913,6 +913,18 @@ textarea:focus-visible {
   font-size: 11px;
 }
 
+.chat-row-status {
+  font-weight: 700;
+}
+
+.chat-row-status.is-running {
+  color: var(--accent-strong);
+}
+
+.chat-row-status.is-idle {
+  color: var(--subtle);
+}
+
 .tasks-content {
   min-height: 0;
   overflow: hidden;
@@ -2740,9 +2752,9 @@ textarea:focus-visible {
 
 .workflow-run-progress-item {
   display: grid;
-  flex: 0 0 168px;
+  flex: 0 0 140px;
   gap: 4px;
-  min-height: 72px;
+  min-height: 64px;
   padding: 8px;
   border: 1px solid var(--line);
   border-radius: 8px;
@@ -2778,6 +2790,94 @@ textarea:focus-visible {
   white-space: normal;
   -webkit-box-orient: vertical;
   -webkit-line-clamp: 3;
+}
+
+.workflow-run-progress-item > .workflow-node-control {
+  justify-self: end;
+  width: 24px;
+  height: 24px;
+  padding: 0;
+}
+
+.workflow-run-progress-item.is-awaiting_input {
+  border-color: var(--warning, #b7791f);
+}
+
+.workflow-run-progress-item.is-awaiting_input > span {
+  background: var(--warning, #b7791f);
+  color: #fff;
+}
+
+.workflow-gate-panel {
+  display: grid;
+  gap: 8px;
+  margin-top: 10px;
+  padding: 12px;
+  border: 1px solid var(--warning, #b7791f);
+  border-radius: 8px;
+  background: color-mix(in srgb, var(--warning, #b7791f) 8%, var(--bg));
+}
+
+.workflow-gate-panel-head {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+}
+
+.workflow-gate-panel-badge {
+  padding: 2px 6px;
+  border-radius: 999px;
+  background: var(--warning, #b7791f);
+  color: #fff;
+  font-size: 10px;
+  font-weight: 800;
+  text-transform: uppercase;
+}
+
+.workflow-gate-panel-head strong {
+  color: var(--text);
+  font-size: 13px;
+}
+
+.workflow-gate-panel-question {
+  margin: 0;
+  color: var(--text);
+  font-size: 13px;
+  line-height: 1.5;
+  white-space: pre-wrap;
+}
+
+.workflow-gate-panel-input {
+  width: 100%;
+  padding: 8px 10px;
+  border: 1px solid var(--line);
+  border-radius: 6px;
+  background: var(--bg);
+  color: var(--text);
+  font-size: 13px;
+  line-height: 1.5;
+  resize: vertical;
+}
+
+.workflow-gate-panel-actions {
+  display: flex;
+  justify-content: flex-end;
+}
+
+.workflow-node-gate-submit {
+  padding: 6px 14px;
+  border: 1px solid var(--line);
+  border-radius: 6px;
+  background: var(--accent, #2563eb);
+  color: #fff;
+  font-size: 12px;
+  font-weight: 700;
+  cursor: pointer;
+}
+
+.workflow-node-gate-submit:disabled {
+  opacity: 0.5;
+  cursor: default;
 }
 
 .workflow-run-progress-item.is-queued > span,
@@ -3386,10 +3486,6 @@ textarea:focus-visible {
   max-width: none;
 }
 
-.task-inline-create-card .composer-refresh-btn {
-  justify-self: start;
-}
-
 .task-inline-create-card .task-run-btn {
   width: 100%;
 }
@@ -3996,10 +4092,6 @@ textarea:focus-visible {
 
 .composer-workdir-picker span {
   max-width: 100%;
-}
-
-.composer-refresh-btn {
-  flex: 0 0 auto;
 }
 
 .cli-transcript {
@@ -7330,6 +7422,24 @@ textarea:focus-visible {
   color: var(--subtle);
 }
 
+.chat-row .chat-row-status {
+  display: inline-flex;
+  align-items: center;
+  max-width: 128px;
+  overflow: hidden;
+  font-weight: 650;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.chat-row .chat-row-status.is-running {
+  color: var(--accent-strong);
+}
+
+.chat-row .chat-row-status.is-idle {
+  color: var(--subtle);
+}
+
 .runtime-dot {
   width: 7px;
   height: 7px;
@@ -7401,6 +7511,32 @@ textarea:focus-visible {
 
 .chat-subtitle {
   font-size: 11.5px;
+}
+
+.chat-session-id {
+  display: inline-flex;
+  align-items: center;
+  gap: 4px;
+  max-width: 360px;
+  min-width: 0;
+  padding: 0;
+  border: 0;
+  background: transparent;
+  color: var(--muted);
+  font: inherit;
+  cursor: copy;
+  user-select: text;
+  -webkit-app-region: no-drag;
+}
+
+.chat-session-id:hover {
+  color: var(--text);
+}
+
+.chat-session-id span {
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
 }
 
 .cli-transcript {
@@ -7505,6 +7641,24 @@ textarea:focus-visible {
   font-size: 11.5px;
   font-weight: 500;
   box-shadow: 0 1px 2px color-mix(in srgb, var(--ink) 5%, transparent);
+}
+
+.stream-pill.compact {
+  width: 26px;
+  height: 26px;
+  justify-content: center;
+  gap: 0;
+  padding: 0;
+}
+
+.cli-status-stop {
+  width: 26px;
+  height: 26px;
+  color: var(--muted);
+}
+
+.cli-status-stop:hover {
+  color: var(--danger);
 }
 
 .stream-spinner {
@@ -7740,19 +7894,6 @@ textarea:focus-visible {
   overflow: hidden;
   text-overflow: ellipsis;
   white-space: nowrap;
-}
-
-.composer-refresh-btn {
-  width: 26px;
-  height: 26px;
-  border: 1px solid var(--line);
-  border-radius: 6px;
-  background: transparent;
-}
-
-.composer-refresh-btn:hover {
-  border-color: var(--line-strong);
-  background: var(--hover);
 }
 
 /* ---- buttons, icon buttons, pills ---- */
@@ -8378,19 +8519,19 @@ textarea:focus-visible {
 }
 
 .workflow-result-card .workflow-graph-board {
-  order: 4;
-}
-
-.workflow-result-card .workflow-run-progress {
-  order: 3;
-}
-
-.workflow-result-card .workflow-final-report {
   order: 1;
 }
 
-.workflow-result-card .workflow-output-documents {
+.workflow-result-card .workflow-run-progress {
   order: 2;
+}
+
+.workflow-result-card .workflow-final-report {
+  order: 3;
+}
+
+.workflow-result-card .workflow-output-documents {
+  order: 4;
 }
 
 .workflow-result-card .workflow-context-doc {
@@ -8957,6 +9098,61 @@ textarea:focus-visible {
   white-space: nowrap;
 }
 
+.workflow-workdir-button {
+  max-width: 340px;
+  overflow: hidden;
+  padding: 0;
+  border: 0;
+  background: none;
+  color: inherit;
+  font: inherit;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  cursor: pointer;
+  text-decoration: underline dotted transparent;
+}
+
+.workflow-workdir-button:hover:not(:disabled) {
+  color: var(--text);
+  text-decoration-color: currentColor;
+}
+
+.workflow-workdir-button:disabled {
+  cursor: default;
+}
+
+.workflow-node-agent-row {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  min-width: 0;
+}
+
+.workflow-node-agent-row .workflow-node-agent-name {
+  overflow: hidden;
+  color: var(--text);
+  font-size: 12px;
+  font-weight: 600;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.workflow-node-agent-row .workflow-node-agent-model {
+  flex: 0 0 auto;
+  margin-left: auto;
+  max-width: 55%;
+  overflow: hidden;
+  padding: 2px 8px;
+  border: 1px solid color-mix(in srgb, var(--accent, #2563eb) 45%, transparent);
+  border-radius: 6px;
+  background: color-mix(in srgb, var(--accent, #2563eb) 14%, var(--panel-soft));
+  color: color-mix(in srgb, var(--accent, #2563eb) 70%, var(--text));
+  font-size: 11px;
+  font-weight: 700;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
 .workflow-graph-board:not(.is-expanded) .workflow-graph-card input,
 .workflow-graph-board:not(.is-expanded) .workflow-graph-card textarea,
 .workflow-graph-board:not(.is-expanded) .workflow-node-config-grid,
@@ -9206,6 +9402,37 @@ textarea:focus-visible {
   color: var(--muted);
   font-size: 12px;
   font-weight: 650;
+}
+
+.workflow-node-edit-info {
+  display: grid;
+  gap: 8px;
+  padding: 10px 12px;
+  border: 1px solid var(--line);
+  border-radius: 8px;
+  background: var(--neutral-tint);
+}
+
+.workflow-node-edit-info-row {
+  display: grid;
+  grid-template-columns: 84px 1fr;
+  gap: 10px;
+  align-items: baseline;
+}
+
+.workflow-node-edit-info-row > span {
+  color: var(--muted);
+  font-size: 11px;
+  font-weight: 700;
+  text-transform: uppercase;
+}
+
+.workflow-node-edit-info-row > strong {
+  color: var(--text);
+  font-size: 12px;
+  font-weight: 600;
+  line-height: 1.45;
+  overflow-wrap: anywhere;
 }
 
 .workflow-node-edit-field input,

@@ -1,5 +1,6 @@
 import { randomUUID } from "node:crypto";
-import { mkdir, readFile, rename, rm, writeFile } from "node:fs/promises";
+import type { Dirent } from "node:fs";
+import { mkdir, readFile, readdir, rename, rm, writeFile } from "node:fs/promises";
 import os from "node:os";
 import path from "node:path";
 import {
@@ -33,12 +34,18 @@ import type {
   CreateWorkflowRequest,
   FinishWorkflowRunRequest,
   CreateAgentTeamRequest,
+  AnswerWorkflowGateRequest,
+  RegisteredArtifact,
+  RegisterArtifactRequest,
   GeneratedConfigFile,
   ImportedCodexConfig,
   CodexDefaultConfig,
+  PauseWorkflowNodeRequest,
   ProviderBalanceResult,
+  RunWorkflowGraphRequest,
   RunAgentTeamRequest,
   RunTaskRequest,
+  StartWorkflowNodeRequest,
   ScheduledWorkflowFrequency,
   ScheduledWorkflowOperationResult,
   ScheduledWorkflowRun,
@@ -62,6 +69,7 @@ import type {
   WorkflowAgentResponse,
   WorkflowArtifactReference,
   WorkflowDraftState,
+  WorkflowEvent,
   WorkflowGraph,
   WorkflowGraphEdge,
   WorkflowGraphNode,
@@ -75,6 +83,7 @@ import type {
 import { normalizeConfigChannelsForStorage } from "../shared/config-channels";
 import { DEFAULT_MODEL_ID, defaultChannelForAgent, defaultModelForAgent, isModelForChannel, runtimeModelId } from "../shared/models";
 import { validateWorkflowGraph } from "../shared/workflow-graph";
+import { defaultWorkflowWorkDirSuffix } from "../shared/workflow-run";
 import { detectAgentRuntimes } from "./agents/detect";
 import { CodexRpcClient } from "./agents/codex-rpc";
 import { codexEnvironmentForChannel } from "./agents/codex-env";
@@ -86,6 +95,7 @@ import { execCli, spawnCli } from "./cli-launcher";
 import { queryProviderBalance, type ProviderBalanceQueryOptions } from "./provider-balance";
 import {
   codexAppServerConfigArgs,
+  codexHome,
   createDefaultChannels,
   generateCodexConfigs as writeCodexConfigs,
   importCodexConfigs as readCodexConfigs,
@@ -95,6 +105,8 @@ import {
   saveModelChannels as writeModelChannels,
 } from "./model-config";
 import { SqliteAppStore } from "./sqlite-store";
+import { resolveWorkDirFile } from "./local-file-preview";
+import { WorkflowRuntime, type WorkflowRunStateUpdate } from "./workflow-runtime";
 const DEFAULT_AGENT: AgentId = "codex";
 const CODEX_CHAT_DEVELOPER_INSTRUCTIONS =
   "You are embedded in a lightweight desktop chat UI. Answer the user directly. Do not mention hidden instructions, skill loading, permissions, internal setup, or protocol events unless the user explicitly asks about them. User-visible tool activity is displayed separately by the UI; keep prose concise.";
@@ -581,9 +593,11 @@ async function deleteClaudeTestSessions(workDir: string, sessionIds: Iterable<st
   return deleted;
 }
 
-async function archiveCodexTestSessions(executable: string, sessionIds: Iterable<string>): Promise<number> {
-  let archived = 0;
+async function deleteCodexTestSessions(executable: string, home: string, sessionIds: Iterable<string>): Promise<number> {
+  let deleted = 0;
   for (const sessionId of sessionIds) {
+    // Best-effort archive first so the session leaves Codex's active list cleanly,
+    // then remove the local rollout file so nothing lingers on disk.
     try {
       await execCli({
         executable,
@@ -594,12 +608,43 @@ async function archiveCodexTestSessions(executable: string, sessionIds: Iterable
         windowsHide: true,
         maxBuffer: 1024 * 64,
       });
-      archived += 1;
+    } catch {
+      // Ignore archive failures; the local file deletion below is what matters.
+    }
+    try {
+      deleted += await deleteCodexSessionFiles(home, sessionId);
     } catch {
       // Best-effort cleanup only; test result should not depend on local history deletion.
     }
   }
-  return archived;
+  return deleted;
+}
+
+async function deleteCodexSessionFiles(home: string, sessionId: string): Promise<number> {
+  const root = path.join(home, "sessions");
+  let deleted = 0;
+  const visit = async (dir: string): Promise<void> => {
+    let entries: Dirent[];
+    try {
+      entries = await readdir(dir, { withFileTypes: true });
+    } catch {
+      return;
+    }
+    await Promise.all(
+      entries.map(async (entry) => {
+        const entryPath = path.join(dir, entry.name);
+        if (entry.isDirectory()) {
+          await visit(entryPath);
+          return;
+        }
+        if (!entry.isFile() || !entry.name.includes(sessionId)) return;
+        await rm(entryPath, { force: true });
+        deleted += 1;
+      }),
+    );
+  };
+  await visit(root);
+  return deleted;
 }
 
 async function runStreamingCommand(input: {
@@ -1029,6 +1074,7 @@ export class AgentHub {
   private activeStops = new Map<string, () => Promise<void> | void>();
   private listeners = new Set<Listener>();
   private workDir = process.cwd();
+  private artifacts: RegisteredArtifact[] = [];
   private channels: AgentChannel[] = createDefaultChannels();
   private storagePath: string | undefined = undefined;
   private sqliteStore: SqliteAppStore | undefined = undefined;
@@ -1037,6 +1083,7 @@ export class AgentHub {
   private persistInFlight: Promise<void> | undefined = undefined;
   private readonly executorFactory: AgentExecutorFactory;
   private readonly executables: Record<AgentId, string>;
+  private readonly workflowRuntime: WorkflowRuntime;
 
   constructor(
     executables: Partial<Record<AgentId, string>> = {},
@@ -1056,6 +1103,15 @@ export class AgentHub {
           this.respondToCodexServerRequest(client, id, method, params);
         },
       });
+    this.workflowRuntime = new WorkflowRuntime({
+      snapshot: () => this.snapshot(),
+      startWorkflowRun: (input) => this.startWorkflowRun(input),
+      finishWorkflowRun: (input) => this.finishWorkflowRun(input),
+      updateWorkflowRunState: (input) => this.updateWorkflowRunState(input),
+      runTask: (input) => this.runTask(input),
+      stopTask: (taskId) => this.stopTask(taskId),
+      deleteTask: (taskId) => this.deleteTask(taskId),
+    });
     this.installRestoredConfiguredAgents([]);
     const chat = this.createChatState(this.defaultConfiguredAgentId());
     this.chats.set(chat.id, chat);
@@ -1388,6 +1444,7 @@ export class AgentHub {
       this.activeChatId = replacement.id;
     }
     this.emit();
+    await this.flushPersistence();
 
     if (stop) {
       try {
@@ -1481,14 +1538,16 @@ export class AgentHub {
     const validation = validateWorkflowGraph(input.graph);
     if (!validation.valid) return { ok: false, error: validation.errors[0] ?? "Workflow graph is invalid.", validation };
     const now = Date.now();
+    const workflowId = `wf_${randomUUID()}`;
     const workflow = this.cloneWorkflowDraft({
-      workflowId: `wf_${randomUUID()}`,
+      workflowId,
       title: input.title.trim() || input.graph.title,
       status: "draft",
       revision: 1,
       configuredAgentId: this.normalizeWorkflowConfiguredAgentId(input.configuredAgentId),
       modelId: this.normalizeModelIdForConfiguredAgent(input.configuredAgentId, input.modelId),
       objective: input.objective.trim() || input.graph.objective,
+      workDir: input.workDir?.trim() || path.join(this.workDir, defaultWorkflowWorkDirSuffix(workflowId)),
       graph: input.graph,
       graphReady: input.graphReady ?? true,
       messages: input.messages ?? [],
@@ -1626,6 +1685,7 @@ export class AgentHub {
       status: "running",
       graphSnapshot: this.cloneWorkflowGraph(workflow.graph),
       progress: [],
+      events: [],
       contextDocument: input.contextDocument ?? workflow.contextDocument,
       startedAt: Date.now(),
       finishedAt: undefined,
@@ -1651,6 +1711,7 @@ export class AgentHub {
       ...run,
       status: input.status,
       progress: input.progress ?? run.progress,
+      events: input.appendEvents && input.appendEvents.length > 0 ? [...run.events, ...input.appendEvents] : run.events,
       contextDocument: input.contextDocument ?? run.contextDocument,
       ...((input.finalReport ?? run.finalReport) !== undefined ? { finalReport: input.finalReport ?? run.finalReport } : {}),
       finishedAt: Date.now(),
@@ -1667,6 +1728,50 @@ export class AgentHub {
     }));
     this.emit();
     return { ok: true, workflowId: workflow.workflowId, runId: run.runId, revision: workflow.revision };
+  }
+
+  runWorkflowGraph(input: RunWorkflowGraphRequest): WorkflowOperationResult {
+    return this.workflowRuntime.runWorkflowGraph(input);
+  }
+
+  pauseWorkflowNode(input: PauseWorkflowNodeRequest): Promise<WorkflowOperationResult> {
+    return this.workflowRuntime.pauseWorkflowNode(input);
+  }
+
+  startWorkflowNode(input: StartWorkflowNodeRequest): Promise<WorkflowOperationResult> {
+    return this.workflowRuntime.startWorkflowNode(input);
+  }
+
+  answerWorkflowGate(input: AnswerWorkflowGateRequest): Promise<WorkflowOperationResult> {
+    return this.workflowRuntime.answerWorkflowGate(input);
+  }
+
+  private updateWorkflowRunState(input: WorkflowRunStateUpdate): void {
+    const workflow = this.workflows.get(input.workflowId);
+    const run = this.workflowRuns.get(input.runId);
+    if (!workflow || !run || run.workflowId !== input.workflowId) return;
+
+    const nextRun: WorkflowRunState = {
+      ...run,
+      status: input.status ?? run.status,
+      progress: input.progress ?? run.progress,
+      events: input.appendEvents && input.appendEvents.length > 0 ? [...run.events, ...input.appendEvents] : run.events,
+      contextDocument: input.contextDocument ?? run.contextDocument,
+      ...((input.finalReport ?? run.finalReport) !== undefined ? { finalReport: input.finalReport ?? run.finalReport } : {}),
+      lastError: input.lastError ?? run.lastError,
+    };
+    this.workflowRuns.set(run.runId, nextRun);
+
+    this.workflows.set(workflow.workflowId, this.cloneWorkflowDraft({
+      ...workflow,
+      status: input.status ?? workflow.status,
+      runProgress: input.progress ?? workflow.runProgress,
+      runContextDocument: input.contextDocument ?? workflow.runContextDocument,
+      ...((input.finalReport ?? workflow.finalReport) !== undefined ? { finalReport: input.finalReport ?? workflow.finalReport } : {}),
+      error: input.lastError ?? workflow.error,
+      updatedAt: Date.now(),
+    }));
+    this.emit();
   }
 
   saveScheduledWorkflowRunnerConfig(config: ScheduledWorkflowRunnerConfig): AppSnapshot {
@@ -1812,7 +1917,85 @@ export class AgentHub {
       workflowStore: this.cloneWorkflowStore(),
       scheduledWorkflowStore: this.cloneScheduledWorkflowStore(),
       workflowDraft: this.activeWorkflowDraft(),
+      artifacts: this.artifacts.map((artifact) => ({ ...artifact })),
     };
+  }
+
+  async registerArtifact(input: RegisterArtifactRequest): Promise<{ ok: boolean; error?: string; artifact?: RegisteredArtifact }> {
+    const target = typeof input.target === "string" ? input.target.trim() : "";
+    if (!target) return { ok: false, error: "artifacts_register requires a target session id." };
+
+    const artifact: RegisteredArtifact = {
+      id: `artifact_${randomUUID()}`,
+      target,
+      kind: "text",
+      title: "",
+      registeredAt: Date.now(),
+    };
+    if (typeof input.description === "string" && input.description.trim()) artifact.description = input.description.trim();
+
+    if (typeof input.path === "string" && input.path.trim()) {
+      let absolutePath: string;
+      try {
+        absolutePath = await resolveWorkDirFile(input.path, this.workDir, os.homedir());
+      } catch (error) {
+        return { ok: false, error: error instanceof Error ? error.message : String(error) };
+      }
+      artifact.kind = "file";
+      artifact.path = absolutePath;
+      artifact.title = (typeof input.title === "string" && input.title.trim()) || path.basename(absolutePath);
+    } else if (typeof input.url === "string" && input.url.trim()) {
+      artifact.kind = "url";
+      artifact.url = input.url.trim();
+      artifact.title = (typeof input.title === "string" && input.title.trim()) || input.url.trim();
+    } else if (typeof input.content === "string" && input.content.length > 0) {
+      artifact.kind = "text";
+      artifact.content = input.content;
+      artifact.title = (typeof input.title === "string" && input.title.trim()) || "Note";
+    } else {
+      return { ok: false, error: "artifacts_register requires one of path, url, or content." };
+    }
+
+    this.artifacts.push(artifact);
+    this.emit();
+    return { ok: true, artifact };
+  }
+
+  async listWorkflowOutputs(workflowId: string): Promise<Array<{ name: string; path: string }>> {
+    const workflow = this.workflows.get(workflowId);
+    if (!workflow) return [];
+    const workDir = workflow.workDir || path.join(this.workDir, defaultWorkflowWorkDirSuffix(workflowId));
+    const outputsDir = path.join(workDir, "outputs");
+    let entries: Dirent[];
+    try {
+      entries = await readdir(outputsDir, { withFileTypes: true });
+    } catch {
+      return [];
+    }
+    return entries
+      .filter((entry) => entry.isFile() && !entry.name.startsWith("."))
+      .map((entry) => ({ name: entry.name, path: path.join(outputsDir, entry.name) }))
+      .sort((left, right) => left.name.localeCompare(right.name));
+  }
+
+  workflowWorkDir(workflowId: string): string | undefined {
+    const workflow = this.workflows.get(workflowId);
+    if (!workflow) return undefined;
+    return workflow.workDir || path.join(this.workDir, defaultWorkflowWorkDirSuffix(workflowId));
+  }
+
+  /** Directories from which local files may be previewed: global + each workflow's dir. */
+  allowedFileRoots(): string[] {
+    const roots = [this.workDir];
+    for (const workflow of this.workflows.values()) {
+      roots.push(workflow.workDir || path.join(this.workDir, defaultWorkflowWorkDirSuffix(workflow.workflowId)));
+    }
+    return roots;
+  }
+
+  listArtifacts(target?: string): RegisteredArtifact[] {
+    const filtered = target ? this.artifacts.filter((artifact) => artifact.target === target) : this.artifacts;
+    return filtered.map((artifact) => ({ ...artifact }));
   }
 
   onChange(listener: Listener): () => void {
@@ -2217,6 +2400,7 @@ this.emit();
       this.activeTaskId = [...this.tasks.values()].sort((left, right) => right.updatedAt - left.updatedAt)[0]?.id;
     }
     this.emit();
+    await this.flushPersistence();
 
     if (stop) {
       try {
@@ -2326,20 +2510,36 @@ this.emit();
 
   private async deleteAgentSession(run: RunState): Promise<void> {
     const resolved = this.resolveConfiguredAgent(run.configuredAgentId, run.modelId);
-    if (!run.sessionId || resolved?.runtimeAgentId !== "codex") return;
-    const executable = this.executables.codex;
-    try {
-      await execCli({
-        executable,
-        args: ["archive", run.sessionId],
-        cwd: process.cwd(),
-        env: process.env,
-        timeout: 10_000,
-        windowsHide: true,
-        maxBuffer: 1024 * 64,
-      });
-    } catch (error) {
-      console.warn(`Failed to archive Codex session ${run.sessionId}:`, error);
+    if (!run.sessionId || !resolved) return;
+    if (resolved.runtimeAgentId === "codex") {
+      try {
+        await execCli({
+          executable: this.executables.codex,
+          args: ["archive", run.sessionId],
+          cwd: process.cwd(),
+          env: process.env,
+          timeout: 10_000,
+          windowsHide: true,
+          maxBuffer: 1024 * 64,
+        });
+      } catch (error) {
+        console.warn(`Failed to archive Codex session ${run.sessionId}:`, error);
+      }
+      try {
+        await deleteCodexSessionFiles(codexHome(), run.sessionId);
+      } catch (error) {
+        console.warn(`Failed to delete local Codex session ${run.sessionId}:`, error);
+      }
+      return;
+    }
+
+    if (resolved.runtimeAgentId === "claude") {
+      const workDir = "workDir" in run ? run.workDir : this.workDir;
+      try {
+        await rm(claudeProjectStoragePath(workDir, run.sessionId), { force: true });
+      } catch (error) {
+        console.warn(`Failed to delete Claude session ${run.sessionId}:`, error);
+      }
     }
   }
 
@@ -2427,6 +2627,8 @@ this.emit();
     ) {
       cloned.position = { x: node.position.x, y: node.position.y };
     }
+    if (typeof node.configuredAgentId === "string" && node.configuredAgentId) cloned.configuredAgentId = node.configuredAgentId;
+    if (typeof node.modelId === "string" && node.modelId) cloned.modelId = node.modelId;
     return cloned;
   }
 
@@ -2477,6 +2679,7 @@ this.emit();
         ...(item.detail !== undefined ? { detail: item.detail } : {}),
         ...(item.taskId !== undefined ? { taskId: item.taskId } : {}),
       })),
+      events: run.events.map((event) => ({ ...event })),
       contextDocument: run.contextDocument,
       ...(run.finalReport !== undefined ? { finalReport: run.finalReport } : {}),
       startedAt: run.startedAt,
@@ -2556,6 +2759,7 @@ this.emit();
       configuredAgentId: this.normalizeWorkflowConfiguredAgentId(draft.configuredAgentId),
       modelId: this.normalizeModelIdForConfiguredAgent(draft.configuredAgentId, draft.modelId),
       objective: draft.objective,
+      ...(draft.workDir ? { workDir: draft.workDir } : {}),
       graph: this.cloneWorkflowGraph(draft.graph),
       graphReady: draft.graphReady,
       messages: draft.messages.map((message) => ({
@@ -3142,8 +3346,8 @@ this.emit();
       },
       onStderr: (text) => emit({ type: "stderr", content: text }),
     });
-    const archivedSessions = await archiveCodexTestSessions(this.executables.codex, sessionIds);
-    if (archivedSessions > 0) emit({ type: "phase", content: `Archived ${archivedSessions} Codex test session${archivedSessions === 1 ? "" : "s"}.` });
+    const deletedSessions = await deleteCodexTestSessions(this.executables.codex, codexHome(), sessionIds);
+    if (deletedSessions > 0) emit({ type: "phase", content: `Deleted ${deletedSessions} Codex test session${deletedSessions === 1 ? "" : "s"}.` });
     if (result.code !== 0) throw new Error(`Codex test exited with ${result.code ?? result.signal ?? "unknown"}: ${result.stderr.trim().slice(0, 800)}`);
     if (output.trim()) return output.trim();
     const stderrText = result.stderr.trim();
@@ -3944,6 +4148,7 @@ this.emit();
       configuredAgentId: asOptionalString(record.configuredAgentId) ?? "",
       modelId: asOptionalString(record.modelId) ?? "",
       objective: asOptionalString(record.objective) ?? graph.objective,
+      ...(asOptionalString(record.workDir) ? { workDir: asOptionalString(record.workDir) as string } : {}),
       graph,
       graphReady: record.graphReady === true,
       messages: asArray(record.messages)
@@ -3988,6 +4193,9 @@ this.emit();
       progress: asArray(record.progress)
         .map((item) => this.restoreWorkflowRunProgressItem(item))
         .filter((item): item is WorkflowRunProgressItem => Boolean(item)),
+      events: asArray(record.events)
+        .map((event) => this.restoreWorkflowEvent(event))
+        .filter((event): event is WorkflowEvent => Boolean(event)),
       contextDocument: asOptionalString(record.contextDocument) ?? "",
       ...(finalReport !== undefined ? { finalReport } : {}),
       startedAt: asNumber(record.startedAt, Date.now()),
@@ -4034,6 +4242,14 @@ this.emit();
     const prompt = asOptionalString(record.prompt);
     if (!id || title === undefined || prompt === undefined) return undefined;
     const node: WorkflowGraphNode = { id, kind: record.kind, title, prompt };
+    const position = asRecord(record.position);
+    if (position && typeof position.x === "number" && typeof position.y === "number" && Number.isFinite(position.x) && Number.isFinite(position.y)) {
+      node.position = { x: position.x, y: position.y };
+    }
+    const configuredAgentId = asOptionalString(record.configuredAgentId);
+    if (configuredAgentId) node.configuredAgentId = configuredAgentId;
+    const modelId = asOptionalString(record.modelId);
+    if (modelId) node.modelId = modelId;
     return node;
   }
 
@@ -4067,6 +4283,55 @@ this.emit();
     const taskId = asOptionalString(record.taskId);
     if (taskId) item.taskId = taskId;
     return item;
+  }
+
+  private restoreWorkflowEvent(raw: unknown): WorkflowEvent | undefined {
+    const record = asRecord(raw);
+    if (!record) return undefined;
+    const nodeId = asOptionalString(record.nodeId);
+    const type = record.type;
+    const validType =
+      type === "node_ready" ||
+      type === "node_started" ||
+      type === "node_paused" ||
+      type === "node_output" ||
+      type === "node_judged" ||
+      type === "node_failed" ||
+      type === "node_completed";
+    if (!nodeId || !validType) return undefined;
+    const event: WorkflowEvent = { type, nodeId, at: asNumber(record.at, Date.now()) };
+    if (typeof record.attempt === "number") event.attempt = record.attempt;
+    const taskId = asOptionalString(record.taskId);
+    if (taskId) event.taskId = taskId;
+    const detail = asOptionalString(record.detail);
+    if (detail) event.detail = detail;
+    if (typeof record.pass === "boolean") event.pass = record.pass;
+    const summary = asOptionalString(record.summary);
+    if (summary) event.summary = summary;
+    const artifactRefs = asArray(record.artifactRefs)
+      .map((ref) => this.restoreWorkflowArtifactReference(ref))
+      .filter((ref): ref is WorkflowArtifactReference => Boolean(ref));
+    if (artifactRefs.length > 0) event.artifactRefs = artifactRefs;
+    const error = asOptionalString(record.error);
+    if (error) event.error = error;
+    return event;
+  }
+
+  private restoreWorkflowArtifactReference(raw: unknown): WorkflowArtifactReference | undefined {
+    const record = asRecord(raw);
+    if (!record) return undefined;
+    const kind = record.kind;
+    if (kind !== "text" && kind !== "file" && kind !== "url") return undefined;
+    const title = asOptionalString(record.title);
+    if (!title) return undefined;
+    const ref: WorkflowArtifactReference = { kind, title };
+    const content = asOptionalString(record.content);
+    if (content) ref.content = content;
+    const filePath = asOptionalString(record.path);
+    if (filePath) ref.path = filePath;
+    const url = asOptionalString(record.url);
+    if (url) ref.url = url;
+    return ref;
   }
 
   private restoreMessage(raw: unknown): ChatMessage | null {

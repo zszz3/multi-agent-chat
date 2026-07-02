@@ -6,6 +6,7 @@ import { buildPaletteCommands } from "./CommandPalette";
 import {
   App,
   appShellClass,
+  ChatPage,
   ChatHistoryPanel,
   chatConfigLocked,
   ChatControls,
@@ -237,6 +238,7 @@ const appSnapshot: AppSnapshot = {
     runs: [],
   },
   workflowDraft: undefined,
+  artifacts: [],
 };
 
 const paletteContext = {
@@ -583,7 +585,6 @@ describe("ChatControls", () => {
         runtimes={runtimes}
         onSelectConfiguredAgent={async () => undefined}
         onChooseWorkDir={async () => undefined}
-        onRefresh={async () => undefined}
       />,
     );
 
@@ -594,9 +595,11 @@ describe("ChatControls", () => {
     expect(html).toContain("value=\"gpt-5.5\" selected=\"\"");
     expect(html).toContain("aria-label=\"Choose work directory\"");
     expect(html).toContain("/tmp/workspace");
+    expect(html).not.toContain("composer-refresh-btn");
+    expect(html).not.toContain("Refresh agents");
   });
 
-  test("locks agent and model selects after a chat starts", () => {
+  test("locks agent, model, and workdir after a chat starts", () => {
     const html = renderToStaticMarkup(
       <ChatControls
         configuredAgentId="repo-reviewer"
@@ -608,12 +611,160 @@ describe("ChatControls", () => {
         runtimes={runtimes}
         onSelectConfiguredAgent={async () => undefined}
         onChooseWorkDir={async () => undefined}
-        onRefresh={async () => undefined}
       />,
     );
 
     expect(html).toContain("<select class=\"composer-select\" aria-label=\"Configured agent\" disabled=\"\"");
     expect(html).toContain("<select class=\"composer-select\" aria-label=\"Agent model\" disabled=\"\"");
+    expect(html).toContain("aria-label=\"Choose work directory\" disabled=\"\"");
+  });
+});
+
+describe("ChatPage", () => {
+  test("renders full date and time for chat messages", () => {
+    const chat: ChatSession = {
+      id: "chat-1",
+      title: "Repo chat",
+      configuredAgentId: "repo-reviewer",
+      modelId: "gpt-5.5",
+      sessionId: "session-1",
+      running: false,
+      messages: [
+        { id: "message-1", role: "user", content: "Review this", timestamp: 1710000000000 },
+        { id: "message-2", role: "assistant", content: "Done", timestamp: 1710000060000 },
+      ],
+      pendingAssistantMessageId: undefined,
+      lastError: undefined,
+      createdAt: 1710000000000,
+      updatedAt: 1710000060000,
+    };
+
+    const html = renderToStaticMarkup(
+      <ChatPage
+        activeChat={chat}
+        activeChatRuntimeId="codex"
+        activeChatConfiguredAgent={configuredAgents[0]}
+        activeChatConfigTitle="Codex OpenAI"
+        prompt=""
+        slashCommandSuggestions={[]}
+        slashCommandIndex={0}
+        canSend={false}
+        activeChatLocked={false}
+        transcriptRef={{ current: null }}
+        configuredAgents={configuredAgents}
+        channels={channels}
+        runtimes={runtimes}
+        workDir="/tmp/workspace"
+        onTranscriptScroll={() => undefined}
+        onPromptChange={() => undefined}
+        onSlashCommandIndexChange={() => undefined}
+        onCompleteSlashCommand={() => undefined}
+        onSend={async () => undefined}
+        onStopActiveChat={async () => undefined}
+        onSelectConfiguredAgent={() => undefined}
+        onSelectModel={() => undefined}
+        onChooseWorkDir={() => undefined}
+      />,
+    );
+
+    expect(html).toContain("You · 2024.03.10 00:00");
+    expect(html).toContain("Codex · 2024.03.10 00:01");
+  });
+
+  test("renders the provider session id as a copyable control", () => {
+    const chat: ChatSession = {
+      id: "chat-1",
+      title: "Repo chat",
+      configuredAgentId: "repo-reviewer",
+      modelId: "gpt-5.5",
+      sessionId: "session-1",
+      running: false,
+      messages: [],
+      pendingAssistantMessageId: undefined,
+      lastError: undefined,
+      createdAt: 1710000000000,
+      updatedAt: 1710000000000,
+    };
+
+    const html = renderToStaticMarkup(
+      <ChatPage
+        activeChat={chat}
+        activeChatRuntimeId="codex"
+        activeChatConfiguredAgent={configuredAgents[0]}
+        activeChatConfigTitle="Codex OpenAI"
+        prompt=""
+        slashCommandSuggestions={[]}
+        slashCommandIndex={0}
+        canSend={false}
+        activeChatLocked={false}
+        transcriptRef={{ current: null }}
+        configuredAgents={configuredAgents}
+        channels={channels}
+        runtimes={runtimes}
+        workDir="/tmp/workspace"
+        onTranscriptScroll={() => undefined}
+        onPromptChange={() => undefined}
+        onSlashCommandIndexChange={() => undefined}
+        onCompleteSlashCommand={() => undefined}
+        onSend={async () => undefined}
+        onStopActiveChat={async () => undefined}
+        onSelectConfiguredAgent={() => undefined}
+        onSelectModel={() => undefined}
+        onChooseWorkDir={() => undefined}
+      />,
+    );
+
+    expect(html).toContain("chat-session-id");
+    expect(html).toContain("title=\"Copy session id\"");
+    expect(html).toContain("session session-1");
+  });
+
+  test("shows compact running controls in the transcript instead of the header", () => {
+    const chat: ChatSession = {
+      id: "chat-1",
+      title: "Repo chat",
+      configuredAgentId: "repo-reviewer",
+      modelId: "gpt-5.5",
+      sessionId: "session-1",
+      running: true,
+      messages: [{ id: "message-1", role: "user", content: "Review this", timestamp: 1710000000000 }],
+      pendingAssistantMessageId: undefined,
+      lastError: undefined,
+      createdAt: 1710000000000,
+      updatedAt: 1710000000000,
+    };
+
+    const html = renderToStaticMarkup(
+      <ChatPage
+        activeChat={chat}
+        activeChatRuntimeId="codex"
+        activeChatConfiguredAgent={configuredAgents[0]}
+        activeChatConfigTitle="Codex OpenAI"
+        prompt=""
+        slashCommandSuggestions={[]}
+        slashCommandIndex={0}
+        canSend={false}
+        activeChatLocked={false}
+        transcriptRef={{ current: null }}
+        configuredAgents={configuredAgents}
+        channels={channels}
+        runtimes={runtimes}
+        workDir="/tmp/workspace"
+        onTranscriptScroll={() => undefined}
+        onPromptChange={() => undefined}
+        onSlashCommandIndexChange={() => undefined}
+        onCompleteSlashCommand={() => undefined}
+        onSend={async () => undefined}
+        onStopActiveChat={async () => undefined}
+        onSelectConfiguredAgent={() => undefined}
+        onSelectModel={() => undefined}
+        onChooseWorkDir={() => undefined}
+      />,
+    );
+
+    expect(html).toContain("cli-status-stop");
+    expect(html).not.toContain("Codex is working");
+    expect(html).not.toContain("<div class=\"chat-header-actions\"><button");
   });
 });
 
@@ -667,7 +818,6 @@ describe("Sidebar history panels", () => {
         channels={channels}
         activeChatId="chat-1"
         contextMenu={{ chatId: "chat-1", x: 24, y: 32 }}
-        onCreateChat={() => undefined}
         onSelectChat={() => undefined}
         onOpenContextMenu={() => undefined}
         onDeleteChat={() => undefined}
@@ -676,9 +826,107 @@ describe("Sidebar history panels", () => {
 
     expect(html).toContain("Chats");
     expect(html).toContain("Payment review");
+    expect(html).not.toContain("new-chat-compact-btn");
     expect(html).toContain("chat-context-menu");
     expect(html).toContain("Delete chat");
     expect(html).toContain("Delete session and data");
+  });
+
+  test("renders running and idle state inside each chat tab", () => {
+    const runningChat: ChatSession = {
+      id: "chat-running",
+      title: "Running review",
+      configuredAgentId: "repo-reviewer",
+      modelId: "gpt-5.5",
+      sessionId: "session-1",
+      running: true,
+      messages: [
+        { id: "message-1", role: "user", content: "Review this", timestamp: 1710000000000 },
+        { id: "message-2", role: "assistant", content: "", timestamp: 1710000000001 },
+      ],
+      pendingAssistantMessageId: "message-2",
+      lastError: undefined,
+      createdAt: 1710000000000,
+      updatedAt: 1710000000001,
+    };
+    const idleChat: ChatSession = {
+      id: "chat-idle",
+      title: "Idle review",
+      configuredAgentId: "repo-reviewer",
+      modelId: "gpt-5.5",
+      sessionId: "session-2",
+      running: false,
+      messages: [
+        { id: "message-3", role: "user", content: "Review this too", timestamp: 1710000000002 },
+        { id: "message-4", role: "assistant", content: "Done", timestamp: 1710000000003 },
+      ],
+      pendingAssistantMessageId: undefined,
+      lastError: undefined,
+      createdAt: 1710000000002,
+      updatedAt: 1710000000003,
+    };
+
+    const html = renderToStaticMarkup(
+      <ChatHistoryPanel
+        chats={[runningChat, idleChat]}
+        configuredAgents={configuredAgents}
+        channels={channels}
+        activeChatId="chat-running"
+        onSelectChat={() => undefined}
+        onOpenContextMenu={() => undefined}
+        onDeleteChat={() => undefined}
+      />,
+    );
+
+    expect(html).toContain("chat-row-status is-running");
+    expect(html).toContain("Running · 12:00 AM");
+    expect(html).toContain("chat-row-status is-idle");
+    expect(html).toContain("Idle · 12:00 AM");
+    expect(html).not.toContain("Replied");
+    expect(html).not.toContain("Stopped");
+  });
+
+  test("orders chat tabs by updated time", () => {
+    const olderChat: ChatSession = {
+      id: "chat-older",
+      title: "Older chat",
+      configuredAgentId: "repo-reviewer",
+      modelId: "gpt-5.5",
+      sessionId: undefined,
+      running: false,
+      messages: [],
+      pendingAssistantMessageId: undefined,
+      lastError: undefined,
+      createdAt: 1710000000000,
+      updatedAt: 1710000000000,
+    };
+    const newerChat: ChatSession = {
+      id: "chat-newer",
+      title: "Newer chat",
+      configuredAgentId: "repo-reviewer",
+      modelId: "gpt-5.5",
+      sessionId: undefined,
+      running: false,
+      messages: [],
+      pendingAssistantMessageId: undefined,
+      lastError: undefined,
+      createdAt: 1710000000001,
+      updatedAt: 1710000005000,
+    };
+
+    const html = renderToStaticMarkup(
+      <ChatHistoryPanel
+        chats={[olderChat, newerChat]}
+        configuredAgents={configuredAgents}
+        channels={channels}
+        activeChatId="chat-newer"
+        onSelectChat={() => undefined}
+        onOpenContextMenu={() => undefined}
+        onDeleteChat={() => undefined}
+      />,
+    );
+
+    expect(html.indexOf("Newer chat")).toBeLessThan(html.indexOf("Older chat"));
   });
 
   test("renders workflow context menu actions and rename dialog", () => {
@@ -2309,7 +2557,6 @@ describe("TaskPage", () => {
         onPromptChange={() => undefined}
         onSelectConfiguredAgent={() => undefined}
         onChooseWorkDir={async () => undefined}
-        onRefresh={async () => undefined}
         onRunTask={async () => undefined}
         onRerunTask={async () => undefined}
         onSelectTask={async () => undefined}
@@ -2371,7 +2618,6 @@ describe("TaskPage", () => {
         onPromptChange={() => undefined}
         onSelectConfiguredAgent={() => undefined}
         onChooseWorkDir={async () => undefined}
-        onRefresh={async () => undefined}
         onRunTask={async () => undefined}
         onRerunTask={async () => undefined}
         onSelectTask={async () => undefined}
@@ -2461,7 +2707,6 @@ describe("TeamPage", () => {
         onRunTeam={async () => undefined}
         onStopTeamRun={async () => undefined}
         onChooseWorkDir={async () => undefined}
-        onRefresh={async () => undefined}
       />,
     );
 
@@ -2556,7 +2801,6 @@ describe("TeamPage", () => {
         onRunTeam={async () => undefined}
         onStopTeamRun={async () => undefined}
         onChooseWorkDir={async () => undefined}
-        onRefresh={async () => undefined}
       />,
     );
 
@@ -2590,7 +2834,6 @@ describe("TeamPage", () => {
         onRunTeam={async () => undefined}
         onStopTeamRun={async () => undefined}
         onChooseWorkDir={async () => undefined}
-        onRefresh={async () => undefined}
       />,
     );
 
@@ -2624,7 +2867,6 @@ describe("TeamPage", () => {
         onRunTeam={async () => undefined}
         onStopTeamRun={async () => undefined}
         onChooseWorkDir={async () => undefined}
-        onRefresh={async () => undefined}
       />,
     );
 
@@ -2659,7 +2901,6 @@ describe("TeamPage", () => {
         onRunTeam={async () => undefined}
         onStopTeamRun={async () => undefined}
         onChooseWorkDir={async () => undefined}
-        onRefresh={async () => undefined}
       />,
     );
 
@@ -2699,7 +2940,6 @@ describe("TeamPage", () => {
         onRunTeam={async () => undefined}
         onStopTeamRun={async () => undefined}
         onChooseWorkDir={async () => undefined}
-        onRefresh={async () => undefined}
       />,
     );
 
@@ -3045,7 +3285,7 @@ describe("WorkflowPage", () => {
     expect(html).toContain("Agent 8");
   });
 
-  test("renders workflow output documents from final report paths", () => {
+  test("extracts workflow output document paths from text", () => {
     expect(extractWorkflowOutputDocuments("产物见 docs/learning-highlights.md 和 [summary](reports/summary.md).")).toEqual([
       { path: "docs/learning-highlights.md", title: "learning-highlights.md" },
       { path: "reports/summary.md", title: "summary.md" },
@@ -3059,39 +3299,6 @@ describe("WorkflowPage", () => {
         "证据包含 README.md；最终产物见 .multi-agent-chat/workflows/wf_review/outputs/learning-highlights.md。",
       ),
     ).toEqual([{ path: ".multi-agent-chat/workflows/wf_review/outputs/learning-highlights.md", title: "learning-highlights.md" }]);
-
-    const html = renderToStaticMarkup(
-      <WorkflowPage
-        workflowId="wf_review"
-        title="qjagents Agent 功能速览"
-        status="completed"
-        graph={graph}
-        graphReady
-        objective="Review qjagents"
-        messages={[]}
-        reply=""
-        error={undefined}
-        configuredAgentId="repo-reviewer"
-        runtimes={runtimes}
-        channels={channels}
-        workDir="/tmp/workspace"
-        running={false}
-        finalReport="## Final User Report\n证据包含 README.md；最终产物见 .multi-agent-chat/workflows/wf_review/outputs/learning-highlights.md。"
-        onObjectiveChange={() => undefined}
-        onSelectConfiguredAgent={() => undefined}
-        onDraftGraph={() => undefined}
-        onReplyChange={() => undefined}
-        onSendReply={() => undefined}
-        onUpdateNode={() => undefined}
-        onRunGraph={async () => undefined}
-        onResetSession={() => undefined}
-      />,
-    );
-
-    expect(html).toContain("Output documents");
-    expect(html).toContain("learning-highlights.md");
-    expect(html).toContain(".multi-agent-chat/workflows/wf_review/outputs/learning-highlights.md");
-    expect(html).not.toContain("README.md</span>");
   });
 
   test("renders workflow history beside the workflow workspace", () => {
@@ -3699,8 +3906,10 @@ workflowGraph.upsert({
     expect(html).toContain("Payment release is ready with one follow-up risk.");
     expect(html).toContain("Workflow transcript");
     expect(html).toContain("Main agent report ready");
-    expect(styles.indexOf(".workflow-result-card .workflow-final-report")).toBeLessThan(styles.indexOf(".workflow-result-card .workflow-graph-board"));
-    expect(styles).toContain(".workflow-result-card .workflow-final-report {\n  order: 1;");
+    // Graph is shown first, then run outputs flow below it.
+    expect(styles).toContain(".workflow-result-card .workflow-graph-board {\n  order: 1;");
+    expect(styles).toContain(".workflow-result-card .workflow-run-progress {\n  order: 2;");
+    expect(styles).toContain(".workflow-result-card .workflow-final-report {\n  order: 3;");
   });
 
   test("shows validation errors and disables execution for cyclic graphs", () => {

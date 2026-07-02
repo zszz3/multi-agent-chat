@@ -138,6 +138,7 @@ export function ResourceSidebar({
           contextMenu={chatModel.contextMenu}
           newChatLabel={text.chrome.newChat}
           runningLabel={language === "zh" ? "运行中" : "Running"}
+          idleLabel={language === "zh" ? "空闲" : "Idle"}
           onCreateChat={onCreateChat}
           onSelectChat={onSelectChat}
           onOpenContextMenu={onOpenChatContextMenu}
@@ -267,7 +268,7 @@ function TaskResourcePanel({
                   <TaskStatusChip label={task.running ? "Running" : taskProgressLabel(task.progress)} tone={task.running ? "running" : task.progress} />
                 </div>
                 <strong>{task.title}</strong>
-                <span>{`${task.status} · ${formatTime(task.updatedAt)}`}</span>
+                <span>{`${task.status} | ${formatTime(task.updatedAt)}`}</span>
               </button>
             );
           })

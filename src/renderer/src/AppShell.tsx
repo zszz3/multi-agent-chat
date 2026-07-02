@@ -849,7 +849,6 @@ export function AppShell() {
             onSelectConfiguredAgent={setTaskConfiguredAgent}
             onSelectModel={setTaskModelId}
             onChooseWorkDir={chooseWorkDir}
-            onRefresh={refresh}
             onRunTask={runTask}
             onRerunTask={rerunTask}
             onSelectTask={openTaskDetail}
@@ -957,7 +956,6 @@ export function AppShell() {
             onSelectConfiguredAgent={setActiveChatConfiguredAgent}
             onSelectModel={setActiveChatModel}
             onChooseWorkDir={chooseWorkDir}
-            onRefresh={refresh}
           />
         )}
         </main>
