@@ -1,5 +1,5 @@
 import { useEffect, useRef, useState, type DragEvent, type MouseEvent } from "react";
-import { CircleStop, FolderOpen, GitBranch, GripVertical, Play, Plus, RefreshCw, Save, Trash2, UserPlus, Users, Wand2, X } from "lucide-react";
+import { CircleStop, FolderOpen, GitBranch, GripVertical, Play, Plus, Save, Trash2, UserPlus, Users, Wand2, X } from "lucide-react";
 import { DEFAULT_MODEL_ID } from "../../../../shared/models";
 import type {
   AgentChannel,
@@ -58,7 +58,6 @@ interface TeamPageProps {
   onRunTeam: (teamId: string) => MaybePromise;
   onStopTeamRun: (teamRunId: string) => MaybePromise;
   onChooseWorkDir: () => MaybePromise;
-  onRefresh: () => MaybePromise;
 }
 
 export function TeamPage({
@@ -81,7 +80,6 @@ export function TeamPage({
   onRunTeam,
   onStopTeamRun,
   onChooseWorkDir,
-  onRefresh,
 }: TeamPageProps) {
   const activeTeam = teams.find((team) => team.id === activeTeamId) ?? teams[0];
   const activeTeamRuns = activeTeam ? teamRuns.filter((run) => run.teamId === activeTeam.id) : [];
@@ -419,9 +417,6 @@ export function TeamPage({
                 >
                   <FolderOpen size={14} />
                   <span>{workDir || "Choose workdir"}</span>
-                </button>
-                <button className="icon-btn flat composer-refresh-btn" onClick={() => void onRefresh()} title="Refresh agents">
-                  <RefreshCw size={13} />
                 </button>
                 <button className="send-btn" onClick={() => void onRunTeam(activeTeam.id)} disabled={!canRun}>
                   <Play size={14} />

@@ -28,7 +28,7 @@ describe("createLocalTextFilePreview", () => {
     await writeFile(outsideFile, "# Outside", "utf8");
 
     await expect(createLocalTextFilePreview(outsideFile, workDir, tmpdir())).rejects.toThrow(
-      "Only files under the current work directory can be previewed.",
+      "Only files under the current work directory can be used.",
     );
   });
 });

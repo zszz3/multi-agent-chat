@@ -2,12 +2,14 @@ import { useEffect, useRef, useState, type MouseEvent, type ReactElement } from 
 import { Bot, CircleStop, FileInput, GitBranch, Maximize2, Play, Send, Wand2, X } from "lucide-react";
 import { DEFAULT_MODEL_ID } from "../../../../shared/models";
 import { WORKFLOW_TOTAL_QUESTION_COUNT } from "../../../../shared/workflow-agent";
+import { WORKFLOW_FINAL_REVIEW_NODE_ID } from "../../../../shared/workflow-run";
 import { validateWorkflowGraph } from "../../../../shared/workflow-graph";
 import type {
   AgentChannel,
   AgentRuntime,
   ConfiguredAgent,
   LocalFilePreview,
+  RegisteredArtifact,
   WorkflowGraph,
   WorkflowGraphNode,
   WorkflowGrillMessage,
@@ -58,10 +60,23 @@ const WORKFLOW_TEXT = {
     dagValid: "DAG 有效",
     dagInvalid: "DAG 无效",
     runProgress: "运行进度",
+    pauseNode: "暂停节点",
+    startNode: "开始节点",
+    gateAnswerPlaceholder: "输入你的决定...",
+    gateSubmit: "提交决定",
     finalReport: "主 Agent 总结",
     completed: "工作流已完成",
+    registeredArtifacts: "Agent 登记的产出",
     outputDocuments: "产出文档",
     files: "个文件",
+    nodeAgentField: "Agent（本节点）",
+    nodeAgentDefault: "跟随工作流默认",
+    nodeInfoAgent: "执行 Agent",
+    nodeInfoObjective: "总目标",
+    nodeInfoInputs: "输入来源",
+    nodeInfoNoUpstream: "无上游节点，仅依据总目标和本节点指令",
+    nodeInfoOutput: "产出",
+    nodeInfoOutputValue: "Work Completion Report + Handoff（写入共享上下文）",
     loading: "读取中",
     closePreview: "关闭文档预览",
     largeFile: "文件较大，仅显示前 512KB。",
@@ -85,10 +100,23 @@ const WORKFLOW_TEXT = {
     dagValid: "DAG valid",
     dagInvalid: "DAG invalid",
     runProgress: "Run progress",
+    pauseNode: "Pause node",
+    startNode: "Start node",
+    gateAnswerPlaceholder: "Enter your decision...",
+    gateSubmit: "Submit decision",
     finalReport: "Main agent summary",
     completed: "Workflow completed",
+    registeredArtifacts: "Agent-published artifacts",
     outputDocuments: "Output documents",
     files: "files",
+    nodeAgentField: "Agent (this node)",
+    nodeAgentDefault: "Follow workflow default",
+    nodeInfoAgent: "Runs with",
+    nodeInfoObjective: "Objective",
+    nodeInfoInputs: "Inputs from",
+    nodeInfoNoUpstream: "No upstream nodes — uses the objective and this node's prompt only",
+    nodeInfoOutput: "Produces",
+    nodeInfoOutputValue: "Work Completion Report + Handoff (appended to shared context)",
     loading: "Loading",
     closePreview: "Close document preview",
     largeFile: "File is large; showing the first 512KB.",
@@ -119,9 +147,14 @@ interface WorkflowPageProps {
   workDir: string;
   running: boolean;
   runProgress?: WorkflowRunProgressItem[];
+  activeRunId?: string | undefined;
+  artifacts?: RegisteredArtifact[];
   contextDocument?: string;
   finalReport?: string;
   onObjectiveChange: (value: string) => void;
+  onPauseNode?: (nodeId: string) => MaybePromise;
+  onStartNode?: (nodeId: string) => MaybePromise;
+  onAnswerGate?: (nodeId: string, answer: string) => MaybePromise;
   onSelectConfiguredAgent: (configuredAgentId: string) => void;
   onSelectModel?: (modelId: string) => void;
   onDraftGraph: () => void;
@@ -132,7 +165,6 @@ interface WorkflowPageProps {
   onResetSession: () => MaybePromise;
   onStopGrill?: () => void;
   onChooseWorkDir?: () => MaybePromise;
-  onRefresh?: () => MaybePromise;
   onReadOutputFile?: (filePath: string) => Promise<LocalFilePreview>;
   language?: Language;
   defaultGraphExpanded?: boolean;
@@ -156,9 +188,14 @@ export function WorkflowPage({
   workDir,
   running,
   runProgress = [],
+  activeRunId,
+  artifacts = [],
   contextDocument = "",
   finalReport = "",
   onObjectiveChange,
+  onPauseNode,
+  onStartNode,
+  onAnswerGate,
   onSelectConfiguredAgent,
   onSelectModel = () => undefined,
   onDraftGraph,
@@ -169,7 +206,6 @@ export function WorkflowPage({
   onResetSession,
   onStopGrill = () => undefined,
   onChooseWorkDir = () => undefined,
-  onRefresh = () => undefined,
   onReadOutputFile,
   language = "en",
   defaultGraphExpanded = false,
@@ -216,6 +252,7 @@ export function WorkflowPage({
   const composerCanSend = Boolean(composerValue.trim()) && !running;
   const composerLocked = workflowStarted || running;
   const [graphExpanded, setGraphExpanded] = useState(defaultGraphExpanded);
+  const [gateAnswers, setGateAnswers] = useState<Record<string, string>>({});
   const [editingWorkflowNodeId, setEditingWorkflowNodeId] = useState<string | undefined>(undefined);
   const [filePreview, setFilePreview] = useState<LocalFilePreview | undefined>(undefined);
   const [filePreviewError, setFilePreviewError] = useState<string | undefined>(undefined);
@@ -279,11 +316,17 @@ export function WorkflowPage({
 
   function renderWorkflowNodeCard(node: WorkflowGraphNode, compact: boolean): ReactElement {
     const nodeRunProgress = runProgressByNodeId.get(node.id);
-    const nodeMeta = node.kind === "agent" ? (
-      <div className="workflow-node-meta-row">
-        <span>{truncateWorkflowContext(node.prompt || "No node prompt.", compact ? 80 : 140)}</span>
-      </div>
-    ) : null;
+    const nodeAgentId = node.configuredAgentId || configuredAgentId;
+    const nodeAgentConfig = configuredAgentById(nodeAgentId, configuredAgents);
+    const nodeAgentName = nodeAgentConfig?.name || nodeAgentId || "default";
+    const nodeModelId = node.modelId || (node.configuredAgentId ? nodeAgentConfig?.modelId : modelId) || modelId;
+    const nodeAgentRow =
+      node.kind === "agent" ? (
+        <div className="workflow-node-agent-row" title={`Agent: ${nodeAgentName} · Model: ${nodeModelId}`}>
+          <span className="workflow-node-agent-name">{nodeAgentName}</span>
+          <span className="workflow-node-agent-model">{nodeModelId}</span>
+        </div>
+      ) : null;
 
     const NodeKindIcon = node.kind === "start" ? Play : node.kind === "end" ? CircleStop : Bot;
     const openNodeEditor = (event: MouseEvent) => {
@@ -308,10 +351,12 @@ export function WorkflowPage({
       return (
         <article
           className={`workflow-graph-card workflow-canvas-node-card is-${node.kind} ${nodeRunProgress ? `run-${nodeRunProgress.status}` : ""}`}
+          onClick={openNodeEditor}
           onContextMenu={openNodeEditor}
+          title="Click to view details"
         >
           {cardHead}
-          {nodeMeta}
+          {nodeAgentRow}
           {nodeRunProgress?.detail ? <div className={`workflow-node-run-detail is-${nodeRunProgress.status}`}>{nodeRunProgress.detail}</div> : null}
         </article>
       );
@@ -320,10 +365,12 @@ export function WorkflowPage({
     return (
       <article
         className={`workflow-graph-card workflow-canvas-node-card workflow-expanded-node-card is-${node.kind} ${nodeRunProgress ? `run-${nodeRunProgress.status}` : ""}`}
+        onClick={openNodeEditor}
         onContextMenu={openNodeEditor}
+        title="Click to view details"
       >
         {cardHead}
-        {nodeMeta}
+        {nodeAgentRow}
         {nodeRunProgress?.detail ? <div className={`workflow-node-run-detail is-${nodeRunProgress.status}`}>{nodeRunProgress.detail}</div> : null}
       </article>
     );
@@ -331,6 +378,15 @@ export function WorkflowPage({
 
   function renderWorkflowNodeEditor(node: WorkflowGraphNode): ReactElement {
     const disabled = running;
+    const editorAgentId = node.configuredAgentId || configuredAgentId;
+    const editorAgentConfig = configuredAgentById(editorAgentId, configuredAgents);
+    const editorAgentName = editorAgentConfig?.name || editorAgentId || "default";
+    const editorModelId = node.modelId || (node.configuredAgentId ? editorAgentConfig?.modelId : modelId) || modelId;
+    const upstreamTitles = graph.edges
+      .filter((edge) => edge.toNodeId === node.id)
+      .map((edge) => graph.nodes.find((item) => item.id === edge.fromNodeId))
+      .filter((item): item is WorkflowGraphNode => Boolean(item && item.kind === "agent"))
+      .map((item) => item.title);
 
     return (
       <section className="workflow-node-edit-overlay" role="dialog" aria-modal="true" aria-label="Edit workflow node" onClick={() => setEditingWorkflowNodeId(undefined)}>
@@ -359,6 +415,44 @@ export function WorkflowPage({
                 rows={8}
               />
             </label>
+          ) : null}
+          {node.kind === "agent" ? (
+            <label className="workflow-node-edit-field">
+              <span>{workflowText.nodeAgentField}</span>
+              <select
+                aria-label={`Node ${node.id} agent`}
+                value={node.configuredAgentId ?? ""}
+                disabled={disabled}
+                onChange={(event) => onUpdateNode(node.id, { configuredAgentId: event.currentTarget.value || undefined })}
+              >
+                <option value="">{`${workflowText.nodeAgentDefault}（${configuredAgentById(configuredAgentId, configuredAgents)?.name || configuredAgentId || "default"}）`}</option>
+                {configuredAgents.map((agent) => (
+                  <option key={agent.id} value={agent.id}>
+                    {agent.name}
+                  </option>
+                ))}
+              </select>
+            </label>
+          ) : null}
+          {node.kind === "agent" ? (
+            <div className="workflow-node-edit-info" aria-label="Node runtime inputs and outputs">
+              <div className="workflow-node-edit-info-row">
+                <span>{workflowText.nodeInfoAgent}</span>
+                <strong>{editorAgentName} · {editorModelId}</strong>
+              </div>
+              <div className="workflow-node-edit-info-row">
+                <span>{workflowText.nodeInfoObjective}</span>
+                <strong>{objective || "—"}</strong>
+              </div>
+              <div className="workflow-node-edit-info-row">
+                <span>{workflowText.nodeInfoInputs}</span>
+                <strong>{upstreamTitles.length > 0 ? upstreamTitles.join("、") : workflowText.nodeInfoNoUpstream}</strong>
+              </div>
+              <div className="workflow-node-edit-info-row">
+                <span>{workflowText.nodeInfoOutput}</span>
+                <strong>{workflowText.nodeInfoOutputValue}</strong>
+              </div>
+            </div>
           ) : null}
         </article>
       </section>
@@ -456,14 +550,79 @@ export function WorkflowPage({
                   <span>{workflowRunProgressSummary(runProgress)}</span>
                 </div>
                 <div className="workflow-run-progress-list">
-                  {runProgress.map((item) => (
-                    <div key={item.nodeId} className={`workflow-run-progress-item is-${item.status}`}>
-                      <span>{workflowRunStatusLabel(item.status)}</span>
-                      <strong>{item.title}</strong>
-                      {item.detail ? <small>{item.detail}</small> : null}
-                    </div>
-                  ))}
+                  {runProgress.map((item) => {
+                    const controllable = Boolean(activeRunId) && item.nodeId !== WORKFLOW_FINAL_REVIEW_NODE_ID;
+                    const canPause = controllable && item.status === "running" && typeof onPauseNode === "function";
+                    const canStart = controllable && (item.status === "paused" || item.status === "failed") && typeof onStartNode === "function";
+                    return (
+                      <div key={item.nodeId} className={`workflow-run-progress-item is-${item.status}`}>
+                        <span>{workflowRunStatusLabel(item.status)}</span>
+                        <strong>{item.title}</strong>
+                        {item.detail ? <small>{item.detail}</small> : null}
+                        {canPause ? (
+                          <button
+                            type="button"
+                            className="workflow-node-control icon-btn"
+                            onClick={() => void onPauseNode?.(item.nodeId)}
+                            title={workflowText.pauseNode}
+                            aria-label={`${workflowText.pauseNode}: ${item.title}`}
+                          >
+                            <CircleStop size={14} />
+                          </button>
+                        ) : null}
+                        {canStart ? (
+                          <button
+                            type="button"
+                            className="workflow-node-control icon-btn"
+                            onClick={() => void onStartNode?.(item.nodeId)}
+                            title={workflowText.startNode}
+                            aria-label={`${workflowText.startNode}: ${item.title}`}
+                          >
+                            <Play size={14} />
+                          </button>
+                        ) : null}
+                      </div>
+                    );
+                  })}
                 </div>
+                {runProgress
+                  .filter((item) => item.status === "awaiting_input" && item.nodeId !== WORKFLOW_FINAL_REVIEW_NODE_ID && typeof onAnswerGate === "function")
+                  .map((item) => {
+                    const gateDraft = gateAnswers[item.nodeId] ?? "";
+                    const submitGate = (): void => {
+                      const answer = gateDraft.trim();
+                      if (!answer) return;
+                      void onAnswerGate?.(item.nodeId, answer);
+                      setGateAnswers((current) => ({ ...current, [item.nodeId]: "" }));
+                    };
+                    return (
+                      <div key={`gate-${item.nodeId}`} className="workflow-gate-panel">
+                        <div className="workflow-gate-panel-head">
+                          <span className="workflow-gate-panel-badge">{workflowRunStatusLabel("awaiting_input")}</span>
+                          <strong>{item.title}</strong>
+                        </div>
+                        {item.detail ? <p className="workflow-gate-panel-question">{item.detail}</p> : null}
+                        <textarea
+                          className="workflow-gate-panel-input"
+                          value={gateDraft}
+                          placeholder={workflowText.gateAnswerPlaceholder}
+                          rows={3}
+                          onChange={(event) => setGateAnswers((current) => ({ ...current, [item.nodeId]: event.target.value }))}
+                          onKeyDown={(event) => {
+                            if (event.key === "Enter" && (event.metaKey || event.ctrlKey)) {
+                              event.preventDefault();
+                              submitGate();
+                            }
+                          }}
+                        />
+                        <div className="workflow-gate-panel-actions">
+                          <button type="button" className="workflow-node-gate-submit" onClick={submitGate} disabled={!gateDraft.trim()}>
+                            {workflowText.gateSubmit}
+                          </button>
+                        </div>
+                      </div>
+                    );
+                  })}
               </section>
             ) : null}
             {finalReportVisible ? (
@@ -474,6 +633,50 @@ export function WorkflowPage({
                 </div>
                 <div className="workflow-final-report-body">
                   <Markdown text={finalReport} />
+                </div>
+              </section>
+            ) : null}
+            {artifacts.length > 0 ? (
+              <section className="workflow-output-documents" aria-label="Registered artifacts">
+                <div className="workflow-output-documents-head">
+                  <strong>{workflowText.registeredArtifacts}</strong>
+                  <span>{`${artifacts.length} ${workflowText.files}`}</span>
+                </div>
+                <div className="workflow-output-document-list">
+                  {artifacts.map((artifact) =>
+                    artifact.kind === "file" && artifact.path ? (
+                      <button
+                        key={artifact.id}
+                        className="workflow-output-document"
+                        onClick={() => void openOutputDocument(artifact.path as string)}
+                        disabled={filePreviewLoadingPath === artifact.path}
+                        title={artifact.description || artifact.path}
+                      >
+                        <FileInput size={14} />
+                        <span>{artifact.title}</span>
+                        <small>{artifact.description || artifact.path}</small>
+                      </button>
+                    ) : artifact.kind === "url" && artifact.url ? (
+                      <a
+                        key={artifact.id}
+                        className="workflow-output-document"
+                        href={artifact.url}
+                        target="_blank"
+                        rel="noreferrer"
+                        title={artifact.description || artifact.url}
+                      >
+                        <FileInput size={14} />
+                        <span>{artifact.title}</span>
+                        <small>{artifact.description || artifact.url}</small>
+                      </a>
+                    ) : (
+                      <div key={artifact.id} className="workflow-output-document" title={artifact.description || artifact.title}>
+                        <FileInput size={14} />
+                        <span>{artifact.title}</span>
+                        {artifact.description ? <small>{artifact.description}</small> : null}
+                      </div>
+                    ),
+                  )}
                 </div>
               </section>
             ) : null}
@@ -574,7 +777,6 @@ export function WorkflowPage({
               onSelectConfiguredAgent={onSelectConfiguredAgent}
               onSelectModel={onSelectModel}
               onChooseWorkDir={onChooseWorkDir}
-              onRefresh={onRefresh}
             />
             <div className="workflow-composer-actions">
               {!graphVisible && grillComplete ? (

@@ -1,5 +1,5 @@
 import type { MouseEvent } from "react";
-import { Plus, SquarePen, Trash2 } from "lucide-react";
+import { SquarePen, Trash2 } from "lucide-react";
 import { agentAccent, configuredAgentById, configuredAgentRuntimeId, resolveConfiguredAgentChannel } from "../../app/agents";
 import { formatTime } from "../../app/format";
 import type { AgentChannel, ChatSession, ConfiguredAgent } from "../../../../shared/types";
@@ -12,9 +12,8 @@ interface ChatHistoryPanelProps {
   channels: AgentChannel[];
   activeChatId?: string | undefined;
   contextMenu?: { chatId: string; x: number; y: number } | undefined;
-  newChatLabel?: string;
   runningLabel?: string;
-  onCreateChat: () => MaybePromise;
+  idleLabel?: string;
   onSelectChat: (chatId: string) => MaybePromise;
   onOpenContextMenu: (event: MouseEvent, chatId: string) => void;
   onDeleteChat: (chatId: string) => MaybePromise;
@@ -26,9 +25,8 @@ export function ChatHistoryPanel({
   channels,
   activeChatId,
   contextMenu,
-  newChatLabel = "New chat",
   runningLabel = "Running",
-  onCreateChat,
+  idleLabel = "Idle",
   onSelectChat,
   onOpenContextMenu,
   onDeleteChat,
@@ -39,17 +37,15 @@ export function ChatHistoryPanel({
         <span>Chats</span>
         <SquarePen size={14} />
       </div>
-      <div className="new-chat-menu-wrap">
-        <button className="new-chat-compact-btn" onClick={() => void onCreateChat()}>
-          <Plus size={13} />
-          <span>{newChatLabel}</span>
-        </button>
-      </div>
       <div className="chat-list">
-        {chats.map((chat) => {
+        {[...chats].sort((left, right) => right.updatedAt - left.updatedAt).map((chat) => {
           const agent = configuredAgentById(chat.configuredAgentId, configuredAgents);
           const channel = resolveConfiguredAgentChannel(agent, channels);
           const runtimeId = configuredAgentRuntimeId(agent, channel);
+          const status = chatRowStatus(chat, {
+            running: runningLabel,
+            idle: idleLabel,
+          });
           return (
             <button
               key={chat.id}
@@ -60,7 +56,9 @@ export function ChatHistoryPanel({
             >
               <span className={`runtime-dot ${agentAccent(runtimeId)} ${chat.running ? "is-pulsing" : ""}`} />
               <strong>{chat.title}</strong>
-              <span>{chat.running ? runningLabel : formatTime(chat.updatedAt)}</span>
+              <span className={`chat-row-status ${status.className}`} title={status.title}>
+                {status.label}
+              </span>
             </button>
           );
         })}
@@ -83,4 +81,26 @@ export function ChatHistoryPanel({
       ) : null}
     </section>
   );
+}
+
+function chatRowStatus(
+  chat: ChatSession,
+  labels: { running: string; idle: string },
+): { className: string; label: string; title: string } {
+  const time = formatTime(chat.updatedAt);
+  if (chat.running) {
+    const label = `${labels.running} · ${time}`;
+    return {
+      className: "is-running",
+      label,
+      title: label,
+    };
+  }
+
+  const label = `${labels.idle} · ${time}`;
+  return {
+    className: "is-idle",
+    label,
+    title: label,
+  };
 }

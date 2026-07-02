@@ -230,8 +230,6 @@ function targetLabel(target: SkillInstallTarget): string {
 type MaybePromise = void | Promise<void>;
 const WORKFLOW_TASK_POLL_MS = 1000;
 const WORKFLOW_TASK_TIMEOUT_MS = 30 * 60 * 1000;
-const WORKFLOW_NODE_MAX_ATTEMPTS = 2;
-const WORKFLOW_FINAL_REVIEW_NODE_ID = "__final_review__";
 
 const DEFAULT_SNAPSHOT: AppSnapshot = {
   detectedAt: 0,
@@ -260,6 +258,7 @@ const DEFAULT_SNAPSHOT: AppSnapshot = {
     runs: [],
   },
   workflowDraft: undefined,
+  artifacts: [],
 };
 
 function activeChatFrom(snapshot: AppSnapshot): ChatSession | undefined {
@@ -378,14 +377,6 @@ function createWorkflowId(): string {
 
 function delay(ms: number): Promise<void> {
   return new Promise((resolve) => window.setTimeout(resolve, ms));
-}
-
-function taskArtifact(task: TaskRun): string {
-  const assistantMessage = [...task.messages].reverse().find((message) => message.role === "assistant" && message.content.trim());
-  if (assistantMessage) return assistantMessage.content.trim();
-  const errorMessage = [...task.messages].reverse().find((message) => message.role === "error" && message.content.trim());
-  if (errorMessage) return errorMessage.content.trim();
-  return `${task.title} completed without assistant output.`;
 }
 
 function compactWorkflowActivity(content: string, limit = 140): string {
@@ -755,6 +746,7 @@ export function App() {
   const workflowDraftHydratedRef = useRef(false);
   const workflowDraftHydratingRef = useRef(false);
   const workflowDraftSaveTimerRef = useRef<number | undefined>(undefined);
+  const workflowDraftAppliedUpdatedAtRef = useRef(0);
   const snapshotRef = useRef(snapshot);
   const workflowRunningRef = useRef(workflowRunning);
   const workflowStoreIds = snapshot.workflowStore.workflows.map((workflow) => workflow.workflowId).join(":");
@@ -874,9 +866,11 @@ export function App() {
 
   function applyPersistedWorkflowDraft(draft: WorkflowDraftState): void {
     workflowDraftHydratingRef.current = true;
+    workflowDraftAppliedUpdatedAtRef.current = draft.updatedAt;
     setWorkflowId(draft.workflowId);
     setWorkflowTitle(draft.title);
     setWorkflowStatus(draft.status);
+    setWorkflowRunning(draft.status === "running");
     setWorkflowRevision(draft.revision);
     setWorkflowConfiguredAgentId(draft.configuredAgentId);
     setWorkflowModelId(draft.modelId);
@@ -973,9 +967,15 @@ export function App() {
   useEffect(() => {
     const activeWorkflow = snapshot.workflowDraft;
     if (!workflowDraftHydratedRef.current || !activeWorkflow) return;
-    if (activeWorkflow.workflowId === workflowId && activeWorkflow.revision === workflowRevision) return;
+    if (
+      activeWorkflow.workflowId === workflowId &&
+      activeWorkflow.revision === workflowRevision &&
+      activeWorkflow.updatedAt === workflowDraftAppliedUpdatedAtRef.current
+    ) {
+      return;
+    }
     applyPersistedWorkflowDraft(activeWorkflow);
-  }, [snapshot.workflowStore.activeWorkflowId, snapshot.workflowDraft?.workflowId, snapshot.workflowDraft?.revision]);
+  }, [snapshot.workflowStore.activeWorkflowId, snapshot.workflowDraft?.workflowId, snapshot.workflowDraft?.revision, snapshot.workflowDraft?.updatedAt]);
 
   useEffect(() => {
     if (!workflowDraftHydratedRef.current || workflowDraftHydratingRef.current) return;
@@ -984,6 +984,7 @@ export function App() {
       workflowDraftSaveTimerRef.current = undefined;
       const draft = buildWorkflowDraft();
       if (!draft) return;
+      workflowDraftAppliedUpdatedAtRef.current = draft.updatedAt;
       void window.multiAgentChat.updateWorkflowDraft(draft).then(setSnapshot);
     }, 300);
     return () => {
@@ -1926,7 +1927,7 @@ export function App() {
     });
     setSnapshot(runningSnapshot);
 
-    const result = await runWorkflowGraphInternal(workflow);
+    const result = await runWorkflowGraphInternal(workflow, { waitForCompletion: true });
     const finalStatus = result.ok ? "completed" : "failed";
     const message = result.ok ? "Workflow completed." : result.error || "Workflow failed.";
     const finishedSnapshot = await window.multiAgentChat.finishScheduledWorkflowRun(runId, {
@@ -1952,6 +1953,13 @@ export function App() {
     setWorkflowRunProgress([]);
     setWorkflowRunContextDocument("");
     setWorkflowFinalReport("");
+  }
+
+  // Layout-only changes (node dragging) must persist the new position without
+  // discarding an in-progress or finished run's state.
+  function syncWorkflowGraphLayout(nextGraph: WorkflowGraph): void {
+    setWorkflowGraph(nextGraph);
+    setWorkflowRevision((current) => current + 1);
   }
 
   function applyWorkflowGraphFromAgentContent(content: string): boolean {
@@ -2061,6 +2069,11 @@ export function App() {
       ...workflowGraph,
       nodes: workflowGraph.nodes.map((node) => (node.id === nodeId ? { ...node, ...update } : node)),
     };
+    const layoutOnly = Object.keys(update).length > 0 && Object.keys(update).every((key) => key === "position");
+    if (layoutOnly) {
+      syncWorkflowGraphLayout(nextGraph);
+      return;
+    }
     syncWorkflowGraph(nextGraph);
   }
 
@@ -2070,414 +2083,132 @@ export function App() {
   }
 
   async function runWorkflowGraph(): Promise<void> {
-    await runWorkflowGraphInternal();
+    await runWorkflowGraphInternal(undefined, { waitForCompletion: false });
   }
 
-  async function runWorkflowGraphInternal(targetWorkflow?: WorkflowDraftState): Promise<{ ok: boolean; workflowRunId?: string; error?: string }> {
-    const runWorkflowId = targetWorkflow?.workflowId ?? workflowId;
-    const runGraph = targetWorkflow?.graph ?? workflowGraph;
-    const runConfiguredAgentId = targetWorkflow?.configuredAgentId || workflowConfiguredAgentId || defaultConfiguredAgentId(snapshotRef.current.configuredAgents);
-    const runModelId = configuredAgentModelId(
-      runConfiguredAgentId,
-      targetWorkflow?.modelId || workflowModelId,
-      snapshotRef.current.configuredAgents,
-      snapshotRef.current.channels,
-    );
+  function activeWorkflowRunId(): string | undefined {
+    const runningRun = snapshot.workflowStore.runs.find((run) => run.workflowId === workflowId && run.status === "running");
+    return runningRun?.runId ?? workflowRunIds[workflowRunIds.length - 1];
+  }
+
+  async function pauseWorkflowNode(nodeId: string): Promise<void> {
+    const runId = activeWorkflowRunId();
+    if (!runId || typeof window.multiAgentChat.pauseWorkflowNode !== "function") return;
+    const result = await window.multiAgentChat.pauseWorkflowNode({ workflowId, runId, nodeId });
+    setSnapshot(await window.multiAgentChat.getSnapshot());
+    if (!result.ok && result.error) setWorkflowError(result.error);
+  }
+
+  async function startWorkflowNode(nodeId: string): Promise<void> {
+    const runId = activeWorkflowRunId();
+    if (!runId || typeof window.multiAgentChat.startWorkflowNode !== "function") return;
+    setWorkflowRunning(true);
+    setWorkflowStatus("running");
+    const result = await window.multiAgentChat.startWorkflowNode({ workflowId, runId, nodeId });
+    setSnapshot(await window.multiAgentChat.getSnapshot());
+    if (!result.ok && result.error) setWorkflowError(result.error);
+  }
+
+  async function answerWorkflowGate(nodeId: string, answer: string): Promise<void> {
+    const runId = activeWorkflowRunId();
+    if (!runId || typeof window.multiAgentChat.answerWorkflowGate !== "function") return;
+    setWorkflowRunning(true);
+    setWorkflowStatus("running");
+    const result = await window.multiAgentChat.answerWorkflowGate({ workflowId, runId, nodeId, answer });
+    setSnapshot(await window.multiAgentChat.getSnapshot());
+    if (!result.ok && result.error) setWorkflowError(result.error);
+  }
+
+  async function runWorkflowGraphInternal(
+    targetWorkflow?: WorkflowDraftState,
+    options: { waitForCompletion?: boolean } = {},
+  ): Promise<{ ok: boolean; workflowRunId?: string; error?: string }> {
+    const runtimeWorkflowId = targetWorkflow?.workflowId ?? workflowId;
+    const runtimeGraph = targetWorkflow?.graph ?? workflowGraph;
     const initialWorkflowContextDocument = targetWorkflow?.contextDocument ?? workflowContextDocument;
-    const runAgentSessionId = targetWorkflow?.agentSessionId ?? workflowAgentSessionId;
 
     if (targetWorkflow) {
-      applyPersistedWorkflowDraft(targetWorkflow);
+      applyPersistedWorkflowDraft(targetWorkflow as WorkflowDraftState);
       setActiveFeature("workflow");
     }
 
-    const validation = validateWorkflowGraph(runGraph);
+    const validation = validateWorkflowGraph(runtimeGraph);
     if (!validation.valid || workflowRunningRef.current) {
       const error = workflowRunningRef.current ? "Workflow is already running." : validation.errors.join(" ");
       setWorkflowError(error);
       return { ok: false, error };
     }
-    const executionLevels = workflowGraphExecutionLevels(runGraph);
-    if (executionLevels.length === 0) {
+    if (workflowGraphExecutionLevels(runtimeGraph).length === 0) {
       const error = "Workflow graph has no executable agent nodes.";
       setWorkflowError(error);
       return { ok: false, error };
     }
+    if (typeof window.multiAgentChat.runWorkflowGraph !== "function") {
+      const error = missingAppCapabilityMessage("Run workflow");
+      setWorkflowError(error);
+      return { ok: false, error };
+    }
+
     setWorkflowRunning(true);
     setWorkflowStatus("running");
     setWorkflowError(undefined);
     setWorkflowFinalReport("");
-    let activeWorkflowRunId: string | undefined;
-    let latestRunProgress: WorkflowRunProgressItem[] = [];
-    let finalRunContextDocument = "";
-    let finalReport = "";
-    try {
-      let latestSnapshot = snapshotRef.current;
-      const storagePlan = workflowStoragePlanFor(runWorkflowId);
-      const baseWorkflowContextDocument = [initialWorkflowContextDocument.trim(), workflowStoragePlanDocument(storagePlan)].filter(Boolean).join("\n\n");
-      latestSnapshot = await window.multiAgentChat.startWorkflowRun({
-        workflowId: runWorkflowId,
-        contextDocument: baseWorkflowContextDocument,
-      });
-      setSnapshot(latestSnapshot);
-      const runningWorkflow = latestSnapshot.workflowStore.workflows.find((workflow) => workflow.workflowId === runWorkflowId);
-      activeWorkflowRunId = runningWorkflow?.runIds.at(-1);
-      if (!activeWorkflowRunId) throw new Error("Workflow run did not start.");
-      setWorkflowRunIds(runningWorkflow?.runIds ?? workflowRunIds);
-      const nodeById = new Map(runGraph.nodes.map((node) => [node.id, node]));
-      latestRunProgress = executionLevels.flat().map((nodeId) => {
-        const node = nodeById.get(nodeId);
-        return {
-          nodeId,
-          title: node?.title ?? nodeId,
-          status: "queued",
-        };
-      });
-      setWorkflowRunProgress(latestRunProgress);
-      const updateWorkflowRunProgress = (nodeId: string, update: Partial<WorkflowRunProgressItem>): void => {
-        latestRunProgress = latestRunProgress.map((item) => (item.nodeId === nodeId ? { ...item, ...update } : item));
-        setWorkflowRunProgress(latestRunProgress);
-      };
-      const clearWorkflowRunProgressTaskId = (nodeId: string): void => {
-        latestRunProgress = latestRunProgress.map((item) => {
-          if (item.nodeId !== nodeId || item.taskId === undefined) return item;
-          const next = { ...item };
-          delete next.taskId;
-          return next;
-        });
-        setWorkflowRunProgress(latestRunProgress);
-      };
-      const cleanupWorkflowTask = async (taskId: string): Promise<void> => {
-        try {
-          latestSnapshot = await window.multiAgentChat.deleteTask(taskId);
-          setSnapshot(latestSnapshot);
-        } catch (error) {
-          console.warn("Failed to clean up workflow task", taskId, error);
-        }
-      };
-      setWorkflowRunContextDocument(baseWorkflowContextDocument);
-      const artifactsByNodeId = new Map<string, string>();
-      const contextArtifacts: Array<{ nodeId: string; title: string; summary: string }> = [];
-      let runContextDocument = baseWorkflowContextDocument;
-      finalRunContextDocument = baseWorkflowContextDocument;
-      const upstreamAgentNodeIdsByNodeId = new Map<string, string[]>();
-      for (const nodeId of validation.executableNodeIds) upstreamAgentNodeIdsByNodeId.set(nodeId, []);
-      for (const edge of runGraph.edges) {
-        const fromNode = nodeById.get(edge.fromNodeId);
-        if (fromNode?.kind !== "agent" || !upstreamAgentNodeIdsByNodeId.has(edge.toNodeId)) continue;
-        upstreamAgentNodeIdsByNodeId.get(edge.toNodeId)?.push(edge.fromNodeId);
-      }
-
-      const startWorkflowTask = async (request: {
-        prompt: string;
-        configuredAgentId: string;
-        modelId: string;
-        workDir: string;
-      }): Promise<TaskRun> => {
-        const existingTaskIds = new Set(latestSnapshot.tasks.map((task) => task.id));
-        latestSnapshot = await window.multiAgentChat.runTask(request);
-        setSnapshot(latestSnapshot);
-        const task = latestSnapshot.tasks
-          .filter((item) => !existingTaskIds.has(item.id))
-          .sort((left, right) => right.createdAt - left.createdAt)
-          .find((item) => item.prompt === request.prompt && item.configuredAgentId === request.configuredAgentId);
-        if (task) return task;
-        const fallbackTask = latestSnapshot.tasks.filter((item) => !existingTaskIds.has(item.id)).sort((left, right) => right.createdAt - left.createdAt)[0];
-        if (!fallbackTask) throw new Error("Workflow task creation did not return a new task.");
-        return fallbackTask;
-      };
-
-      const waitForTask = async (taskId: string, onTaskUpdate?: (task: TaskRun) => void): Promise<TaskRun> => {
-        const startedAt = Date.now();
-        while (Date.now() - startedAt < WORKFLOW_TASK_TIMEOUT_MS) {
-          const polledSnapshot = await window.multiAgentChat.getSnapshot();
-          latestSnapshot = polledSnapshot;
-          setSnapshot(polledSnapshot);
-          const task = polledSnapshot.tasks.find((item) => item.id === taskId);
-          if (!task) throw new Error(`Workflow task ${taskId} was deleted before completion.`);
-          onTaskUpdate?.(task);
-          if (task.status === "completed") return task;
-          if (task.status === "failed" || task.status === "stopped") {
-            throw new Error(task.lastError || `Workflow task ${task.title} ${task.status}.`);
-          }
-          await delay(WORKFLOW_TASK_POLL_MS);
-        }
-        throw new Error(`Workflow task ${taskId} timed out.`);
-      };
-
-      const upstreamArtifactsForNode = (node: WorkflowGraphNode): Array<{ node: WorkflowGraphNode; artifact: string }> =>
-        (upstreamAgentNodeIdsByNodeId.get(node.id) ?? [])
-          .map((upstreamNodeId) => {
-            const upstreamNode = nodeById.get(upstreamNodeId);
-            const artifact = artifactsByNodeId.get(upstreamNodeId);
-            return upstreamNode && artifact ? { node: upstreamNode, artifact } : undefined;
-          })
-          .filter((item): item is { node: WorkflowGraphNode; artifact: string } => Boolean(item));
-
-      const nodeAttemptPrompt = (node: WorkflowGraphNode, attempt: number, retryPrompt: string, contextDocument: string): string => {
-        const basePrompt = workflowNodeRunPrompt(runGraph, node, upstreamArtifactsForNode(node), contextDocument, storagePlan);
-        if (!retryPrompt.trim()) return basePrompt;
-        return [
-          basePrompt,
-          "",
-          `This is retry attempt ${attempt} of ${WORKFLOW_NODE_MAX_ATTEMPTS}.`,
-          "The workflow judge rejected the previous attempt. Address this retry instruction exactly:",
-          retryPrompt.trim(),
-        ].join("\n");
-      };
-
-      const startNodeAttempt = async (
-        node: WorkflowGraphNode,
-        attempt: number,
-        retryPrompt: string,
-        contextDocument: string,
-      ): Promise<{ node: WorkflowGraphNode; taskId: string; attempt: number }> => {
-        const prompt = nodeAttemptPrompt(node, attempt, retryPrompt, contextDocument);
-        const task = await startWorkflowTask({
-          prompt,
-          configuredAgentId: runConfiguredAgentId,
-          modelId: runModelId,
-          workDir: latestSnapshot.workDir,
-        });
-        updateWorkflowRunProgress(node.id, {
-          status: "running",
-          detail: attempt === 1 ? "Task running" : `Retry ${attempt}/${WORKFLOW_NODE_MAX_ATTEMPTS} running`,
-          taskId: task.id,
-        });
-        return { node, taskId: task.id, attempt };
-      };
-
-      const waitForNodeAttempt = async (startedTask: {
-        node: WorkflowGraphNode;
-        taskId: string;
-        attempt: number;
-      }): Promise<{ node: WorkflowGraphNode; task: TaskRun; attempt: number }> => {
-        try {
-          return {
-            node: startedTask.node,
-            task: await waitForTask(startedTask.taskId, (task) =>
-              updateWorkflowRunProgress(startedTask.node.id, {
-                status: "running",
-                detail: workflowTaskLiveDetail(task),
-                taskId: startedTask.taskId,
-              }),
-            ),
-            attempt: startedTask.attempt,
-          };
-        } catch (error) {
-          updateWorkflowRunProgress(startedTask.node.id, {
-            status: "failed",
-            detail: error instanceof Error ? error.message : String(error),
-            taskId: startedTask.taskId,
-          });
-          await cleanupWorkflowTask(startedTask.taskId);
-          clearWorkflowRunProgressTaskId(startedTask.node.id);
-          throw error;
-        }
-      };
-
-      const evaluateNodeAttempt = async (
-        node: WorkflowGraphNode,
-        artifact: string,
-        attempt: number,
-        contextDocument: string,
-      ): Promise<WorkflowJudgeResult> => {
-        updateWorkflowRunProgress(node.id, {
-          status: "running",
-          detail: `Evaluating attempt ${attempt}/${WORKFLOW_NODE_MAX_ATTEMPTS}`,
-        });
-        const judgeTask = await startWorkflowTask({
-          prompt: workflowJudgePrompt(runGraph, node, artifact, contextDocument, attempt, WORKFLOW_NODE_MAX_ATTEMPTS),
-          configuredAgentId: runConfiguredAgentId,
-          modelId: runModelId,
-          workDir: latestSnapshot.workDir,
-        });
-        const completedJudgeTask = await (async (): Promise<TaskRun> => {
-          try {
-            return await waitForTask(judgeTask.id, (task) =>
-              updateWorkflowRunProgress(node.id, {
-                status: "running",
-                detail: `Judge: ${workflowTaskLiveDetail(task)}`,
-              }),
-            );
-          } finally {
-            await cleanupWorkflowTask(judgeTask.id);
-          }
-        })();
-        const result = parseWorkflowJudgeResult(taskArtifact(completedJudgeTask));
-        if (!result) throw new Error(`Workflow judge for ${node.title} did not return workflowEvaluation.submit(...).`);
-        return result;
-      };
-
-      for (const level of executionLevels) {
-        const levelContextDocument = runContextDocument;
-        let pendingNodes = level.map((nodeId) => nodeById.get(nodeId)).filter((node): node is WorkflowGraphNode => Boolean(node && node.kind === "agent"));
-        const attemptsByNodeId = new Map<string, number>();
-        const retryPromptByNodeId = new Map<string, string>();
-
-        while (pendingNodes.length > 0) {
-          const startedTasks: Array<{ node: WorkflowGraphNode; taskId: string; attempt: number }> = [];
-          for (const node of pendingNodes) {
-            const attempt = (attemptsByNodeId.get(node.id) ?? 0) + 1;
-            attemptsByNodeId.set(node.id, attempt);
-            startedTasks.push(await startNodeAttempt(node, attempt, retryPromptByNodeId.get(node.id) ?? "", levelContextDocument));
-          }
-
-          const completedTasks = await Promise.all(startedTasks.map(waitForNodeAttempt));
-          const nextPendingNodes: WorkflowGraphNode[] = [];
-          for (const completedTask of completedTasks) {
-            const artifact = taskArtifact(completedTask.task);
-            const judge = await (async (): Promise<WorkflowJudgeResult> => {
-              try {
-                return await evaluateNodeAttempt(completedTask.node, artifact, completedTask.attempt, levelContextDocument);
-              } finally {
-                await cleanupWorkflowTask(completedTask.task.id);
-              }
-            })();
-            if (judge.complete) {
-              artifactsByNodeId.set(completedTask.node.id, artifact);
-              contextArtifacts.push({
-                nodeId: completedTask.node.id,
-                title: completedTask.node.title,
-                summary: workflowArtifactSummary(artifact),
-              });
-              runContextDocument = [baseWorkflowContextDocument.trim(), workflowContextDocumentFromArtifacts(contextArtifacts)].filter(Boolean).join("\n\n");
-              finalRunContextDocument = runContextDocument;
-              setWorkflowRunContextDocument(runContextDocument);
-              updateWorkflowRunProgress(completedTask.node.id, {
-                status: "completed",
-                detail: `Approved: ${truncateWorkflowContext(judge.reason, 160)}`,
-                taskId: completedTask.task.id,
-              });
-              clearWorkflowRunProgressTaskId(completedTask.node.id);
-              continue;
-            }
-
-            if (completedTask.attempt < WORKFLOW_NODE_MAX_ATTEMPTS) {
-              retryPromptByNodeId.set(completedTask.node.id, judge.retryPrompt || judge.reason);
-              updateWorkflowRunProgress(completedTask.node.id, {
-                status: "queued",
-                detail: `Retry requested: ${truncateWorkflowContext(judge.reason, 160)}`,
-                taskId: completedTask.task.id,
-              });
-              clearWorkflowRunProgressTaskId(completedTask.node.id);
-              nextPendingNodes.push(completedTask.node);
-              continue;
-            }
-
-            updateWorkflowRunProgress(completedTask.node.id, {
-              status: "failed",
-              detail: `Judge rejected after ${WORKFLOW_NODE_MAX_ATTEMPTS} attempts: ${truncateWorkflowContext(judge.reason, 160)}`,
-              taskId: completedTask.task.id,
-            });
-            clearWorkflowRunProgressTaskId(completedTask.node.id);
-            throw new Error(`Workflow node ${completedTask.node.title} did not pass evaluation after ${WORKFLOW_NODE_MAX_ATTEMPTS} attempts: ${judge.reason}`);
-          }
-          pendingNodes = nextPendingNodes;
-        }
-      }
-      const completedNodeProgress = latestRunProgress;
-      const finalReviewProgress: WorkflowRunProgressItem = {
-        nodeId: WORKFLOW_FINAL_REVIEW_NODE_ID,
-        title: "Main agent review",
-        status: "running",
-        detail: "Main agent reviewing all node outputs",
-      };
-      latestRunProgress = [...completedNodeProgress, finalReviewProgress];
-      setWorkflowRunProgress(latestRunProgress);
-      const nodeArtifacts = validation.executableNodeIds
-        .map((nodeId) => {
-          const node = nodeById.get(nodeId);
-          const artifact = artifactsByNodeId.get(nodeId);
-          return node && artifact ? { node, artifact } : undefined;
-        })
-        .filter((item): item is { node: WorkflowGraphNode; artifact: string } => Boolean(item));
-      const finalReviewPrompt = workflowFinalReviewPrompt(runGraph, nodeArtifacts, runContextDocument, completedNodeProgress, storagePlan);
-      const finalReviewRequestId = `workflow-final-${Date.now()}-${Math.random().toString(36).slice(2)}`;
-      const finalAssistantMessageId = `workflow-final-assistant-${Date.now()}`;
-      workflowRequestIdRef.current = finalReviewRequestId;
-      workflowAssistantMessageIdRef.current = finalAssistantMessageId;
-      workflowStreamingStartedRef.current = false;
-      workflowAssistantContentRef.current = "";
-      setWorkflowMessages((current) => [...current, { id: finalAssistantMessageId, role: "assistant", content: WORKFLOW_THINKING_MESSAGE }]);
-      updateWorkflowRunProgress(WORKFLOW_FINAL_REVIEW_NODE_ID, {
-        status: "running",
-        detail: "Main agent reviewing all node outputs",
-      });
-      try {
-        finalReport = await askWorkflowAgentFor(finalReviewPrompt, runAgentSessionId, finalReviewRequestId, runConfiguredAgentId, runModelId);
-        if (!workflowStreamingStartedRef.current && finalReport) {
-          setWorkflowMessages((current) =>
-            current.map((message) => (message.id === finalAssistantMessageId ? { ...message, content: finalReport } : message)),
-          );
-        }
-      } catch (error) {
-        updateWorkflowRunProgress(WORKFLOW_FINAL_REVIEW_NODE_ID, {
-          status: "failed",
-          detail: error instanceof Error ? error.message : String(error),
-        });
-        setWorkflowMessages((current) =>
-          current.map((message) =>
-            message.id === finalAssistantMessageId
-              ? { ...message, content: `Workflow agent error: ${error instanceof Error ? error.message : String(error)}` }
-              : message,
-          ),
-        );
-        throw error;
-      }
-      setWorkflowFinalReport(finalReport);
-      finalRunContextDocument = [
-        runContextDocument.trim(),
-        ["# Workflow Final Report", "", finalReport].join("\n").trim(),
-      ].filter(Boolean).join("\n\n");
-      setWorkflowRunContextDocument(finalRunContextDocument);
-      updateWorkflowRunProgress(WORKFLOW_FINAL_REVIEW_NODE_ID, {
-        status: "completed",
-        detail: "Main agent report ready",
-      });
-      latestSnapshot = await window.multiAgentChat.finishWorkflowRun({
-        workflowId: runWorkflowId,
-        runId: activeWorkflowRunId,
-        status: "completed",
-        progress: latestRunProgress,
-        contextDocument: finalRunContextDocument,
-        finalReport,
-      });
-      setSnapshot(latestSnapshot);
-      setWorkflowStatus("completed");
-      return { ok: true, workflowRunId: activeWorkflowRunId };
-    } catch (error) {
-      const message = error instanceof Error ? error.message : String(error);
-      latestRunProgress = workflowProgressAfterFailure(latestRunProgress, message);
-      setWorkflowRunProgress(latestRunProgress);
-      if (activeWorkflowRunId) {
-        try {
-          const failedSnapshot = await window.multiAgentChat.finishWorkflowRun({
-            workflowId: runWorkflowId,
-            runId: activeWorkflowRunId,
-            status: "failed",
-            progress: latestRunProgress,
-            contextDocument: finalRunContextDocument,
-            ...(finalReport ? { finalReport } : {}),
-            lastError: message,
-          });
-          setSnapshot(failedSnapshot);
-          setWorkflowStatus("failed");
-        } catch {
-          setWorkflowStatus("failed");
-        }
-      } else {
-        setWorkflowStatus("failed");
-      }
-      setWorkflowError(message);
-      return {
-        ok: false,
-        ...(activeWorkflowRunId !== undefined ? { workflowRunId: activeWorkflowRunId } : {}),
-        error: message,
-      };
-    } finally {
-      setWorkflowRunning(false);
+    const result = await window.multiAgentChat.runWorkflowGraph({
+      workflowId: runtimeWorkflowId,
+      contextDocument: initialWorkflowContextDocument,
+    });
+    const nextSnapshot = await window.multiAgentChat.getSnapshot();
+    setSnapshot(nextSnapshot);
+    const runningWorkflow = nextSnapshot.workflowStore.workflows.find((workflow) => workflow.workflowId === runtimeWorkflowId);
+    if (runningWorkflow) {
+      setWorkflowRunIds(runningWorkflow.runIds);
+      setWorkflowRunProgress(runningWorkflow.runProgress);
+      setWorkflowRunContextDocument(runningWorkflow.runContextDocument);
+      setWorkflowFinalReport(runningWorkflow.finalReport ?? "");
     }
+
+    if (!result.ok || !result.runId) {
+      const error = result.error || "Workflow run did not start.";
+      setWorkflowStatus("failed");
+      setWorkflowRunning(false);
+      setWorkflowError(error);
+      return { ok: false, error };
+    }
+
+    if (!options.waitForCompletion) {
+      return { ok: true, workflowRunId: result.runId };
+    }
+
+    const timeoutMs = Math.max(WORKFLOW_TASK_TIMEOUT_MS, WORKFLOW_TASK_TIMEOUT_MS * Math.max(1, runtimeGraph.nodes.filter((node) => node.kind === "agent").length + 1));
+    const startedAt = Date.now();
+    while (Date.now() - startedAt < timeoutMs) {
+      const polledSnapshot = await window.multiAgentChat.getSnapshot();
+      setSnapshot(polledSnapshot);
+      const run = polledSnapshot.workflowStore.runs.find((item) => item.runId === result.runId && item.workflowId === runtimeWorkflowId);
+      const workflow = polledSnapshot.workflowStore.workflows.find((item) => item.workflowId === runtimeWorkflowId);
+      if (workflow) {
+        setWorkflowRunIds(workflow.runIds);
+        setWorkflowRunProgress(workflow.runProgress);
+        setWorkflowRunContextDocument(workflow.runContextDocument);
+        setWorkflowFinalReport(workflow.finalReport ?? "");
+        setWorkflowStatus(workflow.status);
+      }
+      if (run?.status === "completed") {
+        setWorkflowRunning(false);
+        return { ok: true, workflowRunId: result.runId };
+      }
+      if (run?.status === "failed" || run?.status === "stopped") {
+        const error = run.lastError || `Workflow ${run.status}.`;
+        setWorkflowRunning(false);
+        setWorkflowError(error);
+        return { ok: false, workflowRunId: result.runId, error };
+      }
+      await delay(WORKFLOW_TASK_POLL_MS);
+    }
+    const error = `Workflow run ${result.runId} timed out.`;
+    setWorkflowRunning(false);
+    setWorkflowError(error);
+    return { ok: false, workflowRunId: result.runId, error };
   }
 
   async function rerunTask(task: TaskRun): Promise<void> {
@@ -2600,7 +2331,6 @@ export function App() {
         skillTemplates={skillTemplates}
         chatContextMenu={chatContextMenu}
         onOpenPalette={() => setPaletteOpen(true)}
-        onCreateChat={createChat}
         onSelectChat={selectChat}
         onOpenChatContextMenu={openChatContextMenu}
         onDeleteChat={deleteChat}
@@ -2634,7 +2364,6 @@ export function App() {
             onSelectConfiguredAgent={setTaskConfiguredAgent}
             onSelectModel={setTaskModelId}
             onChooseWorkDir={chooseWorkDir}
-            onRefresh={refresh}
             onRunTask={runTask}
             onRerunTask={rerunTask}
             onSelectTask={openTaskDetail}
@@ -2662,9 +2391,14 @@ export function App() {
             workDir={snapshot.workDir}
             running={workflowRunning}
             runProgress={workflowRunProgress}
+            activeRunId={activeWorkflowRunId()}
+            artifacts={snapshot.artifacts.filter((artifact) => artifact.target === workflowId || artifact.target === activeWorkflowRunId())}
             contextDocument={workflowRunContextDocument}
             finalReport={workflowFinalReport}
             onObjectiveChange={setWorkflowObjective}
+            onPauseNode={pauseWorkflowNode}
+            onStartNode={startWorkflowNode}
+            onAnswerGate={answerWorkflowGate}
             onSelectConfiguredAgent={setWorkflowConfiguredAgent}
             onSelectModel={setWorkflowModelId}
             onDraftGraph={draftWorkflowGraph}
@@ -2675,7 +2409,6 @@ export function App() {
             onResetSession={resetWorkflowSession}
             onStopGrill={stopWorkflowGrill}
             onChooseWorkDir={chooseWorkDir}
-            onRefresh={refresh}
             onReadOutputFile={readLocalFile}
             language={language}
           />
@@ -2764,7 +2497,6 @@ export function App() {
             onSelectConfiguredAgent={setActiveChatConfiguredAgent}
             onSelectModel={setActiveChatModel}
             onChooseWorkDir={chooseWorkDir}
-            onRefresh={refresh}
           />
         )}
       </main>

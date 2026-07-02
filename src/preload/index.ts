@@ -19,9 +19,13 @@ import type {
   InstalledSkillResult,
   InstallSkillRequest,
   LocalFilePreview,
+  AnswerWorkflowGateRequest,
+  PauseWorkflowNodeRequest,
   ProviderBalanceResult,
+  RunWorkflowGraphRequest,
   RunAgentTeamRequest,
   RunTaskRequest,
+  StartWorkflowNodeRequest,
   ScheduledWorkflowOperationResult,
   ScheduledWorkflowRun,
   ScheduledWorkflowRunnerConfig,
@@ -38,6 +42,7 @@ import type {
   WorkflowAgentRequest,
   WorkflowAgentResponse,
   WorkflowDraftState,
+  WorkflowOperationResult,
 } from "../shared/types";
 
 const api = {
@@ -81,6 +86,10 @@ const api = {
   selectWorkflow: (workflowId: string): Promise<AppSnapshot> => ipcRenderer.invoke("workflow:select", workflowId),
   renameWorkflow: (workflowId: string, title: string): Promise<AppSnapshot> => ipcRenderer.invoke("workflow:rename", workflowId, title),
   deleteWorkflow: (workflowId: string): Promise<AppSnapshot> => ipcRenderer.invoke("workflow:delete", workflowId),
+  runWorkflowGraph: (request: RunWorkflowGraphRequest): Promise<WorkflowOperationResult> => ipcRenderer.invoke("workflow-run:run-graph", request),
+  pauseWorkflowNode: (request: PauseWorkflowNodeRequest): Promise<WorkflowOperationResult> => ipcRenderer.invoke("workflow-run:pause-node", request),
+  startWorkflowNode: (request: StartWorkflowNodeRequest): Promise<WorkflowOperationResult> => ipcRenderer.invoke("workflow-run:start-node", request),
+  answerWorkflowGate: (request: AnswerWorkflowGateRequest): Promise<WorkflowOperationResult> => ipcRenderer.invoke("workflow-run:answer-gate", request),
   startWorkflowRun: (request: StartWorkflowRunRequest): Promise<AppSnapshot> => ipcRenderer.invoke("workflow-run:start", request),
   finishWorkflowRun: (request: FinishWorkflowRunRequest): Promise<AppSnapshot> => ipcRenderer.invoke("workflow-run:finish", request),
   saveScheduledWorkflowRunnerConfig: (config: ScheduledWorkflowRunnerConfig): Promise<AppSnapshot> =>

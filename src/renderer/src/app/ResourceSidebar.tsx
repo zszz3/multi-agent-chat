@@ -47,7 +47,6 @@ interface ResourceSidebarProps {
   skillTemplates: SkillTemplate[];
   chatContextMenu: { chatId: string; x: number; y: number } | undefined;
   onOpenPalette: () => void;
-  onCreateChat: () => MaybePromise;
   onSelectChat: (chatId: string) => MaybePromise;
   onOpenChatContextMenu: (event: MouseEvent, chatId: string) => void;
   onDeleteChat: (chatId: string) => MaybePromise;
@@ -92,7 +91,6 @@ export function ResourceSidebar({
   skillTemplates,
   chatContextMenu,
   onOpenPalette,
-  onCreateChat,
   onSelectChat,
   onOpenChatContextMenu,
   onDeleteChat,
@@ -131,9 +129,8 @@ export function ResourceSidebar({
           channels={snapshot.channels}
           activeChatId={activeChat?.id}
           contextMenu={chatContextMenu}
-          newChatLabel={text.chrome.newChat}
-          runningLabel={language === "zh" ? "运行中" : "Running"}
-          onCreateChat={onCreateChat}
+          runningLabel="Running"
+          idleLabel="Idle"
           onSelectChat={onSelectChat}
           onOpenContextMenu={onOpenChatContextMenu}
           onDeleteChat={onDeleteChat}

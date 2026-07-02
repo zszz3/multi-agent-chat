@@ -23,8 +23,12 @@ import type {
   FinishWorkflowRunRequest,
   ImportOnlineSkillRequest,
   InstallSkillRequest,
+  AnswerWorkflowGateRequest,
+  PauseWorkflowNodeRequest,
   RunAgentTeamRequest,
+  RunWorkflowGraphRequest,
   RunTaskRequest,
+  StartWorkflowNodeRequest,
   ScheduledWorkflowRun,
   ScheduledWorkflowRunnerConfig,
   ScheduledWorkflowRunnerStatus,
@@ -340,6 +344,10 @@ function registerIpcHandlers(): void {
   ipcMain.handle("workflow:select", (_event, workflowId: string) => hub.selectWorkflow(workflowId));
   ipcMain.handle("workflow:rename", (_event, workflowId: string, title: string) => hub.renameWorkflow(workflowId, title));
   ipcMain.handle("workflow:delete", (_event, workflowId: string) => hub.deleteWorkflow(workflowId));
+  ipcMain.handle("workflow-run:run-graph", (_event, request: RunWorkflowGraphRequest) => hub.runWorkflowGraph(request));
+  ipcMain.handle("workflow-run:pause-node", (_event, request: PauseWorkflowNodeRequest) => hub.pauseWorkflowNode(request));
+  ipcMain.handle("workflow-run:start-node", (_event, request: StartWorkflowNodeRequest) => hub.startWorkflowNode(request));
+  ipcMain.handle("workflow-run:answer-gate", (_event, request: AnswerWorkflowGateRequest) => hub.answerWorkflowGate(request));
   ipcMain.handle("workflow-run:start", (_event, request: StartWorkflowRunRequest) => {
     hub.startWorkflowRun(request);
     return hub.snapshot();

@@ -4,7 +4,7 @@ import http from "node:http";
 import path from "node:path";
 import type { AddressInfo } from "node:net";
 import type { AgentHub } from "./agent-hub";
-import type { AgentChannel, AgentId, ConfiguredAgent, CreateWorkflowRequest, UpdateWorkflowRequest, WorkflowArtifactReference, WorkflowGraph, AppendWorkflowRunContextRequest, ImportOnlineSkillRequest } from "../shared/types";
+import type { AgentChannel, AgentId, ConfiguredAgent, CreateWorkflowRequest, RegisterArtifactRequest, UpdateWorkflowRequest, WorkflowArtifactReference, WorkflowGraph, AppendWorkflowRunContextRequest, ImportOnlineSkillRequest } from "../shared/types";
 import { SKILL_TEMPLATES } from "../shared/skill-templates";
 import { importOnlineSkillToLibrary, listImportedSkillTemplates } from "./skill-installer";
 import { fetchOnlineSkills, ONLINE_SKILL_SOURCES } from "../shared/online-skills";
@@ -335,6 +335,22 @@ async function routeWorkflowRequest(hub: AgentHub, route: string, body: unknown,
     };
     if (typeof record.nodeId === "string") request.nodeId = record.nodeId;
     return hub.appendWorkflowRunContext(request);
+  }
+  if (route === "/mcp/artifacts/register") {
+    const request: RegisterArtifactRequest = {
+      target: typeof record.target === "string" ? record.target : "",
+    };
+    if (typeof record.title === "string") request.title = record.title;
+    if (typeof record.path === "string") request.path = record.path;
+    if (typeof record.url === "string") request.url = record.url;
+    if (typeof record.content === "string") request.content = record.content;
+    if (typeof record.description === "string") request.description = record.description;
+    if (record.kind === "text" || record.kind === "file" || record.kind === "url") request.kind = record.kind;
+    return hub.registerArtifact(request);
+  }
+  if (route === "/mcp/artifacts/list") {
+    const target = typeof record.target === "string" ? record.target : undefined;
+    return { ok: true, artifacts: hub.listArtifacts(target) };
   }
   return { ok: false, error: `Unknown MCP bridge route: ${route}` };
 }

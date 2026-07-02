@@ -414,6 +414,12 @@ export interface WorkflowGraphNode {
   title: string;
   prompt: string;
   /**
+   * Optional per-node agent/model override. When set, this agent node runs with
+   * this configured agent (and model) instead of the workflow-level default.
+   */
+  configuredAgentId?: string | undefined;
+  modelId?: string | undefined;
+  /**
    * Optional explicit canvas position. When set, the workflow board pins the
    * node here instead of auto-layout; agents (via MCP) and user drags both write
    * this. Omit it to let the auto wrapping layout place the node.
@@ -448,7 +454,7 @@ export interface WorkflowGrillMessage {
   content: string;
 }
 
-export type WorkflowRunNodeStatus = "queued" | "running" | "completed" | "failed";
+export type WorkflowRunNodeStatus = "queued" | "running" | "paused" | "awaiting_input" | "completed" | "failed";
 
 export interface WorkflowRunProgressItem {
   nodeId: string;
@@ -456,6 +462,39 @@ export interface WorkflowRunProgressItem {
   status: WorkflowRunNodeStatus;
   detail?: string;
   taskId?: string;
+}
+
+export type WorkflowEventType =
+  | "node_ready"
+  | "node_started"
+  | "node_paused"
+  | "node_output"
+  | "node_judged"
+  | "node_failed"
+  | "node_completed"
+  | "gate_opened"
+  | "gate_answered";
+
+/**
+ * Append-only record of a workflow run's node transitions. The event log is the
+ * source of truth; the UI-facing progress list is projected from it via
+ * projectNodeStates(). See src/main/WORKFLOW-RUNTIME.md.
+ */
+export interface WorkflowEvent {
+  type: WorkflowEventType;
+  nodeId: string;
+  at: number;
+  attempt?: number;
+  taskId?: string;
+  detail?: string;
+  pass?: boolean;
+  summary?: string;
+  artifactRefs?: WorkflowArtifactReference[];
+  error?: string;
+  /** gate_opened: the concrete question the agent needs a human to answer. */
+  question?: string;
+  /** gate_answered: the human's answer that unblocks the node. */
+  answer?: string;
 }
 
 export type WorkflowStatus = "draft" | "running" | "completed" | "failed" | "stopped";
@@ -473,6 +512,34 @@ export interface LocalFilePreview {
   title: string;
   content: string;
   truncated: boolean;
+}
+
+/**
+ * An artifact an agent deliberately published for the user to see, via the
+ * `artifacts_register` MCP tool. `target` is the owning session id
+ * (chatId | taskId | workflowId | runId). File paths are validated + resolved to
+ * an absolute path under the work directory at registration time.
+ */
+export interface RegisteredArtifact {
+  id: string;
+  target: string;
+  kind: "text" | "file" | "url";
+  title: string;
+  path?: string;
+  url?: string;
+  content?: string;
+  description?: string;
+  registeredAt: number;
+}
+
+export interface RegisterArtifactRequest {
+  target: string;
+  title?: string;
+  kind?: "text" | "file" | "url";
+  path?: string;
+  url?: string;
+  content?: string;
+  description?: string;
 }
 
 export interface WorkflowDraftState {
@@ -504,6 +571,7 @@ export interface WorkflowRunState {
   status: WorkflowStatus;
   graphSnapshot: WorkflowGraph;
   progress: WorkflowRunProgressItem[];
+  events: WorkflowEvent[];
   contextDocument: string;
   finalReport?: string;
   startedAt: number;
@@ -682,11 +750,32 @@ export interface StartWorkflowRunRequest {
   contextDocument?: string;
 }
 
+export interface RunWorkflowGraphRequest {
+  workflowId: string;
+  contextDocument?: string;
+}
+
+export interface PauseWorkflowNodeRequest {
+  workflowId: string;
+  runId: string;
+  nodeId: string;
+}
+
+export interface StartWorkflowNodeRequest extends PauseWorkflowNodeRequest {}
+
+export interface AnswerWorkflowGateRequest {
+  workflowId: string;
+  runId: string;
+  nodeId: string;
+  answer: string;
+}
+
 export interface FinishWorkflowRunRequest {
   workflowId: string;
   runId: string;
   status: Exclude<WorkflowStatus, "draft" | "running">;
   progress?: WorkflowRunProgressItem[];
+  appendEvents?: WorkflowEvent[];
   contextDocument?: string;
   finalReport?: string;
   lastError?: string;
@@ -709,4 +798,5 @@ export interface AppSnapshot {
   workflowStore: WorkflowStoreState;
   scheduledWorkflowStore: ScheduledWorkflowStoreState;
   workflowDraft: WorkflowDraftState | undefined;
+  artifacts: RegisteredArtifact[];
 }
