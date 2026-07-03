@@ -7,12 +7,12 @@ import type { Plugin } from "vite";
 
 const repoRoot = dirname(fileURLToPath(import.meta.url));
 
-function copyBundledSkillsPlugin(): Plugin {
+function copyBundledDirPlugin(name: string, relPath: string): Plugin {
   return {
-    name: "copy-bundled-skills",
+    name,
     closeBundle() {
-      const source = resolve(repoRoot, "src/shared/bundled-skills");
-      const target = resolve(repoRoot, "out/shared/bundled-skills");
+      const source = resolve(repoRoot, relPath);
+      const target = resolve(repoRoot, relPath.replace("src/shared", "out/shared"));
       rmSync(target, { recursive: true, force: true });
       cpSync(source, target, { recursive: true });
     },
@@ -21,7 +21,10 @@ function copyBundledSkillsPlugin(): Plugin {
 
 export default defineConfig({
   main: {
-    plugins: [copyBundledSkillsPlugin()],
+    plugins: [
+      copyBundledDirPlugin("copy-bundled-skills", "src/shared/bundled-skills"),
+      copyBundledDirPlugin("copy-bundled-workflows", "src/shared/bundled-workflows"),
+    ],
     build: {
       outDir: resolve(repoRoot, "out/main"),
       rollupOptions: {

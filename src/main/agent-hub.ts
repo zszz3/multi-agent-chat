@@ -83,7 +83,6 @@ import type {
 import { normalizeConfigChannelsForStorage } from "../shared/config-channels";
 import { DEFAULT_MODEL_ID, defaultChannelForAgent, defaultModelForAgent, isModelForChannel } from "../shared/models";
 import { validateWorkflowGraph } from "../shared/workflow-graph";
-import { defaultWorkflowWorkDirSuffix } from "../shared/workflow-run";
 import { detectAgentRuntimes } from "./agents/detect";
 import { CodexRpcClient } from "./agents/codex-rpc";
 import { codexEnvironmentForChannel } from "./agents/codex-env";
@@ -1285,7 +1284,7 @@ export class AgentHub {
       configuredAgentId: this.normalizeWorkflowConfiguredAgentId(input.configuredAgentId),
       modelId: this.normalizeModelIdForConfiguredAgent(input.configuredAgentId, input.modelId),
       objective: input.objective.trim() || input.graph.objective,
-      workDir: input.workDir?.trim() || path.join(this.workDir, defaultWorkflowWorkDirSuffix(workflowId)),
+      ...(input.workDir?.trim() ? { workDir: input.workDir.trim() } : {}),
       graph: input.graph,
       graphReady: input.graphReady ?? true,
       messages: input.messages ?? [],
@@ -1304,6 +1303,43 @@ export class AgentHub {
     this.activeWorkflowId = workflow.workflowId;
     this.emit();
     return { ok: true, workflowId: workflow.workflowId, revision: workflow.revision, validation };
+  }
+
+  /**
+   * Seed git-bundled workflow definitions into the store. Idempotent by fixed
+   * workflowId: existing workflows (including user-edited copies) are left alone.
+   */
+  ensureBundledWorkflows(defs: Array<{ workflowId: string; title: string; objective: string; graph: WorkflowGraph }>): void {
+    let changed = false;
+    for (const def of defs) {
+      if (!def.workflowId || this.workflows.has(def.workflowId)) continue;
+      const now = Date.now();
+      const workflow = this.cloneWorkflowDraft({
+        workflowId: def.workflowId,
+        title: def.title,
+        status: "draft",
+        revision: 1,
+        configuredAgentId: "",
+        modelId: "",
+        objective: def.objective,
+        graph: def.graph,
+        graphReady: true,
+        messages: [],
+        reply: "",
+        error: undefined,
+        runProgress: [],
+        runContextDocument: "",
+        contextDocument: "",
+        runIds: [],
+        agentSessionId: undefined,
+        createdAt: now,
+        updatedAt: now,
+      });
+      this.workflows.set(workflow.workflowId, workflow);
+      if (!this.activeWorkflowId) this.activeWorkflowId = workflow.workflowId;
+      changed = true;
+    }
+    if (changed) this.emit();
   }
 
   selectWorkflow(workflowId: string): AppSnapshot {
@@ -1702,7 +1738,7 @@ export class AgentHub {
   async listWorkflowOutputs(workflowId: string): Promise<Array<{ name: string; path: string }>> {
     const workflow = this.workflows.get(workflowId);
     if (!workflow) return [];
-    const workDir = workflow.workDir || path.join(this.workDir, defaultWorkflowWorkDirSuffix(workflowId));
+    const workDir = workflow.workDir || this.workDir;
     const outputsDir = path.join(workDir, "outputs");
     let entries: Dirent[];
     try {
@@ -1719,14 +1755,14 @@ export class AgentHub {
   workflowWorkDir(workflowId: string): string | undefined {
     const workflow = this.workflows.get(workflowId);
     if (!workflow) return undefined;
-    return workflow.workDir || path.join(this.workDir, defaultWorkflowWorkDirSuffix(workflowId));
+    return workflow.workDir || this.workDir;
   }
 
   /** Directories from which local files may be previewed: global + each workflow's dir. */
   allowedFileRoots(): string[] {
     const roots = [this.workDir];
     for (const workflow of this.workflows.values()) {
-      roots.push(workflow.workDir || path.join(this.workDir, defaultWorkflowWorkDirSuffix(workflow.workflowId)));
+      roots.push(workflow.workDir || this.workDir);
     }
     return roots;
   }
