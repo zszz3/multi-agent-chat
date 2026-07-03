@@ -1,10 +1,7 @@
 import { useMemo } from "react";
-import type { MultiAgentChatApi } from "../../../../../preload";
 import { createWorkflowGraphFromObjective } from "../../../../../shared/workflow-graph";
 import type { AppSnapshot, LocalFilePreview } from "../../../../../shared/types";
-import type { SnapshotService } from "../../../app/services/snapshot-service";
 import type { WorkflowService } from "../../../app/services/workflow-service";
-import { missingAppCapabilityMessage } from "../../../app/shell";
 import { buildWorkflowSidebarController, type WorkflowSidebarFeatureController, useWorkflowSidebarState } from "./useWorkflowSidebarState";
 import { useWorkflowDraft, type WorkflowDraftController } from "./useWorkflowDraft";
 import { useWorkflowFeatureController } from "./useWorkflowFeatureController";
@@ -12,8 +9,6 @@ import { useWorkflowRunner, type WorkflowRunnerController } from "./useWorkflowR
 import type { WorkflowController } from "../workflow-controller";
 
 interface UseWorkflowFeatureManagerOptions {
-  chatApi: Pick<MultiAgentChatApi, "runTask" | "deleteTask" | "renameWorkflow" | "deleteWorkflow">;
-  snapshots: SnapshotService;
   workflows: WorkflowService;
   snapshot: AppSnapshot;
   snapshotRef: React.MutableRefObject<AppSnapshot>;
@@ -31,13 +26,10 @@ export interface WorkflowFeatureManager {
   controller: WorkflowController;
   sidebarController: WorkflowSidebarFeatureController;
   closeSidebarContextMenu: () => void;
-  runWorkflowGraphInternal: WorkflowRunnerController["runWorkflowGraphInternal"];
   resetWorkflowLocalDraft: WorkflowDraftController["resetWorkflowLocalDraft"];
 }
 
 export function useWorkflowFeatureManager({
-  chatApi,
-  snapshots,
   workflows,
   snapshot,
   snapshotRef,
@@ -65,11 +57,8 @@ export function useWorkflowFeatureManager({
     workflowRunning: draft.workflowRunning,
     setSnapshot,
     workflowsService: workflows,
-    applyPersistedWorkflowDraft: draft.applyPersistedWorkflowDraft,
-    resetWorkflowLocalDraft: draft.resetWorkflowLocalDraft,
-    canRenameWorkflow: typeof chatApi.renameWorkflow === "function",
-    canDeleteWorkflow: typeof chatApi.deleteWorkflow === "function",
-    missingCapabilityMessage: missingAppCapabilityMessage,
+    canRenameWorkflow: true,
+    canDeleteWorkflow: true,
   });
   const sidebarController = useMemo(() => {
     const options = {
@@ -90,67 +79,15 @@ export function useWorkflowFeatureManager({
     snapshot.workflowStore.activeWorkflowId,
     snapshot.workflowStore.workflows,
   ]);
-  const runner = useWorkflowRunner(
-    onEnterWorkflow
-      ? {
-          chatApi,
-          snapshots,
-          workflows,
-          snapshotRef,
-          setSnapshot,
-          workflowRunning: draft.workflowRunning,
-          workflowId: draft.workflowId,
-          workflowGraph: draft.workflowGraph,
-          workflowConfiguredAgentId: draft.workflowConfiguredAgentId,
-          workflowModelId: draft.workflowModelId,
-          workflowContextDocument: draft.workflowContextDocument,
-          workflowAgentSessionId: draft.workflowAgentSessionId,
-          workflowRunIds: draft.workflowRunIds,
-          applyPersistedWorkflowDraft: draft.applyPersistedWorkflowDraft,
-          askWorkflowAgentFor: draft.askWorkflowAgentFor,
-          beginWorkflowAssistantRequest: draft.beginWorkflowAssistantRequest,
-          hasWorkflowAssistantStreamed: draft.hasWorkflowAssistantStreamed,
-          setWorkflowError: draft.setWorkflowError,
-          setWorkflowRunning: draft.setWorkflowRunning,
-          setWorkflowStatus: draft.setWorkflowStatus,
-          setWorkflowFinalReport: draft.setWorkflowFinalReport,
-          setWorkflowRunIds: draft.setWorkflowRunIds,
-          setWorkflowRunProgress: draft.setWorkflowRunProgress,
-          setWorkflowRunContextDocument: draft.setWorkflowRunContextDocument,
-          setWorkflowMessages: draft.setWorkflowMessages,
-          onEnterWorkflow,
-        }
-      : {
-          chatApi,
-          snapshots,
-          workflows,
-          snapshotRef,
-          setSnapshot,
-          workflowRunning: draft.workflowRunning,
-          workflowId: draft.workflowId,
-          workflowGraph: draft.workflowGraph,
-          workflowConfiguredAgentId: draft.workflowConfiguredAgentId,
-          workflowModelId: draft.workflowModelId,
-          workflowContextDocument: draft.workflowContextDocument,
-          workflowAgentSessionId: draft.workflowAgentSessionId,
-          workflowRunIds: draft.workflowRunIds,
-          applyPersistedWorkflowDraft: draft.applyPersistedWorkflowDraft,
-          askWorkflowAgentFor: draft.askWorkflowAgentFor,
-          beginWorkflowAssistantRequest: draft.beginWorkflowAssistantRequest,
-          hasWorkflowAssistantStreamed: draft.hasWorkflowAssistantStreamed,
-          setWorkflowError: draft.setWorkflowError,
-          setWorkflowRunning: draft.setWorkflowRunning,
-          setWorkflowStatus: draft.setWorkflowStatus,
-          setWorkflowFinalReport: draft.setWorkflowFinalReport,
-          setWorkflowRunIds: draft.setWorkflowRunIds,
-          setWorkflowRunProgress: draft.setWorkflowRunProgress,
-          setWorkflowRunContextDocument: draft.setWorkflowRunContextDocument,
-          setWorkflowMessages: draft.setWorkflowMessages,
-        },
-  );
+  const runner = useWorkflowRunner({
+    workflows,
+    workflowId: draft.workflowId,
+    workflowContextDocument: draft.workflowContextDocument,
+  });
   const controller = useWorkflowFeatureController({
     snapshot,
     setSnapshot,
+    workflows,
     draft,
     runner,
     language,
@@ -165,7 +102,6 @@ export function useWorkflowFeatureManager({
     controller,
     sidebarController,
     closeSidebarContextMenu: sidebarState.closeWorkflowContextMenu,
-    runWorkflowGraphInternal: runner.runWorkflowGraphInternal,
     resetWorkflowLocalDraft: draft.resetWorkflowLocalDraft,
   };
 }

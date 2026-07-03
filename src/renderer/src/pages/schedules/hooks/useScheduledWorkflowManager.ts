@@ -5,9 +5,7 @@ import type {
   AppSnapshot,
   CreateScheduledWorkflowScheduleRequest,
   ScheduledWorkflowSchedule,
-  WorkflowDraftState,
 } from "../../../../../shared/types";
-import { useScheduledWorkflowRunner } from "../../workflow/hooks/useScheduledWorkflowRunner";
 import {
   defaultScheduledWorkflowDraft,
   intervalSecondsForFrequency,
@@ -24,9 +22,7 @@ type ScheduledWorkflowUpdate = Partial<
 interface UseScheduledWorkflowManagerOptions {
   chatApi: MultiAgentChatApi;
   snapshot: AppSnapshot;
-  snapshotRef: React.MutableRefObject<AppSnapshot>;
   setSnapshot: (snapshot: AppSnapshot) => void;
-  runWorkflowGraphInternal: (targetWorkflow?: WorkflowDraftState) => Promise<{ ok: boolean; workflowRunId?: string; error?: string }>;
   onEnterSchedules?: () => void;
 }
 
@@ -62,21 +58,13 @@ function createScheduledWorkflowRequest(draft: ScheduledWorkflowDraft, workflowT
 export function useScheduledWorkflowManager({
   chatApi,
   snapshot,
-  snapshotRef,
   setSnapshot,
-  runWorkflowGraphInternal,
   onEnterSchedules,
 }: UseScheduledWorkflowManagerOptions): ScheduledWorkflowManager {
   const [scheduledWorkflowDraft, setScheduledWorkflowDraft] = useState<ScheduledWorkflowDraft>(() =>
     defaultScheduledWorkflowDraft(snapshot.workflowStore.workflows, snapshot.workflowStore.activeWorkflowId),
   );
   const [scheduledWorkflowMode, setScheduledWorkflowMode] = useState<"detail" | "create">("detail");
-  const { handleScheduledWorkflowEvent } = useScheduledWorkflowRunner({
-    chatApi,
-    snapshotRef,
-    setSnapshot,
-    runWorkflowGraphInternal,
-  });
 
   useEffect(() => {
     setScheduledWorkflowDraft((current) => {
@@ -84,12 +72,6 @@ export function useScheduledWorkflowManager({
       return defaultScheduledWorkflowDraft(snapshot.workflowStore.workflows, snapshot.workflowStore.activeWorkflowId);
     });
   }, [snapshot.workflowStore.activeWorkflowId, snapshot.workflowStore.workflows]);
-
-  useEffect(() => {
-    return chatApi.onScheduledWorkflowEvent((event) => {
-      void handleScheduledWorkflowEvent(event);
-    });
-  }, [chatApi, handleScheduledWorkflowEvent]);
 
   const connectScheduledRunner = useCallback(async (): Promise<void> => {
     const next = await chatApi.connectScheduledWorkflowRunner();

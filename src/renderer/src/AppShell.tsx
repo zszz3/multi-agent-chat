@@ -271,11 +271,8 @@ export function AppShell() {
     controller: workflowController,
     sidebarController: workflowSidebarController,
     closeSidebarContextMenu: closeWorkflowContextMenu,
-    runWorkflowGraphInternal,
     resetWorkflowLocalDraft,
   } = useWorkflowFeatureManager({
-    chatApi,
-    snapshots,
     workflows,
     snapshot,
     snapshotRef,
@@ -320,9 +317,7 @@ export function AppShell() {
   } = useScheduledWorkflowManager({
     chatApi,
     snapshot,
-    snapshotRef,
     setSnapshot,
-    runWorkflowGraphInternal,
     onEnterSchedules: () => setActiveFeature("schedules"),
   });
 

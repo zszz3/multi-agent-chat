@@ -19,16 +19,19 @@ import type {
   AppSnapshot,
   CodexDefaultConfig,
   ConfiguredAgent,
+  CreateWorkflowDraftRequest,
   CreateScheduledWorkflowScheduleRequest,
   CreateAgentTeamRequest,
   FinishWorkflowRunRequest,
   ImportOnlineSkillRequest,
   InstallSkillRequest,
+  PatchWorkflowDraftRequest,
   AnswerWorkflowGateRequest,
   PauseWorkflowNodeRequest,
   RunAgentTeamRequest,
   RunWorkflowGraphRequest,
   RunTaskRequest,
+  SendWorkflowDraftReplyRequest,
   StartWorkflowNodeRequest,
   ScheduledWorkflowRun,
   ScheduledWorkflowRunnerConfig,
@@ -184,9 +187,20 @@ async function refreshScheduledWorkflowSchedulesFromCloud(): Promise<void> {
   hub.replaceScheduledWorkflowSchedules(schedules);
 }
 
-function emitScheduledWorkflowEvent(event: ScheduledWorkflowDueEvent): void {
+async function consumeScheduledWorkflowEvent(event: ScheduledWorkflowDueEvent): Promise<void> {
   hub.updateScheduledWorkflowRunnerStatus({ connected: true, connecting: false, lastEventAt: Date.now(), lastError: undefined });
-  mainWindow?.webContents.send("scheduled-workflows:event", event);
+  try {
+    await hub.runScheduledWorkflowEvent(event, (eventId: string, request: AckScheduledWorkflowEventRequest) => {
+      return scheduledWorkflowCloudClient.ackEvent(scheduledWorkflowCloudConfig(), eventId, request);
+    });
+    hub.updateScheduledWorkflowRunnerStatus({ lastError: undefined });
+  } catch (error) {
+    hub.updateScheduledWorkflowRunnerStatus({
+      connected: false,
+      connecting: false,
+      lastError: error instanceof Error ? error.message : String(error),
+    });
+  }
 }
 
 async function connectScheduledWorkflowRunner(): Promise<AppSnapshot> {
@@ -197,7 +211,9 @@ async function connectScheduledWorkflowRunner(): Promise<AppSnapshot> {
     await ensureScheduledWorkflowRunnerConfig();
     await refreshScheduledWorkflowSchedulesFromCloud();
     scheduledWorkflowEventConnection = scheduledWorkflowCloudClient.connectEvents(scheduledWorkflowCloudConfig(), {
-      onEvent: emitScheduledWorkflowEvent,
+      onEvent: (event) => {
+        void consumeScheduledWorkflowEvent(event);
+      },
       onError: (error) => {
         scheduledWorkflowEventConnection = undefined;
         hub.updateScheduledWorkflowRunnerStatus({
@@ -354,6 +370,11 @@ function registerIpcHandlers(): void {
   ipcMain.handle("workflow-agent:ask", async (event, request: WorkflowAgentRequest) =>
     hub.askWorkflowAgent(request, (agentEvent) => event.sender.send("workflow-agent:event", agentEvent)),
   );
+  ipcMain.handle("workflow:draft:create", (_event, request?: CreateWorkflowDraftRequest) => hub.createWorkflowDraft(request));
+  ipcMain.handle("workflow:draft:patch", (_event, request: PatchWorkflowDraftRequest) => hub.patchWorkflowDraft(request));
+  ipcMain.handle("workflow:draft:reset-session", (_event, workflowId: string) => hub.resetWorkflowDraftSession(workflowId));
+  ipcMain.handle("workflow:draft:send-reply", async (_event, request: SendWorkflowDraftReplyRequest) => hub.sendWorkflowDraftReply(request));
+  ipcMain.handle("workflow:draft:abandon", (_event, workflowId: string) => hub.abandonWorkflowDraftReply(workflowId));
   ipcMain.handle("workflow:draft:update", (_event, draft?: WorkflowDraftState) => hub.updateWorkflowDraft(draft));
   ipcMain.handle("workflow:select", (_event, workflowId: string) => hub.selectWorkflow(workflowId));
   ipcMain.handle("workflow:rename", (_event, workflowId: string, title: string) => hub.renameWorkflow(workflowId, title));
@@ -443,7 +464,7 @@ function registerIpcHandlers(): void {
   ipcMain.handle("scheduled-workflows:cloud:trigger", async (_event, scheduleId: string) => {
     await ensureScheduledWorkflowRunnerConfig();
     const event = await scheduledWorkflowCloudClient.triggerSchedule(scheduledWorkflowCloudConfig(), scheduleId);
-    emitScheduledWorkflowEvent(event);
+    void consumeScheduledWorkflowEvent(event);
     return event;
   });
   ipcMain.handle("scheduled-workflows:cloud:ack", async (_event, eventId: string, request: AckScheduledWorkflowEventRequest) => {

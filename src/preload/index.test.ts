@@ -34,6 +34,11 @@ describe("preload skill API", () => {
     expect(electronState.exposedApi).toHaveProperty("revealPathInFinder");
     expect(electronState.exposedApi).toHaveProperty("getKeepAwake");
     expect(electronState.exposedApi).toHaveProperty("setKeepAwake");
+    expect(electronState.exposedApi).toHaveProperty("createWorkflowDraft");
+    expect(electronState.exposedApi).toHaveProperty("patchWorkflowDraft");
+    expect(electronState.exposedApi).toHaveProperty("resetWorkflowDraftSession");
+    expect(electronState.exposedApi).toHaveProperty("sendWorkflowDraftReply");
+    expect(electronState.exposedApi).toHaveProperty("abandonWorkflowDraftReply");
     expect(electronState.exposedApi).toHaveProperty("saveScheduledWorkflowRunnerConfig");
     expect(electronState.exposedApi).toHaveProperty("upsertScheduledWorkflowSchedule");
     expect(electronState.exposedApi).toHaveProperty("deleteScheduledWorkflowSchedule");

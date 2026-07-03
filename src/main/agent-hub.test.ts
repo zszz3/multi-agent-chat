@@ -958,6 +958,59 @@ fs.writeFileSync(${JSON.stringify(argsPath)}, process.argv.slice(2).join("\\n") 
     expect(calls.some((call) => call.method === "thread/start" && call.params.developerInstructions.includes("Final User Report"))).toBe(true);
   });
 
+  test("keeps workflow draft replies in main-owned snapshot state", async () => {
+    const dir = await mkdtemp(path.join(os.tmpdir(), "multi-agent-chat-workflow-draft-reply-"));
+    const fake = await writeSequentialCodexFake(dir);
+    const hub = new AgentHub({ codex: fake.executable, claude: "missing-claude-for-test" });
+    (hub as any).runtimes.set("codex", {
+      id: "codex",
+      label: "Codex",
+      command: fake.executable,
+      version: "test",
+      available: true,
+    });
+    const before = hub.snapshot();
+    const created = hub.createWorkflowDraft({ configuredAgentId: "default-agent" });
+    const workflowId = created.workflowDraft?.workflowId;
+    expect(workflowId).toBeTruthy();
+
+    const first = await hub.sendWorkflowDraftReply({
+      workflowId: workflowId!,
+      reply: "Ask one question about the repo layout.",
+    });
+    expect(first.workflowDraft).toMatchObject({
+      workflowId,
+      objective: "Ask one question about the repo layout.",
+      agentSessionId: "thread-1",
+      messages: [
+        { role: "user", content: "Ask one question about the repo layout." },
+        { role: "assistant", content: "artifact-1" },
+      ],
+    });
+
+    const second = await hub.sendWorkflowDraftReply({
+      workflowId: workflowId!,
+      reply: "Use that answer and propose the next step.",
+    });
+    expect(second.workflowDraft).toMatchObject({
+      workflowId,
+      objective: "Ask one question about the repo layout.",
+      agentSessionId: "thread-1",
+      messages: [
+        { role: "user", content: "Ask one question about the repo layout." },
+        { role: "assistant", content: "artifact-1" },
+        { role: "user", content: "Use that answer and propose the next step." },
+        { role: "assistant", content: "artifact-2" },
+      ],
+    });
+    expect(second.chats).toHaveLength(before.chats.length);
+    expect(second.tasks).toHaveLength(before.tasks.length);
+
+    const calls = (await readFile(fake.callsPath, "utf8")).trim().split("\n").map((line) => JSON.parse(line) as any);
+    expect(calls.some((call) => call.method === "thread/start")).toBe(true);
+    expect(calls.some((call) => call.method === "thread/resume" && call.params.threadId === "thread-1")).toBe(true);
+  });
+
   test("uses the workflow-selected model for workflow agent API requests", async () => {
     const dir = await mkdtemp(path.join(os.tmpdir(), "multi-agent-chat-workflow-model-"));
     const hub = new AgentHub({ codex: "missing-codex-for-test", claude: "missing-claude-for-test" });
@@ -1503,6 +1556,60 @@ fs.writeFileSync(${JSON.stringify(argsPath)}, process.argv.slice(2).join("\\n") 
     expect(snapshot.workflowStore.runs.some((item: any) => item.runId === run.runId || item.workflowId === first.workflowId)).toBe(false);
     expect(snapshot.workflowStore.activeWorkflowId).toBe(second.workflowId);
     expect(snapshot.workflowDraft.workflowId).toBe(second.workflowId);
+  });
+
+  test("resets one workflow draft session without dropping other drafts", () => {
+    const hub = new AgentHub();
+    const first = hub.createWorkflowDraft({ title: "First draft" }).workflowDraft!;
+    const patched = hub.patchWorkflowDraft({
+      workflowId: first.workflowId,
+      messages: [
+        { id: "m-1", role: "user", content: "Initial objective" },
+        { id: "m-2", role: "assistant", content: "Initial reply" },
+      ],
+      agentSessionId: "thread-1",
+      contextDocument: "# Durable context",
+      runContextDocument: "# Run context",
+    }).workflowDraft!;
+    const started = hub.startWorkflowRun({
+      workflowId: patched.workflowId,
+      contextDocument: "# Run context",
+    });
+    hub.finishWorkflowRun({
+      workflowId: patched.workflowId,
+      runId: started.runId!,
+      status: "completed",
+      progress: [{ nodeId: "plan", title: "Plan", status: "completed" }],
+      finalReport: "## Final User Report\nDone.",
+    });
+    const second = hub.createWorkflowDraft({ title: "Second draft" }).workflowDraft!;
+
+    const reset = hub.resetWorkflowDraftSession(first.workflowId);
+    const resetFirst = reset.workflowStore.workflows.find((workflow) => workflow.workflowId === first.workflowId);
+    const preservedSecond = reset.workflowStore.workflows.find((workflow) => workflow.workflowId === second.workflowId);
+
+    expect(reset.workflowStore.workflows).toHaveLength(2);
+    expect(reset.workflowStore.activeWorkflowId).toBe(first.workflowId);
+    expect(reset.workflowDraft?.workflowId).toBe(first.workflowId);
+    expect(resetFirst).toMatchObject({
+      workflowId: first.workflowId,
+      title: "Untitled workflow",
+      status: "draft",
+      objective: "",
+      graphReady: false,
+      messages: [],
+      runProgress: [],
+      runContextDocument: "",
+      contextDocument: "",
+      runIds: [],
+      agentSessionId: undefined,
+    });
+    expect(resetFirst?.finalReport).toBeUndefined();
+    expect(preservedSecond).toMatchObject({
+      workflowId: second.workflowId,
+      title: "Second draft",
+      status: "draft",
+    });
   });
 
   test("rejects invalid workflow creation with validation reasons", () => {
@@ -2083,6 +2190,104 @@ fs.writeFileSync(${JSON.stringify(argsPath)}, process.argv.slice(2).join("\\n") 
       workflowRunId: "run_workflow_1",
       message: "Workflow completed.",
     });
+  });
+
+  test("runs a scheduled workflow event in main and acks after local completion", async () => {
+    const contexts: AgentExecutionContext[] = [];
+    const ackEvent = vi.fn(async () => undefined);
+    const hub = new AgentHub(
+      { codex: "codex-for-test", claude: "missing-claude-for-test" },
+      {
+        create: (context) => {
+          contexts.push(context);
+          return {
+            start: async () => {
+              const content = context.prompt.includes("workflow judge")
+                ? 'workflowEvaluation.submit({ complete: true, reason: "approved", retryPrompt: "" })'
+                : context.prompt.includes("main workflow agent")
+                  ? "## Final User Report\nScheduled workflow completed."
+                  : "### Work Completion Report\nScheduled work finished.\n\n### Handoff\nReady.";
+              context.emit({ type: "completed", content });
+            },
+            stop: async () => undefined,
+          };
+        },
+      },
+    );
+    (hub as any).runtimes.set("codex", {
+      id: "codex",
+      label: "Codex",
+      command: "codex-for-test",
+      version: "test",
+      available: true,
+    });
+    const created = (hub as any).createWorkflow({
+      title: "Scheduled workflow",
+      objective: "Run from scheduled event",
+      graph: {
+        title: "Scheduled workflow",
+        objective: "Run from scheduled event",
+        nodes: [
+          { id: "start", kind: "start", title: "Start", prompt: "" },
+          { id: "work", kind: "agent", title: "Work", prompt: "Do the scheduled work." },
+          { id: "end", kind: "end", title: "Done", prompt: "" },
+        ],
+        edges: [
+          { id: "start->work", fromNodeId: "start", toNodeId: "work" },
+          { id: "work->end", fromNodeId: "work", toNodeId: "end" },
+        ],
+      },
+    });
+    (hub as any).upsertScheduledWorkflowSchedule({
+      scheduleId: "sched_1",
+      workflowId: created.workflowId,
+      title: "Scheduled workflow",
+      enabled: true,
+      intervalSeconds: 86400,
+      frequency: "daily",
+      timeOfDay: "09:00",
+      timezone: "Asia/Shanghai",
+      source: "cloud",
+      createdAt: 1710000000000,
+      updatedAt: 1710000000000,
+    });
+
+    await hub.runScheduledWorkflowEvent({
+      eventId: "event_1",
+      type: "scheduled.workflow.due",
+      title: "Scheduled workflow",
+      message: "Cloud runner triggered this workflow.",
+      payload: {
+        scheduleId: "sched_1",
+        workflowId: created.workflowId,
+      },
+    }, ackEvent);
+
+    const snapshot = hub.snapshot() as any;
+    expect(snapshot.scheduledWorkflowStore.runs[0]).toMatchObject({
+      runId: "scheduled_run_event_1",
+      scheduleId: "sched_1",
+      workflowId: created.workflowId,
+      status: "completed",
+      message: "Workflow completed.",
+      workflowRunId: expect.stringMatching(/^run_/),
+    });
+    expect(snapshot.workflowStore.runs.find((run: any) => run.runId === snapshot.scheduledWorkflowStore.runs[0].workflowRunId)).toMatchObject({
+      workflowId: created.workflowId,
+      status: "completed",
+      finalReport: "## Final User Report\nScheduled workflow completed.",
+    });
+    expect(ackEvent).toHaveBeenCalledTimes(1);
+    expect(ackEvent).toHaveBeenCalledWith("event_1", expect.objectContaining({
+      status: "completed",
+      workflowRunId: snapshot.scheduledWorkflowStore.runs[0].workflowRunId,
+      message: "Workflow completed.",
+    }));
+    expect(contexts.map((context) => (context.prompt.includes("workflow judge") ? "judge" : context.prompt.includes("main workflow agent") ? "final" : "work"))).toEqual([
+      "work",
+      "judge",
+      "final",
+    ]);
   });
 
   test("rejects schedules for missing workflows", () => {

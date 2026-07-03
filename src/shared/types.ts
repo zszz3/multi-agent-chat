@@ -721,6 +721,38 @@ export interface CreateWorkflowRequest {
   updatedAt?: number;
 }
 
+export interface CreateWorkflowDraftRequest {
+  title?: string;
+  configuredAgentId?: string;
+  modelId?: string;
+}
+
+export interface PatchWorkflowDraftRequest {
+  workflowId: string;
+  title?: string;
+  status?: WorkflowStatus;
+  configuredAgentId?: string;
+  modelId?: string;
+  objective?: string;
+  workDir?: string | null;
+  graph?: WorkflowGraph;
+  graphReady?: boolean;
+  messages?: WorkflowGrillMessage[];
+  reply?: string;
+  error?: string | null;
+  runProgress?: WorkflowRunProgressItem[];
+  runContextDocument?: string;
+  contextDocument?: string;
+  finalReport?: string | null;
+  agentSessionId?: string | null;
+  resetRunState?: boolean;
+}
+
+export interface SendWorkflowDraftReplyRequest {
+  workflowId: string;
+  reply: string;
+}
+
 export interface UpdateWorkflowRequest {
   workflowId: string;
   expectedRevision?: number;

@@ -27,11 +27,8 @@ interface UseWorkflowSidebarStateOptions {
   workflowRunning: boolean;
   setSnapshot: (snapshot: AppSnapshot) => void;
   workflowsService: Pick<WorkflowService, "renameWorkflow" | "deleteWorkflow">;
-  applyPersistedWorkflowDraft: (draft: WorkflowDraftState) => void;
-  resetWorkflowLocalDraft: () => void;
   canRenameWorkflow: boolean;
   canDeleteWorkflow: boolean;
-  missingCapabilityMessage: (feature: string) => string;
 }
 
 export function useWorkflowSidebarState({
@@ -40,11 +37,8 @@ export function useWorkflowSidebarState({
   workflowRunning,
   setSnapshot,
   workflowsService,
-  applyPersistedWorkflowDraft,
-  resetWorkflowLocalDraft,
   canRenameWorkflow,
   canDeleteWorkflow,
-  missingCapabilityMessage,
 }: UseWorkflowSidebarStateOptions): WorkflowSidebarStateController {
   const [workflowContextMenu, setWorkflowContextMenu] = useState<WorkflowSidebarContextMenu | undefined>();
   const [workflowRenameDraft, setWorkflowRenameDraft] = useState<WorkflowSidebarRenameDraft | undefined>();
@@ -85,47 +79,25 @@ export function useWorkflowSidebarState({
     if (!workflowRenameDraft) return;
     const title = workflowRenameDraft.title.trim();
     if (!title) return;
-    if (!canRenameWorkflow) {
-      window.alert?.(missingCapabilityMessage("Rename workflow"));
-      return;
-    }
+    if (!canRenameWorkflow) return;
     const next = await workflowsService.renameWorkflow(workflowRenameDraft.workflowId, title);
     setWorkflowRenameDraft(undefined);
     setSnapshot(next);
-    if (next.workflowDraft) applyPersistedWorkflowDraft(next.workflowDraft);
-  }, [
-    applyPersistedWorkflowDraft,
-    canRenameWorkflow,
-    missingCapabilityMessage,
-    setSnapshot,
-    workflowRenameDraft,
-    workflowsService,
-  ]);
+  }, [canRenameWorkflow, setSnapshot, workflowRenameDraft, workflowsService]);
 
   const deleteWorkflow = useCallback(async (workflowId: string): Promise<void> => {
     setWorkflowContextMenu(undefined);
     if (workflowRunning && workflowId === activeWorkflowId) return;
-    if (!canDeleteWorkflow) {
-      window.alert?.(missingCapabilityMessage("Delete workflow"));
-      return;
-    }
+    if (!canDeleteWorkflow) return;
     const workflow = workflows.find((item) => item.workflowId === workflowId);
     const confirmed =
       typeof window.confirm === "function" ? window.confirm(`Delete workflow "${workflow?.title ?? workflowId}" and its run data?`) : true;
     if (!confirmed) return;
     const next = await workflowsService.deleteWorkflow(workflowId);
     setSnapshot(next);
-    if (next.workflowDraft) {
-      applyPersistedWorkflowDraft(next.workflowDraft);
-    } else if (workflowId === activeWorkflowId) {
-      resetWorkflowLocalDraft();
-    }
   }, [
     activeWorkflowId,
-    applyPersistedWorkflowDraft,
     canDeleteWorkflow,
-    missingCapabilityMessage,
-    resetWorkflowLocalDraft,
     setSnapshot,
     workflowRunning,
     workflows,
