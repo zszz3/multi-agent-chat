@@ -1,0 +1,124 @@
+import { describe, expect, test, vi } from "vitest";
+import { InteractiveSessionManager } from "./interactive-session-manager";
+import { ProcessLease } from "./process-lease";
+
+describe("ProcessLease", () => {
+  test("tracks monotonic attachment generations and mints generation-scoped turn ids", () => {
+    const lease = new ProcessLease(0);
+
+    expect(lease.matchesGeneration(0)).toBe(true);
+    expect(lease.nextGeneration()).toBe(1);
+    expect(lease.matchesGeneration(1)).toBe(true);
+    expect(lease.nextTurnId()).toBe("turn-1-1");
+    expect(lease.nextTurnId()).toBe("turn-1-2");
+    expect(lease.nextGeneration()).toBe(2);
+    expect(lease.matchesGeneration(1)).toBe(false);
+    expect(lease.matchesGeneration(2)).toBe(true);
+    expect(lease.nextTurnId()).toBe("turn-2-1");
+  });
+});
+
+describe("InteractiveSessionManager", () => {
+  test("serializes duplicate chat sends through one session queue", async () => {
+    const started: string[] = [];
+    let running = false;
+    const session = {
+      reconfigure: vi.fn(),
+      ensureAttached: vi.fn(async () => undefined),
+      sendPrompt: vi.fn(async (prompt: string) => {
+        expect(running).toBe(false);
+        running = true;
+        await new Promise((resolve) => setTimeout(resolve, 10));
+        started.push(prompt);
+        running = false;
+      }),
+      interrupt: vi.fn(async () => undefined),
+      detach: vi.fn(async () => undefined),
+      detachIfStillExpired: vi.fn(async () => undefined),
+      snapshot: () => ({
+        executionStyle: "interactive" as const,
+        attachmentState: "idle" as const,
+        attachmentGeneration: 1,
+        capabilities: {
+          supportsInProcessConversationResume: true,
+          supportsResumeAfterDetach: false,
+          supportsResumeAfterAppRestart: false,
+          supportsTurnResume: false,
+          supportsInterrupt: true,
+          supportsContinue: true,
+          supportsApprovalRequests: false,
+          supportsUserInputRequests: false,
+        },
+      }),
+    };
+
+    const manager = new InteractiveSessionManager({
+      createSession: () => session,
+      now: () => 1000,
+    });
+
+    await manager.getOrCreate("chat-1", {} as never);
+    await Promise.all([
+      manager.dispatch("chat-1", (interactive) => interactive.sendPrompt("first")),
+      manager.dispatch("chat-1", (interactive) => interactive.sendPrompt("second")),
+    ]);
+
+    expect(started).toEqual(["first", "second"]);
+    expect(session.reconfigure).toHaveBeenCalledTimes(0);
+  });
+
+  test("idle sweep only detaches when generation and activity timestamp still match", async () => {
+    const detachIfStillExpired = vi.fn(async () => undefined);
+    let snapshot = {
+      executionStyle: "interactive" as const,
+      attachmentState: "idle" as const,
+      attachmentGeneration: 4,
+      lastMeaningfulActivityAt: 1,
+      capabilities: {
+        supportsInProcessConversationResume: true,
+        supportsResumeAfterDetach: false,
+        supportsResumeAfterAppRestart: false,
+        supportsTurnResume: false,
+        supportsInterrupt: true,
+        supportsContinue: true,
+        supportsApprovalRequests: false,
+        supportsUserInputRequests: false,
+      },
+    };
+    const manager = new InteractiveSessionManager({
+      createSession: () =>
+        ({
+          reconfigure: vi.fn(),
+          ensureAttached: vi.fn(async () => undefined),
+          sendPrompt: vi.fn(async () => undefined),
+          interrupt: vi.fn(async () => undefined),
+          detach: vi.fn(async () => undefined),
+          detachIfStillExpired,
+          snapshot: () => {
+            const captured = snapshot;
+            snapshot = {
+              ...snapshot,
+              attachmentGeneration: 5,
+              lastMeaningfulActivityAt: 2,
+            };
+            return captured;
+          },
+        }) as never,
+      now: () => 3_700_000,
+    });
+
+    await manager.getOrCreate("chat-1", {} as never);
+    snapshot = {
+      ...snapshot,
+      attachmentGeneration: 4,
+      lastMeaningfulActivityAt: 1,
+    };
+    await manager.sweepExpiredSessions();
+
+    expect(detachIfStillExpired).toHaveBeenCalledWith({
+      expectedGeneration: 4,
+      expectedLastMeaningfulActivityAt: 1,
+      reason: "idle_timeout",
+    });
+  });
+});

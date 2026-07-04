@@ -4,6 +4,7 @@ import { codexEnvironmentForChannel } from "./agents/codex-env";
 import { claudeCliModelForChannel, claudeEnvironmentForChannel } from "./agents/claude-env";
 import { ClaudeRunner } from "./agents/claude-runner";
 import { CodexRpcClient } from "./agents/codex-rpc";
+import type { RuntimeDriver } from "./agents/runtime-driver";
 import { codexAppServerConfigArgs } from "./model-config";
 
 export interface AgentExecutionContext {
@@ -41,17 +42,84 @@ interface RuntimeAgentExecutorFactoryOptions {
   ) => void;
 }
 
+function defaultResumeCapabilities() {
+  return {
+    supportsInProcessConversationResume: true,
+    supportsResumeAfterDetach: false,
+    supportsResumeAfterAppRestart: false,
+    supportsTurnResume: false,
+  };
+}
+
+function defaultInteractiveCapabilities(runtimeId: AgentId) {
+  return {
+    runtimeId,
+    chatStyle: "interactive" as const,
+    taskStyle: "oneshot" as const,
+    workflowStyle: "oneshot" as const,
+    testStyle: "oneshot" as const,
+    supportsInterrupt: true,
+    supportsContinue: true,
+    supportsApprovalRequests: runtimeId !== "api",
+    supportsUserInputRequests: runtimeId !== "api",
+    resume: defaultResumeCapabilities(),
+  };
+}
+
+function defaultOneShotCapabilities(runtimeId: AgentId) {
+  return {
+    runtimeId,
+    chatStyle: "oneshot" as const,
+    taskStyle: "oneshot" as const,
+    workflowStyle: "oneshot" as const,
+    testStyle: "oneshot" as const,
+    supportsInterrupt: false,
+    supportsContinue: false,
+    supportsApprovalRequests: false,
+    supportsUserInputRequests: false,
+    resume: {
+      supportsInProcessConversationResume: false,
+      supportsResumeAfterDetach: false,
+      supportsResumeAfterAppRestart: false,
+      supportsTurnResume: false,
+    },
+  };
+}
+
+export class RuntimeDriverRegistry {
+  constructor(private readonly drivers: RuntimeDriver[]) {}
+
+  driverFor(agentId: AgentId): RuntimeDriver {
+    const driver = this.drivers.find((item) => item.runtimeId === agentId);
+    if (!driver) throw new Error(`No runtime driver registered for ${agentId}`);
+    return driver;
+  }
+}
+
+export function createRuntimeDriverRegistry(options: RuntimeAgentExecutorFactoryOptions): RuntimeDriverRegistry {
+  const codexDriver: RuntimeDriver = {
+    runtimeId: "codex",
+    getCapabilities: () => defaultOneShotCapabilities("codex"),
+    createOneShotExecutor: (context) => new CodexAgentExecutor(context, options),
+  };
+  const claudeDriver: RuntimeDriver = {
+    runtimeId: "claude",
+    getCapabilities: () => defaultOneShotCapabilities("claude"),
+    createOneShotExecutor: (context) => new ClaudeAgentExecutor(context, options),
+  };
+  const apiDriver: RuntimeDriver = {
+    runtimeId: "api",
+    getCapabilities: () => defaultOneShotCapabilities("api"),
+    createOneShotExecutor: (context) => new ApiAgentExecutor(context, options),
+  };
+  return new RuntimeDriverRegistry([codexDriver, claudeDriver, apiDriver]);
+}
+
 export class RuntimeAgentExecutorFactory implements AgentExecutorFactory {
-  constructor(private readonly options: RuntimeAgentExecutorFactoryOptions) {}
+  constructor(private readonly registry: RuntimeDriverRegistry) {}
 
   create(context: AgentExecutionContext): AgentExecutor {
-    if (context.agentId === "codex") {
-      return new CodexAgentExecutor(context, this.options);
-    }
-    if (context.agentId === "api") {
-      return new ApiAgentExecutor(context, this.options);
-    }
-    return new ClaudeAgentExecutor(context, this.options);
+    return this.registry.driverFor(context.agentId).createOneShotExecutor(context);
   }
 }
 

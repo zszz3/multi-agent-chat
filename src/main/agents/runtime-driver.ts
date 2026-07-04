@@ -1,30 +1,44 @@
-import type { AgentEvent, AgentId, ChatRuntimeSessionState, PersistedResumeState } from "../../shared/types";
+import type { AgentEvent, AgentId, AgentRuntime, ChatRuntimeSessionState, PersistedResumeState } from "../../shared/types";
+import type { AgentExecutionContext, AgentExecutor } from "../agent-executor";
 import type { RuntimeCapabilities } from "./runtime-capabilities";
 
-export interface RuntimeDriverExecutionInput {
+export interface RuntimeSessionEvent {
+  attachmentGeneration: number;
+  turnId?: string;
+  event: AgentEvent;
+}
+
+export interface InteractiveSessionContext {
+  chatId: string;
+  configuredAgentId: string;
   runtimeId: AgentId;
-  prompt: string;
+  runtime: AgentRuntime;
+  channelId: string;
   workDir: string;
-  modelId?: string;
+  modelId: string;
+  developerInstructions: string;
   resumeState?: PersistedResumeState;
-  onEvent?: (event: AgentEvent) => void;
+  emit: (event: AgentEvent) => void;
+  syncState?: (state: ChatRuntimeSessionState) => void;
 }
 
-export interface RuntimeDriverExecutionResult {
-  content?: string;
-  resumeState?: PersistedResumeState;
-}
-
-export interface RuntimeSessionHandle {
-  readonly runtimeId: AgentId;
-  readonly session: ChatRuntimeSessionState;
+export interface InteractiveSession {
+  reconfigure(context: InteractiveSessionContext): void;
+  ensureAttached(): Promise<void>;
+  sendPrompt(prompt: string): Promise<void>;
   interrupt(): Promise<void>;
-  continue(prompt?: string): Promise<RuntimeDriverExecutionResult>;
+  detach(reason: "idle_timeout" | "app_shutdown" | "error"): Promise<void>;
+  detachIfStillExpired(input: {
+    expectedGeneration: number;
+    expectedLastMeaningfulActivityAt: number;
+    reason: "idle_timeout" | "app_shutdown" | "error";
+  }): Promise<void>;
+  snapshot(): ChatRuntimeSessionState;
 }
 
 export interface RuntimeDriver {
-  readonly runtimeId: AgentId;
-  readonly capabilities: RuntimeCapabilities;
-  start(input: RuntimeDriverExecutionInput): Promise<RuntimeDriverExecutionResult>;
-  attach(session: ChatRuntimeSessionState): Promise<RuntimeSessionHandle | undefined>;
+  runtimeId: AgentId;
+  getCapabilities(runtime: AgentRuntime): RuntimeCapabilities;
+  createOneShotExecutor(context: AgentExecutionContext): AgentExecutor;
+  createInteractiveSession?(context: InteractiveSessionContext): InteractiveSession;
 }

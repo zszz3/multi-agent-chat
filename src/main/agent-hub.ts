@@ -95,12 +95,15 @@ import { buildWorkflowAgentPrompt } from "../shared/workflow-agent";
 import { createWorkflowGraphFromObjective, parseWorkflowGraphUpsert, validateWorkflowGraph } from "../shared/workflow-graph";
 import { defaultWorkflowWorkDirSuffix } from "../shared/workflow-run";
 import { detectAgentRuntimes } from "./agents/detect";
+import { InteractiveSessionManager } from "./agents/interactive-session-manager";
 import { CodexRpcClient } from "./agents/codex-rpc";
 import { codexEnvironmentForChannel } from "./agents/codex-env";
 import { claudeCliModelForChannel, claudeEnvironmentForChannel } from "./agents/claude-env";
 import { ClaudeRunner } from "./agents/claude-runner";
 import { createClaudeStreamState, normalizeClaudeStreamEvent } from "./agents/claude-stream";
-import { RuntimeAgentExecutorFactory, type AgentExecutorFactory } from "./agent-executor";
+import type { RuntimeCapabilities } from "./agents/runtime-capabilities";
+import type { InteractiveSessionContext } from "./agents/runtime-driver";
+import { createRuntimeDriverRegistry, RuntimeAgentExecutorFactory, RuntimeDriverRegistry, type AgentExecutorFactory } from "./agent-executor";
 import { execCli, spawnCli } from "./cli-launcher";
 import { queryProviderBalance, type ProviderBalanceQueryOptions } from "./provider-balance";
 import {
@@ -1188,27 +1191,43 @@ export class AgentHub {
   private persistTimer: ReturnType<typeof setTimeout> | undefined = undefined;
   private persistInFlight: Promise<void> | undefined = undefined;
   private readonly executorFactory: AgentExecutorFactory;
+  private readonly runtimeDrivers: RuntimeDriverRegistry;
+  private readonly interactiveSessions: InteractiveSessionManager;
   private readonly executables: Record<AgentId, string>;
   private readonly workflowRuntime: WorkflowRuntime;
 
   constructor(
     executables: Partial<Record<AgentId, string>> = {},
     executorFactory?: AgentExecutorFactory,
+    runtimeDrivers?: RuntimeDriverRegistry,
   ) {
     this.executables = {
       codex: executables.codex ?? process.env.CODEX_PATH ?? "codex",
       claude: executables.claude ?? process.env.CLAUDE_PATH ?? "claude",
       api: executables.api ?? "api",
     };
-    this.executorFactory =
-      executorFactory ??
-      new RuntimeAgentExecutorFactory({
+    this.runtimeDrivers =
+      runtimeDrivers ??
+      createRuntimeDriverRegistry({
         executables: this.executables,
         channelById: (channelId) => this.channelById(channelId),
         respondToCodexServerRequest: (client, id, method, params) => {
           this.respondToCodexServerRequest(client, id, method, params);
         },
       });
+    this.executorFactory =
+      executorFactory ??
+      new RuntimeAgentExecutorFactory(this.runtimeDrivers);
+    this.interactiveSessions = new InteractiveSessionManager({
+      createSession: (context) => {
+        const driver = this.runtimeDrivers.driverFor(context.runtimeId);
+        if (!driver.createInteractiveSession) {
+          throw new Error(`${context.runtimeId} does not support shared interactive sessions yet.`);
+        }
+        return driver.createInteractiveSession(context);
+      },
+      now: () => Date.now(),
+    });
     this.workflowRuntime = new WorkflowRuntime({
       snapshot: () => this.snapshot(),
       startWorkflowRun: (input) => this.startWorkflowRun(input),
@@ -1559,6 +1578,7 @@ export class AgentHub {
         // The chat is already gone from app state; deletion should still succeed.
       }
     }
+    await this.interactiveSessions.dispose(chatId, "app_shutdown");
     await this.deleteAgentSession(chat);
 
     return this.snapshot();
@@ -2401,44 +2421,141 @@ export class AgentHub {
     return () => this.listeners.delete(listener);
   }
 
-async sendPrompt(prompt: string, chatId = this.activeChatId): Promise<void> {
-if (!chatId) return;
-const chat = this.chats.get(chatId);
-if (!chat || chat.running) return;
-const trimmedPrompt = prompt.trim();
-if (!trimmedPrompt) return;
+  private runtimeSessionFromCapabilities(capabilities: RuntimeCapabilities): ChatRuntimeSessionState {
+    return {
+      executionStyle: capabilities.chatStyle,
+      attachmentState: "detached",
+      attachmentGeneration: 0,
+      capabilities: {
+        ...capabilities.resume,
+        supportsInterrupt: capabilities.supportsInterrupt,
+        supportsContinue: capabilities.supportsContinue,
+        supportsApprovalRequests: capabilities.supportsApprovalRequests,
+        supportsUserInputRequests: capabilities.supportsUserInputRequests,
+      },
+    };
+  }
 
-if (trimmedPrompt.startsWith("/")) {
-await this.handleSlashCommand(chat, trimmedPrompt);
-return;
-}
+  private interactiveResumeState(chat: ChatState, runtimeId: AgentId): PersistedResumeState | undefined {
+    if (chat.runtimeSession?.resumeState) {
+      return clonePersistedResumeState(chat.runtimeSession.resumeState);
+    }
+    if (!chat.sessionId) return undefined;
+    return runtimeId === "claude"
+      ? { runtimeId: "claude", native: { sessionId: chat.sessionId } }
+      : { runtimeId: "codex", native: { threadId: chat.sessionId } };
+  }
 
- const resolved = this.resolveConfiguredAgent(chat.configuredAgentId, chat.modelId);
- if (!resolved) {
- chat.messages.push(createErrorMessage("No configured agent is selected."));
- chat.lastError = "No configured agent selected";
- chat.updatedAt = Date.now();
- this.emit();
- return;
- }
- if (!resolved.runtime?.available) {
- chat.messages.push(createErrorMessage(`${resolved.agent.name || resolved.agent.id} is not available on this machine.`));
- chat.lastError = `${resolved.runtimeAgentId} unavailable`;
- chat.updatedAt = Date.now();
- this.emit();
- return;
- }
+  private syncInteractiveChatState(chat: ChatState, state: ChatRuntimeSessionState): void {
+    const nextState = cloneRuntimeSessionState(state);
+    const resolved = this.resolveConfiguredAgent(chat.configuredAgentId, chat.modelId);
+    const runtimeId = resolved?.runtimeAgentId ?? "codex";
+    if (!nextState.resumeState) {
+      const resumeState = this.interactiveResumeState(chat, runtimeId);
+      if (resumeState) nextState.resumeState = resumeState;
+    }
+    chat.runtimeSession = nextState;
+    chat.updatedAt = Date.now();
+    this.emit();
+  }
 
-if (!hasAgentConversationMessages(chat.messages)) chat.title = titleFromPrompt(trimmedPrompt);
-chat.messages.push(createUserMessage(trimmedPrompt));
- chat.running = true;
-chat.lastError = undefined;
-chat.pendingAssistantMessageId = undefined;
-chat.updatedAt = Date.now();
-this.activeChatId = chat.id;
-this.emit();
- void this.runChat(chat, trimmedPrompt, resolved);
-}
+  private buildInteractiveChatContext(chat: ChatState, resolved: ResolvedConfiguredAgent): InteractiveSessionContext {
+    const resumeState = this.interactiveResumeState(chat, resolved.runtimeAgentId);
+    return {
+      chatId: chat.id,
+      configuredAgentId: chat.configuredAgentId,
+      runtimeId: resolved.runtimeAgentId,
+      runtime: resolved.runtime as AgentRuntime,
+      channelId: resolved.channel.id,
+      workDir: this.runWorkDir(chat),
+      modelId: resolved.modelId,
+      developerInstructions: CODEX_CHAT_DEVELOPER_INSTRUCTIONS,
+      ...(resumeState ? { resumeState } : {}),
+      emit: (event) => this.handleAgentEvent(chat, event),
+      syncState: (state) => this.syncInteractiveChatState(chat, state),
+    };
+  }
+
+  async sendPrompt(prompt: string, chatId = this.activeChatId): Promise<void> {
+    if (!chatId) return;
+    const chat = this.chats.get(chatId);
+    if (!chat || chat.running) return;
+    const trimmedPrompt = prompt.trim();
+    if (!trimmedPrompt) return;
+
+    if (trimmedPrompt.startsWith("/")) {
+      await this.handleSlashCommand(chat, trimmedPrompt);
+      return;
+    }
+
+    const resolved = this.resolveConfiguredAgent(chat.configuredAgentId, chat.modelId);
+    if (!resolved) {
+      chat.messages.push(createErrorMessage("No configured agent is selected."));
+      chat.lastError = "No configured agent selected";
+      chat.updatedAt = Date.now();
+      this.emit();
+      return;
+    }
+    if (!resolved.runtime?.available) {
+      chat.messages.push(createErrorMessage(`${resolved.agent.name || resolved.agent.id} is not available on this machine.`));
+      chat.lastError = `${resolved.runtimeAgentId} unavailable`;
+      chat.updatedAt = Date.now();
+      this.emit();
+      return;
+    }
+
+    const driver = this.runtimeDrivers.driverFor(resolved.runtimeAgentId);
+    const capabilities = driver.getCapabilities(resolved.runtime);
+    const supportsInteractiveChat =
+      capabilities.chatStyle === "interactive" && typeof driver.createInteractiveSession === "function";
+
+    if (supportsInteractiveChat && !chat.runtimeSession) {
+      chat.runtimeSession = this.runtimeSessionFromCapabilities(capabilities);
+    }
+
+    if (!hasAgentConversationMessages(chat.messages)) chat.title = titleFromPrompt(trimmedPrompt);
+    chat.messages.push(createUserMessage(trimmedPrompt));
+    chat.running = true;
+    chat.lastError = undefined;
+    chat.pendingAssistantMessageId = undefined;
+    chat.updatedAt = Date.now();
+    this.activeChatId = chat.id;
+    this.emit();
+
+    if (supportsInteractiveChat) {
+      try {
+        const context = this.buildInteractiveChatContext(chat, resolved);
+        const session = this.interactiveSessions.getOrCreate(chat.id, context);
+        this.syncInteractiveChatState(chat, session.snapshot());
+        this.activeStops.set(chat.id, async () => {
+          if (!chat.running) return;
+          await this.interactiveSessions.interrupt(chat.id);
+          this.syncInteractiveChatState(chat, session.snapshot());
+        });
+        await this.interactiveSessions.dispatch(chat.id, async (managed, lease) => {
+          await managed.ensureAttached();
+          const attachedState = managed.snapshot();
+          lease.syncAttachmentGeneration(attachedState.attachmentGeneration);
+          this.syncInteractiveChatState(chat, attachedState);
+          if (chat.runtimeSession) {
+            chat.runtimeSession.attachmentGeneration = lease.currentAttachmentGeneration();
+            chat.runtimeSession.attachmentState = "running";
+            chat.runtimeSession.activeTurnId = lease.nextTurnId();
+            chat.runtimeSession.lastMeaningfulActivityAt = Date.now();
+            chat.updatedAt = Date.now();
+            this.emit();
+          }
+          await managed.sendPrompt(trimmedPrompt);
+          this.syncInteractiveChatState(chat, managed.snapshot());
+        });
+      } catch (error) {
+        this.markRunFailed(chat, error instanceof Error ? error.message : String(error));
+      }
+      return;
+    }
+
+    void this.runChat(chat, trimmedPrompt, resolved);
+  }
 
   private async handleSlashCommand(chat: ChatState, prompt: string): Promise<void> {
     chat.messages.push(createUserMessage(prompt, true));
@@ -2750,6 +2867,11 @@ this.emit();
     this.activeStops.delete(chatId);
     if (stop) await stop();
     chat.running = false;
+    if (chat.runtimeSession) {
+      chat.runtimeSession.attachmentState = "interrupted";
+      chat.runtimeSession.lastMeaningfulActivityAt = Date.now();
+      delete chat.runtimeSession.activeTurnId;
+    }
     chat.messages.push(createErrorMessage("Stopped"));
     chat.updatedAt = Date.now();
     this.emit();
@@ -4136,14 +4258,32 @@ this.emit();
   }
 
   private handleAgentEvent(run: RunState, event: AgentEvent): void {
+    const runtimeSession = run.kind === "chat" ? run.runtimeSession : undefined;
+    const touchRuntimeSession = (attachmentState: ChatRuntimeSessionState["attachmentState"], clearTurn = false): void => {
+      if (!runtimeSession) return;
+      runtimeSession.attachmentState = attachmentState;
+      runtimeSession.lastMeaningfulActivityAt = Date.now();
+      if (clearTurn) delete runtimeSession.activeTurnId;
+    };
+
     if (event.type === "session") {
       run.sessionId = event.sessionId;
+      if (runtimeSession) {
+        const resolved = this.resolveConfiguredAgent(run.configuredAgentId, run.modelId);
+        const runtimeId = resolved?.runtimeAgentId ?? "codex";
+        runtimeSession.resumeState =
+          runtimeId === "claude"
+            ? { runtimeId: "claude", native: { sessionId: event.sessionId } }
+            : { runtimeId: "codex", native: { threadId: event.sessionId } };
+        runtimeSession.lastMeaningfulActivityAt = Date.now();
+      }
       run.updatedAt = Date.now();
       this.emit();
       return;
     }
 
     if (event.type === "delta") {
+      touchRuntimeSession("running");
       if (!run.pendingAssistantMessageId) {
         const message = createAssistantMessage(event.content);
         run.pendingAssistantMessageId = message.id;
@@ -4158,6 +4298,7 @@ this.emit();
     }
 
     if (event.type === "meta" || event.type === "system" || event.type === "tool_call" || event.type === "tool_result" || event.type === "handoff") {
+      touchRuntimeSession("running");
       this.appendEventToAssistant(run, {
         id: randomUUID(),
         type: event.type,
@@ -4174,6 +4315,7 @@ this.emit();
     }
 
     if (event.type === "completed") {
+      touchRuntimeSession("idle", true);
       if (event.content) {
         if (!run.pendingAssistantMessageId) {
           run.messages.push(createAssistantMessage(event.content));
@@ -4195,6 +4337,7 @@ this.emit();
     }
 
     if (event.type === "error") {
+      touchRuntimeSession("interrupted", true);
       run.lastError = event.error;
       run.messages.push(createErrorMessage(event.error));
       run.pendingAssistantMessageId = undefined;
