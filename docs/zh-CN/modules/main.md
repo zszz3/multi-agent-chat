@@ -67,7 +67,7 @@
 
 ## 执行层
 
-执行统一入口仍然是 `RuntimeAgentExecutorFactory`，但 chat / task 的真正 runtime 分发现在下沉到了 `src/main/runtime-adapter.ts` 的共享 registry。
+执行统一入口是 `RuntimeAgentExecutorFactory`。
 
 它根据 runtime 选择不同后端：
 
@@ -75,7 +75,7 @@
 - Claude：`ClaudeRunner`
 - API：HTTP 请求
 
-这一层的意义是把“执行一个 Agent”抽象成统一接口。当前 Phase 1 已经把 chat / task 的启动统一到这里，workflow 和 runtime test 的后续收敛见 `docs/zh-CN/runtime-adapter-refactor-plan.md`。
+这一层的意义是把“执行一个 Agent”抽象成统一接口，让 chat、task、workflow 都能复用。
 
 开发时要尽量保持这个边界：
 

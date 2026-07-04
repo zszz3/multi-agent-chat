@@ -154,7 +154,7 @@ renderer 基本上把这个 snapshot 当成“唯一业务状态源”。这也�
 - `claude`
 - `api`
 
-统一入口在 `src/main/agent-executor.ts`，由 `RuntimeAgentExecutorFactory` 负责对接执行器；当前 chat / task 启动已经进一步统一到 `src/main/runtime-adapter.ts` 的共享 registry。
+统一入口在 `src/main/agent-executor.ts`，由 `RuntimeAgentExecutorFactory` 负责根据 runtime 创建对应执行器。
 
 三个执行后端分别是：
 
@@ -162,7 +162,7 @@ renderer 基本上把这个 snapshot 当成“唯一业务状态源”。这也�
 - Claude：通过 `ClaudeRunner` 包装 CLI 子进程
 - API：直接 `fetch` 到兼容接口
 
-不管是聊天、任务还是 workflow，整体都复用同一套执行抽象。当前 Phase 1 已经统一了 chat / task 的启动入口，workflow 的同层收敛仍在后续阶段。
+不管是聊天、任务还是 workflow，整体都复用同一套执行抽象，这样避免了“每个功能都各自实现一套 provider 逻辑”。
 
 ## 8. 前端组织方式
 
