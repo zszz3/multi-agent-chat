@@ -28,6 +28,7 @@ import type {
   AppSnapshot,
   ChatEvent,
   ChatMessage,
+  ChatRuntimeSessionState,
   ChatSession,
   CodexPluginCatalogItem,
   AppendWorkflowContextRequest,
@@ -45,8 +46,11 @@ import type {
   PatchWorkflowDraftRequest,
   PauseWorkflowNodeRequest,
   ProviderBalanceResult,
+  PersistedResumeState,
   RunWorkflowGraphRequest,
   RunAgentTeamRequest,
+  RuntimeInteractionCapabilities,
+  RuntimeResumeCapabilities,
   RunTaskRequest,
   SendWorkflowDraftReplyRequest,
   StartWorkflowNodeRequest,
@@ -167,6 +171,10 @@ interface PersistedChatSessionRecord {
   updatedAt: number;
 }
 
+interface PersistedChatSessionRecordV3 extends PersistedChatSessionRecord {
+  runtimeSession?: ChatRuntimeSessionState;
+}
+
 interface PersistedChatMessageRecord {
   id: string;
   chatId: string;
@@ -263,6 +271,11 @@ interface PersistedAppStateV2 {
   configuredAgents?: ConfiguredAgent[];
 }
 
+interface PersistedAppStateV3 extends Omit<PersistedAppStateV2, "version" | "sessions"> {
+  version: 3;
+  sessions: PersistedChatSessionRecordV3[];
+}
+
 function createAssistantMessage(content = "", local = false): ChatMessage {
   return {
     id: randomUUID(),
@@ -340,6 +353,14 @@ function isTaskProgress(value: unknown): value is TaskProgress {
   return value === "backlog" || value === "todo" || value === "in_progress" || value === "in_review" || value === "done";
 }
 
+function isExecutionStyle(value: unknown): value is ChatRuntimeSessionState["executionStyle"] {
+  return value === "oneshot" || value === "interactive";
+}
+
+function isRuntimeAttachmentState(value: unknown): value is ChatRuntimeSessionState["attachmentState"] {
+  return value === "detached" || value === "idle" || value === "running" || value === "interrupted";
+}
+
 function isAgentTeamMode(value: unknown): value is AgentTeamMode {
   return value === "pipeline" || value === "parallel" || value === "supervisor";
 }
@@ -415,6 +436,75 @@ function asArray(value: unknown): unknown[] {
 
 function asBoolean(value: unknown): boolean {
   return value === true;
+}
+
+function defaultRuntimeSessionCapabilities(): RuntimeResumeCapabilities & RuntimeInteractionCapabilities {
+  return {
+    supportsInProcessConversationResume: true,
+    supportsResumeAfterDetach: false,
+    supportsResumeAfterAppRestart: false,
+    supportsTurnResume: false,
+    supportsInterrupt: true,
+    supportsContinue: true,
+    supportsApprovalRequests: false,
+    supportsUserInputRequests: false,
+  };
+}
+
+function clonePersistedResumeState(resumeState: PersistedResumeState): PersistedResumeState {
+  if (resumeState.runtimeId === "codex") {
+    return {
+      runtimeId: "codex",
+      native: {
+        threadId: resumeState.native.threadId,
+        ...(resumeState.native.sessionTreeRootId !== undefined ? { sessionTreeRootId: resumeState.native.sessionTreeRootId } : {}),
+      },
+      ...(resumeState.appContext
+        ? {
+            appContext: {
+              ...(resumeState.appContext.cwd !== undefined ? { cwd: resumeState.appContext.cwd } : {}),
+              ...(resumeState.appContext.modelId !== undefined ? { modelId: resumeState.appContext.modelId } : {}),
+              ...(resumeState.appContext.approvalPolicy !== undefined ? { approvalPolicy: resumeState.appContext.approvalPolicy } : {}),
+              ...(resumeState.appContext.sandboxPolicy !== undefined ? { sandboxPolicy: resumeState.appContext.sandboxPolicy } : {}),
+            },
+          }
+        : {}),
+      ...(resumeState.extensions ? { extensions: { ...resumeState.extensions } } : {}),
+    };
+  }
+  return {
+    runtimeId: "claude",
+    native: {
+      sessionId: resumeState.native.sessionId,
+      ...(resumeState.native.projectKey !== undefined ? { projectKey: resumeState.native.projectKey } : {}),
+      ...(resumeState.native.subpaths !== undefined ? { subpaths: [...resumeState.native.subpaths] } : {}),
+    },
+    ...(resumeState.appContext
+      ? {
+          appContext: {
+            cwd: resumeState.appContext.cwd,
+            ...(resumeState.appContext.modelId !== undefined ? { modelId: resumeState.appContext.modelId } : {}),
+            ...(resumeState.appContext.claudeConfigDir !== undefined ? { claudeConfigDir: resumeState.appContext.claudeConfigDir } : {}),
+            ...(resumeState.appContext.sessionStoreRef !== undefined ? { sessionStoreRef: resumeState.appContext.sessionStoreRef } : {}),
+          },
+        }
+      : {}),
+    ...(resumeState.extensions ? { extensions: { ...resumeState.extensions } } : {}),
+  };
+}
+
+function cloneRuntimeSessionState(runtimeSession: ChatRuntimeSessionState): ChatRuntimeSessionState {
+  return {
+    executionStyle: runtimeSession.executionStyle,
+    attachmentState: runtimeSession.attachmentState,
+    attachmentGeneration: runtimeSession.attachmentGeneration,
+    ...(runtimeSession.activeTurnId !== undefined ? { activeTurnId: runtimeSession.activeTurnId } : {}),
+    ...(runtimeSession.lastMeaningfulActivityAt !== undefined
+      ? { lastMeaningfulActivityAt: runtimeSession.lastMeaningfulActivityAt }
+      : {}),
+    ...(runtimeSession.resumeState ? { resumeState: clonePersistedResumeState(runtimeSession.resumeState) } : {}),
+    capabilities: { ...runtimeSession.capabilities },
+  };
 }
 
 function hasAgentConversationMessages(messages: ChatMessage[]): boolean {
@@ -589,8 +679,9 @@ function extractClaudeSessionId(line: string): string | undefined {
 }
 
 function claudeProjectStoragePath(workDir: string, sessionId: string): string {
-  const slug = workDir.replace(/[\\/]/g, "-");
-  return path.join(os.homedir(), ".claude", "projects", slug, `${sessionId}.jsonl`);
+  const slug = workDir.replace(/[:\\/]/g, "-");
+  const homeDir = process.env.HOME || process.env.USERPROFILE || os.homedir();
+  return path.join(homeDir, ".claude", "projects", slug, `${sessionId}.jsonl`);
 }
 
 async function deleteClaudeTestSessions(workDir: string, sessionIds: Iterable<string>): Promise<number> {
@@ -929,6 +1020,7 @@ class ChatState {
   id: string = randomUUID();
   title: string;
   sessionId: string | undefined = undefined;
+  runtimeSession: ChatRuntimeSessionState | undefined = undefined;
   running = false;
   messages: ChatMessage[] = [];
   pendingAssistantMessageId: string | undefined = undefined;
@@ -3328,6 +3420,7 @@ this.emit();
       configuredAgentId: chat.configuredAgentId,
       modelId: chat.modelId,
       sessionId: chat.sessionId,
+      ...(chat.runtimeSession ? { runtimeSession: cloneRuntimeSessionState(chat.runtimeSession) } : {}),
       running: chat.running,
       messages: chat.messages.map((message) => this.serializeMessage(message)),
       pendingAssistantMessageId: chat.pendingAssistantMessageId,
@@ -4146,7 +4239,7 @@ this.emit();
     if (Array.isArray(record.channels)) {
       this.channels = normalizeConfigChannelsForStorage(normalizeChannels(record.channels));
     }
-    if (record.version === 2) {
+    if (record.version === 2 || record.version === 3) {
       this.restorePersistedStateV2(record);
       return;
     }
@@ -4349,6 +4442,117 @@ this.emit();
     this.activeTeamRunId = activeTeamRunId && this.teamRuns.has(activeTeamRunId) ? activeTeamRunId : [...this.teamRuns.keys()][0];
   }
 
+  private migrateLegacyRuntimeSession(record: PersistedChatSessionRecord): ChatRuntimeSessionState | undefined {
+    if (!record.sessionId) return undefined;
+    const resolved = this.resolveConfiguredAgent(record.configuredAgentId, record.modelId);
+    const runtimeId = resolved?.runtimeAgentId === "claude" ? "claude" : "codex";
+    const resumeState: PersistedResumeState =
+      runtimeId === "claude"
+        ? { runtimeId: "claude", native: { sessionId: record.sessionId } }
+        : { runtimeId: "codex", native: { threadId: record.sessionId } };
+    return {
+      executionStyle: "interactive",
+      attachmentState: "detached",
+      attachmentGeneration: 0,
+      resumeState,
+      capabilities: defaultRuntimeSessionCapabilities(),
+    };
+  }
+
+  private restoreRuntimeSession(raw: unknown): ChatRuntimeSessionState | undefined {
+    const record = asRecord(raw);
+    if (!record || !isExecutionStyle(record.executionStyle) || !isRuntimeAttachmentState(record.attachmentState)) return undefined;
+    const capabilitiesRecord = asRecord(record.capabilities);
+    const capabilities = defaultRuntimeSessionCapabilities();
+    if (capabilitiesRecord) {
+      capabilities.supportsInProcessConversationResume = asBoolean(capabilitiesRecord.supportsInProcessConversationResume);
+      capabilities.supportsResumeAfterDetach = asBoolean(capabilitiesRecord.supportsResumeAfterDetach);
+      capabilities.supportsResumeAfterAppRestart = asBoolean(capabilitiesRecord.supportsResumeAfterAppRestart);
+      capabilities.supportsTurnResume = asBoolean(capabilitiesRecord.supportsTurnResume);
+      capabilities.supportsInterrupt = asBoolean(capabilitiesRecord.supportsInterrupt);
+      capabilities.supportsContinue = asBoolean(capabilitiesRecord.supportsContinue);
+      capabilities.supportsApprovalRequests = asBoolean(capabilitiesRecord.supportsApprovalRequests);
+      capabilities.supportsUserInputRequests = asBoolean(capabilitiesRecord.supportsUserInputRequests);
+    }
+    const restored: ChatRuntimeSessionState = {
+      executionStyle: record.executionStyle,
+      attachmentState: record.attachmentState,
+      attachmentGeneration: Math.max(0, Math.floor(asNumber(record.attachmentGeneration, 0))),
+      capabilities,
+    };
+    const activeTurnId = asOptionalString(record.activeTurnId);
+    if (activeTurnId) restored.activeTurnId = activeTurnId;
+    if (typeof record.lastMeaningfulActivityAt === "number") {
+      restored.lastMeaningfulActivityAt = record.lastMeaningfulActivityAt;
+    }
+    const resumeStateRecord = asRecord(record.resumeState);
+    if (resumeStateRecord?.runtimeId === "codex") {
+      const native = asRecord(resumeStateRecord.native);
+      const threadId = asOptionalString(native?.threadId);
+      if (threadId) {
+        const sessionTreeRootId = asOptionalString(native?.sessionTreeRootId);
+        const appContext = asRecord(resumeStateRecord.appContext);
+        const codexCwd = asOptionalString(appContext?.cwd);
+        const codexModelId = asOptionalString(appContext?.modelId);
+        const approvalPolicy = asOptionalString(appContext?.approvalPolicy);
+        const sandboxPolicy = appContext?.sandboxPolicy;
+        restored.resumeState = {
+          runtimeId: "codex",
+          native: {
+            threadId,
+            ...(sessionTreeRootId !== undefined ? { sessionTreeRootId } : {}),
+          },
+          ...(appContext
+            ? {
+                appContext: {
+                  ...(codexCwd !== undefined ? { cwd: codexCwd } : {}),
+                  ...(codexModelId !== undefined ? { modelId: codexModelId } : {}),
+                  ...(approvalPolicy !== undefined ? { approvalPolicy } : {}),
+                  ...(sandboxPolicy !== undefined ? { sandboxPolicy } : {}),
+                },
+              }
+            : {}),
+          ...(asRecord(resumeStateRecord.extensions) ? { extensions: { ...asRecord(resumeStateRecord.extensions)! } } : {}),
+        };
+      }
+    }
+    if (resumeStateRecord?.runtimeId === "claude") {
+      const native = asRecord(resumeStateRecord.native);
+      const sessionId = asOptionalString(native?.sessionId);
+      if (sessionId) {
+        const appContext = asRecord(resumeStateRecord.appContext);
+        const cwd = asOptionalString(appContext?.cwd);
+        const projectKey = asOptionalString(native?.projectKey);
+        const subpaths = Array.isArray(native?.subpaths)
+          ? native.subpaths.map((item) => asOptionalString(item)).filter((item): item is string => Boolean(item))
+          : undefined;
+        const claudeModelId = asOptionalString(appContext?.modelId);
+        const claudeConfigDir = asOptionalString(appContext?.claudeConfigDir);
+        const sessionStoreRef = asOptionalString(appContext?.sessionStoreRef);
+        restored.resumeState = {
+          runtimeId: "claude",
+          native: {
+            sessionId,
+            ...(projectKey !== undefined ? { projectKey } : {}),
+            ...(subpaths !== undefined ? { subpaths } : {}),
+          },
+          ...(cwd
+            ? {
+                appContext: {
+                  cwd,
+                  ...(claudeModelId !== undefined ? { modelId: claudeModelId } : {}),
+                  ...(claudeConfigDir !== undefined ? { claudeConfigDir } : {}),
+                  ...(sessionStoreRef !== undefined ? { sessionStoreRef } : {}),
+                },
+              }
+            : {}),
+          ...(asRecord(resumeStateRecord.extensions) ? { extensions: { ...asRecord(resumeStateRecord.extensions)! } } : {}),
+        };
+      }
+    }
+    return restored;
+  }
+
   private restoreChatState(raw: unknown): ChatState | null {
     if (!raw || typeof raw !== "object") return null;
     const record = raw as Record<string, unknown>;
@@ -4373,6 +4577,33 @@ this.emit();
       ? record.messages.map((message) => this.restoreMessage(message)).filter((message): message is ChatMessage => Boolean(message))
       : [];
     chat.messages = this.normalizeRestoredMessages(messages);
+    const migratedLegacyRuntimeSession = this.migrateLegacyRuntimeSession({
+      id: chat.id,
+      title: chat.title,
+      configuredAgentId: chat.configuredAgentId,
+      modelId: chat.modelId,
+      sessionId: chat.sessionId,
+      lastError: chat.lastError,
+      createdAt: chat.createdAt,
+      updatedAt: chat.updatedAt,
+    });
+    const restoredRuntimeSession = asRecord(record.runtimeSession) ? this.restoreRuntimeSession(record.runtimeSession) : undefined;
+    const hydratedRuntimeSession =
+      restoredRuntimeSession && !restoredRuntimeSession.resumeState && migratedLegacyRuntimeSession?.resumeState
+        ? {
+            ...cloneRuntimeSessionState(restoredRuntimeSession),
+            resumeState: clonePersistedResumeState(migratedLegacyRuntimeSession.resumeState),
+          }
+        : restoredRuntimeSession;
+    const resolvedRuntimeSession = hydratedRuntimeSession ?? migratedLegacyRuntimeSession;
+    chat.runtimeSession = resolvedRuntimeSession
+      ? {
+          ...cloneRuntimeSessionState(resolvedRuntimeSession),
+          attachmentState: "detached",
+          attachmentGeneration: 0,
+        }
+      : undefined;
+    if (chat.runtimeSession) delete chat.runtimeSession.activeTurnId;
     return chat;
   }
 
@@ -4873,8 +5104,8 @@ this.emit();
     }, PERSIST_DEBOUNCE_MS);
   }
 
-  private buildPersistedPayload(): PersistedAppStateV2 {
-    const sessions: PersistedChatSessionRecord[] = [];
+  private buildPersistedPayload(): PersistedAppStateV3 {
+    const sessions: PersistedChatSessionRecordV3[] = [];
     const messages: PersistedChatMessageRecord[] = [];
     const events: PersistedChatEventRecord[] = [];
     const tasks: PersistedTaskRunRecord[] = [];
@@ -4890,6 +5121,7 @@ this.emit();
         configuredAgentId: chat.configuredAgentId,
         modelId: chat.modelId,
         sessionId: chat.sessionId,
+        ...(chat.runtimeSession ? { runtimeSession: cloneRuntimeSessionState(chat.runtimeSession) } : {}),
         lastError: chat.lastError,
         createdAt: chat.createdAt,
         updatedAt: chat.updatedAt,
@@ -4988,7 +5220,7 @@ this.emit();
     }
 
     return {
-      version: 2,
+      version: 3,
       activeChatId: this.activeChatId ?? null,
       activeTaskId: this.activeTaskId ?? null,
       activeTeamId: this.activeTeamId ?? null,

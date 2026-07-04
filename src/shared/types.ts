@@ -183,6 +183,46 @@ export interface CodexDefaultConfig {
   plugins: AgentPluginConfig[] | null;
 }
 
+export type ExecutionStyle = "oneshot" | "interactive";
+
+export interface RuntimeResumeCapabilities {
+  supportsInProcessConversationResume: boolean;
+  supportsResumeAfterDetach: boolean;
+  supportsResumeAfterAppRestart: boolean;
+  supportsTurnResume: boolean;
+}
+
+export interface RuntimeInteractionCapabilities {
+  supportsInterrupt: boolean;
+  supportsContinue: boolean;
+  supportsApprovalRequests: boolean;
+  supportsUserInputRequests: boolean;
+}
+
+export type PersistedResumeState =
+  | {
+      runtimeId: "codex";
+      native: { threadId: string; sessionTreeRootId?: string };
+      appContext?: { cwd?: string; modelId?: string; approvalPolicy?: string; sandboxPolicy?: unknown };
+      extensions?: Record<string, unknown>;
+    }
+  | {
+      runtimeId: "claude";
+      native: { sessionId: string; projectKey?: string; subpaths?: string[] };
+      appContext?: { cwd: string; modelId?: string; claudeConfigDir?: string; sessionStoreRef?: string };
+      extensions?: Record<string, unknown>;
+    };
+
+export interface ChatRuntimeSessionState {
+  executionStyle: ExecutionStyle;
+  attachmentState: "detached" | "idle" | "running" | "interrupted";
+  attachmentGeneration: number;
+  activeTurnId?: string;
+  lastMeaningfulActivityAt?: number;
+  resumeState?: PersistedResumeState;
+  capabilities: RuntimeResumeCapabilities & RuntimeInteractionCapabilities;
+}
+
 export type AgentEvent =
   | { type: "session"; sessionId: string }
   | { type: "delta"; content: string }
@@ -227,6 +267,7 @@ export interface ChatSession {
   configuredAgentId: string;
   modelId: string;
   sessionId: string | undefined;
+  runtimeSession?: ChatRuntimeSessionState;
   running: boolean;
   messages: ChatMessage[];
   pendingAssistantMessageId: string | undefined;

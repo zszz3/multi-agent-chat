@@ -537,7 +537,7 @@ fs.writeFileSync(${JSON.stringify(argsPath)}, process.argv.slice(2).join("\\n") 
     const homeDir = await mkdtemp(path.join(os.tmpdir(), "multi-agent-chat-claude-home-"));
     const workDir = path.join(homeDir, "workspace");
     const sessionId = "019e9143-2451-7612-a62d-e65389574d7d";
-    const projectSlug = workDir.replace(/[\\/]/g, "-");
+    const projectSlug = workDir.replace(/[:\\/]/g, "-");
     const sessionDir = path.join(homeDir, ".claude", "projects", projectSlug);
     const sessionPath = path.join(sessionDir, `${sessionId}.jsonl`);
     await mkdir(sessionDir, { recursive: true });
@@ -1000,7 +1000,7 @@ fs.writeFileSync(${JSON.stringify(argsPath)}, process.argv.slice(2).join("\\n") 
     await hub.flushPersistence();
 
     const persisted = JSON.parse(await readFile(storagePath, "utf8")) as any;
-    expect(persisted.version).toBe(2);
+    expect(persisted.version).toBe(3);
     expect(persisted.sessions).toEqual([expect.objectContaining({ id: expect.any(String) }), expect.objectContaining({ id: chat.id })]);
     expect(persisted.messages).toEqual(expect.arrayContaining([expect.objectContaining({ chatId: chat.id, role: "assistant" })]));
     expect(persisted.events).toEqual(expect.arrayContaining([expect.objectContaining({ chatId: chat.id, type: "meta", content: "→ shell_command\npwd" })]));
@@ -1021,6 +1021,304 @@ fs.writeFileSync(${JSON.stringify(argsPath)}, process.argv.slice(2).join("\\n") 
         events: [expect.objectContaining({ type: "meta", content: "→ shell_command\npwd" })],
       }),
     ]);
+  });
+
+  test("migrates a legacy chat sessionId into detached runtime resume state", async () => {
+    const dir = await mkdtemp(path.join(os.tmpdir(), "multi-agent-chat-runtime-session-migration-"));
+    const storagePath = path.join(dir, "app-chats.json");
+    await writeFile(
+      storagePath,
+      JSON.stringify({
+        version: 2,
+        activeChatId: "chat-1",
+        workDir: dir,
+        sessions: [
+          {
+            id: "chat-1",
+            title: "Legacy chat",
+            configuredAgentId: "default-agent",
+            modelId: DEFAULT_MODEL_ID,
+            sessionId: "thread-1",
+            createdAt: 1710000000000,
+            updatedAt: 1710000000000,
+          },
+        ],
+        messages: [],
+        events: [],
+        tasks: [],
+        taskMessages: [],
+        taskEvents: [],
+        teams: [],
+        teamRuns: [],
+      }),
+      "utf8",
+    );
+
+    const hub = new AgentHub();
+    await hub.loadPersistedState(storagePath);
+
+    const chat = hub.snapshot().chats.find((item) => item.id === "chat-1");
+    expect(chat?.runtimeSession).toMatchObject({
+      executionStyle: "interactive",
+      attachmentState: "detached",
+      attachmentGeneration: 0,
+      resumeState: {
+        runtimeId: "codex",
+        native: { threadId: "thread-1" },
+      },
+    });
+  });
+
+  test("restores interactive chats as detached and clears ephemeral turn state", () => {
+    const hub = new AgentHub({ codex: "missing-codex-for-test", claude: "missing-claude-for-test" });
+    addConfiguredAgents(hub, [configuredAgent("claude-agent", { runtimeAgentId: "claude", name: "Claude Agent" })]);
+
+    const restored = (hub as any).restoreChatState({
+      id: "chat-restore-1",
+      title: "Claude restore",
+      configuredAgentId: "claude-agent",
+      modelId: DEFAULT_MODEL_ID,
+      sessionId: "session-1",
+      runtimeSession: {
+        executionStyle: "interactive",
+        attachmentState: "running",
+        attachmentGeneration: 12,
+        activeTurnId: "turn-9",
+        resumeState: {
+          runtimeId: "claude",
+          native: { sessionId: "session-1" },
+        },
+      },
+      messages: [],
+      createdAt: 1710000000000,
+      updatedAt: 1710000000000,
+    });
+
+    expect(restored.runtimeSession).toMatchObject({
+      executionStyle: "interactive",
+      attachmentState: "detached",
+      attachmentGeneration: 0,
+      resumeState: {
+        runtimeId: "claude",
+        native: { sessionId: "session-1" },
+      },
+    });
+    expect(restored.runtimeSession?.activeTurnId).toBeUndefined();
+  });
+
+  test("falls back to legacy session migration when persisted runtimeSession is malformed", async () => {
+    const dir = await mkdtemp(path.join(os.tmpdir(), "multi-agent-chat-runtime-session-fallback-"));
+    const storagePath = path.join(dir, "app-chats.json");
+    await writeFile(
+      storagePath,
+      JSON.stringify({
+        version: 3,
+        activeChatId: "chat-1",
+        workDir: dir,
+        sessions: [
+          {
+            id: "chat-1",
+            title: "Broken runtime session",
+            configuredAgentId: "default-agent",
+            modelId: DEFAULT_MODEL_ID,
+            sessionId: "thread-legacy-1",
+            runtimeSession: {
+              executionStyle: "interactive",
+            },
+            createdAt: 1710000000000,
+            updatedAt: 1710000000000,
+          },
+        ],
+        messages: [],
+        events: [],
+        tasks: [],
+        taskMessages: [],
+        taskEvents: [],
+        teams: [],
+        teamRuns: [],
+      }),
+      "utf8",
+    );
+
+    const hub = new AgentHub();
+    await hub.loadPersistedState(storagePath);
+
+    const chat = hub.snapshot().chats.find((item) => item.id === "chat-1");
+    expect(chat?.runtimeSession).toMatchObject({
+      executionStyle: "interactive",
+      attachmentState: "detached",
+      attachmentGeneration: 0,
+      resumeState: {
+        runtimeId: "codex",
+        native: { threadId: "thread-legacy-1" },
+      },
+    });
+  });
+
+  test("persists runtimeSession as V3 and restores durable fields while clearing ephemeral state", async () => {
+    const dir = await mkdtemp(path.join(os.tmpdir(), "multi-agent-chat-runtime-session-roundtrip-"));
+    const storagePath = path.join(dir, "app-chats.json");
+    const hub = new AgentHub();
+    await hub.loadPersistedState(storagePath);
+    const chat = hub.createChat("default-agent");
+    const state = (hub as any).chats.get(chat.id);
+    state.runtimeSession = {
+      executionStyle: "interactive",
+      attachmentState: "running",
+      attachmentGeneration: 7,
+      activeTurnId: "turn-7",
+      lastMeaningfulActivityAt: 1710000000500,
+      resumeState: {
+        runtimeId: "codex",
+        native: { threadId: "thread-roundtrip-1", sessionTreeRootId: "tree-root-1" },
+        appContext: {
+          cwd: dir,
+          modelId: DEFAULT_MODEL_ID,
+          approvalPolicy: "never",
+          sandboxPolicy: { mode: "workspace-write" },
+        },
+        extensions: { source: "test" },
+      },
+      capabilities: {
+        supportsInProcessConversationResume: true,
+        supportsResumeAfterDetach: true,
+        supportsResumeAfterAppRestart: true,
+        supportsTurnResume: false,
+        supportsInterrupt: true,
+        supportsContinue: true,
+        supportsApprovalRequests: true,
+        supportsUserInputRequests: true,
+      },
+    };
+
+    await hub.flushPersistence();
+
+    const persisted = JSON.parse(await readFile(storagePath, "utf8")) as any;
+    expect(persisted.version).toBe(3);
+    expect(persisted.sessions).toEqual(
+      expect.arrayContaining([
+        expect.objectContaining({
+          id: chat.id,
+          runtimeSession: expect.objectContaining({
+            executionStyle: "interactive",
+            attachmentState: "running",
+            attachmentGeneration: 7,
+            activeTurnId: "turn-7",
+            resumeState: expect.objectContaining({
+              runtimeId: "codex",
+              native: expect.objectContaining({ threadId: "thread-roundtrip-1" }),
+            }),
+          }),
+        }),
+      ]),
+    );
+
+    const restored = new AgentHub();
+    await restored.loadPersistedState(storagePath);
+    const restoredChat = restored.snapshot().chats.find((item) => item.id === chat.id);
+    expect(restoredChat?.runtimeSession).toMatchObject({
+      executionStyle: "interactive",
+      attachmentState: "detached",
+      attachmentGeneration: 0,
+      lastMeaningfulActivityAt: 1710000000500,
+      resumeState: {
+        runtimeId: "codex",
+        native: { threadId: "thread-roundtrip-1", sessionTreeRootId: "tree-root-1" },
+        appContext: {
+          cwd: dir,
+          modelId: DEFAULT_MODEL_ID,
+          approvalPolicy: "never",
+          sandboxPolicy: { mode: "workspace-write" },
+        },
+        extensions: { source: "test" },
+      },
+      capabilities: {
+        supportsInProcessConversationResume: true,
+        supportsResumeAfterDetach: true,
+        supportsResumeAfterAppRestart: true,
+        supportsTurnResume: false,
+        supportsInterrupt: true,
+        supportsContinue: true,
+        supportsApprovalRequests: true,
+        supportsUserInputRequests: true,
+      },
+    });
+    expect(restoredChat?.runtimeSession?.activeTurnId).toBeUndefined();
+  });
+
+  test("falls back to legacy sessionId when persisted resumeState is partially malformed", async () => {
+    const dir = await mkdtemp(path.join(os.tmpdir(), "multi-agent-chat-runtime-session-resume-fallback-"));
+    const storagePath = path.join(dir, "app-chats.json");
+    await writeFile(
+      storagePath,
+      JSON.stringify({
+        version: 3,
+        activeChatId: "chat-1",
+        workDir: dir,
+        sessions: [
+          {
+            id: "chat-1",
+            title: "Broken resume state",
+            configuredAgentId: "default-agent",
+            modelId: DEFAULT_MODEL_ID,
+            sessionId: "thread-legacy-2",
+            runtimeSession: {
+              executionStyle: "interactive",
+              attachmentState: "idle",
+              attachmentGeneration: 3,
+              resumeState: {
+                runtimeId: "codex",
+                native: {},
+              },
+              capabilities: {
+                supportsInProcessConversationResume: true,
+                supportsResumeAfterDetach: true,
+                supportsResumeAfterAppRestart: true,
+                supportsTurnResume: false,
+                supportsInterrupt: true,
+                supportsContinue: true,
+                supportsApprovalRequests: false,
+                supportsUserInputRequests: false,
+              },
+            },
+            createdAt: 1710000000000,
+            updatedAt: 1710000000000,
+          },
+        ],
+        messages: [],
+        events: [],
+        tasks: [],
+        taskMessages: [],
+        taskEvents: [],
+        teams: [],
+        teamRuns: [],
+      }),
+      "utf8",
+    );
+
+    const hub = new AgentHub();
+    await hub.loadPersistedState(storagePath);
+
+    const chat = hub.snapshot().chats.find((item) => item.id === "chat-1");
+    expect(chat?.runtimeSession).toMatchObject({
+      executionStyle: "interactive",
+      attachmentState: "detached",
+      attachmentGeneration: 0,
+      resumeState: {
+        runtimeId: "codex",
+        native: { threadId: "thread-legacy-2" },
+      },
+      capabilities: {
+        supportsInProcessConversationResume: true,
+        supportsResumeAfterDetach: true,
+        supportsResumeAfterAppRestart: true,
+        supportsTurnResume: false,
+        supportsInterrupt: true,
+        supportsContinue: true,
+        supportsApprovalRequests: false,
+        supportsUserInputRequests: false,
+      },
+    });
   });
 
   test("persists execution channel config in app state and restores it ahead of legacy channel file", async () => {
