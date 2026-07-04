@@ -79,7 +79,11 @@ The key entry files are:
 
 - `src/main/index.ts`: bootstraps Electron, loads state, registers IPC, starts local services
 - `src/main/agent-hub.ts`: central in-memory state container plus orchestration logic
-- `src/main/agent-executor.ts`: runtime-specific execution strategy for Codex, Claude, and API agents
+- `src/main/agent-executor.ts`: thin runtime driver registry plus one-shot execution bridge
+- `src/main/agents/runtime-driver.ts`: shared runtime capabilities and interactive session contracts
+- `src/main/agents/interactive-session-manager.ts`: per-chat interactive queue plus central idle-detach sweep
+- `src/main/agents/codex-interactive-session.ts`: long-lived Codex chat attachment boundary
+- `src/main/agents/claude-interactive-session.ts`: shared Claude chat attachment boundary
 - `src/main/sqlite-store.ts`: small SQLite persistence wrapper
 
 ### Preload
@@ -140,13 +144,20 @@ The app supports three runtime families:
 - `claude`
 - `api`
 
-Execution is delegated through `RuntimeAgentExecutorFactory` in `src/main/agent-executor.ts`.
+Execution is delegated through a thin driver registry in `src/main/agent-executor.ts`.
 
-Each runtime has a different backend:
+The main process now supports two execution styles:
 
-- Codex: RPC-style interaction through `CodexRpcClient`
-- Claude: CLI process wrapper through `ClaudeRunner`
+- `oneshot`: one request per task, workflow, or stateless API call
+- `interactive`: one logical chat session with a lazily attached runtime process
+
+Each runtime still has a different backend:
+
+- Codex: RPC-style interaction through `CodexRpcClient` plus `CodexInteractiveSession` for reusable chat attachment
+- Claude: CLI process wrapper through `ClaudeRunner` plus `ClaudeInteractiveSession` for shared chat attachment
 - API: direct HTTP request to provider-compatible endpoints
+
+`AgentHub` remains the state authority. It persists logical chat identity and runtime resume metadata, restores interactive chats in a detached state after app restart, and lets `InteractiveSessionManager` own serialized per-chat execution and idle sweeping.
 
 The same high-level concepts are reused across chat, task, and workflow execution:
 

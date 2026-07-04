@@ -1189,6 +1189,7 @@ export class AgentHub {
   private sqliteStore: SqliteAppStore | undefined = undefined;
   private modelConfigPath: string | undefined = undefined;
   private persistTimer: ReturnType<typeof setTimeout> | undefined = undefined;
+  private idleSweepTimer: ReturnType<typeof setInterval> | undefined = undefined;
   private persistInFlight: Promise<void> | undefined = undefined;
   private readonly executorFactory: AgentExecutorFactory;
   private readonly runtimeDrivers: RuntimeDriverRegistry;
@@ -1251,6 +1252,9 @@ export class AgentHub {
         command: runtime.command || this.executables[runtime.id],
       });
     }
+    this.idleSweepTimer ??= setInterval(() => {
+      void this.interactiveSessions.sweepExpiredSessions(Date.now());
+    }, 30 * 60 * 1000);
     this.emit();
   }
 

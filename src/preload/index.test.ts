@@ -1,4 +1,9 @@
-import { describe, expect, test, vi } from "vitest";
+import { mkdtemp, writeFile } from "node:fs/promises";
+import os from "node:os";
+import path from "node:path";
+import type { AppSnapshot, ChatRuntimeSessionState, ChatSession } from "../shared/types";
+import type { MultiAgentChatApi } from "./index";
+import { describe, expect, expectTypeOf, test, vi } from "vitest";
 
 const electronState = vi.hoisted(() => ({
   exposedApi: undefined as Record<string, unknown> | undefined,
@@ -55,5 +60,102 @@ describe("preload skill API", () => {
     expect(electronState.exposedApi).toHaveProperty("queryRuntimeChannelBalance");
     expect(electronState.exposedApi).toHaveProperty("loadCodexDefaultConfig");
     expect(electronState.exposedApi).not.toHaveProperty("translateSkill");
+  });
+
+  test("keeps runtime session typing stable across the preload snapshot surface", () => {
+    expectTypeOf<Awaited<ReturnType<MultiAgentChatApi["getSnapshot"]>>>().toEqualTypeOf<AppSnapshot>();
+    expectTypeOf<ChatSession["runtimeSession"]>().toEqualTypeOf<ChatRuntimeSessionState | undefined>();
+  });
+});
+
+describe("AgentHub runtime recovery wiring", () => {
+  test("initialize starts one central idle sweep while restored interactive chats stay detached", async () => {
+    vi.useFakeTimers();
+    vi.setSystemTime(new Date("2026-07-05T00:00:00.000Z"));
+
+    let hub: InstanceType<(typeof import("../main/agent-hub"))["AgentHub"]> | undefined;
+
+    try {
+      const dir = await mkdtemp(path.join(os.tmpdir(), "multi-agent-chat-runtime-recovery-"));
+      const storagePath = path.join(dir, "app-chats.json");
+      await writeFile(
+        storagePath,
+        JSON.stringify({
+          version: 3,
+          activeChatId: "chat-1",
+          workDir: dir,
+          sessions: [
+            {
+              id: "chat-1",
+              title: "Recovered interactive chat",
+              configuredAgentId: "default-agent",
+              modelId: "default",
+              sessionId: "thread-restore-1",
+              runtimeSession: {
+                executionStyle: "interactive",
+                attachmentState: "running",
+                attachmentGeneration: 8,
+                activeTurnId: "turn-8-1",
+                resumeState: {
+                  runtimeId: "codex",
+                  native: { threadId: "thread-restore-1" },
+                },
+                capabilities: {
+                  supportsInProcessConversationResume: true,
+                  supportsResumeAfterDetach: true,
+                  supportsResumeAfterAppRestart: true,
+                  supportsTurnResume: false,
+                  supportsInterrupt: true,
+                  supportsContinue: true,
+                  supportsApprovalRequests: true,
+                  supportsUserInputRequests: true,
+                },
+              },
+              createdAt: 1710000000000,
+              updatedAt: 1710000000000,
+            },
+          ],
+          messages: [],
+          events: [],
+          tasks: [],
+          taskMessages: [],
+          taskEvents: [],
+          teams: [],
+          teamRuns: [],
+        }),
+        "utf8",
+      );
+
+      vi.resetModules();
+      vi.doMock("../main/agents/detect", () => ({
+        detectAgentRuntimes: vi.fn(async () => []),
+      }));
+      const { AgentHub } = await import("../main/agent-hub");
+      hub = new AgentHub({ codex: "missing-codex-for-test", claude: "missing-claude-for-test" });
+      await hub.loadPersistedState(storagePath);
+
+      const sweepExpiredSessions = vi.fn(async () => undefined);
+      (hub as any).interactiveSessions.sweepExpiredSessions = sweepExpiredSessions;
+
+      await hub.initialize();
+      await hub.initialize();
+      await vi.advanceTimersByTimeAsync(30 * 60 * 1000);
+
+      expect(sweepExpiredSessions).toHaveBeenCalledTimes(1);
+      expect(sweepExpiredSessions).toHaveBeenCalledWith(Date.now());
+      expect(hub.snapshot().chats.find((chat) => chat.id === "chat-1")?.runtimeSession).toMatchObject({
+        attachmentState: "detached",
+        attachmentGeneration: 0,
+      });
+      expect(hub.snapshot().chats.find((chat) => chat.id === "chat-1")?.runtimeSession?.activeTurnId).toBeUndefined();
+    } finally {
+      if (hub) {
+        const idleSweepTimer = (hub as any).idleSweepTimer as ReturnType<typeof setInterval> | undefined;
+        if (idleSweepTimer) clearInterval(idleSweepTimer);
+      }
+      vi.unmock("../main/agents/detect");
+      vi.useRealTimers();
+      vi.resetModules();
+    }
   });
 });

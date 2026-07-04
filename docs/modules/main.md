@@ -10,7 +10,11 @@ If a renderer feature changes the actual behavior of chats, tasks, workflows, ag
 
 - `index.ts`: Electron bootstrap, BrowserWindow creation, IPC registration, local bridge startup
 - `agent-hub.ts`: central app state container and domain orchestration layer
-- `agent-executor.ts`: runtime adapter for Codex, Claude, and API agents
+- `agent-executor.ts`: thin runtime driver registry and one-shot execution bridge
+- `agents/runtime-driver.ts`: shared runtime capability and interactive session interfaces
+- `agents/interactive-session-manager.ts`: per-chat queueing and idle-detach orchestration for interactive runtimes
+- `agents/codex-interactive-session.ts`: reusable Codex chat attachment
+- `agents/claude-interactive-session.ts`: reusable Claude chat attachment
 - `model-config.ts`: channel normalization, Codex config generation/import, preset-backed config handling
 - `provider-balance.ts`: provider balance queries
 - `scheduled-workflow-cloud.ts`: cloud sync for scheduled workflows
@@ -46,6 +50,8 @@ It is responsible for:
 - tracking configured agents and model channels
 - creating/selecting/deleting chats
 - running prompts and streaming events into chat sessions
+- restoring interactive chat resume state as detached after app restart
+- coordinating idle-sweep recovery for attached interactive sessions
 - creating/running/stopping tasks
 - creating/updating teams and team runs
 - managing workflow store and workflow draft
@@ -56,13 +62,20 @@ When changing business behavior, start here first. Many UI issues are actually s
 
 ## Execution Layer
 
-Runtime execution is abstracted by `RuntimeAgentExecutorFactory`.
+Runtime execution is split into two styles:
+
+- `oneshot`: one executor per task, workflow, or stateless API call
+- `interactive`: one logical chat session with a lazily attached runtime process
+
+The selection boundary lives in `RuntimeAgentExecutorFactory` plus the runtime driver registry.
 
 Backends:
 
-- Codex runtime uses `CodexRpcClient`
-- Claude runtime uses `ClaudeRunner`
+- Codex one-shot and interactive paths use `CodexRpcClient`, with chat reuse managed by `CodexInteractiveSession`
+- Claude one-shot and interactive paths use `ClaudeRunner`, with chat reuse managed by `ClaudeInteractiveSession`
 - API runtime uses direct `fetch`
+
+`AgentHub` still owns snapshot state and persisted recovery metadata, but interactive process lifecycle now sits behind `InteractiveSessionManager` and the runtime-specific session helpers under `src/main/agents/`.
 
 This layer should stay runtime-agnostic from the perspective of higher-level features. Chat, task, and workflow code should not duplicate provider-specific logic.
 
