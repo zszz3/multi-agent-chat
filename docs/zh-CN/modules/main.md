@@ -67,7 +67,7 @@
 
 ## 执行层
 
-执行统一入口仍然是 `RuntimeAgentExecutorFactory`，但 chat / task / workflow-agent / runtime test 的真正 runtime 分发现在都下沉到了 `src/main/runtime-adapter.ts` 的共享 registry。
+执行统一入口仍然是 `RuntimeAgentExecutorFactory`，但 chat / task 的真正 runtime 分发现在下沉到了 `src/main/runtime-adapter.ts` 的共享 registry。
 
 它根据 runtime 选择不同后端：
 
@@ -75,14 +75,12 @@
 - Claude：`ClaudeRunner`
 - API：HTTP 请求
 
-这一层的意义是把“执行一个 Agent”抽象成统一接口。现在 chat / task / workflow-agent / runtime test 都已经统一到这里；runtime detect 和一次性 CLI probe 仍然保持独立，后续收尾见 `docs/zh-CN/runtime-adapter-refactor-plan.md`。
+这一层的意义是把“执行一个 Agent”抽象成统一接口。当前 Phase 1 已经把 chat / task 的启动统一到这里，workflow 和 runtime test 的后续收敛见 `docs/zh-CN/runtime-adapter-refactor-plan.md`。
 
 开发时要尽量保持这个边界：
 
 - 运行时差异留在执行层
 - 上层功能只关心 prompt、model、channel、事件流和 session
-- 新增 runtime 时，先在 adapter 里补齐 `createExecutor(...)`、`runWorkflow(...)`、`testAgent(...)`，再考虑上层功能接入
-- runtime detect 和一次性 setup probe 默认继续放在 adapter 外，除非它们真的共享同一套执行生命周期
 
 不要把 provider 特殊逻辑散落到 task、workflow、chat 的高层逻辑里。
 

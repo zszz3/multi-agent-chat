@@ -56,7 +56,7 @@ When changing business behavior, start here first. Many UI issues are actually s
 
 ## Execution Layer
 
-Runtime execution now enters through `RuntimeAgentExecutorFactory`, while chat, task, workflow-agent, and runtime-test startup all delegate to the shared registry in `src/main/runtime-adapter.ts`.
+Runtime execution now enters through `RuntimeAgentExecutorFactory`, which delegates chat and task startup to the shared registry in `src/main/runtime-adapter.ts`.
 
 Backends:
 
@@ -64,14 +64,12 @@ Backends:
 - Claude runtime uses `ClaudeRunner`
 - API runtime uses direct `fetch`
 
-This layer should stay runtime-agnostic from the perspective of higher-level features. The registry now centralizes chat, task, workflow-agent, and runtime-test startup here; runtime detection and one-shot CLI probes remain separate by design and are tracked in `docs/runtime-adapter-refactor-plan.md`.
+This layer should stay runtime-agnostic from the perspective of higher-level features. Phase 1 centralizes chat and task startup here; workflow-agent and runtime-test consolidation are tracked in `docs/runtime-adapter-refactor-plan.md`.
 
 When adding runtime behavior:
 
 - prefer extending `runtime-adapter.ts` or the runtime-specific helper under `src/main/agents/`
 - avoid leaking provider-specific branching into unrelated task or workflow code
-- when adding a new runtime, implement `createExecutor(...)`, `runWorkflow(...)`, and `testAgent(...)` in the adapter before touching higher-level features
-- keep runtime detection and one-shot setup probes outside the adapter unless they truly share execution lifecycle semantics
 
 ## IPC Registration
 

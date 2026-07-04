@@ -7,7 +7,6 @@ import { DEFAULT_MODEL_ID } from "../shared/models";
 import { projectNodeStates } from "../shared/workflow-run";
 import type { AgentChannel, AgentId, ConfiguredAgent } from "../shared/types";
 import type { AgentExecutionContext, AgentExecutorFactory } from "./agent-executor";
-import { claudeProjectStoragePath } from "./runtime-adapter";
 import { writeNodeCliLauncher } from "./test-cli-fixtures";
 
 function configuredAgent(
@@ -538,11 +537,12 @@ fs.writeFileSync(${JSON.stringify(argsPath)}, process.argv.slice(2).join("\\n") 
     const homeDir = await mkdtemp(path.join(os.tmpdir(), "multi-agent-chat-claude-home-"));
     const workDir = path.join(homeDir, "workspace");
     const sessionId = "019e9143-2451-7612-a62d-e65389574d7d";
-    vi.stubEnv("HOME", homeDir);
-    vi.stubEnv("USERPROFILE", homeDir);
-    const sessionPath = claudeProjectStoragePath(workDir, sessionId);
-    await mkdir(path.dirname(sessionPath), { recursive: true });
+    const projectSlug = workDir.replace(/[\\/]/g, "-");
+    const sessionDir = path.join(homeDir, ".claude", "projects", projectSlug);
+    const sessionPath = path.join(sessionDir, `${sessionId}.jsonl`);
+    await mkdir(sessionDir, { recursive: true });
     await writeFile(sessionPath, "{}\n", "utf8");
+    vi.stubEnv("HOME", homeDir);
     try {
       const hub = new AgentHub({ codex: "missing-codex-for-test", claude: "missing-claude-for-test" });
       addConfiguredAgents(hub, [configuredAgent("claude-agent", { runtimeAgentId: "claude", name: "Claude Agent" })]);
@@ -751,84 +751,6 @@ fs.writeFileSync(${JSON.stringify(argsPath)}, process.argv.slice(2).join("\\n") 
       expect.arrayContaining(["initialize", "config/read", "model/list", "plugin/list", "mcpServerStatus/list"]),
     );
     expect(calls.map((call) => call.method)).not.toContain("turn/start");
-  });
-
-  test("forwards Claude slash prompts into the runtime conversation", async () => {
-    const contexts: AgentExecutionContext[] = [];
-    const executorFactory: AgentExecutorFactory = {
-      create: (context) => {
-        contexts.push(context);
-        return {
-          start: async () => {
-            context.emit({ type: "completed", content: "Claude help output" });
-          },
-          stop: async () => undefined,
-        };
-      },
-    };
-    const hub = new AgentHub({ codex: "missing-codex-for-test", claude: "claude-for-test" }, executorFactory);
-    addConfiguredAgents(hub, [configuredAgent("claude-agent", { runtimeAgentId: "claude", name: "Claude Agent" })]);
-    (hub as any).runtimes.set("claude", {
-      id: "claude",
-      label: "Claude Code",
-      command: "claude-for-test",
-      version: "test",
-      available: true,
-    });
-    const chat = hub.createChat("claude-agent");
-
-    await hub.sendPrompt("/help", chat.id);
-
-    await waitFor(() => contexts, (items) => items.length === 1);
-    expect(contexts[0]?.agentId).toBe("claude");
-    expect(contexts[0]?.prompt).toBe("/help");
-
-    const activeChat = hub.snapshot().chats.find((item) => item.id === chat.id);
-    expect(activeChat?.running).toBe(false);
-    expect(activeChat?.messages).toEqual([
-      expect.objectContaining({ role: "user", content: "/help" }),
-      expect.objectContaining({ role: "assistant", content: "Claude help output" }),
-    ]);
-    expect(activeChat?.messages.some((message) => message.local)).toBe(false);
-  });
-
-  test("keeps /app help as a local command in Claude chats", async () => {
-    const contexts: AgentExecutionContext[] = [];
-    const executorFactory: AgentExecutorFactory = {
-      create: (context) => {
-        contexts.push(context);
-        return {
-          start: async () => {
-            context.emit({ type: "completed", content: "unexpected" });
-          },
-          stop: async () => undefined,
-        };
-      },
-    };
-    const hub = new AgentHub({ codex: "missing-codex-for-test", claude: "claude-for-test" }, executorFactory);
-    addConfiguredAgents(hub, [configuredAgent("claude-agent", { runtimeAgentId: "claude", name: "Claude Agent" })]);
-    (hub as any).runtimes.set("claude", {
-      id: "claude",
-      label: "Claude Code",
-      command: "claude-for-test",
-      version: "test",
-      available: true,
-    });
-    const chat = hub.createChat("claude-agent");
-
-    await hub.sendPrompt("/app help", chat.id);
-
-    expect(contexts).toHaveLength(0);
-    const activeChat = hub.snapshot().chats.find((item) => item.id === chat.id);
-    expect(activeChat?.running).toBe(false);
-    expect(activeChat?.messages).toEqual([
-      expect.objectContaining({ role: "user", content: "/app help", local: true }),
-      expect.objectContaining({
-        role: "assistant",
-        local: true,
-        content: expect.stringContaining("Claude slash commands are forwarded to Claude Code"),
-      }),
-    ]);
   });
 
   test("lists the full Codex plugin catalog through app-server RPC", async () => {

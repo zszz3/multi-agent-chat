@@ -1,8 +1,8 @@
 # Runtime 适配层重构方案
 
-日期：2026-07-03
+日期：2026-07-02
 分支：`feat/claude-interactive-runtime`
-状态：当前工作树已完成 Phase 1 到 Phase 4
+状态：本分支完成 Phase 1，Phase 2 到 Phase 4 仍待开发
 范围：把 `codex`、`claude`、`api` 三种 runtime 的启动统一到一个主进程适配层入口
 
 ## 目标
@@ -19,12 +19,13 @@
 
 ### 已经部分统一
 
-- `chat`、`task`、`workflow agent`、`runtime test` 现在都已经通过 `src/main/agent-executor.ts` 与 `src/main/runtime-adapter.ts` 的共享 registry 统一分发。
+- `chat` 和 `task` 执行现在已经通过 `src/main/agent-executor.ts` 里的 `RuntimeAgentExecutorFactory` 接到 `src/main/runtime-adapter.ts` 的共享 registry。
 
-### 有意保持独立的部分
+### 仍然分散
 
-- runtime detect 和一次性 CLI probe 仍然保持在 registry 之外，这是刻意保留的边界。
-- runtime 扩展方式和 adapter 错误路径覆盖现在已经补到本方案文档与 `src/main/runtime-adapter.test.ts`。
+- `workflow agent` 仍然在 `AgentHub.askWorkflowAgent(...)` 里手写三路分支。
+- `runtime test` 仍然分散在 `testCodexAgent(...)`、`testClaudeAgent(...)`、`testApiAgent(...)` 三套实现里。
+- API 的请求构造和响应提取逻辑在 workflow/test 路径之间还有重复。
 
 ## 设计方向
 
@@ -82,16 +83,6 @@
 - `npm run typecheck`
 - `vitest run src/main/runtime-adapter.test.ts src/main/agents/claude-runner.test.ts src/main/agents/codex-rpc.test.ts`
 
-### 交付结果
-
-- Phase 1 已落在提交 `854a4ef`（`重构: 统一 chat task 运行时适配入口`）
-- 已推送到 `origin/feat/claude-interactive-runtime`
-- 本阶段新增文件：
-  - `src/main/runtime-adapter.ts`
-  - `src/main/runtime-adapter.test.ts`
-- 本阶段桥接入口更新文件：
-  - `src/main/agent-executor.ts`
-
 ## Phase 2
 
 ### 目标
@@ -100,9 +91,9 @@
 
 ### TodoList
 
-- [x] 用统一 registry dispatch 替换 `askCodexWorkflowAgent(...)`、`askClaudeWorkflowAgent(...)`、`askApiWorkflowAgent(...)` 的分支调用
-- [x] 保持 workflow idle-timeout 和事件转发语义不变
-- [x] 将 workflow 路径里重复的 runtime glue 迁移到适配层辅助逻辑
+- [ ] 用统一 registry dispatch 替换 `askCodexWorkflowAgent(...)`、`askClaudeWorkflowAgent(...)`、`askApiWorkflowAgent(...)` 的分支调用
+- [ ] 保持 workflow idle-timeout 和事件转发语义不变
+- [ ] 将 workflow 路径里重复的 runtime glue 迁移到适配层辅助逻辑
 
 ### 验收标准
 
@@ -112,11 +103,6 @@
 - Claude workflow 的 session resume 行为不回归
 - API workflow 仍然遵守当前所选 model 和 provider 请求格式
 
-### 验证结果
-
-- `npm run typecheck`
-- `vitest run src/main/runtime-adapter.test.ts src/main/agent-hub.test.ts`
-
 ## Phase 3
 
 ### 目标
@@ -125,9 +111,9 @@
 
 ### TodoList
 
-- [x] 用统一 registry dispatch 替换 `testCodexAgent(...)`、`testClaudeAgent(...)`、`testApiAgent(...)` 的分支调用
-- [x] 适当把共享请求构造和响应提取逻辑从 `AgentHub` 中移出
-- [x] 保持 Codex 和 Claude 的测试会话清理行为不变
+- [ ] 用统一 registry dispatch 替换 `testCodexAgent(...)`、`testClaudeAgent(...)`、`testApiAgent(...)` 的分支调用
+- [ ] 适当把共享请求构造和响应提取逻辑从 `AgentHub` 中移出
+- [ ] 保持 Codex 和 Claude 的测试会话清理行为不变
 
 ### 验收标准
 
@@ -135,11 +121,6 @@
 - Codex / Claude 的临时测试会话清理逻辑不回归
 - API runtime test 仍然使用当前选中的 model 和 provider 专属请求体
 - `AgentHub` 不再自己维护三套 runtime test 启动实现
-
-### 验证结果
-
-- `npm run typecheck`
-- `vitest run src/main/runtime-adapter.test.ts src/main/agent-hub.test.ts`
 
 ## Phase 4
 
@@ -149,46 +130,16 @@
 
 ### TodoList
 
-- [x] 继续抽取在前三阶段之后仍然重复的共享 helper
-- [x] 评估 runtime detect 和一次性 CLI probe 是否也要复用 registry，或继续保持独立
-- [x] 补 adapter 层自己的分发和错误处理测试
-- [x] 补文档，明确未来新增 runtime 的接入方式
+- [ ] 继续抽取在前三阶段之后仍然重复的共享 helper
+- [ ] 评估 runtime detect 和一次性 CLI probe 是否也要复用 registry，或继续保持独立
+- [ ] 补 adapter 层自己的分发和错误处理测试
+- [ ] 补文档，明确未来新增 runtime 的接入方式
 
 ### 验收标准
 
 - 后续新增 runtime 时，只需要新增一个 adapter 实现并接入 registry
 - `AgentHub` 保持业务编排层角色，不再充当 runtime 启动细节层
 - runtime 专属代码可以从一个主入口快速定位，而不是散落在 `AgentHub` 多处
-
-### 结论：runtime detect / probe 保持独立
-
-`detectAgentRuntimes()` 和 `detectCodexModels()` 这类一次性探测逻辑不并入 runtime adapter registry。
-
-原因：
-
-- adapter registry 负责的是可启动、可停止、带 prompt / session / event stream 的执行流。
-- runtime detect 本质是一个 `--version` 可用性检查，不是一次真正的 Agent 运行。
-- model / config probe 属于配置管理时的辅助工具，不属于聊天、任务、workflow、runtime test 这些用户可见执行路径。
-- 把 probe 继续放在独立 helper 里，可以避免 `RuntimeAdapter` 被塞进不共享执行语义的生命周期外调用。
-
-### 新增 Runtime 的接入方式
-
-新增一个 runtime 时，按这个顺序接入：
-
-1. 在 shared types 和相关 preset / model 元数据里补 runtime 身份。
-2. 如果需要定制 env、CLI 或协议 glue，再在 `src/main/agents/` 下补对应 helper。
-3. 在 `src/main/runtime-adapter.ts` 里实现三条能力：
-   - `createExecutor(...)`
-   - `runWorkflow(...)`
-   - `testAgent(...)`
-4. 在 `createRuntimeAdapterRegistry(...)` 里注册这个 adapter。
-5. 在 `src/main/runtime-adapter.test.ts` 补分发和错误路径测试；如果有 runtime 专属 helper，再补各自测试。
-6. 只有当新 runtime 真的需要本机可用性检测或初始化探测时，才去扩展 detect / probe 工具。
-
-### 验证结果
-
-- `npm run typecheck`
-- `vitest run src/main/runtime-adapter.test.ts src/main/agent-hub.test.ts src/main/agents/detect.test.ts src/main/agents/claude-runner.test.ts src/main/agents/codex-rpc.test.ts`
 
 ## 开发顺序
 

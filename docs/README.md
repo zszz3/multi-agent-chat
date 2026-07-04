@@ -11,7 +11,7 @@ This directory contains project documentation for the Electron desktop app.
 
 - `architecture-overview.md`: overall architecture, runtime flow, module boundaries, and data flow
 - `claude-interactive-runtime-plan.md`: Phase 1 and Phase 2 scope, TODO lists, and acceptance criteria for Claude chat slash passthrough and future PTY-backed interaction
-- `runtime-adapter-refactor-plan.md`: completed runtime-adapter refactor notes, remaining boundary decisions, and the extension pattern for adding a new runtime
+- `runtime-adapter-refactor-plan.md`: phased plan for unifying `codex`, `claude`, and `api` startup behind one main-process runtime adapter entry
 - `renderer-refactor-progress-2026-06-28.md`: current progress, validation status, and remaining work for the renderer shell/provider/service refactor
 - `modules/main.md`: Electron main process and application state hub
 - `modules/preload.md`: preload bridge and renderer-facing API surface

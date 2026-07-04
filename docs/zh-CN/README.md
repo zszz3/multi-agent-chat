@@ -6,7 +6,7 @@
 
 - `architecture-overview.md`：项目整体架构、运行流程、模块边界和数据流
 - `claude-interactive-runtime-plan.md`：Claude 交互运行时方案，包含 Phase 1/2 范围、TodoList 和验收标准
-- `runtime-adapter-refactor-plan.md`：runtime-adapter 重构完成情况、边界决策，以及未来新增 runtime 的接入方式
+- `runtime-adapter-refactor-plan.md`：统一 `codex`、`claude`、`api` 启动入口的分阶段重构方案
 - `modules/main.md`：Electron 主进程和应用状态中心开发文档
 - `modules/preload.md`：preload 桥接层开发文档
 - `modules/renderer.md`：React 渲染层和页面模块开发文档

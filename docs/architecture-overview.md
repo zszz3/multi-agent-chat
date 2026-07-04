@@ -80,7 +80,6 @@ The key entry files are:
 - `src/main/index.ts`: bootstraps Electron, loads state, registers IPC, starts local services
 - `src/main/agent-hub.ts`: central in-memory state container plus orchestration logic
 - `src/main/agent-executor.ts`: runtime-specific execution strategy for Codex, Claude, and API agents
-- `src/main/runtime-adapter.ts`: shared runtime registry for chat, task, workflow-agent, and runtime-test startup
 - `src/main/sqlite-store.ts`: small SQLite persistence wrapper
 
 ### Preload
@@ -141,7 +140,7 @@ The app supports three runtime families:
 - `claude`
 - `api`
 
-Execution is delegated through `RuntimeAgentExecutorFactory` in `src/main/agent-executor.ts`, with chat, task, workflow-agent, and runtime-test startup routed through the shared registry in `src/main/runtime-adapter.ts`.
+Execution is delegated through `RuntimeAgentExecutorFactory` in `src/main/agent-executor.ts`, with chat and task startup now routed through the shared registry in `src/main/runtime-adapter.ts`.
 
 Each runtime has a different backend:
 
@@ -149,7 +148,7 @@ Each runtime has a different backend:
 - Claude: CLI process wrapper through `ClaudeRunner`
 - API: direct HTTP request to provider-compatible endpoints
 
-The same high-level concepts are reused across chat, task, workflow execution, and runtime/config testing:
+The same high-level concepts are reused across chat, task, and workflow execution, even though workflow migration to the shared runtime adapter registry is still a later phase:
 
 - configured agent
 - channel
@@ -218,17 +217,6 @@ Usually touch:
 - `src/main/model-config.ts` and runtime env helpers if the provider needs special wiring
 - `src/renderer/src/pages/runtime` or `pages/config` if the UI needs new configuration rules
 
-### Add a new runtime
-
-Usually touch:
-
-- `src/shared/types.ts` if the runtime identity or snapshot contracts change
-- `src/shared/provider-presets.ts` or `src/shared/models.ts` if default metadata is needed
-- `src/main/runtime-adapter.ts` for `createExecutor(...)`, `runWorkflow(...)`, and `testAgent(...)`
-- `src/main/agents/*` if the runtime needs dedicated CLI, env, or protocol helpers
-- `src/main/agents/detect.ts` only if the runtime needs machine-local availability detection
-- `src/main/runtime-adapter.test.ts` plus any runtime-specific helper tests
-
 ### Add a new workflow behavior
 
 Usually touch:
@@ -264,7 +252,6 @@ On the backend side, the main process is intentionally fat. That is acceptable f
 3. `src/shared/types.ts`
 4. `src/main/index.ts`
 5. `src/main/agent-hub.ts`
-6. `src/main/runtime-adapter.ts`
-7. `src/preload/index.ts`
-8. `src/renderer/src/App.tsx`
-9. the feature page folder you actually need to change
+6. `src/preload/index.ts`
+7. `src/renderer/src/App.tsx`
+8. the feature page folder you actually need to change
