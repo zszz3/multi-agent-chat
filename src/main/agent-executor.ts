@@ -3,6 +3,7 @@ import { DEFAULT_MODEL_ID, runtimeModelId } from "../shared/models";
 import { codexEnvironmentForChannel } from "./agents/codex-env";
 import { claudeCliModelForChannel, claudeEnvironmentForChannel } from "./agents/claude-env";
 import { ClaudeRunner } from "./agents/claude-runner";
+import { CodexInteractiveSession } from "./agents/codex-interactive-session";
 import { CodexRpcClient } from "./agents/codex-rpc";
 import type { RuntimeDriver } from "./agents/runtime-driver";
 import { codexAppServerConfigArgs } from "./model-config";
@@ -99,8 +100,45 @@ export class RuntimeDriverRegistry {
 export function createRuntimeDriverRegistry(options: RuntimeAgentExecutorFactoryOptions): RuntimeDriverRegistry {
   const codexDriver: RuntimeDriver = {
     runtimeId: "codex",
-    getCapabilities: () => defaultOneShotCapabilities("codex"),
+    getCapabilities: () => ({
+      ...defaultInteractiveCapabilities("codex"),
+      resume: {
+        supportsInProcessConversationResume: true,
+        supportsResumeAfterDetach: true,
+        supportsResumeAfterAppRestart: true,
+        supportsTurnResume: false,
+      },
+    }),
     createOneShotExecutor: (context) => new CodexAgentExecutor(context, options),
+    createInteractiveSession: (context) =>
+      new CodexInteractiveSession(context, {
+        capabilities: {
+          supportsInProcessConversationResume: true,
+          supportsResumeAfterDetach: true,
+          supportsResumeAfterAppRestart: true,
+          supportsTurnResume: false,
+          supportsInterrupt: true,
+          supportsContinue: true,
+          supportsApprovalRequests: true,
+          supportsUserInputRequests: true,
+        },
+        createCodexClient: ({ onEvent, onExit }) => {
+          const channel = options.channelById(context.channelId);
+          let client: CodexRpcClient;
+          client = new CodexRpcClient({
+            executable: context.runtime.command || options.executables.codex,
+            cwd: context.workDir,
+            extraArgs: codexAppServerConfigArgs(channel, context.modelId),
+            env: codexEnvironmentForChannel(channel),
+            onEvent,
+            onRequest: (id, method, params) => {
+              options.respondToCodexServerRequest(client, id, method, params);
+            },
+            onExit,
+          });
+          return client;
+        },
+      }),
   };
   const claudeDriver: RuntimeDriver = {
     runtimeId: "claude",

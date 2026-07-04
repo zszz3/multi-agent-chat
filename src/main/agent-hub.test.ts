@@ -57,6 +57,26 @@ function interactiveChatCapabilities(runtimeId: AgentId) {
   };
 }
 
+function oneshotChatCapabilities(runtimeId: AgentId) {
+  return {
+    runtimeId,
+    chatStyle: "oneshot" as const,
+    taskStyle: "oneshot" as const,
+    workflowStyle: "oneshot" as const,
+    testStyle: "oneshot" as const,
+    supportsInterrupt: false,
+    supportsContinue: false,
+    supportsApprovalRequests: false,
+    supportsUserInputRequests: false,
+    resume: {
+      supportsInProcessConversationResume: false,
+      supportsResumeAfterDetach: false,
+      supportsResumeAfterAppRestart: false,
+      supportsTurnResume: false,
+    },
+  };
+}
+
 async function writeCodexAppServerFake(dir: string): Promise<{ executable: string; callsPath: string }> {
   const callsPath = path.join(dir, "calls.jsonl");
   const script = `#!/usr/bin/env node
@@ -222,6 +242,53 @@ rl.on("line", (line) => {
   return { executable, callsPath };
 }
 
+async function writeTurnStartFailureCodexFake(dir: string): Promise<{ executable: string; callsPath: string }> {
+  const callsPath = path.join(dir, "turn-start-failure-calls.jsonl");
+  const script = `#!/usr/bin/env node
+const fs = require("fs");
+const readline = require("readline");
+
+const callsPath = ${JSON.stringify(callsPath)};
+
+function write(message) {
+  process.stdout.write(JSON.stringify(message) + "\\n");
+}
+
+function record(message) {
+  if (!message.method) return;
+  fs.appendFileSync(callsPath, JSON.stringify({ method: message.method, params: message.params ?? null }) + "\\n");
+}
+
+const rl = readline.createInterface({ input: process.stdin });
+rl.on("line", (line) => {
+  if (!line.trim()) return;
+  const message = JSON.parse(line);
+  record(message);
+  if (message.id === undefined) return;
+
+  if (message.method === "initialize") {
+    write({ jsonrpc: "2.0", id: message.id, result: {} });
+    return;
+  }
+  if (message.method === "thread/start") {
+    write({ jsonrpc: "2.0", id: message.id, result: { thread: { id: "thread-1" } } });
+    return;
+  }
+  if (message.method === "thread/resume") {
+    write({ jsonrpc: "2.0", id: message.id, result: { thread: { id: message.params.threadId } } });
+    return;
+  }
+  if (message.method === "turn/start") {
+    write({ jsonrpc: "2.0", id: message.id, error: { code: -32000, message: "turn failed" } });
+    return;
+  }
+  write({ jsonrpc: "2.0", id: message.id, error: { code: -32601, message: "unknown method " + message.method } });
+});
+`;
+  const executable = await writeNodeCliLauncher(dir, "codex-turn-start-failure-fake", script);
+  return { executable, callsPath };
+}
+
 async function writeCodexExecFake(dir: string): Promise<{ executable: string; callsPath: string; sessionId: string }> {
   const callsPath = path.join(dir, "exec-calls.jsonl");
   const sessionId = "019ed5a0-0000-7000-8000-000000000123";
@@ -314,19 +381,28 @@ describe("AgentHub chat sessions", () => {
 
   test("runs chat turns through the configured agent executor", async () => {
     const events: any[] = [];
+    const executorFactory: AgentExecutorFactory = {
+      create: (context: any) => ({
+        start: async () => {
+          events.push(context);
+          context.emit({ type: "session", sessionId: "executor-session" });
+          context.emit({ type: "delta", content: "executor response" });
+          context.emit({ type: "completed" });
+        },
+        stop: async () => undefined,
+      }),
+    };
+    const runtimeDrivers = new RuntimeDriverRegistry([
+      {
+        runtimeId: "codex",
+        getCapabilities: () => oneshotChatCapabilities("codex"),
+        createOneShotExecutor: (context: AgentExecutionContext) => executorFactory.create(context),
+      } as any,
+    ]);
     const hub = new AgentHub(
       { codex: "missing-codex-for-test", claude: "missing-claude-for-test" },
-      {
-        create: (context: any) => ({
-          start: async () => {
-            events.push(context);
-            context.emit({ type: "session", sessionId: "executor-session" });
-            context.emit({ type: "delta", content: "executor response" });
-            context.emit({ type: "completed" });
-          },
-          stop: async () => undefined,
-        }),
-      },
+      executorFactory,
+      runtimeDrivers,
     );
     (hub as any).runtimes.set("codex", {
       id: "codex",
@@ -511,6 +587,35 @@ describe("AgentHub chat sessions", () => {
     ]);
   });
 
+  test("reuses one Codex attachment for sequential prompts in the same chat", async () => {
+    const dir = await mkdtemp(path.join(os.tmpdir(), "multi-agent-chat-codex-interactive-"));
+    const fake = await writeSequentialCodexFake(dir);
+    const hub = new AgentHub({ codex: fake.executable, claude: "missing-claude-for-test" });
+    (hub as any).runtimes.set("codex", {
+      id: "codex",
+      label: "Codex",
+      command: fake.executable,
+      version: "test",
+      available: true,
+    });
+
+    const chatId = hub.snapshot().activeChatId!;
+    await hub.sendPrompt("First", chatId);
+    await waitFor(() => hub.snapshot().chats.find((chat) => chat.id === chatId), (chat) => chat?.running === false);
+    await hub.sendPrompt("Second", chatId);
+    await waitFor(() => hub.snapshot().chats.find((chat) => chat.id === chatId), (chat) => chat?.running === false);
+
+    const calls = (await readFile(fake.callsPath, "utf8"))
+      .trim()
+      .split("\n")
+      .filter(Boolean)
+      .map((line) => JSON.parse(line) as { method: string });
+    expect(calls.filter((call) => call.method === "initialize")).toHaveLength(1);
+    expect(calls.filter((call) => call.method === "thread/start")).toHaveLength(1);
+    expect(calls.filter((call) => call.method === "thread/resume")).toHaveLength(0);
+    expect(calls.filter((call) => call.method === "turn/start")).toHaveLength(2);
+  });
+
   test("marks chat failed when interactive session creation throws", async () => {
     const runtimeDrivers = new RuntimeDriverRegistry([
       {
@@ -642,6 +747,31 @@ describe("AgentHub chat sessions", () => {
       role: "error",
       content: "Stopped",
     });
+  });
+
+  test("clears interactive runtime turn state when Codex turn/start fails", async () => {
+    const dir = await mkdtemp(path.join(os.tmpdir(), "multi-agent-chat-codex-turn-failure-"));
+    const fake = await writeTurnStartFailureCodexFake(dir);
+    const hub = new AgentHub({ codex: fake.executable, claude: "missing-claude-for-test" });
+    (hub as any).runtimes.set("codex", {
+      id: "codex",
+      label: "Codex",
+      command: fake.executable,
+      version: "test",
+      available: true,
+    });
+    const chatId = hub.snapshot().activeChatId!;
+
+    await hub.sendPrompt("Hello", chatId);
+
+    const activeChat = await waitFor(
+      () => hub.snapshot().chats.find((chat) => chat.id === chatId),
+      (chat) => chat?.running === false,
+    );
+
+    expect(activeChat?.lastError).toContain("turn/start: turn failed");
+    expect(activeChat?.runtimeSession?.attachmentState).toBe("idle");
+    expect(activeChat?.runtimeSession?.activeTurnId).toBeUndefined();
   });
 
   test("disposes interactive sessions when deleting a chat after completion", async () => {
@@ -985,7 +1115,18 @@ fs.writeFileSync(${JSON.stringify(argsPath)}, process.argv.slice(2).join("\\n") 
         };
       },
     };
-    const hub = new AgentHub({ codex: "codex-for-test", claude: "missing-claude-for-test" }, executorFactory);
+    const runtimeDrivers = new RuntimeDriverRegistry([
+      {
+        runtimeId: "codex",
+        getCapabilities: () => oneshotChatCapabilities("codex"),
+        createOneShotExecutor: (context: AgentExecutionContext) => executorFactory.create(context),
+      } as any,
+    ]);
+    const hub = new AgentHub(
+      { codex: "codex-for-test", claude: "missing-claude-for-test" },
+      executorFactory,
+      runtimeDrivers,
+    );
     (hub as any).runtimes.set("codex", {
       id: "codex",
       label: "Codex",

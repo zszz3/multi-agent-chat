@@ -2523,14 +2523,16 @@ export class AgentHub {
     this.emit();
 
     if (supportsInteractiveChat) {
+      let session: ReturnType<InteractiveSessionManager["getOrCreate"]> | undefined;
       try {
         const context = this.buildInteractiveChatContext(chat, resolved);
-        const session = this.interactiveSessions.getOrCreate(chat.id, context);
-        this.syncInteractiveChatState(chat, session.snapshot());
+        session = this.interactiveSessions.getOrCreate(chat.id, context);
+        const interactiveSession = session;
+        this.syncInteractiveChatState(chat, interactiveSession.snapshot());
         this.activeStops.set(chat.id, async () => {
           if (!chat.running) return;
           await this.interactiveSessions.interrupt(chat.id);
-          this.syncInteractiveChatState(chat, session.snapshot());
+          this.syncInteractiveChatState(chat, interactiveSession.snapshot());
         });
         await this.interactiveSessions.dispatch(chat.id, async (managed, lease) => {
           await managed.ensureAttached();
@@ -2549,6 +2551,9 @@ export class AgentHub {
           this.syncInteractiveChatState(chat, managed.snapshot());
         });
       } catch (error) {
+        if (session) {
+          this.syncInteractiveChatState(chat, session.snapshot());
+        }
         this.markRunFailed(chat, error instanceof Error ? error.message : String(error));
       }
       return;
