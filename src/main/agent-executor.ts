@@ -2,7 +2,9 @@ import type { AgentChannel, AgentEvent, AgentId, AgentRuntime } from "../shared/
 import { DEFAULT_MODEL_ID, runtimeModelId } from "../shared/models";
 import { codexEnvironmentForChannel } from "./agents/codex-env";
 import { claudeCliModelForChannel, claudeEnvironmentForChannel } from "./agents/claude-env";
+import { ClaudeInteractiveSession } from "./agents/claude-interactive-session";
 import { ClaudeRunner } from "./agents/claude-runner";
+import { ClaudeCliInteractiveTransport } from "./agents/claude-sdk-interactive-transport";
 import { CodexInteractiveSession } from "./agents/codex-interactive-session";
 import { CodexRpcClient } from "./agents/codex-rpc";
 import type { RuntimeDriver } from "./agents/runtime-driver";
@@ -142,8 +144,37 @@ export function createRuntimeDriverRegistry(options: RuntimeAgentExecutorFactory
   };
   const claudeDriver: RuntimeDriver = {
     runtimeId: "claude",
-    getCapabilities: () => defaultOneShotCapabilities("claude"),
+    getCapabilities: () => ({
+      ...defaultInteractiveCapabilities("claude"),
+      resume: {
+        supportsInProcessConversationResume: true,
+        supportsResumeAfterDetach: false,
+        supportsResumeAfterAppRestart: false,
+        supportsTurnResume: false,
+      },
+    }),
     createOneShotExecutor: (context) => new ClaudeAgentExecutor(context, options),
+    createInteractiveSession: (context) =>
+      new ClaudeInteractiveSession(context, {
+        capabilities: {
+          supportsInProcessConversationResume: true,
+          supportsResumeAfterDetach: false,
+          supportsResumeAfterAppRestart: false,
+          supportsTurnResume: false,
+          supportsInterrupt: true,
+          supportsContinue: true,
+          supportsApprovalRequests: true,
+          supportsUserInputRequests: true,
+        },
+        createTransport: () => {
+          const channel = options.channelById(context.channelId);
+          return new ClaudeCliInteractiveTransport({
+            executable: context.runtime.command || options.executables.claude,
+            cliModelForTurn: (modelId) => claudeCliModelForChannel(channel, modelId ?? context.modelId),
+            envForTurn: (modelId) => claudeEnvironmentForChannel(channel, modelId ?? context.modelId, process.env),
+          });
+        },
+      }),
   };
   const apiDriver: RuntimeDriver = {
     runtimeId: "api",

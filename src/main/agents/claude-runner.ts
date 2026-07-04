@@ -84,4 +84,8 @@ export class ClaudeRunner {
     this.proc?.kill("SIGTERM");
     this.proc = null;
   }
+
+  async interrupt(): Promise<void> {
+    this.proc?.kill("SIGINT");
+  }
 }

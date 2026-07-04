@@ -1,7 +1,7 @@
 import { mkdtemp, readFile } from "node:fs/promises";
 import os from "node:os";
 import path from "node:path";
-import { describe, expect, test } from "vitest";
+import { describe, expect, test, vi } from "vitest";
 import { writeNodeCliLauncher } from "../test-cli-fixtures";
 import { ClaudeRunner } from "./claude-runner";
 
@@ -58,5 +58,22 @@ describe("ClaudeRunner argument construction", () => {
 
     expect(args).not.toContain("--model");
     expect(args).not.toContain("--resume");
+  });
+
+  test("interrupts the running Claude process with SIGINT", async () => {
+    const runner = new ClaudeRunner({
+      executable: "claude",
+      cwd: process.cwd(),
+      prompt: "hello",
+      modelId: undefined,
+      sessionId: undefined,
+      onEvent: () => undefined,
+    });
+    const kill = vi.fn();
+    (runner as any).proc = { kill };
+
+    await runner.interrupt();
+
+    expect(kill).toHaveBeenCalledWith("SIGINT");
   });
 });

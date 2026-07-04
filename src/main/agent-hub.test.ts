@@ -289,6 +289,30 @@ rl.on("line", (line) => {
   return { executable, callsPath };
 }
 
+async function writeClaudeSequentialFake(dir: string): Promise<{ executable: string; callsPath: string }> {
+  const callsPath = path.join(dir, "claude-calls.jsonl");
+  const script = `#!/usr/bin/env node
+const fs = require("fs");
+
+const callsPath = ${JSON.stringify(callsPath)};
+const args = process.argv.slice(2);
+fs.appendFileSync(callsPath, JSON.stringify({ args }) + "\\n");
+
+const resumeIndex = args.indexOf("--resume");
+const sessionId = resumeIndex >= 0 && args[resumeIndex + 1] ? args[resumeIndex + 1] : "claude-session-1";
+const prompt = args[args.length - 1] || "";
+
+process.stdout.write(JSON.stringify({
+  type: "result",
+  subtype: "success",
+  session_id: sessionId,
+  result: "reply:" + prompt
+}) + "\\n");
+`;
+  const executable = await writeNodeCliLauncher(dir, "claude-sequential-fake", script);
+  return { executable, callsPath };
+}
+
 async function writeCodexExecFake(dir: string): Promise<{ executable: string; callsPath: string; sessionId: string }> {
   const callsPath = path.join(dir, "exec-calls.jsonl");
   const sessionId = "019ed5a0-0000-7000-8000-000000000123";
@@ -614,6 +638,111 @@ describe("AgentHub chat sessions", () => {
     expect(calls.filter((call) => call.method === "thread/start")).toHaveLength(1);
     expect(calls.filter((call) => call.method === "thread/resume")).toHaveLength(0);
     expect(calls.filter((call) => call.method === "turn/start")).toHaveLength(2);
+  });
+
+  test("routes Claude chats through shared interactive sessions and reuses the same session id for follow-up prompts", async () => {
+    const dir = await mkdtemp(path.join(os.tmpdir(), "multi-agent-chat-claude-interactive-"));
+    const fake = await writeClaudeSequentialFake(dir);
+    const hub = new AgentHub({ codex: "missing-codex-for-test", claude: fake.executable });
+    addConfiguredAgents(hub, [configuredAgent("claude-agent", { runtimeAgentId: "claude", name: "Claude Agent" })]);
+    const chatId = hub.snapshot().activeChatId!;
+    hub.setChatAgent(chatId, "claude-agent");
+    (hub as any).runtimes.set("claude", {
+      id: "claude",
+      label: "Claude",
+      command: fake.executable,
+      version: "test",
+      available: true,
+    });
+
+    await hub.sendPrompt("first", chatId);
+    let activeChat = await waitFor(
+      () => hub.snapshot().chats.find((chat) => chat.id === chatId),
+      (chat) => chat?.running === false,
+    );
+    expect(activeChat?.runtimeSession).toMatchObject({
+      executionStyle: "interactive",
+      attachmentState: "idle",
+      resumeState: { runtimeId: "claude", native: { sessionId: "claude-session-1" } },
+    });
+
+    await hub.sendPrompt("second", chatId);
+    activeChat = await waitFor(
+      () => hub.snapshot().chats.find((chat) => chat.id === chatId),
+      (chat) => chat?.running === false,
+    );
+
+    const calls = (await readFile(fake.callsPath, "utf8"))
+      .trim()
+      .split("\n")
+      .filter(Boolean)
+      .map((line) => JSON.parse(line) as { args: string[] });
+    expect(calls).toHaveLength(2);
+    expect(calls[0]?.args).not.toContain("--resume");
+    expect(calls[1]?.args).toContain("--resume");
+    expect(calls[1]?.args).toContain("claude-session-1");
+    expect(activeChat?.messages).toEqual([
+      expect.objectContaining({ role: "user", content: "first" }),
+      expect.objectContaining({ role: "assistant", content: "reply:first" }),
+      expect.objectContaining({ role: "user", content: "second" }),
+      expect.objectContaining({ role: "assistant", content: "reply:second" }),
+    ]);
+  });
+
+  test("maps Claude interactive chat model ids through the channel-specific CLI alias before spawn", async () => {
+    const dir = await mkdtemp(path.join(os.tmpdir(), "multi-agent-chat-claude-interactive-model-"));
+    const fake = await writeClaudeSequentialFake(dir);
+    const channelPath = path.join(dir, "model-channels.json");
+    const hub = new AgentHub({ codex: "missing-codex-for-test", claude: fake.executable });
+    await hub.loadModelChannels(channelPath);
+    await hub.saveModelChannels([
+      {
+        id: "claude-deepseek",
+        agentId: "claude",
+        label: "Claude DeepSeek",
+        providerName: "DeepSeek",
+        modelProvider: "deepseek-anthropic",
+        baseUrl: "https://api.deepseek.test/anthropic",
+        httpHeaders: { Authorization: "Bearer deepseek-key" },
+        models: [
+          { id: DEFAULT_MODEL_ID, label: "Default" },
+          { id: "deepseek-v4-flash", label: "DeepSeek V4 Flash" },
+        ],
+      },
+    ]);
+    addConfiguredAgents(
+      hub,
+      [configuredAgent("claude-agent", {
+        runtimeAgentId: "claude",
+        name: "Claude Agent",
+        channelId: "claude-deepseek",
+        modelId: "deepseek-v4-flash",
+      })],
+    );
+    const chatId = hub.createChat("claude-agent").id;
+    (hub as any).runtimes.set("claude", {
+      id: "claude",
+      label: "Claude",
+      command: fake.executable,
+      version: "test",
+      available: true,
+    });
+
+    await hub.sendPrompt("first", chatId);
+    await waitFor(
+      () => hub.snapshot().chats.find((chat) => chat.id === chatId),
+      (chat) => chat?.running === false,
+    );
+
+    const calls = (await readFile(fake.callsPath, "utf8"))
+      .trim()
+      .split("\n")
+      .filter(Boolean)
+      .map((line) => JSON.parse(line) as { args: string[] });
+    expect(calls).toHaveLength(1);
+    expect(calls[0]?.args).toContain("--model");
+    expect(calls[0]?.args).toContain("claude-haiku-4-5");
+    expect(calls[0]?.args).not.toContain("deepseek-v4-flash");
   });
 
   test("marks chat failed when interactive session creation throws", async () => {
