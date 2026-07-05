@@ -1,5 +1,42 @@
+import { mkdtemp, readFile } from "node:fs/promises";
+import os from "node:os";
+import path from "node:path";
 import { describe, expect, test } from "vitest";
+import { writeNodeCliLauncher } from "./test-cli-fixtures";
+import { ClaudeRunner } from "./agents/claude-runner";
 import { resolveCliInvocation } from "./cli-launcher";
+
+async function captureClaudeArgs(options: {
+  sessionId?: string;
+  modelId?: string;
+  fixedArgs?: string[];
+}): Promise<string[]> {
+  const dir = await mkdtemp(path.join(os.tmpdir(), "multi-agent-chat-claude-launcher-"));
+  const argsFile = path.join(dir, "args.txt");
+  const executable = await writeNodeCliLauncher(
+    dir,
+    "claude-echo",
+    `const fs = require("fs");
+fs.writeFileSync(${JSON.stringify(argsFile)}, process.argv.slice(2).join("\\n") + "\\n", "utf8");
+`,
+  );
+
+  await new Promise<void>((resolve, reject) => {
+    const runner = new ClaudeRunner({
+      executable,
+      ...(options.fixedArgs ? { fixedArgs: options.fixedArgs } : {}),
+      cwd: dir,
+      prompt: "hello",
+      modelId: options.modelId,
+      sessionId: options.sessionId,
+      onEvent: () => undefined,
+      onExit: () => resolve(),
+    });
+    runner.start().catch(reject);
+  });
+
+  return (await readFile(argsFile, "utf8")).split("\n").filter(Boolean);
+}
 
 describe("resolveCliInvocation", () => {
   test("routes Windows cmd shims through cmd.exe", () => {
@@ -45,5 +82,12 @@ describe("resolveCliInvocation", () => {
       args: ["--version"],
       viaWindowsCmd: false,
     });
+  });
+
+  test("prepends fixed args before native Claude flags", async () => {
+    const args = await captureClaudeArgs({ fixedArgs: ["--verbose-json-wrapper"] });
+
+    expect(args.slice(0, 4)).toEqual(["--verbose-json-wrapper", "--print", "--output-format", "stream-json"]);
+    expect(args.at(-1)).toBe("hello");
   });
 });

@@ -1,11 +1,35 @@
 export type AgentId = "codex" | "claude" | "api";
 
+export type RuntimeLaunchSource = "app_override" | "env_override" | "path" | "shell_hydrated_path" | "unavailable";
+
+export interface RuntimeCommandOverride {
+  executable: string;
+  fixedArgs?: string[];
+}
+
+export interface RuntimeCommandConfig {
+  runtimeId: AgentId;
+  override?: RuntimeCommandOverride;
+}
+
+export interface LearnedNativeCommandRecord {
+  runtimeId: AgentId;
+  cliFingerprint: string;
+  commandStem: string;
+  example: string;
+  successCount: number;
+  lastUsedAt: number;
+}
+
 export interface AgentRuntime {
   id: AgentId;
   label: string;
   command: string;
   version: string | null;
   available: boolean;
+  fixedArgs?: string[];
+  source?: RuntimeLaunchSource;
+  fingerprint?: string;
   error?: string;
 }
 
@@ -869,6 +893,7 @@ export interface AppSnapshot {
   activeTeamRunId: string | undefined;
   workDir: string;
   runtimes: AgentRuntime[];
+  runtimeCommandConfigs?: RuntimeCommandConfig[];
   channels: AgentChannel[];
   configuredAgents: ConfiguredAgent[];
   chats: ChatSession[];

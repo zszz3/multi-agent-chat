@@ -4,7 +4,6 @@ import { codexEnvironmentForChannel } from "./agents/codex-env";
 import { claudeCliModelForChannel, claudeEnvironmentForChannel } from "./agents/claude-env";
 import { ClaudeInteractiveSession } from "./agents/claude-interactive-session";
 import { ClaudeRunner } from "./agents/claude-runner";
-import { ClaudeCliInteractiveTransport } from "./agents/claude-sdk-interactive-transport";
 import { CodexInteractiveSession } from "./agents/codex-interactive-session";
 import { CodexRpcClient } from "./agents/codex-rpc";
 import type { RuntimeDriver } from "./agents/runtime-driver";
@@ -129,6 +128,7 @@ export function createRuntimeDriverRegistry(options: RuntimeAgentExecutorFactory
           let client: CodexRpcClient;
           client = new CodexRpcClient({
             executable: context.runtime.command || options.executables.codex,
+            ...(context.runtime.fixedArgs ? { fixedArgs: context.runtime.fixedArgs } : {}),
             cwd: context.workDir,
             extraArgs: codexAppServerConfigArgs(channel, context.modelId),
             env: codexEnvironmentForChannel(channel),
@@ -168,11 +168,40 @@ export function createRuntimeDriverRegistry(options: RuntimeAgentExecutorFactory
         },
         createTransport: () => {
           const channel = options.channelById(context.channelId);
-          return new ClaudeCliInteractiveTransport({
-            executable: context.runtime.command || options.executables.claude,
-            cliModelForTurn: (modelId) => claudeCliModelForChannel(channel, modelId ?? context.modelId),
-            envForTurn: (modelId) => claudeEnvironmentForChannel(channel, modelId ?? context.modelId, process.env),
-          });
+          let runner: ClaudeRunner | undefined;
+          return {
+            startTurn: async ({ prompt, sessionId, modelId, cwd, onEvent }) => {
+              const activeRunner = new ClaudeRunner({
+                executable: context.runtime.command || options.executables.claude,
+                ...(context.runtime.fixedArgs ? { fixedArgs: context.runtime.fixedArgs } : {}),
+                cwd,
+                env: claudeEnvironmentForChannel(channel, modelId ?? context.modelId, process.env),
+                prompt,
+                modelId: claudeCliModelForChannel(channel, modelId ?? context.modelId),
+                sessionId,
+                onEvent,
+                onExit: () => {
+                  if (runner === activeRunner) runner = undefined;
+                },
+              });
+              runner = activeRunner;
+              await activeRunner.start();
+              return {
+                stop: async () => {
+                  if (runner === activeRunner) runner = undefined;
+                  await activeRunner.stop();
+                },
+              };
+            },
+            interrupt: async () => {
+              await runner?.interrupt();
+            },
+            detach: async () => {
+              const activeRunner = runner;
+              runner = undefined;
+              await activeRunner?.stop();
+            },
+          };
         },
       }),
   };
@@ -207,6 +236,7 @@ class CodexAgentExecutor implements AgentExecutor {
     let client: CodexRpcClient;
     client = new CodexRpcClient({
       executable,
+      ...(this.context.runtime.fixedArgs ? { fixedArgs: this.context.runtime.fixedArgs } : {}),
       cwd: this.context.workDir,
       extraArgs: codexAppServerConfigArgs(channel, this.context.modelId),
       env: codexEnvironmentForChannel(channel),
@@ -274,6 +304,7 @@ class ClaudeAgentExecutor implements AgentExecutor {
     const channel = this.options.channelById(this.context.channelId);
     this.runner = new ClaudeRunner({
       executable: this.context.runtime.command || this.options.executables.claude,
+      ...(this.context.runtime.fixedArgs ? { fixedArgs: this.context.runtime.fixedArgs } : {}),
       cwd: this.context.workDir,
       env: claudeEnvironmentForChannel(channel, this.context.modelId, process.env),
       prompt: this.context.prompt,

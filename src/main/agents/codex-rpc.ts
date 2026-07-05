@@ -14,6 +14,7 @@ interface RpcPending {
 export interface CodexRpcClientOptions {
   executable: string;
   cwd: string;
+  fixedArgs?: string[];
   extraArgs?: string[];
   env?: Record<string, string>;
   onEvent: (event: AgentEvent) => void;
@@ -38,7 +39,14 @@ export class CodexRpcClient {
   async start(): Promise<void> {
     if (this.proc) throw new Error("Codex client already started");
 
-    const args = ["--yolo", ...(this.options.extraArgs ?? []), "app-server", "--listen", "stdio://"];
+    const args = [
+      ...(this.options.fixedArgs ?? []),
+      "--yolo",
+      ...(this.options.extraArgs ?? []),
+      "app-server",
+      "--listen",
+      "stdio://",
+    ];
     const proc = spawnCli({
       executable: this.options.executable,
       args,

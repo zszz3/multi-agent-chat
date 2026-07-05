@@ -40,6 +40,7 @@ import type {
   AnswerWorkflowGateRequest,
   RegisteredArtifact,
   RegisterArtifactRequest,
+  RuntimeCommandConfig,
   GeneratedConfigFile,
   ImportedCodexConfig,
   CodexDefaultConfig,
@@ -456,6 +457,37 @@ function defaultRuntimeSessionCapabilities(): RuntimeResumeCapabilities & Runtim
   };
 }
 
+function cloneRuntimeCommandConfig(config: RuntimeCommandConfig): RuntimeCommandConfig {
+  return {
+    runtimeId: config.runtimeId,
+    ...(config.override
+      ? {
+          override: {
+            executable: config.override.executable,
+            ...(config.override.fixedArgs ? { fixedArgs: [...config.override.fixedArgs] } : {}),
+          },
+        }
+      : {}),
+  };
+}
+
+function runtimeCommandConfigsFromExecutables(executables: Partial<Record<AgentId, string>>): RuntimeCommandConfig[] {
+  const configs: RuntimeCommandConfig[] = [];
+  if (executables.codex) {
+    configs.push({
+      runtimeId: "codex",
+      override: { executable: executables.codex },
+    });
+  }
+  if (executables.claude) {
+    configs.push({
+      runtimeId: "claude",
+      override: { executable: executables.claude },
+    });
+  }
+  return configs;
+}
+
 function clonePersistedResumeState(resumeState: PersistedResumeState): PersistedResumeState {
   if (resumeState.runtimeId === "codex") {
     return {
@@ -702,7 +734,7 @@ async function deleteClaudeTestSessions(workDir: string, sessionIds: Iterable<st
   return deleted;
 }
 
-async function deleteCodexTestSessions(executable: string, home: string, sessionIds: Iterable<string>): Promise<number> {
+async function deleteCodexTestSessions(executable: string, fixedArgs: string[], home: string, sessionIds: Iterable<string>): Promise<number> {
   let deleted = 0;
   for (const sessionId of sessionIds) {
     // Best-effort archive first so the session leaves Codex's active list cleanly,
@@ -710,7 +742,7 @@ async function deleteCodexTestSessions(executable: string, home: string, session
     try {
       await execCli({
         executable,
-        args: ["archive", sessionId],
+        args: [...fixedArgs, "archive", sessionId],
         cwd: process.cwd(),
         env: process.env,
         timeout: 10_000,
@@ -1188,6 +1220,7 @@ export class AgentHub {
   private workDir = process.cwd();
   private artifacts: RegisteredArtifact[] = [];
   private channels: AgentChannel[] = createDefaultChannels();
+  private runtimeCommandConfigs: RuntimeCommandConfig[] = [];
   private storagePath: string | undefined = undefined;
   private sqliteStore: SqliteAppStore | undefined = undefined;
   private modelConfigPath: string | undefined = undefined;
@@ -1211,6 +1244,7 @@ export class AgentHub {
     executorFactory?: AgentExecutorFactory,
     runtimeDrivers?: RuntimeDriverRegistry,
   ) {
+    this.runtimeCommandConfigs = runtimeCommandConfigsFromExecutables(executables);
     this.executables = {
       codex: executables.codex ?? process.env.CODEX_PATH ?? "codex",
       claude: executables.claude ?? process.env.CLAUDE_PATH ?? "claude",
@@ -1254,12 +1288,9 @@ export class AgentHub {
   }
 
   async initialize(): Promise<void> {
-    const runtimes = await detectAgentRuntimes();
+    const runtimes = await detectAgentRuntimes({ runtimeCommandConfigs: this.runtimeCommandConfigs });
     for (const runtime of runtimes) {
-      this.runtimes.set(runtime.id, {
-        ...runtime,
-        command: runtime.command || this.executables[runtime.id],
-      });
+      this.runtimes.set(runtime.id, runtime);
     }
     this.idleSweepTimer ??= setInterval(() => {
       void this.interactiveSessions.sweepExpiredSessions(Date.now());
@@ -1422,6 +1453,18 @@ export class AgentHub {
     };
   }
 
+  private runtimeCommandConfigFor(runtimeId: AgentId): RuntimeCommandConfig | undefined {
+    return this.runtimeCommandConfigs.find((config) => config.runtimeId === runtimeId);
+  }
+
+  private runtimeExecutableFor(runtimeId: AgentId): string {
+    return this.runtimes.get(runtimeId)?.command ?? this.runtimeCommandConfigFor(runtimeId)?.override?.executable ?? this.executables[runtimeId];
+  }
+
+  private runtimeFixedArgsFor(runtimeId: AgentId): string[] {
+    return [...(this.runtimes.get(runtimeId)?.fixedArgs ?? this.runtimeCommandConfigFor(runtimeId)?.override?.fixedArgs ?? [])];
+  }
+
   private normalizeModelIdForConfiguredAgent(configuredAgentId: string | undefined, modelId: string | undefined): string {
     return this.resolveConfiguredAgent(configuredAgentId, modelId)?.modelId ?? DEFAULT_MODEL_ID;
   }
@@ -1544,7 +1587,7 @@ export class AgentHub {
   }
 
   async refreshAgents(): Promise<AppSnapshot> {
-    const runtimes = await detectAgentRuntimes();
+    const runtimes = await detectAgentRuntimes({ runtimeCommandConfigs: this.runtimeCommandConfigs });
     for (const runtime of runtimes) {
       this.runtimes.set(runtime.id, runtime);
     }
@@ -2330,6 +2373,7 @@ export class AgentHub {
       activeTeamRunId: this.activeTeamRunId,
       workDir: this.workDir,
       runtimes: [...this.runtimes.values()],
+      runtimeCommandConfigs: this.runtimeCommandConfigs.map((config) => cloneRuntimeCommandConfig(config)),
       channels: this.channels.map((channel) => cloneAgentChannel(channel)),
       configuredAgents: this.listConfiguredAgents(),
       chats: [...this.chats.values()]
@@ -2724,7 +2768,8 @@ export class AgentHub {
   }
 
   private async withCodexAppServer<T>(chat: ChatState, callback: (client: CodexRpcClient) => Promise<T>): Promise<T> {
-    const executable = this.executables.codex;
+    const executable = this.runtimeExecutableFor("codex");
+    const fixedArgs = this.runtimeFixedArgsFor("codex");
     const resolved = this.resolveConfiguredAgent(chat.configuredAgentId, chat.modelId);
     if (!resolved || resolved.runtimeAgentId !== "codex") {
       throw new Error("Codex app-server requires a Codex configured agent.");
@@ -2732,6 +2777,7 @@ export class AgentHub {
     const channel = resolved.channel;
     const client = new CodexRpcClient({
       executable,
+      ...(fixedArgs.length > 0 ? { fixedArgs } : {}),
       cwd: this.workDir,
       extraArgs: codexAppServerConfigArgs(channel, resolved.modelId),
       env: codexEnvironmentForChannel(channel),
@@ -3052,10 +3098,11 @@ export class AgentHub {
     const resolved = this.resolveConfiguredAgent(run.configuredAgentId, run.modelId);
     if (!run.sessionId || !resolved) return;
     if (resolved.runtimeAgentId === "codex") {
+      const fixedArgs = resolved.runtime?.fixedArgs ?? this.runtimeFixedArgsFor("codex");
       try {
         await execCli({
-          executable: this.executables.codex,
-          args: ["archive", run.sessionId],
+          executable: resolved.runtime?.command || this.runtimeExecutableFor("codex"),
+          args: [...fixedArgs, "archive", run.sessionId],
           cwd: process.cwd(),
           env: process.env,
           timeout: 10_000,
@@ -3925,6 +3972,7 @@ export class AgentHub {
     onEvent: ((event: WorkflowAgentEvent) => void) | undefined;
   }): Promise<WorkflowAgentResponse> {
     const executable = input.runtime.command || this.executables.codex;
+    const fixedArgs = input.runtime.fixedArgs ?? [];
     const model = runtimeModelId(input.modelId);
     const channel = this.channelById(input.channelId);
 
@@ -3950,6 +3998,7 @@ export class AgentHub {
 
       client = new CodexRpcClient({
         executable,
+        ...(fixedArgs.length > 0 ? { fixedArgs } : {}),
         cwd: input.workDir,
         extraArgs: codexAppServerConfigArgs(channel, input.modelId),
         env: codexEnvironmentForChannel(channel),
@@ -4022,7 +4071,10 @@ export class AgentHub {
   }
 
   private async testCodexAgent(channel: AgentChannel, modelId: string, emit: AgentTestEmit): Promise<string> {
+    const executable = this.runtimeExecutableFor("codex");
+    const fixedArgs = this.runtimeFixedArgsFor("codex");
     const args = [
+      ...fixedArgs,
       "exec",
       "--ephemeral",
       "--json",
@@ -4036,7 +4088,7 @@ export class AgentHub {
     let output = "";
     const sessionIds = new Set<string>();
     const result = await runStreamingCommand({
-      executable: this.executables.codex,
+      executable,
       args,
       cwd: this.workDir,
       env: codexEnvironmentForChannel(channel),
@@ -4049,7 +4101,7 @@ export class AgentHub {
       },
       onStderr: (text) => emit({ type: "stderr", content: text }),
     });
-    const deletedSessions = await deleteCodexTestSessions(this.executables.codex, codexHome(), sessionIds);
+    const deletedSessions = await deleteCodexTestSessions(executable, fixedArgs, codexHome(), sessionIds);
     if (deletedSessions > 0) emit({ type: "phase", content: `Deleted ${deletedSessions} Codex test session${deletedSessions === 1 ? "" : "s"}.` });
     if (result.code !== 0) throw new Error(`Codex test exited with ${result.code ?? result.signal ?? "unknown"}: ${result.stderr.trim().slice(0, 800)}`);
     if (output.trim()) return output.trim();
@@ -4062,6 +4114,7 @@ export class AgentHub {
     const env = claudeEnvironmentForChannel(channel, modelId, process.env);
     const envModel = typeof env.ANTHROPIC_MODEL === "string" ? env.ANTHROPIC_MODEL : "default";
     const args = [
+      ...this.runtimeFixedArgsFor("claude"),
       "--print",
       "--output-format",
       "stream-json",
@@ -4077,7 +4130,7 @@ export class AgentHub {
     const sessionIds = new Set<string>();
     const streamState = createClaudeStreamState();
     const result = await runStreamingCommand({
-      executable: this.executables.claude,
+      executable: this.runtimeExecutableFor("claude"),
       args,
       cwd: this.workDir,
       env,
@@ -4186,6 +4239,7 @@ export class AgentHub {
       const channel = this.channelById(input.channelId);
       runner = new ClaudeRunner({
         executable: input.runtime.command || this.executables.claude,
+        ...(input.runtime.fixedArgs ? { fixedArgs: input.runtime.fixedArgs } : {}),
         cwd: input.workDir,
         env: claudeEnvironmentForChannel(channel, input.modelId, process.env),
         prompt: input.prompt,

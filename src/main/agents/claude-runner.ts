@@ -6,6 +6,7 @@ import { spawnCli } from "../cli-launcher";
 
 export interface ClaudeRunOptions {
   executable: string;
+  fixedArgs?: string[];
   cwd: string;
   env?: NodeJS.ProcessEnv;
   prompt: string;
@@ -23,6 +24,7 @@ export class ClaudeRunner {
 
   async start(): Promise<void> {
     const args = [
+      ...(this.options.fixedArgs ?? []),
       "--print",
       "--output-format",
       "stream-json",
