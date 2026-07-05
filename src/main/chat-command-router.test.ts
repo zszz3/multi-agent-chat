@@ -2,12 +2,44 @@ import { describe, expect, test } from "vitest";
 import { routeChatPrompt } from "./chat-command-router";
 
 describe("routeChatPrompt", () => {
-  test("routes /app help as an app-owned command", () => {
-    expect(routeChatPrompt("codex", "/app help")).toEqual({
+  test("defaults /app to help", () => {
+    expect(routeChatPrompt("codex", "/app")).toEqual({
       kind: "app_command",
       commandId: "help",
       commandText: "/app help",
       args: [],
+    });
+  });
+
+  test.each([
+    ["/app help", "help"],
+    ["/app status", "status"],
+    ["/app models", "models"],
+    ["/app plugins", "plugins"],
+  ] as const)("routes %s as an app-owned command", (input, commandId) => {
+    expect(routeChatPrompt("codex", input)).toEqual({
+      kind: "app_command",
+      commandId,
+      commandText: `/app ${commandId}`,
+      args: [],
+    });
+  });
+
+  test("routes /app commands with non-space whitespace separators, case-insensitively", () => {
+    expect(routeChatPrompt("codex", "/APP\tplugins list")).toEqual({
+      kind: "app_command",
+      commandId: "plugins",
+      commandText: "/app plugins",
+      args: ["list"],
+    });
+  });
+
+  test("routes arg-bearing /app commands", () => {
+    expect(routeChatPrompt("codex", "/app plugins list")).toEqual({
+      kind: "app_command",
+      commandId: "plugins",
+      commandText: "/app plugins",
+      args: ["list"],
     });
   });
 

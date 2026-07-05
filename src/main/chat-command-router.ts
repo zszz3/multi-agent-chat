@@ -31,9 +31,8 @@ const POLICIES: Record<AgentId, RuntimeCommandPolicy> = {
 
 export function routeChatPrompt(runtimeId: AgentId, rawInput: string): ChatCommandRoute {
   const input = rawInput.trim();
-  const lower = input.toLowerCase();
 
-  if (lower === APP_COMMAND_PREFIX || lower.startsWith(`${APP_COMMAND_PREFIX} `)) {
+  if (/^\/app(?:\s|$)/i.test(input)) {
     const [, ...parts] = input.split(/\s+/);
     const commandName = (parts[0] ?? "help").toLowerCase();
     const descriptor = APP_COMMANDS.find((item) => item.id === commandName);
