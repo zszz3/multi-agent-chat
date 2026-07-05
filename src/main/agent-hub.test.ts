@@ -37,6 +37,10 @@ function addConfiguredAgents(hub: AgentHub, agents: ConfiguredAgent[]): void {
   hub.updateConfiguredAgents([...hub.snapshot().configuredAgents, ...agents]);
 }
 
+function chatConfigLocked(chat: { running: boolean; sessionId: string | undefined; messages: Array<{ local?: boolean | undefined }> }): boolean {
+  return chat.running || Boolean(chat.sessionId) || chat.messages.some((message) => !message.local);
+}
+
 function interactiveChatCapabilities(runtimeId: AgentId) {
   return {
     runtimeId,
@@ -1364,6 +1368,79 @@ fs.writeFileSync(${JSON.stringify(argsPath)}, process.argv.slice(2).join("\\n") 
     });
   });
 
+  test("handles /app help locally without starting a runtime conversation", async () => {
+    const hub = new AgentHub({ codex: "missing-codex-for-test", claude: "missing-claude-for-test" });
+    const chatId = hub.snapshot().activeChatId!;
+
+    await hub.sendPrompt("/app help", chatId);
+
+    const chat = hub.snapshot().chats.find((item) => item.id === chatId);
+    expect(chat?.messages).toEqual([
+      expect.objectContaining({ role: "user", content: "/app help", local: true }),
+      expect.objectContaining({ role: "assistant", local: true, content: expect.stringContaining("/app status") }),
+    ]);
+    expect(chat?.sessionId).toBeUndefined();
+    expect(chat?.running).toBe(false);
+  });
+
+  test("forwards bare slash to the runtime path instead of handling it locally", async () => {
+    const dir = await mkdtemp(path.join(os.tmpdir(), "multi-agent-chat-claude-slash-runtime-"));
+    const fake = await writeClaudeSequentialFake(dir);
+    const hub = new AgentHub({ codex: "missing-codex-for-test", claude: fake.executable });
+    addConfiguredAgents(hub, [configuredAgent("claude-agent", { runtimeAgentId: "claude", name: "Claude Agent" })]);
+    const chatId = hub.snapshot().activeChatId!;
+    hub.setChatAgent(chatId, "claude-agent");
+    (hub as any).runtimes.set("claude", {
+      id: "claude",
+      label: "Claude",
+      command: fake.executable,
+      version: "test",
+      available: true,
+    });
+
+    await hub.sendPrompt("/help", chatId);
+
+    const chat = await waitFor(
+      () => hub.snapshot().chats.find((item) => item.id === chatId),
+      (item) => item?.running === false,
+    );
+    const calls = (await readFile(fake.callsPath, "utf8"))
+      .trim()
+      .split("\n")
+      .filter(Boolean)
+      .map((line) => JSON.parse(line) as { args: string[] });
+
+    expect(calls).toHaveLength(1);
+    expect(calls[0]?.args.at(-1)).toBe("/help");
+    expect(chat?.sessionId).toBe("claude-session-1");
+    expect(chat?.messages).toEqual([
+      expect.objectContaining({ role: "user", content: "/help" }),
+      expect.objectContaining({ role: "assistant", content: "reply:/help" }),
+    ]);
+    expect(chat?.messages[0]?.local).toBeUndefined();
+    expect(chat?.messages[1]?.local).toBeUndefined();
+  });
+
+  test("rejects bare slash locally for api chats without locking the chat config", async () => {
+    const hub = new AgentHub({ codex: "missing-codex-for-test", claude: "missing-claude-for-test" });
+    addConfiguredAgents(hub, [configuredAgent("api-agent", { runtimeAgentId: "api", name: "API Agent" })]);
+    const chatId = hub.snapshot().activeChatId!;
+    hub.setChatAgent(chatId, "api-agent");
+
+    await hub.sendPrompt("/help", chatId);
+
+    const chat = hub.snapshot().chats.find((item) => item.id === chatId)!;
+    expect(chat.messages).toEqual([
+      expect.objectContaining({ role: "user", content: "/help", local: true }),
+      expect.objectContaining({
+        role: "assistant",
+        local: true,
+        content: expect.stringContaining("Native slash commands are not supported by API runtimes"),
+      }),
+    ]);
+    expect(chatConfigLocked(chat)).toBe(false);
+  });
+
   test("reads Codex status through app-server RPC without starting an agent conversation", async () => {
     const dir = await mkdtemp(path.join(os.tmpdir(), "multi-agent-chat-codex-status-"));
     const fake = await writeCodexAppServerFake(dir);
@@ -1371,7 +1448,7 @@ fs.writeFileSync(${JSON.stringify(argsPath)}, process.argv.slice(2).join("\\n") 
     addConfiguredAgents(hub, [configuredAgent("claude-agent", { runtimeAgentId: "claude", name: "Claude Agent" })]);
     const chatId = hub.snapshot().activeChatId!;
 
-    await hub.sendPrompt("/status", chatId);
+    await hub.sendPrompt("/app status", chatId);
     hub.setChatAgent(chatId, "claude-agent");
 
     const activeChat = hub.snapshot().chats.find((item) => item.id === chatId);
@@ -1379,7 +1456,7 @@ fs.writeFileSync(${JSON.stringify(argsPath)}, process.argv.slice(2).join("\\n") 
     expect(activeChat?.running).toBe(false);
     expect(activeChat?.lastError).toBeUndefined();
     expect(activeChat?.messages).toEqual([
-      expect.objectContaining({ role: "user", content: "/status", local: true }),
+      expect.objectContaining({ role: "user", content: "/app status", local: true }),
       expect.objectContaining({
         role: "assistant",
         local: true,
@@ -1406,7 +1483,7 @@ fs.writeFileSync(${JSON.stringify(argsPath)}, process.argv.slice(2).join("\\n") 
     const hub = new AgentHub({ codex: fake.executable, claude: "missing-claude-for-test" });
     const chatId = hub.snapshot().activeChatId!;
 
-    await hub.sendPrompt("/plugins", chatId);
+    await hub.sendPrompt("/app plugins", chatId);
 
     const activeChat = hub.snapshot().chats.find((item) => item.id === chatId);
     expect(activeChat?.running).toBe(false);
@@ -1480,7 +1557,7 @@ fs.writeFileSync(${JSON.stringify(argsPath)}, process.argv.slice(2).join("\\n") 
     const hub = new AgentHub({ codex: fake.executable, claude: "missing-claude-for-test" });
     const chatId = hub.snapshot().activeChatId!;
 
-    await hub.sendPrompt("/models", chatId);
+    await hub.sendPrompt("/app models", chatId);
 
     const activeChat = hub.snapshot().chats.find((item) => item.id === chatId);
     expect(activeChat?.messages.at(-1)).toMatchObject({

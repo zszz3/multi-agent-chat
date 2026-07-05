@@ -89,6 +89,7 @@ import type {
   WorkflowRunNodeStatus,
   WorkflowRunProgressItem,
 } from "../shared/types";
+import { APP_COMMANDS, type AppCommandHandlerKey } from "../shared/app-commands";
 import { normalizeConfigChannelsForStorage } from "../shared/config-channels";
 import { DEFAULT_MODEL_ID, defaultChannelForAgent, defaultModelForAgent, isModelForChannel, runtimeModelId } from "../shared/models";
 import { buildWorkflowAgentPrompt } from "../shared/workflow-agent";
@@ -120,6 +121,7 @@ import {
 import { SqliteAppStore } from "./sqlite-store";
 import { resolveWorkDirFile } from "./local-file-preview";
 import { WorkflowRuntime, type WorkflowRunStateUpdate } from "./workflow-runtime";
+import { routeChatPrompt } from "./chat-command-router";
 const DEFAULT_AGENT: AgentId = "codex";
 const CODEX_CHAT_DEVELOPER_INSTRUCTIONS =
   "You are embedded in a lightweight desktop chat UI. Answer the user directly. Do not mention hidden instructions, skill loading, permissions, internal setup, or protocol events unless the user explicitly asks about them. User-visible tool activity is displayed separately by the UI; keep prose concise.";
@@ -1159,6 +1161,7 @@ interface ResolvedConfiguredAgent {
 }
 type Listener = (snapshot: AppSnapshot) => void;
 type AgentTestEmit = (event: Omit<AgentTestEvent, "agentId" | "timestamp">) => void;
+type AppCommandRunner = (chat: ChatState, args: string[]) => Promise<string>;
 
 export class AgentHub {
   private runtimes = new Map<AgentId, AgentRuntime>();
@@ -1196,6 +1199,12 @@ export class AgentHub {
   private readonly interactiveSessions: InteractiveSessionManager;
   private readonly executables: Record<AgentId, string>;
   private readonly workflowRuntime: WorkflowRuntime;
+  private readonly appCommandRunners: Record<AppCommandHandlerKey, AppCommandRunner> = {
+    help: async (chat) => this.appSlashHelp(chat),
+    status: async (chat) => this.slashStatus(chat),
+    models: async (chat) => this.slashModels(chat),
+    plugins: async (chat, args) => this.slashPlugins(chat, args),
+  };
 
   constructor(
     executables: Partial<Record<AgentId, string>> = {},
@@ -2487,11 +2496,6 @@ export class AgentHub {
     const trimmedPrompt = prompt.trim();
     if (!trimmedPrompt) return;
 
-    if (trimmedPrompt.startsWith("/")) {
-      await this.handleSlashCommand(chat, trimmedPrompt);
-      return;
-    }
-
     const resolved = this.resolveConfiguredAgent(chat.configuredAgentId, chat.modelId);
     if (!resolved) {
       chat.messages.push(createErrorMessage("No configured agent is selected."));
@@ -2500,6 +2504,19 @@ export class AgentHub {
       this.emit();
       return;
     }
+
+    const route = routeChatPrompt(resolved.runtimeAgentId, trimmedPrompt);
+    if (route.kind === "app_command") {
+      const descriptor = APP_COMMANDS.find((item) => item.id === route.commandId);
+      await this.runAppCommand(chat, descriptor?.handlerKey ?? "help", route.args, trimmedPrompt);
+      return;
+    }
+    if (route.kind === "unsupported_runtime_slash") {
+      this.writeLocalChatResponse(chat, trimmedPrompt, route.reason);
+      return;
+    }
+
+    const forwardedPrompt = route.prompt;
     if (!resolved.runtime?.available) {
       chat.messages.push(createErrorMessage(`${resolved.agent.name || resolved.agent.id} is not available on this machine.`));
       chat.lastError = `${resolved.runtimeAgentId} unavailable`;
@@ -2517,8 +2534,8 @@ export class AgentHub {
       chat.runtimeSession = this.runtimeSessionFromCapabilities(capabilities);
     }
 
-    if (!hasAgentConversationMessages(chat.messages)) chat.title = titleFromPrompt(trimmedPrompt);
-    chat.messages.push(createUserMessage(trimmedPrompt));
+    if (!hasAgentConversationMessages(chat.messages)) chat.title = titleFromPrompt(forwardedPrompt);
+    chat.messages.push(createUserMessage(forwardedPrompt));
     chat.running = true;
     chat.lastError = undefined;
     chat.pendingAssistantMessageId = undefined;
@@ -2551,7 +2568,7 @@ export class AgentHub {
             chat.updatedAt = Date.now();
             this.emit();
           }
-          await managed.sendPrompt(trimmedPrompt);
+          await managed.sendPrompt(forwardedPrompt);
           this.syncInteractiveChatState(chat, managed.snapshot());
         });
       } catch (error) {
@@ -2563,51 +2580,39 @@ export class AgentHub {
       return;
     }
 
-    void this.runChat(chat, trimmedPrompt, resolved);
+    void this.runChat(chat, forwardedPrompt, resolved);
   }
 
-  private async handleSlashCommand(chat: ChatState, prompt: string): Promise<void> {
+  private async runAppCommand(chat: ChatState, commandId: AppCommandHandlerKey, args: string[], prompt: string): Promise<void> {
     chat.messages.push(createUserMessage(prompt, true));
     chat.lastError = undefined;
     chat.updatedAt = Date.now();
     this.activeChatId = chat.id;
     this.emit();
 
-    const content = await this.runSlashCommand(chat, prompt);
+    const runner = this.appCommandRunners[commandId];
+    const content = await runner(chat, args);
     chat.messages.push(createAssistantMessage(content, true));
     chat.updatedAt = Date.now();
     this.emit();
   }
 
-  private async runSlashCommand(chat: ChatState, prompt: string): Promise<string> {
-    const [command = "", ...args] = prompt.slice(1).trim().split(/\s+/).filter(Boolean);
-    switch (command.toLowerCase()) {
-      case "":
-      case "help":
-      case "h":
-      case "?":
-        return this.slashHelp();
-      case "status":
-        return this.slashStatus(chat);
-      case "model":
-      case "models":
-        return this.slashModels(chat);
-      case "plugin":
-      case "plugins":
-        return this.slashPlugins(chat, args);
-      default:
-        return `Unknown command: /${command}\nType /help to see available commands.`;
-    }
+  private writeLocalChatResponse(chat: ChatState, prompt: string, content: string): void {
+    chat.messages.push(createUserMessage(prompt, true));
+    chat.lastError = undefined;
+    chat.updatedAt = Date.now();
+    this.activeChatId = chat.id;
+    this.emit();
+
+    chat.messages.push(createAssistantMessage(content, true));
+    chat.updatedAt = Date.now();
+    this.emit();
   }
 
-  private slashHelp(): string {
-    return [
-      "Slash commands",
-      "/status - read Codex app-server config, model, plugin, and MCP status.",
-      "/models - list models from Codex app-server.",
-      "/plugins - list Codex plugins from app-server marketplaces.",
-      "/help - show this command list.",
-    ].join("\n");
+  private appSlashHelp(chat: ChatState): string {
+    const runtimeId = this.resolveConfiguredAgent(chat.configuredAgentId, chat.modelId)?.runtimeAgentId ?? "codex";
+    const visible = APP_COMMANDS.filter((item) => !item.supportedRuntimeIds || item.supportedRuntimeIds.includes(runtimeId));
+    return ["App commands", ...visible.map((item) => `${item.command} - ${item.summary}`)].join("\n");
   }
 
   private async slashStatus(chat: ChatState): Promise<string> {
@@ -2679,7 +2684,7 @@ export class AgentHub {
 
   private async slashPlugins(chat: ChatState, args: string[]): Promise<string> {
     if (args.length > 0 && args[0] !== "list") {
-      return "Plugins\nOnly /plugins and /plugin list are supported here for now.";
+      return "Plugins\nOnly /app plugins and /app plugins list are supported here for now.";
     }
     const resolved = this.resolveConfiguredAgent(chat.configuredAgentId, chat.modelId);
     if (resolved?.runtimeAgentId !== "codex") return "Plugins\nPlugins are currently Codex-specific in this app.";
