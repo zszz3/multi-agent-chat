@@ -24,6 +24,7 @@ import type {
   AnswerWorkflowGateRequest,
   PauseWorkflowNodeRequest,
   ProviderBalanceResult,
+  RuntimeCommandConfig,
   RunWorkflowGraphRequest,
   RunAgentTeamRequest,
   RunTaskRequest,
@@ -63,6 +64,7 @@ const api = {
   testRuntimeChannel: (channelId: string): Promise<AgentTestResult> => ipcRenderer.invoke("runtime-channels:test", channelId),
   queryRuntimeChannelBalance: (channelId: string): Promise<ProviderBalanceResult> => ipcRenderer.invoke("runtime-channels:balance", channelId),
   loadCodexDefaultConfig: (): Promise<CodexDefaultConfig> => ipcRenderer.invoke("runtime-channels:load-codex-default"),
+  saveRuntimeCommandConfigs: (configs: RuntimeCommandConfig[]): Promise<AppSnapshot> => ipcRenderer.invoke("runtime-commands:save", configs),
   onAgentTestEvent: (callback: (event: AgentTestEvent) => void): (() => void) => {
     const listener = (_event: Electron.IpcRendererEvent, event: AgentTestEvent) => callback(event);
     ipcRenderer.on("configured-agents:test-event", listener);

@@ -224,6 +224,8 @@ export function AppShell() {
   const {
     configChannels,
     selectedConfigChannelId,
+    runtimeCommandConfigs,
+    runtimeCommandConfigDirty,
     configStatus,
     codexPluginCatalog,
     pluginCatalogStatus,
@@ -239,7 +241,10 @@ export function AppShell() {
     openConfigContextMenu,
     deleteConfigChannel,
     saveChannelConfig,
+    saveRuntimeCommandConfigs,
     updateConfigChannel,
+    updateRuntimeCommandConfig,
+    updateRuntimeCommandArgs,
     addConfigModel,
     updateConfigModel,
     removeConfigModel,
@@ -885,6 +890,9 @@ export function AppShell() {
             language={language}
             channels={configChannels}
             selectedChannelId={selectedConfigChannelId}
+            runtimes={snapshot.runtimes}
+            runtimeCommandConfigs={runtimeCommandConfigs}
+            runtimeCommandConfigDirty={runtimeCommandConfigDirty}
             providerKeys={providerKeys}
             codexPluginCatalog={codexPluginCatalog}
             pluginCatalogStatus={pluginCatalogStatus}
@@ -908,6 +916,9 @@ export function AppShell() {
             onTestChannel={testRuntimeChannel}
             onQueryBalance={queryRuntimeChannelBalance}
             onUpdateProviderKey={updateProviderKey}
+            onUpdateRuntimeCommandConfig={updateRuntimeCommandConfig}
+            onUpdateRuntimeCommandArgs={updateRuntimeCommandArgs}
+            onSaveRuntimeCommandConfigs={saveRuntimeCommandConfigs}
             onLoadCodexDefaultConfig={() => window.multiAgentChat.loadCodexDefaultConfig()}
             onReplaceChannelAndPersist={replaceConfigChannelAndPersist}
             onStatusChange={setConfigStatus}

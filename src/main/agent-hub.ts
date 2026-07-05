@@ -478,6 +478,28 @@ function cloneRuntimeCommandConfig(config: RuntimeCommandConfig): RuntimeCommand
   };
 }
 
+function normalizeRuntimeCommandConfig(config: RuntimeCommandConfig): RuntimeCommandConfig | undefined {
+  const executable = config.override?.executable.trim() ?? "";
+  const fixedArgs = Array.isArray(config.override?.fixedArgs) ? config.override.fixedArgs.filter((item): item is string => typeof item === "string") : [];
+  if (!executable) return undefined;
+  return {
+    runtimeId: config.runtimeId,
+    override: {
+      executable,
+      ...(fixedArgs.length > 0 ? { fixedArgs: [...fixedArgs] } : {}),
+    },
+  };
+}
+
+function normalizeRuntimeCommandConfigs(configs: RuntimeCommandConfig[]): RuntimeCommandConfig[] {
+  const next = new Map<AgentId, RuntimeCommandConfig>();
+  for (const config of configs) {
+    const normalized = normalizeRuntimeCommandConfig(config);
+    if (normalized) next.set(normalized.runtimeId, normalized);
+  }
+  return [...next.values()];
+}
+
 function cloneLearnedNativeCommandRecord(record: LearnedNativeCommandRecord): LearnedNativeCommandRecord {
   return {
     runtimeId: record.runtimeId,
@@ -1384,6 +1406,17 @@ export class AgentHub {
     }
     this.normalizeRunSelections();
     this.installRestoredConfiguredAgents(this.listConfiguredAgents());
+    this.emit();
+    await this.flushPersistence();
+    return this.snapshot();
+  }
+
+  async saveRuntimeCommandConfigs(configs: RuntimeCommandConfig[]): Promise<AppSnapshot> {
+    this.runtimeCommandConfigs = normalizeRuntimeCommandConfigs(configs);
+    const runtimes = await detectAgentRuntimes({ runtimeCommandConfigs: this.runtimeCommandConfigs });
+    for (const runtime of runtimes) {
+      this.runtimes.set(runtime.id, runtime);
+    }
     this.emit();
     await this.flushPersistence();
     return this.snapshot();

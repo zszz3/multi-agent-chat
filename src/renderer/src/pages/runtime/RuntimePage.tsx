@@ -7,9 +7,11 @@ import type {
   AgentChannel,
   AgentId,
   AgentModelOption,
+  AgentRuntime,
   CodexDefaultConfig,
   CodexPluginCatalogItem,
   ProviderBalanceResult,
+  RuntimeCommandConfig,
 } from "../../../../shared/types";
 import { agentAccent, agentLabel } from "../../app/agents";
 import { formatDuration } from "../../app/format";
@@ -36,6 +38,42 @@ import {
 } from "./runtime-utils";
 
 const AGENTS: AgentId[] = ["codex", "claude", "api"];
+
+function formatRuntimeCommandArgs(args: string[] | undefined): string {
+  return (args ?? [])
+    .map((arg) => {
+      if (!arg) return "\"\"";
+      if (!/[\s"\\']/.test(arg)) return arg;
+      return `"${arg.replace(/(["\\])/g, "\\$1")}"`;
+    })
+    .join(" ");
+}
+
+function formatResolvedRuntimeCommand(runtime: AgentRuntime | undefined): string {
+  if (!runtime) return "";
+  const fixedArgs = runtime.fixedArgs?.length ? ` ${formatRuntimeCommandArgs(runtime.fixedArgs)}` : "";
+  return `${runtime.command}${fixedArgs}`;
+}
+
+function runtimeSourceLabel(source: AgentRuntime["source"], language: Language): string {
+  const labels =
+    language === "zh"
+      ? {
+          app_override: "应用覆盖",
+          env_override: "环境变量",
+          path: "PATH",
+          shell_hydrated_path: "Shell PATH",
+          unavailable: "不可用",
+        }
+      : {
+          app_override: "App override",
+          env_override: "Environment variable",
+          path: "PATH",
+          shell_hydrated_path: "Shell PATH",
+          unavailable: "Unavailable",
+        };
+  return labels[source ?? "unavailable"];
+}
 
 const CONFIG_TEXT = {
   zh: {
@@ -80,6 +118,9 @@ interface RuntimePageProps {
   language?: Language;
   channels: AgentChannel[];
   selectedChannelId: string;
+  runtimes?: AgentRuntime[];
+  runtimeCommandConfigs?: RuntimeCommandConfig[];
+  runtimeCommandConfigDirty?: boolean;
   providerKeys: Record<string, string>;
   codexPluginCatalog: CodexPluginCatalogItem[];
   pluginCatalogStatus: string;
@@ -102,6 +143,9 @@ interface RuntimePageProps {
   onTestChannel: (channelId: string) => Promise<void>;
   onQueryBalance?: (channelId: string) => Promise<void>;
   onUpdateProviderKey: (presetId: string, value: string) => void;
+  onUpdateRuntimeCommandConfig?: (runtimeId: AgentId, updater: (config: RuntimeCommandConfig) => RuntimeCommandConfig) => void;
+  onUpdateRuntimeCommandArgs?: (runtimeId: AgentId, rawText: string) => void;
+  onSaveRuntimeCommandConfigs?: () => Promise<void>;
   onLoadCodexDefaultConfig?: () => Promise<CodexDefaultConfig>;
   onReplaceChannelAndPersist?: (channelId: string, nextChannel: AgentChannel) => Promise<void>;
   status?: string;
@@ -112,6 +156,9 @@ export function RuntimePage({
   language = "en",
   channels,
   selectedChannelId,
+  runtimes = [],
+  runtimeCommandConfigs = [],
+  runtimeCommandConfigDirty = false,
   providerKeys,
   codexPluginCatalog,
   pluginCatalogStatus,
@@ -134,6 +181,9 @@ export function RuntimePage({
   onTestChannel,
   onQueryBalance,
   onUpdateProviderKey,
+  onUpdateRuntimeCommandConfig,
+  onUpdateRuntimeCommandArgs,
+  onSaveRuntimeCommandConfigs,
   onLoadCodexDefaultConfig,
   onReplaceChannelAndPersist,
   status = "",
@@ -159,12 +209,38 @@ export function RuntimePage({
   const balanceRefreshingText = language === "zh" ? "查询中" : "Checking";
   const balanceIdleText = language === "zh" ? "点击刷新查询当前 Provider 余额。" : "Refresh to query the current provider balance.";
   const balanceNoDataText = language === "zh" ? "Provider 没有返回余额明细。" : "The provider did not return balance details.";
+  const executorOverrideTitle = language === "zh" ? "执行覆盖" : "Executor override";
+  const executorOverrideDescription =
+    language === "zh"
+      ? "为当前运行时覆盖全局可执行文件和固定参数。"
+      : "Override the global executable and fixed args for this runtime.";
+  const saveExecutorText = language === "zh" ? "保存执行覆盖" : "Save executor";
+  const executableLabel = language === "zh" ? "Executable" : "Executable";
+  const fixedArgsLabel = language === "zh" ? "Fixed args" : "Fixed args";
+  const resolvedCommandLabel = language === "zh" ? "Detected command" : "Detected command";
+  const resolvedVersionLabel = language === "zh" ? "Resolved version" : "Resolved version";
+  const resolvedFromLabel = language === "zh" ? "Resolved from" : "Resolved from";
+  const runtimeNotDetectedText = language === "zh" ? "Waiting for runtime detection." : "Waiting for runtime detection.";
+  const apiRuntimeManagedText =
+    language === "zh"
+      ? "API runtime is managed by the app and does not support executable overrides."
+      : "API runtime is managed by the app and does not support executable overrides.";
   const visibleRuntimeChannels = useMemo(() => selectConfigChannelsForDisplay(channels), [channels]);
   const selectedRuntimeChannelRecord = useMemo(() => configChannelForSelection(channels, selectedChannelId), [channels, selectedChannelId]);
   const selectedRuntimeChannelId = selectedRuntimeChannelRecord?.id ?? "";
   const configuredPluginIds = useMemo(() => new Set((selectedRuntimeChannelRecord?.plugins ?? []).map((plugin) => plugin.id)), [selectedRuntimeChannelRecord]);
   const availableCodexPlugins = useMemo(() => codexPluginCatalog.filter((plugin) => !configuredPluginIds.has(plugin.id)), [codexPluginCatalog, configuredPluginIds]);
   const selectedRuntime = selectedRuntimeChannelRecord?.agentId ?? "codex";
+  const selectedResolvedRuntime = useMemo(() => runtimes.find((runtime) => runtime.id === selectedRuntime), [runtimes, selectedRuntime]);
+  const selectedRuntimeCommandConfig = useMemo(
+    () => runtimeCommandConfigs.find((config) => config.runtimeId === selectedRuntime),
+    [runtimeCommandConfigs, selectedRuntime],
+  );
+  const selectedRuntimeCommandExecutable = selectedRuntimeCommandConfig?.override?.executable ?? "";
+  const selectedRuntimeCommandArgs = formatRuntimeCommandArgs(selectedRuntimeCommandConfig?.override?.fixedArgs);
+  const selectedRuntimeResolvedCommand = formatResolvedRuntimeCommand(selectedResolvedRuntime);
+  const selectedRuntimeResolvedSource = runtimeSourceLabel(selectedResolvedRuntime?.source, language);
+  const supportsRuntimeCommandOverrides = selectedRuntime !== "api";
   const runtimeProviderPresets = useMemo(() => AGENT_PROVIDER_PRESETS.filter((preset) => preset.runtimeAgentId === selectedRuntime), [selectedRuntime]);
   const updateSelectedRuntimeChannel = (updater: (channel: AgentChannel) => AgentChannel): void => {
     if (!selectedRuntimeChannelRecord) return;
@@ -437,6 +513,74 @@ export function RuntimePage({
                     </button>
                   ))}
                 </div>
+              </section>
+
+              <section className="agent-provider-presets">
+                <div className="agent-provider-presets-head">
+                  <div>
+                    <h3>{executorOverrideTitle}</h3>
+                    <span>{executorOverrideDescription}</span>
+                  </div>
+                  <button
+                    type="button"
+                    className="control-btn compact secondary"
+                    onClick={() => void onSaveRuntimeCommandConfigs?.()}
+                    disabled={!supportsRuntimeCommandOverrides || !runtimeCommandConfigDirty || !onSaveRuntimeCommandConfigs}
+                  >
+                    <Save size={13} />
+                    <span>{saveExecutorText}</span>
+                  </button>
+                </div>
+                <div className="config-status runtime-config-status">
+                  {`${resolvedFromLabel}: ${selectedRuntimeResolvedSource}${
+                    selectedResolvedRuntime?.error ? ` · ${selectedResolvedRuntime.error}` : ""
+                  }`}
+                </div>
+                {supportsRuntimeCommandOverrides ? (
+                  <div className="config-field-grid">
+                    <label className="config-field config-field-wide">
+                      <span>{resolvedCommandLabel}</span>
+                      <div className="configured-agent-runtime-readonly">
+                        <span className={`agent-badge mini ${agentAccent(selectedRuntime)}`}>{agentLabel(selectedRuntime)}</span>
+                        <strong>{selectedRuntimeResolvedCommand || runtimeNotDetectedText}</strong>
+                      </div>
+                    </label>
+                    <label className="config-field">
+                      <span>{resolvedVersionLabel}</span>
+                      <div className="configured-agent-runtime-readonly">
+                        <strong>{selectedResolvedRuntime?.version ?? "unknown"}</strong>
+                      </div>
+                    </label>
+                    <label className="config-field config-field-wide">
+                      <span>{executableLabel}</span>
+                      <input
+                        aria-label="Runtime executable override"
+                        value={selectedRuntimeCommandExecutable}
+                        placeholder={selectedResolvedRuntime?.command ?? agentLabel(selectedRuntime)}
+                        onChange={(event) =>
+                          onUpdateRuntimeCommandConfig?.(selectedRuntime, (config) => ({
+                            ...config,
+                            override: {
+                              executable: event.currentTarget.value,
+                              ...(config.override?.fixedArgs ? { fixedArgs: [...config.override.fixedArgs] } : {}),
+                            },
+                          }))
+                        }
+                      />
+                    </label>
+                    <label className="config-field config-field-wide">
+                      <span>{fixedArgsLabel}</span>
+                      <input
+                        aria-label="Runtime fixed args override"
+                        value={selectedRuntimeCommandArgs}
+                        placeholder="--profile team-a"
+                        onChange={(event) => onUpdateRuntimeCommandArgs?.(selectedRuntime, event.currentTarget.value)}
+                      />
+                    </label>
+                  </div>
+                ) : (
+                  <div className="config-status runtime-config-status">{apiRuntimeManagedText}</div>
+                )}
               </section>
 
               <section className="agent-provider-presets">

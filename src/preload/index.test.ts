@@ -59,11 +59,13 @@ describe("preload skill API", () => {
     expect(electronState.exposedApi).toHaveProperty("onScheduledWorkflowEvent");
     expect(electronState.exposedApi).toHaveProperty("queryRuntimeChannelBalance");
     expect(electronState.exposedApi).toHaveProperty("loadCodexDefaultConfig");
+    expect(electronState.exposedApi).toHaveProperty("saveRuntimeCommandConfigs");
     expect(electronState.exposedApi).not.toHaveProperty("translateSkill");
   });
 
   test("keeps runtime session typing stable across the preload snapshot surface", () => {
     expectTypeOf<Awaited<ReturnType<MultiAgentChatApi["getSnapshot"]>>>().toEqualTypeOf<AppSnapshot>();
+    expectTypeOf<Awaited<ReturnType<MultiAgentChatApi["saveRuntimeCommandConfigs"]>>>().toEqualTypeOf<AppSnapshot>();
     expectTypeOf<ChatSession["runtimeSession"]>().toEqualTypeOf<ChatRuntimeSessionState | undefined>();
   });
 });

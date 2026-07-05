@@ -1057,6 +1057,25 @@ describe("ConfigPage", () => {
         agentTestResults={{}}
         testingAgentId={undefined}
         agentTestTick={0}
+        runtimes={[
+          {
+            ...runtimes[0]!,
+            command: "codex",
+            fixedArgs: ["--profile", "team-a"],
+            source: "path",
+          },
+          runtimes[1]!,
+        ]}
+        runtimeCommandConfigs={[
+          {
+            runtimeId: "codex",
+            override: {
+              executable: "/custom/bin/codex",
+              fixedArgs: ["--profile", "team-b"],
+            },
+          },
+        ]}
+        runtimeCommandConfigDirty
         onUpdateChannel={() => undefined}
         onAddModel={() => undefined}
         onUpdateModel={() => undefined}
@@ -1069,12 +1088,23 @@ describe("ConfigPage", () => {
         onDeleteConfig={() => undefined}
         onTestChannel={async () => undefined}
         onUpdateProviderKey={() => undefined}
+        onUpdateRuntimeCommandConfig={() => undefined}
+        onUpdateRuntimeCommandArgs={() => undefined}
+        onSaveRuntimeCommandConfigs={async () => undefined}
       />,
     );
 
     expect(html).toContain("runtime-page");
     expect(html).toContain("Config");
     expect(html).toContain("CLI");
+    expect(html).toContain("Executor override");
+    expect(html).toContain("Resolved from: PATH");
+    expect(html).toContain("Detected command");
+    expect(html).toContain("codex --profile team-a");
+    expect(html).toContain("aria-label=\"Runtime executable override\"");
+    expect(html).toContain("value=\"/custom/bin/codex\"");
+    expect(html).toContain("aria-label=\"Runtime fixed args override\"");
+    expect(html).toContain("value=\"--profile team-b\"");
     expect(html).toContain("Provider");
     expect(html).toContain("aria-label=\"Provider API key\"");
     expect(html).toContain("value=\"saved-key\"");

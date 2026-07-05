@@ -3,12 +3,14 @@ import type { MultiAgentChatApi } from "../../../../../preload";
 import { configChannelForSelection, selectConfigChannelsForDisplay } from "../../../../../shared/config-channels";
 import { DEFAULT_MODEL_ID } from "../../../../../shared/models";
 import type {
+  AgentId,
   AgentChannel,
   AgentTestEvent,
   AgentModelOption,
   AppSnapshot,
   CodexPluginCatalogItem,
   ProviderBalanceResult,
+  RuntimeCommandConfig,
 } from "../../../../../shared/types";
 import { createChannel, createModel, shouldRefreshBalances } from "../../../app/app-state";
 import { agentLabel } from "../../../app/agents";
@@ -16,6 +18,110 @@ import { missingAppCapabilityMessage } from "../../../app/shell";
 import type { AgentTestTranscriptItem, AgentTestUiState } from "../runtime-types";
 
 const BALANCE_REFRESH_INTERVAL_MS = 5 * 60_000;
+
+function cloneRuntimeCommandConfig(config: RuntimeCommandConfig): RuntimeCommandConfig {
+  return {
+    runtimeId: config.runtimeId,
+    ...(config.override
+      ? {
+          override: {
+            executable: config.override.executable,
+            ...(config.override.fixedArgs ? { fixedArgs: [...config.override.fixedArgs] } : {}),
+          },
+        }
+      : {}),
+  };
+}
+
+function normalizeRuntimeCommandDraft(config: RuntimeCommandConfig): RuntimeCommandConfig | undefined {
+  const executable = config.override?.executable.trim() ?? "";
+  const fixedArgs = Array.isArray(config.override?.fixedArgs) ? config.override.fixedArgs.filter((item): item is string => typeof item === "string") : [];
+  if (!executable && fixedArgs.length === 0) return undefined;
+  return {
+    runtimeId: config.runtimeId,
+    override: {
+      executable,
+      ...(fixedArgs.length > 0 ? { fixedArgs: [...fixedArgs] } : {}),
+    },
+  };
+}
+
+export function seedRuntimeCommandConfigs(configs: RuntimeCommandConfig[]): RuntimeCommandConfig[] {
+  return configs
+    .map((config) => normalizeRuntimeCommandDraft(cloneRuntimeCommandConfig(config)))
+    .filter((config): config is RuntimeCommandConfig => Boolean(config));
+}
+
+export function upsertRuntimeCommandConfig(
+  current: RuntimeCommandConfig[],
+  runtimeId: AgentId,
+  updater: (config: RuntimeCommandConfig) => RuntimeCommandConfig,
+): RuntimeCommandConfig[] {
+  const next = [...current];
+  const index = next.findIndex((config) => config.runtimeId === runtimeId);
+  const existing = index >= 0 ? cloneRuntimeCommandConfig(next[index]!) : { runtimeId };
+  const updated = normalizeRuntimeCommandDraft(updater(existing));
+  if (!updated) {
+    if (index >= 0) next.splice(index, 1);
+    return next;
+  }
+  if (index >= 0) next[index] = updated;
+  else next.push(updated);
+  return next;
+}
+
+export function runtimeCommandArgsFromText(rawText: string): string[] {
+  const tokens: string[] = [];
+  let current = "";
+  let quote: '"' | "'" | undefined;
+  let escaping = false;
+
+  for (const char of rawText) {
+    if (escaping) {
+      current += char;
+      escaping = false;
+      continue;
+    }
+    if (char === "\\") {
+      escaping = true;
+      continue;
+    }
+    if (quote) {
+      if (char === quote) {
+        quote = undefined;
+        continue;
+      }
+      current += char;
+      continue;
+    }
+    if (char === "\"" || char === "'") {
+      quote = char;
+      continue;
+    }
+    if (/\s/.test(char)) {
+      if (current) {
+        tokens.push(current);
+        current = "";
+      }
+      continue;
+    }
+    current += char;
+  }
+
+  if (escaping) current += "\\";
+  if (current) tokens.push(current);
+  return tokens;
+}
+
+function runtimeCommandArgsToText(args: string[] | undefined): string {
+  return (args ?? [])
+    .map((arg) => {
+      if (!arg) return "\"\"";
+      if (!/[\s"\\']/.test(arg)) return arg;
+      return `"${arg.replace(/(["\\])/g, "\\$1")}"`;
+    })
+    .join(" ");
+}
 
 export function codexRuntimeAvailability(runtimes: AppSnapshot["runtimes"]): {
   detected: boolean;
@@ -47,6 +153,8 @@ interface UseRuntimeConfigManagerOptions {
 export interface RuntimeConfigManager {
   configChannels: AgentChannel[];
   selectedConfigChannelId: string;
+  runtimeCommandConfigs: RuntimeCommandConfig[];
+  runtimeCommandConfigDirty: boolean;
   configStatus: string;
   codexPluginCatalog: CodexPluginCatalogItem[];
   pluginCatalogStatus: string;
@@ -62,7 +170,10 @@ export interface RuntimeConfigManager {
   openConfigContextMenu: (event: MouseEvent, channelId: string, closeOtherMenus?: () => void) => void;
   deleteConfigChannel: (channelId: string) => void;
   saveChannelConfig: () => Promise<void>;
+  saveRuntimeCommandConfigs: () => Promise<void>;
   updateConfigChannel: (channelId: string, updater: (channel: AgentChannel) => AgentChannel) => void;
+  updateRuntimeCommandConfig: (runtimeId: AgentId, updater: (config: RuntimeCommandConfig) => RuntimeCommandConfig) => void;
+  updateRuntimeCommandArgs: (runtimeId: AgentId, rawText: string) => void;
   addConfigModel: (channelId: string) => void;
   updateConfigModel: (channelId: string, modelIndex: number, updater: (model: AgentModelOption) => AgentModelOption) => void;
   removeConfigModel: (channelId: string, modelIndex: number) => void;
@@ -82,7 +193,9 @@ export function useRuntimeConfigManager({
 }: UseRuntimeConfigManagerOptions): RuntimeConfigManager {
   const [configChannels, setConfigChannels] = useState<AgentChannel[]>([]);
   const [selectedConfigChannelId, setSelectedConfigChannelId] = useState("");
+  const [runtimeCommandConfigs, setRuntimeCommandConfigs] = useState<RuntimeCommandConfig[]>([]);
   const [configDirty, setConfigDirty] = useState(false);
+  const [runtimeCommandConfigDirty, setRuntimeCommandConfigDirty] = useState(false);
   const [configStatus, setConfigStatus] = useState("");
   const [codexPluginCatalog, setCodexPluginCatalog] = useState<CodexPluginCatalogItem[]>([]);
   const [pluginCatalogStatus, setPluginCatalogStatus] = useState("");
@@ -96,11 +209,16 @@ export function useRuntimeConfigManager({
   const lastBalanceRefreshAtRef = useRef<number | undefined>(undefined);
   const configChannelsRef = useRef<AgentChannel[]>([]);
   const configDirtyRef = useRef(false);
+  const runtimeCommandConfigsRef = useRef<RuntimeCommandConfig[]>([]);
   const codexRuntime = codexRuntimeAvailability(snapshot.runtimes);
 
   useEffect(() => {
     configChannelsRef.current = configChannels;
   }, [configChannels]);
+
+  useEffect(() => {
+    runtimeCommandConfigsRef.current = runtimeCommandConfigs;
+  }, [runtimeCommandConfigs]);
 
   useEffect(() => {
     configDirtyRef.current = configDirty;
@@ -141,12 +259,33 @@ export function useRuntimeConfigManager({
     setSelectedConfigChannelId((current) => configChannelForSelection(channels, current)?.id ?? "");
   }, []);
 
+  const syncRuntimeCommandConfigsFromSnapshot = useCallback((configs: RuntimeCommandConfig[]) => {
+    setRuntimeCommandConfigs(seedRuntimeCommandConfigs(configs));
+  }, []);
+
   const updateConfigChannels = useCallback((next: AgentChannel[]) => {
     setConfigChannels(next);
     setConfigDirty(true);
     setConfigStatus("");
     setSelectedConfigChannelId((current) => configChannelForSelection(next, current)?.id ?? "");
   }, []);
+
+  const updateRuntimeCommandConfig = useCallback((runtimeId: AgentId, updater: (config: RuntimeCommandConfig) => RuntimeCommandConfig) => {
+    setRuntimeCommandConfigs((current) => upsertRuntimeCommandConfig(current, runtimeId, updater));
+    setRuntimeCommandConfigDirty(true);
+    setConfigStatus("");
+  }, []);
+
+  const updateRuntimeCommandArgs = useCallback((runtimeId: AgentId, rawText: string) => {
+    const fixedArgs = runtimeCommandArgsFromText(rawText);
+    updateRuntimeCommandConfig(runtimeId, (config) => ({
+      ...config,
+      override: {
+        executable: config.override?.executable ?? "",
+        ...(fixedArgs.length > 0 ? { fixedArgs } : {}),
+      },
+    }));
+  }, [updateRuntimeCommandConfig]);
 
   const addConfigChannel = useCallback(() => {
     const next = [...configChannels, createChannel("codex", configChannels.map((channel) => channel.id))];
@@ -212,6 +351,41 @@ export function useRuntimeConfigManager({
       setConfigStatus(error instanceof Error ? error.message : String(error));
     }
   }, [persistChannelConfig]);
+
+  const saveRuntimeCommandConfigs = useCallback(async (): Promise<void> => {
+    const api = chatApi as typeof chatApi & {
+      saveRuntimeCommandConfigs?: (configs: RuntimeCommandConfig[]) => Promise<AppSnapshot>;
+    };
+    if (typeof api.saveRuntimeCommandConfigs !== "function") {
+      setConfigStatus(missingAppCapabilityMessage("Save executor settings"));
+      return;
+    }
+
+    const persistableConfigs = runtimeCommandConfigsRef.current.flatMap((config) => {
+      const executable = config.override?.executable.trim() || snapshot.runtimes.find((runtime) => runtime.id === config.runtimeId)?.command.trim() || "";
+      const fixedArgs = Array.isArray(config.override?.fixedArgs) ? config.override.fixedArgs.filter((item): item is string => typeof item === "string") : [];
+      if (!executable && fixedArgs.length === 0) return [];
+      return [
+        {
+          runtimeId: config.runtimeId,
+          override: {
+            executable,
+            ...(fixedArgs.length > 0 ? { fixedArgs } : {}),
+          },
+        },
+      ];
+    });
+
+    try {
+      const next = await api.saveRuntimeCommandConfigs(persistableConfigs);
+      syncRuntimeCommandConfigsFromSnapshot(next.runtimeCommandConfigs);
+      setRuntimeCommandConfigDirty(false);
+      setSnapshot(next);
+      setConfigStatus("Executor settings saved");
+    } catch (error) {
+      setConfigStatus(error instanceof Error ? error.message : String(error));
+    }
+  }, [chatApi, setSnapshot, snapshot.runtimes, syncRuntimeCommandConfigsFromSnapshot]);
 
   const updateConfigChannel = useCallback((channelId: string, updater: (channel: AgentChannel) => AgentChannel) => {
     setBalanceResults((current) => {
@@ -417,6 +591,11 @@ export function useRuntimeConfigManager({
   }, [configDirty, snapshot.channels, syncChannelsFromSnapshot]);
 
   useEffect(() => {
+    if (runtimeCommandConfigDirty) return;
+    syncRuntimeCommandConfigsFromSnapshot(snapshot.runtimeCommandConfigs);
+  }, [runtimeCommandConfigDirty, snapshot.runtimeCommandConfigs, syncRuntimeCommandConfigsFromSnapshot]);
+
+  useEffect(() => {
     if (!runtimeViewActive || codexPluginCatalog.length > 0 || !codexRuntime.detected) return;
     if (!codexRuntime.available) {
       setPluginCatalogStatus((current) => current || codexRuntime.message);
@@ -459,6 +638,8 @@ export function useRuntimeConfigManager({
   return {
     configChannels,
     selectedConfigChannelId,
+    runtimeCommandConfigs,
+    runtimeCommandConfigDirty,
     configStatus,
     codexPluginCatalog,
     pluginCatalogStatus,
@@ -474,7 +655,10 @@ export function useRuntimeConfigManager({
     openConfigContextMenu,
     deleteConfigChannel,
     saveChannelConfig,
+    saveRuntimeCommandConfigs,
     updateConfigChannel,
+    updateRuntimeCommandConfig,
+    updateRuntimeCommandArgs,
     addConfigModel,
     updateConfigModel,
     removeConfigModel,
