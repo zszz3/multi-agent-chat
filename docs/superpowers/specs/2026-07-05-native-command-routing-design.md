@@ -51,6 +51,19 @@ Introduce a runtime-extensible command-routing architecture for chat input so th
   - `/app models`
   - `/app plugins`
 
+#### Single source of truth for app commands
+
+- App-owned commands must be declared in one shared descriptor registry, for example `src/shared/app-commands.ts`.
+- Command routing, renderer suggestions, and `/app help` output must all derive from that same descriptor list.
+- Main-process execution handlers may live in a separate module, but they must be keyed by the shared command descriptor identity rather than by duplicated string literals.
+- The shared descriptor shape should be sufficient to drive UI and routing, for example:
+  - `id`
+  - `command`
+  - `summary`
+  - `supportedRuntimeIds`
+  - `handlerKey`
+- Renderer code must not hard-code a second independent list of `/app` commands.
+
 #### Routing policy
 
 - Every chat input still enters one shared command router first.
@@ -253,6 +266,20 @@ interface RuntimeLaunchProfile {
 - Only `success` updates learned history positively.
 - Only `invalid_command` triggers immediate learned-suggestion deletion.
 
+#### Invalid-command evidence mapping
+
+- `invalid_command` classification must be conservative and runtime-specific.
+- A turn may be classified as `invalid_command` only when there is direct evidence that the forwarded slash command itself is unknown, unsupported, or syntactically invalid for the current runtime.
+- Codex first-slice policy:
+  - prefer structured App Server or turn-level error payloads
+  - then allow explicit RPC error messages that clearly identify an unknown or unsupported slash command
+  - do not infer `invalid_command` from process exit alone, generic stderr, connection failure, or timeout
+- Claude first-slice policy:
+  - prefer stream-json `error` events or final structured error payloads that explicitly identify unknown slash command usage
+  - stderr-only exit, process failure, transport interruption, or generic runtime error must not be classified as `invalid_command`
+- If the evidence is ambiguous, classify the outcome as `transport_failure` or `runtime_failure`, not `invalid_command`.
+- The invalid-command detector must be pluggable per runtime rather than implemented as one global regex table.
+
 ### Renderer Behavior
 
 #### Input affordances
@@ -317,6 +344,16 @@ interface RuntimeLaunchProfile {
 - Persist learned native suggestion memory.
 - Partition learned memory by runtime and CLI fingerprint.
 - Chat history remains unchanged; no new structured migration is required for historical slash messages.
+
+#### Runtime override scope
+
+- First-slice runtime command overrides are global per runtime, not per configured agent and not per workspace.
+- An override must include:
+  - `executable`
+  - optional `fixedArgs`
+- All chats and future task or workflow runs that use the same runtime share the same launch override unless a later design explicitly widens the scope.
+- Workspace-local launch overrides are out of scope for the first slice.
+- Learned native suggestion memory must remain partitioned by CLI fingerprint, so changing executable path, fixed arguments, or detected version naturally isolates histories.
 
 #### Old command behavior
 

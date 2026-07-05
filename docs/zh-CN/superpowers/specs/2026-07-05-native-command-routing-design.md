@@ -51,6 +51,19 @@
   - `/app models`
   - `/app plugins`
 
+#### `/app` 命令的单一真相源
+
+- 所有应用拥有的命令都必须定义在一份共享描述表里，例如 `src/shared/app-commands.ts`
+- 命令路由、renderer 补全、以及 `/app help` 的输出都必须从同一份描述表派生
+- 主进程中的命令执行 handler 可以放在单独模块里，但必须通过共享命令描述里的 identity 关联，而不是在多个地方重复写字符串
+- 这份共享描述至少应足够驱动 UI 和路由，例如包含：
+  - `id`
+  - `command`
+  - `summary`
+  - `supportedRuntimeIds`
+  - `handlerKey`
+- renderer 不得再维护第二份独立的 `/app` 命令列表
+
 #### 路由策略
 
 - 所有聊天输入仍然先进入一个共享命令路由器
@@ -253,6 +266,20 @@ interface RuntimeLaunchProfile {
 - 只有 `success` 能正向更新本地学习历史
 - 只有 `invalid_command` 会触发 learned suggestion 的即时删除
 
+#### `invalid_command` 证据映射
+
+- `invalid_command` 的判定必须保守，并且按 runtime 分开实现
+- 只有在存在直接证据表明“被转发的这条 slash 命令本身未知、不受支持或语法非法”时，当前 turn 才能被归类为 `invalid_command`
+- Codex 第一阶段策略：
+  - 优先使用结构化的 App Server 或 turn-level error payload
+  - 其次才允许使用能够明确指向 unknown/unsupported slash command 的 RPC 错误信息
+  - 不能仅凭 process exit、泛化 stderr、连接失败或 timeout 推断 `invalid_command`
+- Claude 第一阶段策略：
+  - 优先使用 stream-json `error` 事件或最终结构化错误 payload，且这些错误必须明确表明 slash 命令未知或使用非法
+  - 仅有 stderr 退出、进程失败、transport 中断或泛化 runtime error 时，不得归类为 `invalid_command`
+- 如果证据存在歧义，必须把结果归类为 `transport_failure` 或 `runtime_failure`，而不是 `invalid_command`
+- `invalid_command` 检测器必须是 runtime 可插拔的，不能做成一份全局通用 regex 表
+
 ### Renderer 行为
 
 #### 输入辅助
@@ -317,6 +344,16 @@ interface RuntimeLaunchProfile {
 - learned native suggestion memory
 - learned memory 按 runtime + CLI fingerprint 分桶
 - 聊天记录结构不需要为了这次改动做新迁移；历史 slash 消息保留为普通历史即可
+
+#### Runtime override 的作用域
+
+- 第一阶段的 runtime command override 作用域是“每个 runtime 一份全局配置”，而不是“每个 configured agent 一份”或“每个 workspace 一份”
+- override 至少包含：
+  - `executable`
+  - 可选 `fixedArgs`
+- 只要使用同一个 runtime，所有 chat 以及未来的 task/workflow run 都共享同一份 launch override；除非后续设计显式扩大作用域
+- workspace-local launch override 不在第一阶段范围内
+- learned native suggestion memory 继续按 CLI fingerprint 分桶，因此 executable path、fixedArgs 或 version 变化后，历史会自然隔离
 
 #### 旧命令行为
 
