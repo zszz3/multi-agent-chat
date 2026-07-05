@@ -1505,6 +1505,108 @@ fs.writeFileSync(${JSON.stringify(argsPath)}, process.argv.slice(2).join("\\n") 
     expect(chatConfigLocked(chat)).toBe(false);
   });
 
+  test("reads Claude slash metadata from on-disk command and skill sources through AgentHub", async () => {
+    const homeDir = await mkdtemp(path.join(os.tmpdir(), "multi-agent-chat-claude-slash-metadata-home-"));
+    const workDir = path.join(homeDir, "workspace");
+    await mkdir(path.join(workDir, ".claude", "commands", "frontend"), { recursive: true });
+    await mkdir(path.join(workDir, ".claude", "skills", "project-review"), { recursive: true });
+    await mkdir(path.join(homeDir, ".claude", "skills", "refactor-review-knowledge"), { recursive: true });
+    await writeFile(
+      path.join(workDir, ".claude", "commands", "frontend", "component.md"),
+      [
+        "---",
+        'name: "Frontend Component"',
+        'description: "Scaffold a frontend component from the current workspace."',
+        'argument-hint: "<name>"',
+        "---",
+        "",
+        "Create a component.",
+        "",
+      ].join("\n"),
+      "utf8",
+    );
+    await writeFile(
+      path.join(workDir, ".claude", "commands", "frontend", "hidden.md"),
+      [
+        "---",
+        'description: "Should stay hidden from the slash menu."',
+        "user-invocable: false",
+        "---",
+        "",
+        "Hidden command.",
+        "",
+      ].join("\n"),
+      "utf8",
+    );
+    await writeFile(
+      path.join(workDir, ".claude", "skills", "project-review", "SKILL.md"),
+      [
+        "---",
+        'name: "Project Review"',
+        'description: "Review the current project before making changes."',
+        "---",
+        "",
+        "Review this project.",
+        "",
+      ].join("\n"),
+      "utf8",
+    );
+    await writeFile(
+      path.join(homeDir, ".claude", "skills", "refactor-review-knowledge", "SKILL.md"),
+      [
+        "---",
+        'name: "Refactor Review Knowledge"',
+        'description: "Review refactors for regression risks."',
+        "---",
+        "",
+        "Review refactors.",
+        "",
+      ].join("\n"),
+      "utf8",
+    );
+
+    vi.stubEnv("HOME", homeDir);
+    vi.stubEnv("USERPROFILE", homeDir);
+    try {
+      const hub = new AgentHub({ codex: "missing-codex-for-test", claude: "missing-claude-for-test" });
+      addConfiguredAgents(hub, [configuredAgent("claude-agent", { runtimeAgentId: "claude", name: "Claude Agent" })]);
+      hub.setWorkDir(workDir);
+      const chat = hub.createChat("claude-agent");
+
+      const groups = await hub.listSlashCompletionGroups(chat.id, "/");
+      const nativeMetadata = groups.find((group) => group.id === "native_metadata");
+
+      expect(nativeMetadata?.items).toEqual(
+        expect.arrayContaining([
+          {
+            id: "claude:frontend:component",
+            label: "/frontend:component",
+            insertText: "/frontend:component <name> ",
+            description: "Scaffold a frontend component from the current workspace.",
+            authoritative: true,
+          },
+          {
+            id: "claude:project-review",
+            label: "/project-review",
+            insertText: "/project-review ",
+            description: "Review the current project before making changes.",
+            authoritative: true,
+          },
+          {
+            id: "claude:refactor-review-knowledge",
+            label: "/refactor-review-knowledge",
+            insertText: "/refactor-review-knowledge ",
+            description: "Review refactors for regression risks.",
+            authoritative: true,
+          },
+        ]),
+      );
+      expect(nativeMetadata?.items.some((item) => item.id === "claude:frontend:hidden")).toBe(false);
+    } finally {
+      vi.unstubAllEnvs();
+    }
+  });
+
   test("learns a successful native slash command under the current fingerprint", async () => {
     const dir = await mkdtemp(path.join(os.tmpdir(), "multi-agent-chat-learned-native-slash-"));
     const fake = await writeSequentialCodexFake(dir);

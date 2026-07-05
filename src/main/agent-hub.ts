@@ -95,6 +95,7 @@ import type {
 import { APP_COMMANDS, type AppCommandHandlerKey } from "../shared/app-commands";
 import { normalizeConfigChannelsForStorage } from "../shared/config-channels";
 import { DEFAULT_MODEL_ID, defaultChannelForAgent, defaultModelForAgent, isModelForChannel, runtimeModelId } from "../shared/models";
+import { parseSkillMarkdown, skillFrontmatterValue } from "../shared/online-skills";
 import { buildWorkflowAgentPrompt } from "../shared/workflow-agent";
 import { createWorkflowGraphFromObjective, parseWorkflowGraphUpsert, validateWorkflowGraph } from "../shared/workflow-graph";
 import { defaultWorkflowWorkDirSuffix } from "../shared/workflow-run";
@@ -169,6 +170,13 @@ interface PendingNativeSlashTurn {
   prompt: string;
 }
 
+interface ClaudeCommandMetadata {
+  name: string;
+  argumentHint?: string;
+  description?: string;
+  userInvocable?: boolean;
+}
+
 interface ActiveWorkflowDraftRequest {
   requestId: string;
   assistantMessageId: string;
@@ -178,6 +186,103 @@ interface ActiveWorkflowDraftRequest {
 function isNativeSlashPrompt(prompt: string): boolean {
   const trimmed = prompt.trimStart();
   return trimmed.startsWith("/") && !trimmed.toLowerCase().startsWith("/app");
+}
+
+function parseOptionalBoolean(value: string | undefined): boolean | undefined {
+  if (value === undefined) return undefined;
+  const normalized = value.trim().toLowerCase();
+  if (normalized === "true") return true;
+  if (normalized === "false") return false;
+  return undefined;
+}
+
+function claudeCommandNameFromRelativePath(relativePath: string, source: "command" | "skill"): string | undefined {
+  const normalized = relativePath.replace(/\\/g, "/");
+  const parts = normalized.split("/").filter(Boolean);
+  if (source === "command") {
+    const last = parts.pop();
+    if (!last?.toLowerCase().endsWith(".md")) return undefined;
+    const stem = last.slice(0, -3).trim();
+    if (!stem) return undefined;
+    parts.push(stem);
+  } else {
+    const last = parts.pop();
+    if (last?.toLowerCase() !== "skill.md" || parts.length === 0) return undefined;
+  }
+  return parts.join(":");
+}
+
+function claudeHomeDir(): string {
+  return process.env.HOME || process.env.USERPROFILE || os.homedir();
+}
+
+async function listMarkdownFiles(root: string): Promise<Array<{ absolutePath: string; relativePath: string }>> {
+  const files: Array<{ absolutePath: string; relativePath: string }> = [];
+  const visit = async (dir: string): Promise<void> => {
+    let entries: Dirent[];
+    try {
+      entries = await readdir(dir, { withFileTypes: true });
+    } catch {
+      return;
+    }
+    for (const entry of entries) {
+      const absolutePath = path.join(dir, entry.name);
+      if (entry.isDirectory()) {
+        await visit(absolutePath);
+        continue;
+      }
+      if (!entry.isFile() || !entry.name.toLowerCase().endsWith(".md")) continue;
+      files.push({
+        absolutePath,
+        relativePath: path.relative(root, absolutePath),
+      });
+    }
+  };
+  await visit(root);
+  return files;
+}
+
+async function readClaudeCommandMetadata(root: string, source: "command" | "skill"): Promise<ClaudeCommandMetadata[]> {
+  const files = await listMarkdownFiles(root);
+  const commands: ClaudeCommandMetadata[] = [];
+  for (const file of files) {
+    const name = claudeCommandNameFromRelativePath(file.relativePath, source);
+    if (!name) continue;
+    let markdown: string;
+    try {
+      markdown = await readFile(file.absolutePath, "utf8");
+    } catch {
+      continue;
+    }
+    const parsed = parseSkillMarkdown(markdown, file.absolutePath);
+    const argumentHint = skillFrontmatterValue(markdown, "argument-hint")?.trim();
+    const userInvocable = parseOptionalBoolean(skillFrontmatterValue(markdown, "user-invocable"));
+    const description = parsed.description.trim();
+    commands.push({
+      name,
+      ...(argumentHint ? { argumentHint } : {}),
+      ...(description ? { description } : {}),
+      ...(userInvocable !== undefined ? { userInvocable } : {}),
+    });
+  }
+  return commands;
+}
+
+async function loadClaudeSlashMetadata(workDir: string): Promise<ClaudeCommandMetadata[]> {
+  const sources: Array<{ root: string; kind: "command" | "skill" }> = [
+    { root: path.join(workDir, ".claude", "commands"), kind: "command" },
+    { root: path.join(workDir, ".claude", "skills"), kind: "skill" },
+    { root: path.join(claudeHomeDir(), ".claude", "commands"), kind: "command" },
+    { root: path.join(claudeHomeDir(), ".claude", "skills"), kind: "skill" },
+  ];
+  const commandsByName = new Map<string, ClaudeCommandMetadata>();
+  for (const source of sources) {
+    for (const command of await readClaudeCommandMetadata(source.root, source.kind)) {
+      if (commandsByName.has(command.name)) continue;
+      commandsByName.set(command.name, command);
+    }
+  }
+  return [...commandsByName.values()].sort((left, right) => left.name.localeCompare(right.name));
 }
 
 function classifyNativeCommandFailure(input: {
@@ -793,7 +898,7 @@ function extractClaudeSessionId(line: string): string | undefined {
 
 function claudeProjectStoragePath(workDir: string, sessionId: string): string {
   const slug = workDir.replace(/[:\\/]/g, "-");
-  const homeDir = process.env.HOME || process.env.USERPROFILE || os.homedir();
+  const homeDir = claudeHomeDir();
   return path.join(homeDir, ".claude", "projects", slug, `${sessionId}.jsonl`);
 }
 
@@ -2549,6 +2654,15 @@ export class AgentHub {
       }
     }
 
+    let claudeCommands: ClaudeCommandMetadata[] = [];
+    if (runtimeId === "claude") {
+      try {
+        claudeCommands = await loadClaudeSlashMetadata(this.workDir);
+      } catch {
+        claudeCommands = [];
+      }
+    }
+
     const slashCompletionInput: RuntimeSlashCompletionInput = {
       runtimeId,
       input,
@@ -2556,7 +2670,7 @@ export class AgentHub {
       codexModels,
       codexPlugins,
       importedSkills,
-      claudeCommands: [],
+      claudeCommands,
     };
     if (runtime?.fingerprint) {
       slashCompletionInput.cliFingerprint = runtime.fingerprint;
