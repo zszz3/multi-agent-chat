@@ -177,6 +177,11 @@ interface ClaudeCommandMetadata {
   userInvocable?: boolean;
 }
 
+interface CachedMetadataEntry<T> {
+  value?: T;
+  inFlight?: Promise<T>;
+}
+
 interface ActiveWorkflowDraftRequest {
   requestId: string;
   assistantMessageId: string;
@@ -1404,6 +1409,7 @@ export class AgentHub {
   private channels: AgentChannel[] = createDefaultChannels();
   private runtimeCommandConfigs: RuntimeCommandConfig[] = [];
   private learnedNativeCommands: LearnedNativeCommandRecord[] = [];
+  private claudeSlashMetadataCache = new Map<string, CachedMetadataEntry<ClaudeCommandMetadata[]>>();
   private storagePath: string | undefined = undefined;
   private sqliteStore: SqliteAppStore | undefined = undefined;
   private modelConfigPath: string | undefined = undefined;
@@ -2611,6 +2617,34 @@ export class AgentHub {
     return this.workDir;
   }
 
+  private claudeSlashMetadataCacheKey(workDir: string): string {
+    return `${workDir}\n${claudeHomeDir()}`;
+  }
+
+  private async getClaudeSlashMetadata(workDir: string): Promise<ClaudeCommandMetadata[]> {
+    const key = this.claudeSlashMetadataCacheKey(workDir);
+    const cached = this.claudeSlashMetadataCache.get(key);
+    if (cached?.value) return cached.value;
+    if (cached?.inFlight) return cached.inFlight;
+
+    const entry: CachedMetadataEntry<ClaudeCommandMetadata[]> = {};
+    const load = loadClaudeSlashMetadata(workDir)
+      .then((metadata) => {
+        entry.value = metadata;
+        delete entry.inFlight;
+        return metadata;
+      })
+      .catch((error) => {
+        if (this.claudeSlashMetadataCache.get(key) === entry) {
+          this.claudeSlashMetadataCache.delete(key);
+        }
+        throw error;
+      });
+    entry.inFlight = load;
+    this.claudeSlashMetadataCache.set(key, entry);
+    return load;
+  }
+
   async listSlashCompletionGroups(chatId: string, input: string): Promise<SlashCompletionGroup[]> {
     const chat = this.chats.get(chatId);
     if (!chat) return [];
@@ -2657,7 +2691,7 @@ export class AgentHub {
     let claudeCommands: ClaudeCommandMetadata[] = [];
     if (runtimeId === "claude") {
       try {
-        claudeCommands = await loadClaudeSlashMetadata(this.workDir);
+        claudeCommands = await this.getClaudeSlashMetadata(this.workDir);
       } catch {
         claudeCommands = [];
       }

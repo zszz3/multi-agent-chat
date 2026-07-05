@@ -11,6 +11,29 @@ import type { AgentExecutionContext, AgentExecutorFactory } from "./agent-execut
 import { runtimeCommandStatePathFor } from "./runtime-command-store";
 import { writeNodeCliLauncher } from "./test-cli-fixtures";
 
+const fsPromiseMockState = vi.hoisted(() => ({
+  delayedReadPath: undefined as string | undefined,
+  readDelayMs: 0,
+  readFileCalls: [] as string[],
+}));
+
+vi.mock("node:fs/promises", async (importOriginal) => {
+  const actual = await importOriginal<typeof import("node:fs/promises")>();
+  return {
+    ...actual,
+    readFile: async (...args: Parameters<typeof actual.readFile>) => {
+      const filePath = args[0];
+      const normalizedPath =
+        typeof filePath === "string" ? filePath.replace(/\\/g, "/") : filePath instanceof URL ? filePath.pathname.replace(/\\/g, "/") : String(filePath);
+      fsPromiseMockState.readFileCalls.push(normalizedPath);
+      if (fsPromiseMockState.delayedReadPath && normalizedPath === fsPromiseMockState.delayedReadPath && fsPromiseMockState.readDelayMs > 0) {
+        await new Promise((resolve) => setTimeout(resolve, fsPromiseMockState.readDelayMs));
+      }
+      return actual.readFile(...args);
+    },
+  };
+});
+
 function configuredAgent(
   id: string,
   options: {
@@ -1603,6 +1626,122 @@ fs.writeFileSync(${JSON.stringify(argsPath)}, process.argv.slice(2).join("\\n") 
       );
       expect(nativeMetadata?.items.some((item) => item.id === "claude:frontend:hidden")).toBe(false);
     } finally {
+      vi.unstubAllEnvs();
+    }
+  });
+
+  test("reuses cached Claude slash metadata across repeated completion lookups", async () => {
+    const homeDir = await mkdtemp(path.join(os.tmpdir(), "multi-agent-chat-claude-slash-cache-home-"));
+    const workDir = path.join(homeDir, "workspace");
+    const commandPath = path.join(workDir, ".claude", "commands", "frontend", "component.md");
+    await mkdir(path.dirname(commandPath), { recursive: true });
+    await writeFile(
+      commandPath,
+      [
+        "---",
+        'description: "Initial frontend component description."',
+        "---",
+        "",
+        "Create a component.",
+        "",
+      ].join("\n"),
+      "utf8",
+    );
+
+    vi.stubEnv("HOME", homeDir);
+    vi.stubEnv("USERPROFILE", homeDir);
+    try {
+      const hub = new AgentHub({ codex: "missing-codex-for-test", claude: "missing-claude-for-test" });
+      addConfiguredAgents(hub, [configuredAgent("claude-agent", { runtimeAgentId: "claude", name: "Claude Agent" })]);
+      hub.setWorkDir(workDir);
+      const chat = hub.createChat("claude-agent");
+
+      const firstGroups = await hub.listSlashCompletionGroups(chat.id, "/");
+      const firstMetadata = firstGroups.find((group) => group.id === "native_metadata");
+      expect(firstMetadata?.items).toEqual(
+        expect.arrayContaining([
+          expect.objectContaining({
+            id: "claude:frontend:component",
+            description: "Initial frontend component description.",
+          }),
+        ]),
+      );
+
+      await writeFile(
+        commandPath,
+        [
+          "---",
+          'description: "Updated description that should not appear without invalidation."',
+          "---",
+          "",
+          "Create a component.",
+          "",
+        ].join("\n"),
+        "utf8",
+      );
+
+      const secondGroups = await hub.listSlashCompletionGroups(chat.id, "/");
+      const secondMetadata = secondGroups.find((group) => group.id === "native_metadata");
+      expect(secondMetadata?.items).toEqual(
+        expect.arrayContaining([
+          expect.objectContaining({
+            id: "claude:frontend:component",
+            description: "Initial frontend component description.",
+          }),
+        ]),
+      );
+    } finally {
+      vi.unstubAllEnvs();
+    }
+  });
+
+  test("dedupes in-flight Claude slash metadata loads across concurrent completion lookups", async () => {
+    const homeDir = await mkdtemp(path.join(os.tmpdir(), "multi-agent-chat-claude-slash-concurrent-home-"));
+    const workDir = path.join(homeDir, "workspace");
+    const commandPath = path.join(workDir, ".claude", "commands", "frontend", "component.md");
+    await mkdir(path.dirname(commandPath), { recursive: true });
+    await writeFile(
+      commandPath,
+      [
+        "---",
+        'description: "Concurrent load command."',
+        "---",
+        "",
+        "Create a component.",
+        "",
+      ].join("\n"),
+      "utf8",
+    );
+
+    vi.stubEnv("HOME", homeDir);
+    vi.stubEnv("USERPROFILE", homeDir);
+    fsPromiseMockState.readFileCalls = [];
+    fsPromiseMockState.delayedReadPath = commandPath.replace(/\\/g, "/");
+    fsPromiseMockState.readDelayMs = 30;
+    try {
+      const hub = new AgentHub({ codex: "missing-codex-for-test", claude: "missing-claude-for-test" });
+      addConfiguredAgents(hub, [configuredAgent("claude-agent", { runtimeAgentId: "claude", name: "Claude Agent" })]);
+      hub.setWorkDir(workDir);
+      const chat = hub.createChat("claude-agent");
+
+      const [firstGroups, secondGroups] = await Promise.all([
+        hub.listSlashCompletionGroups(chat.id, "/"),
+        hub.listSlashCompletionGroups(chat.id, "/"),
+      ]);
+
+      expect(firstGroups.find((group) => group.id === "native_metadata")?.items).toEqual(
+        expect.arrayContaining([expect.objectContaining({ id: "claude:frontend:component" })]),
+      );
+      expect(secondGroups.find((group) => group.id === "native_metadata")?.items).toEqual(
+        expect.arrayContaining([expect.objectContaining({ id: "claude:frontend:component" })]),
+      );
+
+      const matchingReads = fsPromiseMockState.readFileCalls.filter((filePath) => filePath === commandPath.replace(/\\/g, "/"));
+      expect(matchingReads).toHaveLength(1);
+    } finally {
+      fsPromiseMockState.delayedReadPath = undefined;
+      fsPromiseMockState.readDelayMs = 0;
+      fsPromiseMockState.readFileCalls = [];
       vi.unstubAllEnvs();
     }
   });
