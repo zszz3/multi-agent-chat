@@ -1,13 +1,13 @@
 import { type RefObject } from "react";
 import { CircleStop, Copy, Plus, Send, Wand2 } from "lucide-react";
-import type { AgentChannel, AgentId, AgentRuntime, ChatMessage, ChatSession, ConfiguredAgent } from "../../../../shared/types";
+import type { AgentChannel, AgentId, AgentRuntime, ChatMessage, ChatSession, ConfiguredAgent, SlashCompletionGroup, SlashCompletionItem } from "../../../../shared/types";
 import { agentAccent, agentLabel } from "../../app/agents";
 import { shouldSendComposerKey } from "../../app/composer";
 import { formatDateTime } from "../../app/format";
 import { Markdown } from "../../Markdown";
 import { ChatControls } from "./ChatControls";
 import { MetaMessage, chatEventDisplayContent } from "./chat-event-display";
-import { SlashCommandSuggestions, type SlashCommandSuggestion } from "./chat-utils";
+import { chatPlaceholder, flattenSlashCompletionItems, SlashCommandSuggestions } from "./chat-utils";
 
 interface ChatPageProps {
   activeChat: ChatSession | undefined;
@@ -15,7 +15,7 @@ interface ChatPageProps {
   activeChatConfiguredAgent: ConfiguredAgent | undefined;
   activeChatConfigTitle: string;
   prompt: string;
-  slashCommandSuggestions: SlashCommandSuggestion[];
+  slashCompletionGroups: SlashCompletionGroup[];
   slashCommandIndex: number;
   canSend: boolean;
   activeChatLocked: boolean;
@@ -27,7 +27,7 @@ interface ChatPageProps {
   onTranscriptScroll: () => void;
   onPromptChange: (value: string) => void;
   onSlashCommandIndexChange: (updater: (current: number) => number) => void;
-  onCompleteSlashCommand: (command: string) => void;
+  onCompleteSlashCommand: (item: SlashCompletionItem) => void;
   onSend: () => Promise<void>;
   onStopActiveChat: () => Promise<void>;
   onSelectConfiguredAgent: (configuredAgentId: string) => void;
@@ -41,7 +41,7 @@ export function ChatPage({
   activeChatConfiguredAgent,
   activeChatConfigTitle,
   prompt,
-  slashCommandSuggestions,
+  slashCompletionGroups,
   slashCommandIndex,
   canSend,
   activeChatLocked,
@@ -60,6 +60,8 @@ export function ChatPage({
   onSelectModel,
   onChooseWorkDir,
 }: ChatPageProps) {
+  const slashCompletionItems = flattenSlashCompletionItems(slashCompletionGroups);
+
   if (!activeChat) {
     return (
       <div className="empty-state page-empty">
@@ -121,29 +123,29 @@ export function ChatPage({
 
       <section className="composer">
         <SlashCommandSuggestions
-          suggestions={slashCommandSuggestions}
+          groups={slashCompletionGroups}
           activeIndex={slashCommandIndex}
-          onSelect={(suggestion) => onCompleteSlashCommand(suggestion.command)}
+          onSelect={onCompleteSlashCommand}
         />
         <div className="composer-box">
           <textarea
             value={prompt}
             onChange={(event) => onPromptChange(event.target.value)}
             onKeyDown={(event) => {
-              if (slashCommandSuggestions.length > 0) {
+              if (slashCompletionItems.length > 0) {
                 if (event.key === "ArrowDown") {
                   event.preventDefault();
-                  onSlashCommandIndexChange((current) => (current + 1) % slashCommandSuggestions.length);
+                  onSlashCommandIndexChange((current) => (current + 1) % slashCompletionItems.length);
                   return;
                 }
                 if (event.key === "ArrowUp") {
                   event.preventDefault();
-                  onSlashCommandIndexChange((current) => (current - 1 + slashCommandSuggestions.length) % slashCommandSuggestions.length);
+                  onSlashCommandIndexChange((current) => (current - 1 + slashCompletionItems.length) % slashCompletionItems.length);
                   return;
                 }
                 if (event.key === "Tab") {
                   event.preventDefault();
-                  onCompleteSlashCommand(slashCommandSuggestions[slashCommandIndex]?.command ?? slashCommandSuggestions[0]!.command);
+                  onCompleteSlashCommand(slashCompletionItems[slashCommandIndex] ?? slashCompletionItems[0]!);
                   return;
                 }
               }
@@ -158,7 +160,7 @@ export function ChatPage({
                 void onSend();
               }
             }}
-            placeholder={`Message ${activeChatConfiguredAgent?.name || agentLabel(activeChatRuntimeId)} or type /help...`}
+            placeholder={chatPlaceholder(activeChatRuntimeId, activeChatConfiguredAgent?.name || agentLabel(activeChatRuntimeId))}
             rows={2}
           />
           <div className="composer-footer">

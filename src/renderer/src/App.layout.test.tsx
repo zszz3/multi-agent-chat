@@ -38,9 +38,9 @@ import {
   skillsShSearchUrl,
   syncKeepAwakeIfAvailable,
   missingAppCapabilityMessage,
+  chatPlaceholder,
   shouldSendComposerKey,
   SlashCommandSuggestions,
-  slashCommandSuggestionsFor,
   scheduledWorkflowEventTarget,
   resolveConfiguredAgentChannel,
   reorderTeamMembers,
@@ -532,27 +532,46 @@ describe("ChatControls", () => {
     expect(shouldSendComposerKey({ key: "a", shiftKey: false, metaKey: false, ctrlKey: false })).toBe(false);
   });
 
-  test("filters slash command suggestions like the CLI prompt", () => {
-    expect(slashCommandSuggestionsFor("/", "codex").map((item) => item.command)).toEqual(["/status", "/models", "/plugins", "/help"]);
-    expect(slashCommandSuggestionsFor("/", "claude").map((item) => item.command)).toEqual(["/help"]);
-    expect(slashCommandSuggestionsFor("/pl", "codex").map((item) => item.command)).toEqual(["/plugins"]);
-    expect(slashCommandSuggestionsFor("/pl", "claude")).toEqual([]);
-    expect(slashCommandSuggestionsFor("/status ", "codex")).toEqual([]);
-    expect(slashCommandSuggestionsFor("hello", "codex")).toEqual([]);
+  test("uses runtime-specific chat placeholders", () => {
+    expect(chatPlaceholder("codex", "Repo Reviewer")).toBe("Message Repo Reviewer, use a native slash command, or type /app help...");
+    expect(chatPlaceholder("claude", "Claude Agent")).toBe("Message Claude Agent, use a native slash command, or type /app help...");
+    expect(chatPlaceholder("api", "API Agent")).toBe("Message API Agent or type /app help...");
   });
 
-  test("renders slash command suggestions", () => {
+  test("renders grouped slash command suggestions", () => {
     const html = renderToStaticMarkup(
       <SlashCommandSuggestions
-        suggestions={slashCommandSuggestionsFor("/", "codex")}
+        groups={[
+          {
+            id: "app_commands",
+            label: "App commands",
+            items: [
+              {
+                id: "app:help",
+                label: "/app help",
+                insertText: "/app help ",
+                description: "Show app-local commands.",
+                authoritative: true,
+              },
+              {
+                id: "app:status",
+                label: "/app status",
+                insertText: "/app status ",
+                description: "Read Codex app-server config, model, plugin, and MCP status.",
+                authoritative: true,
+              },
+            ],
+          },
+        ]}
         activeIndex={0}
         onSelect={() => undefined}
       />,
     );
 
     expect(html).toContain("slash-command-menu");
-    expect(html).toContain("/status");
-    expect(html).toContain("/plugins");
+    expect(html).toContain("slash-command-group-label");
+    expect(html).toContain("App commands");
+    expect(html).toContain("/app status");
     expect(html).toContain("Read Codex app-server config");
   });
 
@@ -650,7 +669,7 @@ describe("ChatPage", () => {
         activeChatConfiguredAgent={configuredAgents[0]}
         activeChatConfigTitle="Codex OpenAI"
         prompt=""
-        slashCommandSuggestions={[]}
+        slashCompletionGroups={[]}
         slashCommandIndex={0}
         canSend={false}
         activeChatLocked={false}
@@ -697,7 +716,7 @@ describe("ChatPage", () => {
         activeChatConfiguredAgent={configuredAgents[0]}
         activeChatConfigTitle="Codex OpenAI"
         prompt=""
-        slashCommandSuggestions={[]}
+        slashCompletionGroups={[]}
         slashCommandIndex={0}
         canSend={false}
         activeChatLocked={false}
@@ -745,7 +764,7 @@ describe("ChatPage", () => {
         activeChatConfiguredAgent={configuredAgents[0]}
         activeChatConfigTitle="Codex OpenAI"
         prompt=""
-        slashCommandSuggestions={[]}
+        slashCompletionGroups={[]}
         slashCommandIndex={0}
         canSend={false}
         activeChatLocked={false}

@@ -1,55 +1,58 @@
-import type { AgentId, ChatSession } from "../../../../shared/types";
+import type { AgentId, ChatSession, SlashCompletionGroup, SlashCompletionItem } from "../../../../shared/types";
 
-export interface SlashCommandSuggestion {
-  command: string;
-  description: string;
-  agentIds?: AgentId[];
+export function chatPlaceholder(agentId: AgentId, label: string): string {
+  if (agentId === "api") return `Message ${label} or type /app help...`;
+  return `Message ${label}, use a native slash command, or type /app help...`;
 }
 
-const SLASH_COMMANDS: SlashCommandSuggestion[] = [
-  { command: "/status", description: "Read Codex app-server config, models, plugins, and MCP status.", agentIds: ["codex"] },
-  { command: "/models", description: "List models from Codex app-server.", agentIds: ["codex"] },
-  { command: "/plugins", description: "List Codex plugins from all app-server marketplaces.", agentIds: ["codex"] },
-  { command: "/help", description: "Show available slash commands." },
-];
+export function slashCommandSuggestionsFor(): SlashCompletionItem[] {
+  return [];
+}
 
-export function slashCommandSuggestionsFor(value: string, agentId: AgentId): SlashCommandSuggestion[] {
-  const input = value.trimStart();
-  if (!input.startsWith("/") || input.includes("\n")) return [];
-  if (/\s/.test(input)) return [];
-  const query = input.toLowerCase();
-  return SLASH_COMMANDS.filter((item) => {
-    if (item.agentIds && !item.agentIds.includes(agentId)) return false;
-    return item.command.toLowerCase().startsWith(query);
-  });
+export function flattenSlashCompletionItems(groups: SlashCompletionGroup[]): SlashCompletionItem[] {
+  return groups.flatMap((group) => group.items);
 }
 
 export function SlashCommandSuggestions({
-  suggestions,
+  groups,
   activeIndex,
   onSelect,
 }: {
-  suggestions: SlashCommandSuggestion[];
+  groups: SlashCompletionGroup[];
   activeIndex: number;
-  onSelect: (suggestion: SlashCommandSuggestion) => void;
+  onSelect: (suggestion: SlashCompletionItem) => void;
 }) {
-  if (suggestions.length === 0) return null;
+  const items = flattenSlashCompletionItems(groups);
+  if (items.length === 0) return null;
+  let offset = 0;
   return (
     <div className="slash-command-menu" role="listbox" aria-label="Slash commands">
-      {suggestions.map((suggestion, index) => (
-        <button
-          key={suggestion.command}
-          type="button"
-          className={`slash-command-option ${index === activeIndex ? "is-active" : ""}`}
-          onMouseDown={(event) => event.preventDefault()}
-          onClick={() => onSelect(suggestion)}
-          role="option"
-          aria-selected={index === activeIndex}
-        >
-          <span>{suggestion.command}</span>
-          <small>{suggestion.description}</small>
-        </button>
-      ))}
+      {groups.map((group) => {
+        const start = offset;
+        offset += group.items.length;
+        return (
+          <div key={group.id} className="slash-command-group">
+            <div className="slash-command-group-label">{group.label}</div>
+            {group.items.map((item, index) => {
+              const flatIndex = start + index;
+              return (
+                <button
+                  key={item.id}
+                  type="button"
+                  className={`slash-command-option ${flatIndex === activeIndex ? "is-active" : ""}`}
+                  onMouseDown={(event) => event.preventDefault()}
+                  onClick={() => onSelect(item)}
+                  role="option"
+                  aria-selected={flatIndex === activeIndex}
+                >
+                  <span>{item.label}</span>
+                  <small>{item.description}</small>
+                </button>
+              );
+            })}
+          </div>
+        );
+      })}
     </div>
   );
 }

@@ -50,8 +50,9 @@ import {
 import { ConfigPage } from "./pages/config/ConfigPage";
 import { useConfiguredAgentsManager } from "./pages/config/hooks/useConfiguredAgentsManager";
 import { ChatPage } from "./pages/chat/ChatPage";
-import { chatConfigLocked, SlashCommandSuggestions, slashCommandSuggestionsFor } from "./pages/chat/chat-utils";
-export { chatConfigLocked, SlashCommandSuggestions, slashCommandSuggestionsFor } from "./pages/chat/chat-utils";
+import { chatConfigLocked, flattenSlashCompletionItems } from "./pages/chat/chat-utils";
+export { chatConfigLocked, chatPlaceholder, SlashCommandSuggestions } from "./pages/chat/chat-utils";
+import { useSlashCommandCompletions } from "./pages/chat/useSlashCommandCompletions";
 import { SkillsPage } from "./pages/skills/SkillsPage";
 import { SettingsPage } from "./pages/settings/SettingsPage";
 import { RuntimePage } from "./pages/runtime/RuntimePage";
@@ -409,10 +410,12 @@ export function AppShell() {
   ]
     .filter(Boolean)
     .join(" · ");
-  const slashCommandSuggestions = useMemo(
-    () => (activeChat ? slashCommandSuggestionsFor(prompt, activeChatRuntimeId) : []),
-    [activeChat, activeChatRuntimeId, prompt],
-  );
+  const slashCompletionGroups = useSlashCommandCompletions({
+    chatId: activeChat?.id,
+    prompt,
+    runtimeId: activeChatRuntimeId,
+  });
+  const slashCompletionItems = useMemo(() => flattenSlashCompletionItems(slashCompletionGroups), [slashCompletionGroups]);
   const promptIsSlashCommand = prompt.trimStart().startsWith("/");
   const canSend = !!activeChat && !activeChat.running && !!prompt.trim() && (promptIsSlashCommand || !!activeRuntime?.available);
   const activeChatLocked = activeChat ? chatConfigLocked(activeChat) : true;
@@ -463,8 +466,8 @@ export function AppShell() {
   );
 
   useEffect(() => {
-    setSlashCommandIndex((current) => Math.min(current, Math.max(0, slashCommandSuggestions.length - 1)));
-  }, [slashCommandSuggestions.length]);
+    setSlashCommandIndex((current) => Math.min(current, Math.max(0, slashCompletionItems.length - 1)));
+  }, [slashCompletionItems.length]);
 
   function toggleTheme(): void {
     setTheme((current) => (current === "dark" ? "light" : "dark"));
@@ -674,8 +677,8 @@ export function AppShell() {
     setSnapshot(next);
   }
 
-  function completeSlashCommand(command: string): void {
-    setPrompt(`${command} `);
+  function completeSlashCommand(item: { insertText: string }): void {
+    setPrompt(item.insertText);
     setSlashCommandIndex(0);
   }
 
@@ -946,7 +949,7 @@ export function AppShell() {
             activeChatConfiguredAgent={activeChatConfiguredAgent}
             activeChatConfigTitle={activeChatConfigTitle}
             prompt={prompt}
-            slashCommandSuggestions={slashCommandSuggestions}
+            slashCompletionGroups={slashCompletionGroups}
             slashCommandIndex={slashCommandIndex}
             canSend={canSend}
             activeChatLocked={activeChatLocked}

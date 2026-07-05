@@ -25,6 +25,7 @@ import type {
   PauseWorkflowNodeRequest,
   ProviderBalanceResult,
   RuntimeCommandConfig,
+  SlashCompletionGroup,
   RunWorkflowGraphRequest,
   RunAgentTeamRequest,
   RunTaskRequest,
@@ -58,6 +59,8 @@ const api = {
   setChatAgent: (chatId: string, configuredAgentId: string): Promise<AppSnapshot> => ipcRenderer.invoke("chat:set-agent", chatId, configuredAgentId),
   setChatChannel: (chatId: string, channelId: string): Promise<AppSnapshot> => ipcRenderer.invoke("chat:set-channel", chatId, channelId),
   setChatModel: (chatId: string, modelId: string): Promise<AppSnapshot> => ipcRenderer.invoke("chat:set-model", chatId, modelId),
+  listSlashCompletions: (chatId: string, input: string): Promise<SlashCompletionGroup[]> =>
+    ipcRenderer.invoke("chat:slash-completions", chatId, input),
   saveModelChannels: (channels: AgentChannel[]): Promise<AppSnapshot> => ipcRenderer.invoke("model-channels:save", channels),
   saveConfiguredAgents: (agents: ConfiguredAgent[]): Promise<AppSnapshot> => ipcRenderer.invoke("configured-agents:save", agents),
   testConfiguredAgent: (agentId: string): Promise<AgentTestResult> => ipcRenderer.invoke("configured-agents:test", agentId),

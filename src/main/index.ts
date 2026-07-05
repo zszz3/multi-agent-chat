@@ -7,6 +7,7 @@ import { AgentHub } from "./agent-hub";
 import { setCodexChatRouterBaseUrl, startCodexChatRouter, type CodexChatRouterServer } from "./codex-chat-router";
 import { createLocalTextFilePreviewUnderRoots } from "./local-file-preview";
 import { startMcpBridge, type McpBridgeServer } from "./mcp-bridge";
+import { listSlashCompletionGroupsForChat } from "./runtime-command-completions";
 import { ScheduledWorkflowCloudClient, type ScheduledWorkflowCloudEventConnection } from "./scheduled-workflow-cloud";
 import { importOnlineSkillToLibrary, installBundledSkill, listImportedSkillTemplates, uninstallBundledSkill } from "./skill-installer";
 import { loadBundledWorkflows } from "./bundled-workflows";
@@ -295,6 +296,9 @@ function registerIpcHandlers(): void {
     hub.setChatChannel(chatId, channelId);
     return hub.snapshot();
   });
+  ipcMain.handle("chat:slash-completions", async (_event, chatId: string, input: string) =>
+    listSlashCompletionGroupsForChat(hub.snapshot(), chatId, input),
+  );
   ipcMain.handle("model-channels:save", async (_event, channels: AgentChannel[]) => hub.saveModelChannels(channels));
   ipcMain.handle("configured-agents:save", async (_event, agents: ConfiguredAgent[]) => hub.updateConfiguredAgents(agents));
   ipcMain.handle("configured-agents:test", async (event, agentId: string) =>

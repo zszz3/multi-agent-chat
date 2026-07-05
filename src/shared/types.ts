@@ -1,5 +1,21 @@
 export type AgentId = "codex" | "claude" | "api";
 
+export type SlashCompletionGroupId = "app_commands" | "native_metadata" | "suggested_native_commands";
+
+export interface SlashCompletionItem {
+  id: string;
+  label: string;
+  insertText: string;
+  description: string;
+  authoritative: boolean;
+}
+
+export interface SlashCompletionGroup {
+  id: SlashCompletionGroupId;
+  label: string;
+  items: SlashCompletionItem[];
+}
+
 export type RuntimeLaunchSource = "app_override" | "env_override" | "path" | "shell_hydrated_path" | "unavailable";
 
 export interface RuntimeCommandOverride {
