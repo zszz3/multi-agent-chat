@@ -205,6 +205,7 @@ const appSnapshot: AppSnapshot = {
   activeTeamRunId: undefined,
   workDir: "/tmp/workspace",
   runtimes,
+  runtimeCommandConfigs: [],
   channels,
   configuredAgents,
   chats: [
@@ -240,6 +241,9 @@ const appSnapshot: AppSnapshot = {
   workflowDraft: undefined,
   artifacts: [],
 };
+
+const requiredRuntimeCommandConfigs: NonNullable<AppSnapshot["runtimeCommandConfigs"]> = appSnapshot.runtimeCommandConfigs;
+void requiredRuntimeCommandConfigs;
 
 const paletteContext = {
   chats: appSnapshot.chats.map((chat) => ({ id: chat.id, title: chat.title, agentId: "codex" })),

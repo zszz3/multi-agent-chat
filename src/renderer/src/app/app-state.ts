@@ -24,6 +24,7 @@ export const DEFAULT_SNAPSHOT: AppSnapshot = {
   activeTeamRunId: undefined,
   workDir: "",
   runtimes: [],
+  runtimeCommandConfigs: [],
   channels: [],
   configuredAgents: [],
   chats: [],

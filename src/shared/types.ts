@@ -893,7 +893,7 @@ export interface AppSnapshot {
   activeTeamRunId: string | undefined;
   workDir: string;
   runtimes: AgentRuntime[];
-  runtimeCommandConfigs?: RuntimeCommandConfig[];
+  runtimeCommandConfigs: RuntimeCommandConfig[];
   channels: AgentChannel[];
   configuredAgents: ConfiguredAgent[];
   chats: ChatSession[];
