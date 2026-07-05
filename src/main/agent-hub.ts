@@ -2496,6 +2496,13 @@ export class AgentHub {
     const trimmedPrompt = prompt.trim();
     if (!trimmedPrompt) return;
 
+    const appRoute = routeChatPrompt("codex", trimmedPrompt);
+    if (appRoute.kind === "app_command") {
+      const descriptor = APP_COMMANDS.find((item) => item.id === appRoute.commandId);
+      await this.runAppCommand(chat, descriptor?.handlerKey ?? "help", appRoute.args, trimmedPrompt);
+      return;
+    }
+
     const resolved = this.resolveConfiguredAgent(chat.configuredAgentId, chat.modelId);
     if (!resolved) {
       chat.messages.push(createErrorMessage("No configured agent is selected."));

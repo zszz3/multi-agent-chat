@@ -1383,6 +1383,22 @@ fs.writeFileSync(${JSON.stringify(argsPath)}, process.argv.slice(2).join("\\n") 
     expect(chat?.running).toBe(false);
   });
 
+  test("handles /app help locally even when no configured agent can be resolved", async () => {
+    const hub = new AgentHub({ codex: "missing-codex-for-test", claude: "missing-claude-for-test" });
+    const chatId = hub.snapshot().activeChatId!;
+    hub.updateConfiguredAgents([]);
+
+    await hub.sendPrompt("/app help", chatId);
+
+    const chat = hub.snapshot().chats.find((item) => item.id === chatId);
+    expect(chat?.messages).toEqual([
+      expect.objectContaining({ role: "user", content: "/app help", local: true }),
+      expect.objectContaining({ role: "assistant", local: true, content: expect.stringContaining("/app status") }),
+    ]);
+    expect(chat?.lastError).toBeUndefined();
+    expect(chat?.running).toBe(false);
+  });
+
   test("forwards bare slash to the runtime path instead of handling it locally", async () => {
     const dir = await mkdtemp(path.join(os.tmpdir(), "multi-agent-chat-claude-slash-runtime-"));
     const fake = await writeClaudeSequentialFake(dir);
