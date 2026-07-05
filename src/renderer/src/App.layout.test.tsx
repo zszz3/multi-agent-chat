@@ -3,6 +3,7 @@ import { renderToStaticMarkup } from "react-dom/server";
 import { describe, expect, test } from "vitest";
 import { Markdown } from "./Markdown";
 import { buildPaletteCommands } from "./CommandPalette";
+import { formatTime } from "./app/format";
 import {
   App,
   appShellClass,
@@ -403,6 +404,11 @@ const teamRuns: TeamRun[] = [
 ];
 
 const styles = readFileSync(new URL("./styles.css", import.meta.url), "utf8");
+const normalizedStyles = normalizeLineEndings(styles);
+
+function normalizeLineEndings(value: string): string {
+  return value.replace(/\r\n/g, "\n");
+}
 
 function cssSelectorsForDeclaration(declaration: RegExp): string[] {
   return Array.from(styles.matchAll(/([^{}]+)\{([^{}]*)\}/g)).flatMap((match) => {
@@ -432,23 +438,23 @@ describe("ChatControls", () => {
   });
 
   test("uses fixed workflow topology layouts instead of a pannable canvas", () => {
-    expect(styles).toContain("grid-template-columns: minmax(172px, 214px) minmax(640px, 1fr) minmax(300px, 360px)");
-    expect(styles).toContain(".team-resource-pane {");
-    expect(styles).toContain(".workflow-studio-pane {");
-    expect(styles).toContain(".run-inspector-pane {");
-    expect(styles).toContain("@media (max-width: 1320px)");
-    expect(styles).toContain(".workflow-topology-board {\n  min-height: 340px");
-    expect(styles).toContain(".workflow-topology-stage {\n  min-width: 0");
-    expect(styles).toContain(".workflow-pipeline-row {\n  width: max-content");
-    expect(styles).toContain(".workflow-studio-toolbar {");
-    expect(styles).toContain(".workflow-task-composer {\n  position: sticky");
-    expect(styles).toContain(".workflow-builder-toolbar {\n  position: relative;\n  z-index: 2;\n  pointer-events: auto");
-    expect(styles).toContain(".workflow-node-card {\n  width: 176px;\n  min-height: 82px");
-    expect(styles).toContain(".workflow-node-card.is-drop-target");
-    expect(styles).toContain("grid-template-columns: repeat(auto-fit, minmax(176px, 1fr))");
-    expect(styles).toContain(".workflow-edge {\n  display: block;\n  width: 36px");
-    expect(styles).not.toContain(".workflow-builder-board.is-panning");
-    expect(styles).not.toContain(".workflow-free-canvas-stage");
+    expect(normalizedStyles).toContain("grid-template-columns: minmax(172px, 214px) minmax(640px, 1fr) minmax(300px, 360px)");
+    expect(normalizedStyles).toContain(".team-resource-pane {");
+    expect(normalizedStyles).toContain(".workflow-studio-pane {");
+    expect(normalizedStyles).toContain(".run-inspector-pane {");
+    expect(normalizedStyles).toContain("@media (max-width: 1320px)");
+    expect(normalizedStyles).toContain(".workflow-topology-board {\n  min-height: 340px");
+    expect(normalizedStyles).toContain(".workflow-topology-stage {\n  min-width: 0");
+    expect(normalizedStyles).toContain(".workflow-pipeline-row {\n  width: max-content");
+    expect(normalizedStyles).toContain(".workflow-studio-toolbar {");
+    expect(normalizedStyles).toContain(".workflow-task-composer {\n  position: sticky");
+    expect(normalizedStyles).toContain(".workflow-builder-toolbar {\n  position: relative;\n  z-index: 2;\n  pointer-events: auto");
+    expect(normalizedStyles).toContain(".workflow-node-card {\n  width: 176px;\n  min-height: 82px");
+    expect(normalizedStyles).toContain(".workflow-node-card.is-drop-target");
+    expect(normalizedStyles).toContain("grid-template-columns: repeat(auto-fit, minmax(176px, 1fr))");
+    expect(normalizedStyles).toContain(".workflow-edge {\n  display: block;\n  width: 36px");
+    expect(normalizedStyles).not.toContain(".workflow-builder-board.is-panning");
+    expect(normalizedStyles).not.toContain(".workflow-free-canvas-stage");
   });
 
   test("removes the standalone Teams surface from top-level navigation", () => {
@@ -458,41 +464,41 @@ describe("ChatControls", () => {
   });
 
   test("uses a React Flow canvas for workflow graphs with pan and fit controls", () => {
-    expect(styles).toContain(".workflow-canvas-board.workflow-graph-board {");
-    expect(styles).toContain(".workflow-react-flow-board {");
-    expect(styles).toContain(".workflow-canvas-controls.react-flow__controls");
-    expect(styles).toContain(".workflow-canvas-minimap.react-flow__minimap");
-    expect(styles).toContain(".workflow-result-card .workflow-canvas-board.workflow-graph-board:not(.is-expanded)");
-    expect(styles).toContain("max-width: 760px;");
-    expect(styles).toContain("height: clamp(380px, 54vh, 600px);");
-    expect(styles).toContain("width: 192px;");
-    expect(styles).toContain("font-size: 13px;");
-    expect(styles).toContain("overflow: hidden;\n  padding: 0;");
-    expect(styles).not.toContain(".workflow-canvas-preview-trigger .workflow-canvas-board");
-    expect(styles).not.toContain(".workflow-result-card .workflow-graph-board:not(.is-expanded) {\n  max-height: min(460px, 56vh);\n  justify-content: center;");
-    expect(styles).toMatch(
+    expect(normalizedStyles).toContain(".workflow-canvas-board.workflow-graph-board {");
+    expect(normalizedStyles).toContain(".workflow-react-flow-board {");
+    expect(normalizedStyles).toContain(".workflow-canvas-controls.react-flow__controls");
+    expect(normalizedStyles).toContain(".workflow-canvas-minimap.react-flow__minimap");
+    expect(normalizedStyles).toContain(".workflow-result-card .workflow-canvas-board.workflow-graph-board:not(.is-expanded)");
+    expect(normalizedStyles).toContain("max-width: 760px;");
+    expect(normalizedStyles).toContain("height: clamp(380px, 54vh, 600px);");
+    expect(normalizedStyles).toContain("width: 192px;");
+    expect(normalizedStyles).toContain("font-size: 13px;");
+    expect(normalizedStyles).toContain("overflow: hidden;\n  padding: 0;");
+    expect(normalizedStyles).not.toContain(".workflow-canvas-preview-trigger .workflow-canvas-board");
+    expect(normalizedStyles).not.toContain(".workflow-result-card .workflow-graph-board:not(.is-expanded) {\n  max-height: min(460px, 56vh);\n  justify-content: center;");
+    expect(normalizedStyles).toMatch(
       /\.workflow-graph-board:not\(\.is-expanded\) \.workflow-graph-card textarea,[\s\S]*?\.workflow-graph-board:not\(\.is-expanded\) \.workflow-node-config-grid,[\s\S]*?\{\n  display: none;\n\}/,
     );
-    expect(styles).toContain(".workflow-graph-board.is-expanded .workflow-graph-card textarea");
-    expect(styles).toContain(".workflow-node-edit-overlay {");
-    expect(styles).toContain(".workflow-node-edit-modal {");
-    expect(styles).toContain(".workflow-node-edit-field textarea");
-    expect(styles).not.toContain(".workflow-graph-board.is-expanded .workflow-graph-card textarea {\n  display: block;\n}");
-    expect(styles).not.toContain(".workflow-graph-board.is-expanded .workflow-node-config-grid {\n  display: grid;\n}");
-    expect(styles).not.toContain("linear-gradient(var(--line-faint) 1px, transparent 1px)");
+    expect(normalizedStyles).toContain(".workflow-graph-board.is-expanded .workflow-graph-card textarea");
+    expect(normalizedStyles).toContain(".workflow-node-edit-overlay {");
+    expect(normalizedStyles).toContain(".workflow-node-edit-modal {");
+    expect(normalizedStyles).toContain(".workflow-node-edit-field textarea");
+    expect(normalizedStyles).not.toContain(".workflow-graph-board.is-expanded .workflow-graph-card textarea {\n  display: block;\n}");
+    expect(normalizedStyles).not.toContain(".workflow-graph-board.is-expanded .workflow-node-config-grid {\n  display: grid;\n}");
+    expect(normalizedStyles).not.toContain("linear-gradient(var(--line-faint) 1px, transparent 1px)");
   });
 
   test("positions workflow output document preview as a right-side reader drawer", () => {
-    expect(styles).toContain(".workflow-file-preview-overlay {\n  position: fixed;");
-    expect(styles).toContain("justify-content: flex-end;");
-    expect(styles).toContain(".workflow-file-preview-modal {\n  display: grid;");
-    expect(styles).toContain("width: min(760px, calc(100vw - 92px));");
-    expect(styles).toContain("height: 100%;");
-    expect(styles).toContain("max-height: none;");
-    expect(styles).toContain("border-radius: 0;");
-    expect(styles).toContain(".workflow-file-preview-content {\n  grid-row: 3;");
-    expect(styles).not.toContain(".workflow-file-preview-overlay {\n  position: fixed;\n  inset: 0;\n  z-index: 110;\n  display: grid;\n  place-items: center;");
-    expect(styles).not.toContain("width: min(980px, 100%);");
+    expect(normalizedStyles).toContain(".workflow-file-preview-overlay {\n  position: fixed;");
+    expect(normalizedStyles).toContain("justify-content: flex-end;");
+    expect(normalizedStyles).toContain(".workflow-file-preview-modal {\n  display: grid;");
+    expect(normalizedStyles).toContain("width: min(760px, calc(100vw - 92px));");
+    expect(normalizedStyles).toContain("height: 100%;");
+    expect(normalizedStyles).toContain("max-height: none;");
+    expect(normalizedStyles).toContain("border-radius: 0;");
+    expect(normalizedStyles).toContain(".workflow-file-preview-content {\n  grid-row: 3;");
+    expect(normalizedStyles).not.toContain(".workflow-file-preview-overlay {\n  position: fixed;\n  inset: 0;\n  z-index: 110;\n  display: grid;\n  place-items: center;");
+    expect(normalizedStyles).not.toContain("width: min(980px, 100%);");
   });
 
   test("keeps the workflow history sidebar visible", () => {
@@ -502,8 +508,8 @@ describe("ChatControls", () => {
   });
 
   test("keeps sidebar history actions outside Electron drag regions", () => {
-    expect(styles).toContain(".resource-sidebar button {\n  -webkit-app-region: no-drag");
-    expect(styles).toContain(".agent-context-menu {\n  -webkit-app-region: no-drag");
+    expect(normalizedStyles).toContain(".resource-sidebar button {\n  -webkit-app-region: no-drag");
+    expect(normalizedStyles).toContain(".agent-context-menu {\n  -webkit-app-region: no-drag");
   });
 
   test("explains when a newly added Electron API requires app restart", () => {
@@ -512,16 +518,16 @@ describe("ChatControls", () => {
   });
 
   test("uses compact segmented controls for workflow mode", () => {
-    expect(styles).toContain(".workflow-mode-row {\n  display: inline-flex");
-    expect(styles).toContain(".workflow-mode-toggle {\n  display: inline-flex");
-    expect(styles).toContain("min-height: 28px");
-    expect(styles).toContain(".workflow-mode-toggle span {\n  display: none");
+    expect(normalizedStyles).toContain(".workflow-mode-row {\n  display: inline-flex");
+    expect(normalizedStyles).toContain(".workflow-mode-toggle {\n  display: inline-flex");
+    expect(normalizedStyles).toContain("min-height: 28px");
+    expect(normalizedStyles).toContain(".workflow-mode-toggle span {\n  display: none");
   });
 
   test("lets workflow run activity wrap inside progress cards", () => {
-    expect(styles).toContain(".workflow-run-progress-item > small {\n  display: -webkit-box");
-    expect(styles).toContain("-webkit-line-clamp: 3");
-    expect(styles).toContain("white-space: normal");
+    expect(normalizedStyles).toContain(".workflow-run-progress-item > small {\n  display: -webkit-box");
+    expect(normalizedStyles).toContain("-webkit-line-clamp: 3");
+    expect(normalizedStyles).toContain("white-space: normal");
   });
 
   test("sends composer text with Enter and keeps Shift Enter for new lines", () => {
@@ -932,9 +938,9 @@ describe("Sidebar history panels", () => {
     );
 
     expect(html).toContain("chat-row-status is-running");
-    expect(html).toContain("Running | 12:00 AM");
+    expect(html).toContain(`Running | ${formatTime(runningChat.updatedAt)}`);
     expect(html).toContain("chat-row-status is-idle");
-    expect(html).toContain("Idle | 12:00 AM");
+    expect(html).toContain(`Idle | ${formatTime(idleChat.updatedAt)}`);
     expect(html).not.toContain("Replied");
     expect(html).not.toContain("Stopped");
   });
@@ -1759,11 +1765,9 @@ describe("ConfigPage", () => {
   test("keeps skill templates named from SKILL.md frontmatter without separate localized fields", () => {
     const codeReviewer = SKILL_TEMPLATES.find((template) => template.id === "refactor-review-knowledge");
 
-    expect(codeReviewer).toMatchObject({
-      name: "refactor-review-knowledge",
-      description: expect.stringContaining("conducting thorough code reviews"),
-      prompt: expect.stringContaining("name: refactor-review-knowledge"),
-    });
+    expect(codeReviewer?.name).toBe("refactor-review-knowledge");
+    expect(normalizeLineEndings(codeReviewer?.prompt ?? "")).toContain("name: refactor-review-knowledge");
+    expect(normalizeLineEndings(codeReviewer?.prompt ?? "")).toContain("conducting thorough code reviews");
     expect(SKILL_TEMPLATES.some((template) => "nameZh" in template || "descriptionZh" in template || "promptZh" in template)).toBe(false);
   });
 
@@ -1803,13 +1807,17 @@ describe("ConfigPage", () => {
 
     for (const [templateId, expectedSections] of expectedSkillContent) {
       const template = SKILL_TEMPLATES.find((item) => item.id === templateId);
+      const normalizedPrompt = normalizeLineEndings(template?.prompt ?? "");
 
       expect(template?.prompt.length).toBeGreaterThan(500);
-      expect(template?.prompt.startsWith("---\n")).toBe(true);
+      expect(normalizedPrompt.startsWith("---\n")).toBe(true);
       for (const section of expectedSections) {
-        expect(template?.prompt).toContain(section);
+        expect(normalizedPrompt).toContain(section);
       }
     }
+    expect(normalizeLineEndings(SKILL_TEMPLATES.find((template) => template.id === "brainstorming")?.prompt ?? "")).toContain("# Brainstorming Ideas Into Designs");
+    expect(normalizeLineEndings(SKILL_TEMPLATES.find((template) => template.id === "brainstorming")?.prompt ?? "")).toContain("Offer the visual companion just-in-time");
+    expect(normalizeLineEndings(SKILL_TEMPLATES.find((template) => template.id === "resume-optimization")?.prompt ?? "")).toContain("# Resume Optimization");
     expect(SKILL_TEMPLATES.every((template) => template.sourceLabel && template.sourcePath)).toBe(true);
     expect(SKILL_TEMPLATES.every((template) => template.sourceUrl?.startsWith("https://github.com/"))).toBe(true);
     expect(SKILL_TEMPLATES.every((template) => template.sourcePath?.startsWith("src/shared/bundled-skills/"))).toBe(true);
@@ -1822,16 +1830,23 @@ describe("ConfigPage", () => {
 
   test("ships bundled Chinese reading views without replacing original skill prompts", () => {
     for (const template of SKILL_TEMPLATES) {
-      expect(template.translationZh?.startsWith("---\n")).toBe(true);
+      const normalizedTranslation = normalizeLineEndings(template.translationZh ?? "");
+
+      expect(normalizedTranslation.startsWith("---\n")).toBe(true);
       expect(template.translationZh?.length).toBeGreaterThan(300);
+      expect(normalizedTranslation).toMatch(/\n# .+/);
     }
 
     const brainstorming = SKILL_TEMPLATES.find((template) => template.id === "brainstorming");
     const resume = SKILL_TEMPLATES.find((template) => template.id === "resume-optimization");
+    const systematicDebugging = SKILL_TEMPLATES.find((template) => template.id === "systematic-debugging");
+    const codeReview = SKILL_TEMPLATES.find((template) => template.id === "code-review-and-quality");
 
     expect(brainstorming?.prompt).toContain("# Brainstorming Ideas Into Designs");
+    expect(normalizeLineEndings(brainstorming?.translationZh ?? "")).not.toContain("# Brainstorming Ideas Into Designs");
     expect(brainstorming?.translationZh).toContain("# 将头脑风暴转化为设计");
     expect(resume?.prompt).toContain("# Resume Optimization");
+    expect(normalizeLineEndings(resume?.translationZh ?? "")).not.toContain("# Resume Optimization");
     expect(resume?.translationZh).toContain("# 简历优化");
     expect(SKILL_TEMPLATES.find((template) => template.id === "systematic-debugging")?.translationZh).toContain("# 系统化调试");
     expect(SKILL_TEMPLATES.find((template) => template.id === "code-review-and-quality")?.translationZh).toContain("# 代码评审与质量");
@@ -2001,13 +2016,13 @@ describe("ConfigPage", () => {
     expect(html).not.toContain("可运行");
     expect(html).not.toContain("个执行节点");
     expect(html).toContain("aria-label=\"暂停计划\"");
-    expect(styles).not.toContain(".scheduled-edit-strip");
-    expect(styles).not.toContain(".scheduled-inline-control");
-    expect(styles).toContain(".scheduled-time-panel {");
-    expect(styles).toContain(".scheduled-weekday-checks {");
-    expect(styles).toContain(".scheduled-apply-btn {");
-    expect(styles).toContain(".scheduled-workflow-graph {\n  min-height: 260px;");
-    expect(styles).toContain(".scheduled-workflow-node {");
+    expect(normalizedStyles).not.toContain(".scheduled-edit-strip");
+    expect(normalizedStyles).not.toContain(".scheduled-inline-control");
+    expect(normalizedStyles).toContain(".scheduled-time-panel {");
+    expect(normalizedStyles).toContain(".scheduled-weekday-checks {");
+    expect(normalizedStyles).toContain(".scheduled-apply-btn {");
+    expect(normalizedStyles).toContain(".scheduled-workflow-graph {\n  min-height: 260px;");
+    expect(normalizedStyles).toContain(".scheduled-workflow-node {");
     expect(html).toContain("删除");
     expect(html).toContain("Workflow completed.");
   });
@@ -2270,7 +2285,8 @@ describe("SkillsPage", () => {
     expect(html).not.toContain("安装到 Codex");
     expect(html).not.toContain("安装到 Claude");
     expect(html).toContain("md-body");
-    expect(html).toContain("<h1>Brainstorming Ideas Into Designs</h1>");
+    expect(html).toContain("Help turn ideas into fully formed designs and specs through natural collaborative dialogue.");
+    expect(html).toContain("Offer the visual companion just-in-time");
     expect(html).toContain("name: brainstorming");
     expect(html).not.toContain("<pre class=\"skill-detail-body\"");
     expect(html).not.toContain("用此技能创建 Agent");
@@ -3993,9 +4009,9 @@ workflowGraph.upsert({
     expect(html).toContain("Workflow transcript");
     expect(html).toContain("Main agent report ready");
     // Graph is shown first, then run outputs flow below it.
-    expect(styles).toContain(".workflow-result-card .workflow-graph-board {\n  order: 1;");
-    expect(styles).toContain(".workflow-result-card .workflow-run-progress {\n  order: 2;");
-    expect(styles).toContain(".workflow-result-card .workflow-final-report {\n  order: 3;");
+    expect(normalizedStyles).toContain(".workflow-result-card .workflow-graph-board {\n  order: 1;");
+    expect(normalizedStyles).toContain(".workflow-result-card .workflow-run-progress {\n  order: 2;");
+    expect(normalizedStyles).toContain(".workflow-result-card .workflow-final-report {\n  order: 3;");
   });
 
   test("shows validation errors and disables execution for cyclic graphs", () => {
