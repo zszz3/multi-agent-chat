@@ -1,12 +1,24 @@
 # Runtime Execution Architecture Implementation Plan
 
-> **For agentic workers:** REQUIRED SUB-SKILL: Use superpowers:subagent-driven-development (recommended) or superpowers:executing-plans to implement this plan task-by-task. Steps use checkbox (`- [ ]`) syntax for tracking.
+> **For agentic workers:** REQUIRED SUB-SKILL: Use superpowers:subagent-driven-development (recommended) or superpowers:executing-plans to implement this plan task-by-task. Steps use checkbox (`- [x]`) syntax for tracking.
 
 **Goal:** Introduce shared runtime-style and interactive-session infrastructure so chat execution becomes capability-driven, Codex chat reuses one app-server attachment per chat, Claude chat moves behind a shared interactive-session boundary, and API remains a stateless one-shot runtime.
 
 **Architecture:** Keep `AgentHub` as the state and orchestration owner, evolve `src/main/agent-executor.ts` into a thin driver-registry boundary, and move interactive lifecycle into focused `src/main/agents/*` modules with serialized command queues and attachment leases. Persist logical chat identity and runtime resume state separately from ephemeral process state so boot recovery, idle detach, and history-based continuation are explicit instead of accidental.
 
 **Tech Stack:** Electron main process, TypeScript, Vitest, Codex app-server RPC, Claude subprocess streaming, SQLite/JSON snapshot persistence.
+
+**Execution Status (2026-07-05):** Completed on `feat/claude-interactive-runtime`.
+
+- Task 1 commit: `9862051` `feat: add runtime session contracts`
+- Task 2 commit: `aa48218` `feat: add interactive session manager`
+- Task 3 commit: `4a22260` `feat: reuse codex chat sessions`
+- Task 4 commit: `dbdfa5a` `feat: route claude chat through shared sessions`
+- Task 5 commit: `9b780ad` `docs: finalize runtime execution architecture`
+- zh-CN doc sync follow-up: `6859613` `docs: sync zh-CN runtime architecture docs`
+- Focused verification completed:
+  - `npm run typecheck`
+  - `npm test -- src/main/agent-hub.test.ts src/main/agents/interactive-session-manager.test.ts src/main/agents/codex-interactive-session.test.ts src/main/agents/codex-rpc.test.ts src/main/agents/claude-interactive-session.test.ts src/main/agents/claude-runner.test.ts src/preload/index.test.ts`
 
 ---
 
@@ -19,7 +31,7 @@
 - Modify: `src/main/agent-hub.ts`
 - Test: `src/main/agent-hub.test.ts`
 
-- [ ] **Step 1: Add failing snapshot and migration tests for interactive runtime session state**
+- [x] **Step 1: Add failing snapshot and migration tests for interactive runtime session state**
 
 ```ts
 test("migrates a legacy chat sessionId into detached runtime resume state", async () => {
@@ -94,13 +106,13 @@ test("restores interactive chats as detached and clears ephemeral turn state", a
 });
 ```
 
-- [ ] **Step 2: Run the focused persistence test slice and verify it fails on missing runtime session fields**
+- [x] **Step 2: Run the focused persistence test slice and verify it fails on missing runtime session fields**
 
 Run: `npm test -- src/main/agent-hub.test.ts`
 
 Expected: FAIL with missing `runtimeSession` shape and restore/migration assertions.
 
-- [ ] **Step 3: Add execution-style, resume, and persisted runtime-session contracts**
+- [x] **Step 3: Add execution-style, resume, and persisted runtime-session contracts**
 
 ```ts
 // src/shared/types.ts
@@ -212,7 +224,7 @@ private migrateLegacyRuntimeSession(record: PersistedChatSessionRecord): ChatRun
 }
 ```
 
-- [ ] **Step 4: Upgrade restore/persist paths so logical session state survives but attachment state resets on boot**
+- [x] **Step 4: Upgrade restore/persist paths so logical session state survives but attachment state resets on boot**
 
 ```ts
 private restoreChatState(raw: unknown): ChatState | null {
@@ -298,7 +310,7 @@ private buildPersistedPayload(): PersistedAppStateV3 {
 }
 ```
 
-- [ ] **Step 5: Re-run the focused persistence tests and typecheck**
+- [x] **Step 5: Re-run the focused persistence tests and typecheck**
 
 Run: `npm test -- src/main/agent-hub.test.ts`
 
@@ -308,7 +320,7 @@ Run: `npm run typecheck`
 
 Expected: PASS with optional `runtimeSession` wired through `ChatSession` and persistence helpers.
 
-- [ ] **Step 6: Commit the contract and persistence foundation**
+- [x] **Step 6: Commit the contract and persistence foundation**
 
 ```bash
 git add src/shared/types.ts src/main/agent-hub.ts src/main/agents/runtime-capabilities.ts src/main/agents/runtime-driver.ts src/main/agent-hub.test.ts
@@ -325,7 +337,7 @@ git commit -m "feat: add runtime session contracts"
 - Test: `src/main/agents/interactive-session-manager.test.ts`
 - Test: `src/main/agent-hub.test.ts`
 
-- [ ] **Step 1: Add failing tests for serialized per-chat commands, no eager attach, and stale detach rejection**
+- [x] **Step 1: Add failing tests for serialized per-chat commands, no eager attach, and stale detach rejection**
 
 ```ts
 test("serializes duplicate chat sends through one session queue", async () => {
@@ -369,13 +381,13 @@ test("idle sweep only detaches when generation and activity timestamp still matc
 });
 ```
 
-- [ ] **Step 2: Run the new session-manager slice and verify it fails before the queue and lease layer exists**
+- [x] **Step 2: Run the new session-manager slice and verify it fails before the queue and lease layer exists**
 
 Run: `npm test -- src/main/agents/interactive-session-manager.test.ts src/main/agent-hub.test.ts`
 
 Expected: FAIL because `InteractiveSessionManager` and lease-based detach checks do not exist yet.
 
-- [ ] **Step 3: Add a reusable lease token helper and interactive session manager**
+- [x] **Step 3: Add a reusable lease token helper and interactive session manager**
 
 ```ts
 // src/main/agents/process-lease.ts
@@ -477,7 +489,7 @@ export class InteractiveSessionManager {
 }
 ```
 
-- [ ] **Step 4: Replace runtime-id branching in `agent-executor.ts` with a driver registry and wire `AgentHub` chat sends through the session manager**
+- [x] **Step 4: Replace runtime-id branching in `agent-executor.ts` with a driver registry and wire `AgentHub` chat sends through the session manager**
 
 ```ts
 // src/main/agent-executor.ts
@@ -561,7 +573,7 @@ async sendPrompt(prompt: string, chatId = this.activeChatId): Promise<void> {
 }
 ```
 
-- [ ] **Step 5: Re-run the manager and hub tests, then commit the session-management boundary**
+- [x] **Step 5: Re-run the manager and hub tests, then commit the session-management boundary**
 
 Run: `npm test -- src/main/agents/interactive-session-manager.test.ts src/main/agent-hub.test.ts`
 
@@ -571,7 +583,7 @@ Run: `npm run typecheck`
 
 Expected: PASS with `AgentHub` routing chat execution through the session manager for interactive runtimes.
 
-- [ ] **Step 6: Commit the shared manager and registry**
+- [x] **Step 6: Commit the shared manager and registry**
 
 ```bash
 git add src/main/agents/process-lease.ts src/main/agents/interactive-session-manager.ts src/main/agent-executor.ts src/main/agent-hub.ts src/main/agents/interactive-session-manager.test.ts src/main/agent-hub.test.ts
@@ -589,7 +601,7 @@ git commit -m "feat: add interactive session manager"
 - Test: `src/main/agents/codex-rpc.test.ts`
 - Test: `src/main/agent-hub.test.ts`
 
-- [ ] **Step 1: Add failing tests for one-process-per-chat reuse, idle detach, and turn-scoped interrupt**
+- [x] **Step 1: Add failing tests for one-process-per-chat reuse, idle detach, and turn-scoped interrupt**
 
 ```ts
 test("reuses one Codex attachment for sequential prompts in the same chat", async () => {
@@ -643,13 +655,13 @@ test("detaches an idle Codex attachment and resumes the same thread on the next 
 });
 ```
 
-- [ ] **Step 2: Run the Codex-focused slice and verify it fails before the interactive session exists**
+- [x] **Step 2: Run the Codex-focused slice and verify it fails before the interactive session exists**
 
 Run: `npm test -- src/main/agents/codex-interactive-session.test.ts src/main/agents/codex-rpc.test.ts src/main/agent-hub.test.ts`
 
 Expected: FAIL because Codex chat still creates a fresh executor process per send.
 
-- [ ] **Step 3: Implement `CodexInteractiveSession` with lease-checked attach, prompt send, and detach**
+- [x] **Step 3: Implement `CodexInteractiveSession` with lease-checked attach, prompt send, and detach**
 
 ```ts
 // src/main/agents/codex-interactive-session.ts
@@ -742,7 +754,7 @@ export class CodexInteractiveSession implements InteractiveSession {
 }
 ```
 
-- [ ] **Step 4: Extend the Codex RPC client so the session can interrupt a live turn and preserve thread identity**
+- [x] **Step 4: Extend the Codex RPC client so the session can interrupt a live turn and preserve thread identity**
 
 ```ts
 // src/main/agents/codex-rpc.ts
@@ -787,7 +799,7 @@ const codexDriver: RuntimeDriver = {
 };
 ```
 
-- [ ] **Step 5: Re-run the Codex slice, then typecheck**
+- [x] **Step 5: Re-run the Codex slice, then typecheck**
 
 Run: `npm test -- src/main/agents/codex-interactive-session.test.ts src/main/agents/codex-rpc.test.ts src/main/agent-hub.test.ts`
 
@@ -797,7 +809,7 @@ Run: `npm run typecheck`
 
 Expected: PASS with Codex chat routed through the interactive session path while task and workflow calls still use one-shot execution.
 
-- [ ] **Step 6: Commit the Codex interactive session**
+- [x] **Step 6: Commit the Codex interactive session**
 
 ```bash
 git add src/main/agents/codex-interactive-session.ts src/main/agents/codex-rpc.ts src/main/agent-executor.ts src/main/agent-hub.ts src/main/agents/codex-interactive-session.test.ts src/main/agents/codex-rpc.test.ts src/main/agent-hub.test.ts
@@ -816,7 +828,7 @@ git commit -m "feat: reuse codex chat sessions"
 - Test: `src/main/agents/claude-runner.test.ts`
 - Test: `src/main/agent-hub.test.ts`
 
-- [ ] **Step 1: Add failing Claude tests for lazy attach, session reuse, and honest detached restore**
+- [x] **Step 1: Add failing Claude tests for lazy attach, session reuse, and honest detached restore**
 
 ```ts
 test("does not spawn Claude until the first prompt and reuses the same session id for follow-up prompts", async () => {
@@ -860,13 +872,13 @@ test("restores Claude attachments as detached instead of pretending the old proc
 });
 ```
 
-- [ ] **Step 2: Run the Claude-focused slice and verify it fails before the shared session path exists**
+- [x] **Step 2: Run the Claude-focused slice and verify it fails before the shared session path exists**
 
 Run: `npm test -- src/main/agents/claude-interactive-session.test.ts src/main/agents/claude-runner.test.ts src/main/agent-hub.test.ts`
 
 Expected: FAIL because Claude chat still launches through the one-shot executor path.
 
-- [ ] **Step 3: Add a swappable Claude transport boundary and a shared interactive session**
+- [x] **Step 3: Add a swappable Claude transport boundary and a shared interactive session**
 
 ```ts
 // src/main/agents/claude-sdk-interactive-transport.ts
@@ -950,7 +962,7 @@ export class ClaudeInteractiveSession implements InteractiveSession {
 }
 ```
 
-- [ ] **Step 4: Adapt `ClaudeRunner` behind the new transport contract and register Claude as an interactive runtime**
+- [x] **Step 4: Adapt `ClaudeRunner` behind the new transport contract and register Claude as an interactive runtime**
 
 ```ts
 // src/main/agents/claude-runner.ts
@@ -1012,7 +1024,7 @@ const claudeDriver: RuntimeDriver = {
 };
 ```
 
-- [ ] **Step 5: Re-run the Claude slice, then typecheck**
+- [x] **Step 5: Re-run the Claude slice, then typecheck**
 
 Run: `npm test -- src/main/agents/claude-interactive-session.test.ts src/main/agents/claude-runner.test.ts src/main/agent-hub.test.ts`
 
@@ -1022,7 +1034,7 @@ Run: `npm run typecheck`
 
 Expected: PASS with Claude chat using the same shared interactive session boundary as Codex.
 
-- [ ] **Step 6: Commit the Claude session boundary**
+- [x] **Step 6: Commit the Claude session boundary**
 
 ```bash
 git add src/main/agents/claude-interactive-session.ts src/main/agents/claude-sdk-interactive-transport.ts src/main/agents/claude-runner.ts src/main/agent-executor.ts src/main/agent-hub.ts src/main/agents/claude-interactive-session.test.ts src/main/agents/claude-runner.test.ts src/main/agent-hub.test.ts
@@ -1038,7 +1050,7 @@ git commit -m "feat: route claude chat through shared sessions"
 - Modify: `docs/modules/main.md`
 - Modify: `docs/README.md`
 
-- [ ] **Step 1: Add the central idle sweep and boot-recovery normalization tests**
+- [x] **Step 1: Add the central idle sweep and boot-recovery normalization tests**
 
 ```ts
 test("boots restored interactive chats detached and does not eagerly reattach them", async () => {
@@ -1081,7 +1093,7 @@ test("preload snapshot typing still accepts optional runtime session metadata", 
 });
 ```
 
-- [ ] **Step 2: Wire the idle sweep into `AgentHub` and keep the preload surface stable**
+- [x] **Step 2: Wire the idle sweep into `AgentHub` and keep the preload surface stable**
 
 ```ts
 // src/main/agent-hub.ts
@@ -1103,7 +1115,7 @@ expectTypeOf<Awaited<ReturnType<typeof api.getSnapshot>>>().toMatchTypeOf<AppSna
 expectTypeOf<ChatSession["runtimeSession"]>().toEqualTypeOf<ChatRuntimeSessionState | undefined>();
 ```
 
-- [ ] **Step 3: Update the architecture docs to describe the new runtime boundary honestly**
+- [x] **Step 3: Update the architecture docs to describe the new runtime boundary honestly**
 
 ```md
 <!-- docs/architecture-overview.md -->
@@ -1124,7 +1136,7 @@ The main-process execution layer now has two styles:
 `AgentHub` remains the state authority, but interactive process lifecycle is owned by the session manager plus runtime-specific session helpers under `src/main/agents/`.
 ```
 
-- [ ] **Step 4: Run the full focused verification set**
+- [x] **Step 4: Run the full focused verification set**
 
 Run:
 
@@ -1139,7 +1151,7 @@ Expected:
 - `npm test -- src/main/agent-hub.test.ts src/main/agents/interactive-session-manager.test.ts src/main/agents/codex-interactive-session.test.ts src/main/agents/codex-rpc.test.ts src/main/agents/claude-interactive-session.test.ts src/main/agents/claude-runner.test.ts src/preload/index.test.ts`: PASS
 - no new renderer-wide or unrelated slash-command regressions are claimed green unless they are actually run separately
 
-- [ ] **Step 5: Inspect the diff for scope discipline and commit docs plus recovery changes**
+- [x] **Step 5: Inspect the diff for scope discipline and commit docs plus recovery changes**
 
 ```bash
 git diff -- src/main/agent-hub.ts src/preload/index.test.ts docs/architecture-overview.md docs/modules/main.md docs/README.md
