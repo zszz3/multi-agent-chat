@@ -294,6 +294,53 @@ rl.on("line", (line) => {
   return { executable, callsPath };
 }
 
+async function writeInvalidSlashCodexFake(dir: string): Promise<{ executable: string; callsPath: string }> {
+  const callsPath = path.join(dir, "codex-invalid-slash-calls.jsonl");
+  const script = `#!/usr/bin/env node
+const fs = require("fs");
+const readline = require("readline");
+
+const callsPath = ${JSON.stringify(callsPath)};
+
+function write(message) {
+  process.stdout.write(JSON.stringify(message) + "\\n");
+}
+
+function record(message) {
+  if (!message.method) return;
+  fs.appendFileSync(callsPath, JSON.stringify({ method: message.method, params: message.params ?? null }) + "\\n");
+}
+
+const rl = readline.createInterface({ input: process.stdin });
+rl.on("line", (line) => {
+  if (!line.trim()) return;
+  const message = JSON.parse(line);
+  record(message);
+  if (message.id === undefined) return;
+
+  if (message.method === "initialize") {
+    write({ jsonrpc: "2.0", id: message.id, result: {} });
+    return;
+  }
+  if (message.method === "thread/start") {
+    write({ jsonrpc: "2.0", id: message.id, result: { thread: { id: "thread-1" } } });
+    return;
+  }
+  if (message.method === "thread/resume") {
+    write({ jsonrpc: "2.0", id: message.id, result: { thread: { id: message.params.threadId } } });
+    return;
+  }
+  if (message.method === "turn/start") {
+    write({ jsonrpc: "2.0", id: message.id, error: { code: -32000, message: "unknown slash command /model" } });
+    return;
+  }
+  write({ jsonrpc: "2.0", id: message.id, error: { code: -32601, message: "unknown method " + message.method } });
+});
+`;
+  const executable = await writeNodeCliLauncher(dir, "codex-invalid-slash-fake", script);
+  return { executable, callsPath };
+}
+
 async function writeClaudeSequentialFake(dir: string): Promise<{ executable: string; callsPath: string }> {
   const callsPath = path.join(dir, "claude-calls.jsonl");
   const script = `#!/usr/bin/env node
@@ -1456,6 +1503,116 @@ fs.writeFileSync(${JSON.stringify(argsPath)}, process.argv.slice(2).join("\\n") 
       }),
     ]);
     expect(chatConfigLocked(chat)).toBe(false);
+  });
+
+  test("learns a successful native slash command under the current fingerprint", async () => {
+    const dir = await mkdtemp(path.join(os.tmpdir(), "multi-agent-chat-learned-native-slash-"));
+    const fake = await writeSequentialCodexFake(dir);
+    const hub = new AgentHub({ codex: fake.executable, claude: "missing-claude-for-test" });
+    const chatId = hub.snapshot().activeChatId!;
+    (hub as any).runtimes.set("codex", {
+      id: "codex",
+      label: "Codex",
+      command: fake.executable,
+      version: "0.136.0",
+      available: true,
+      fingerprint: "codex|0.136.0|team-a",
+    });
+
+    await hub.sendPrompt("/model gpt-5.5", chatId);
+
+    await waitFor(
+      () => hub.snapshot().chats.find((item) => item.id === chatId),
+      (item) => item?.running === false,
+    );
+
+    expect((hub as any).learnedNativeCommands).toEqual([
+      expect.objectContaining({
+        runtimeId: "codex",
+        cliFingerprint: "codex|0.136.0|team-a",
+        commandStem: "/model",
+        example: "/model gpt-5.5",
+        successCount: 1,
+      }),
+    ]);
+    expect((hub.snapshot().chats.find((item) => item.id === chatId) as any)?.pendingNativeSlashTurn).toBeUndefined();
+  });
+
+  test("explicit invalid command evidence evicts the learned native command immediately", async () => {
+    const dir = await mkdtemp(path.join(os.tmpdir(), "multi-agent-chat-invalid-native-slash-"));
+    const fake = await writeInvalidSlashCodexFake(dir);
+    const hub = new AgentHub({ codex: fake.executable, claude: "missing-claude-for-test" });
+    const chatId = hub.snapshot().activeChatId!;
+    (hub as any).runtimes.set("codex", {
+      id: "codex",
+      label: "Codex",
+      command: fake.executable,
+      version: "0.136.0",
+      available: true,
+      fingerprint: "codex|0.136.0|team-a",
+    });
+    (hub as any).learnedNativeCommands = [
+      {
+        runtimeId: "codex",
+        cliFingerprint: "codex|0.136.0|team-a",
+        commandStem: "/model",
+        example: "/model gpt-5.5",
+        successCount: 3,
+        lastUsedAt: 1710000000000,
+      },
+    ];
+
+    await hub.sendPrompt("/model gpt-5.5", chatId);
+
+    const chat = await waitFor(
+      () => hub.snapshot().chats.find((item) => item.id === chatId),
+      (item) => item?.running === false,
+    );
+
+    expect(chat?.lastError).toContain("unknown slash command /model");
+    expect((hub as any).learnedNativeCommands).toEqual([]);
+  });
+
+  test("transport or runtime failures do not evict learned native commands", async () => {
+    const dir = await mkdtemp(path.join(os.tmpdir(), "multi-agent-chat-runtime-failure-native-slash-"));
+    const fake = await writeTurnStartFailureCodexFake(dir);
+    const hub = new AgentHub({ codex: fake.executable, claude: "missing-claude-for-test" });
+    const chatId = hub.snapshot().activeChatId!;
+    (hub as any).runtimes.set("codex", {
+      id: "codex",
+      label: "Codex",
+      command: fake.executable,
+      version: "0.136.0",
+      available: true,
+      fingerprint: "codex|0.136.0|team-a",
+    });
+    (hub as any).learnedNativeCommands = [
+      {
+        runtimeId: "codex",
+        cliFingerprint: "codex|0.136.0|team-a",
+        commandStem: "/model",
+        example: "/model gpt-5.5",
+        successCount: 3,
+        lastUsedAt: 1710000000000,
+      },
+    ];
+
+    await hub.sendPrompt("/model gpt-5.5", chatId);
+
+    const chat = await waitFor(
+      () => hub.snapshot().chats.find((item) => item.id === chatId),
+      (item) => item?.running === false,
+    );
+
+    expect(chat?.lastError).toContain("turn failed");
+    expect((hub as any).learnedNativeCommands).toEqual([
+      expect.objectContaining({
+        runtimeId: "codex",
+        cliFingerprint: "codex|0.136.0|team-a",
+        commandStem: "/model",
+        example: "/model gpt-5.5",
+      }),
+    ]);
   });
 
   test("reads Codex status through app-server RPC without starting an agent conversation", async () => {

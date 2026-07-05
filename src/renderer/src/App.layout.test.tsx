@@ -562,6 +562,32 @@ describe("ChatControls", () => {
               },
             ],
           },
+          {
+            id: "native_metadata",
+            label: "Native metadata",
+            items: [
+              {
+                id: "codex:model:gpt-5.5",
+                label: "/model gpt-5.5",
+                insertText: "/model gpt-5.5 ",
+                description: "Use a specific Codex model.",
+                authoritative: true,
+              },
+            ],
+          },
+          {
+            id: "suggested_native_commands",
+            label: "Suggested native commands",
+            items: [
+              {
+                id: "codex:learned:/memory",
+                label: "/memory add release notes",
+                insertText: "/memory add release notes ",
+                description: "Learned from successful codex usage",
+                authoritative: false,
+              },
+            ],
+          },
         ]}
         activeIndex={0}
         onSelect={() => undefined}
@@ -571,7 +597,11 @@ describe("ChatControls", () => {
     expect(html).toContain("slash-command-menu");
     expect(html).toContain("slash-command-group-label");
     expect(html).toContain("App commands");
+    expect(html).toContain("Native metadata");
+    expect(html).toContain("Suggested native commands");
     expect(html).toContain("/app status");
+    expect(html).toContain("/model gpt-5.5");
+    expect(html).toContain("/memory add release notes");
     expect(html).toContain("Read Codex app-server config");
   });
 

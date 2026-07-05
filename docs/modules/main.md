@@ -15,6 +15,8 @@ If a renderer feature changes the actual behavior of chats, tasks, workflows, ag
 - `agents/interactive-session-manager.ts`: per-chat queueing and idle-detach orchestration for interactive runtimes
 - `agents/codex-interactive-session.ts`: reusable Codex chat attachment
 - `agents/claude-interactive-session.ts`: reusable Claude chat attachment
+- `runtime-command-completions.ts`: grouped slash completion providers for app commands, runtime metadata, and learned native history
+- `runtime-command-store.ts`: persisted runtime command overrides and learned native command history
 - `model-config.ts`: channel normalization, Codex config generation/import, preset-backed config handling
 - `provider-balance.ts`: provider balance queries
 - `scheduled-workflow-cloud.ts`: cloud sync for scheduled workflows
@@ -52,6 +54,8 @@ It is responsible for:
 - running prompts and streaming events into chat sessions
 - restoring interactive chat resume state as detached after app restart
 - coordinating idle-sweep recovery for attached interactive sessions
+- resolving chat slash completion groups from main-owned providers
+- learning or evicting native slash suggestions for chat-only CLI turns
 - creating/running/stopping tasks
 - creating/updating teams and team runs
 - managing workflow store and workflow draft
@@ -59,6 +63,24 @@ It is responsible for:
 - managing scheduled workflow state and runner configuration
 
 When changing business behavior, start here first. Many UI issues are actually state-shape or orchestration issues in `AgentHub`.
+
+## Slash Completion Boundary
+
+Slash completion lookup is intentionally main-owned.
+
+- the renderer asks for completions, but `AgentHub` decides which groups exist
+- app-local `/app` commands come from shared metadata
+- runtime-native metadata comes from runtime-aware providers such as Codex model/plugin metadata and imported skill templates
+- learned native suggestions come from persisted success history keyed by runtime id plus CLI fingerprint
+
+This should not be rebuilt from `AppSnapshot` in the renderer. Runtime fingerprints, imported-skill storage, and live Codex metadata are main-process concerns.
+
+Native slash outcome tracking is also chat-only:
+
+- pending native slash bookkeeping is set only for chat turns that route to a real local CLI runtime
+- it is cleared on success, explicit error events, start failures, stop/interruption, and Claude exit-only failures
+- it is not reused for task or workflow execution
+- only explicit invalid-command evidence evicts learned history; ambiguous failures stay classified as transport or runtime failures
 
 ## Execution Layer
 
@@ -115,6 +137,7 @@ Key persistence points:
 
 - `hub.loadModelChannels(...)`
 - `hub.loadPersistedState(...)`
+- `runtimeCommandStatePathFor(...)`
 - `SqliteAppStore`
 
 Persistence is snapshot-centric, not relational-domain-centric. That means:
@@ -127,6 +150,13 @@ When evolving persisted shapes:
 - add backward-tolerant parsing
 - preserve optional fields when possible
 - avoid breaking older serialized state without a migration path
+
+Runtime command persistence is split from the main snapshot payload. `<storage-path>.runtime-commands.json` stores:
+
+- runtime command executable overrides
+- learned native slash command history
+
+That history is keyed by runtime id and CLI fingerprint so suggestions only apply to the exact local runtime installation that produced them.
 
 ## Scheduled Workflows
 
@@ -163,6 +193,8 @@ Renderer pages should stay declarative here. File-system effects belong in `src/
 Most important tests in this layer are already colocated:
 
 - `agent-hub.test.ts`
+- `runtime-command-store.test.ts`
+- `runtime-command-completions.test.ts`
 - `mcp-bridge.test.ts`
 - `model-config.test.ts`
 - `provider-balance.test.ts`

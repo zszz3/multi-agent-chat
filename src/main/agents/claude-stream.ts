@@ -1,4 +1,5 @@
 import type { AgentEvent } from "../../shared/types";
+import type { NativeCommandFailureClassification } from "../runtime-command-store";
 
 export interface ClaudeStreamState {
   lastText: string;
@@ -52,6 +53,20 @@ function consumeTextDelta(text: string, state: ClaudeStreamState): string {
   return text;
 }
 
+function isTransportFailureMessage(message: string): boolean {
+  return /\b(?:enoent|econnrefused|econnreset|timed out|timeout|connection|spawn)\b/i.test(message);
+}
+
+export function classifyClaudeNativeCommandFailure(input: {
+  prompt: string;
+  error: string;
+}): NativeCommandFailureClassification {
+  if (!input.prompt.trimStart().startsWith("/")) return "runtime_failure";
+  if (/\b(?:unknown|unsupported|invalid)\s+slash\s+command\b/i.test(input.error)) return "invalid_command";
+  if (isTransportFailureMessage(input.error)) return "transport_failure";
+  return "runtime_failure";
+}
+
 export function normalizeClaudeStreamEvent(raw: unknown, state?: ClaudeStreamState): AgentEvent[] {
   if (!raw || typeof raw !== "object") return [];
   const record = raw as Record<string, unknown>;
@@ -82,6 +97,13 @@ export function normalizeClaudeStreamEvent(raw: unknown, state?: ClaudeStreamSta
     const events: AgentEvent[] = [];
     const sessionId = asString(record.session_id);
     if (sessionId) events.push({ type: "session", sessionId });
+
+    const subtype = asString(record.subtype);
+    if (subtype && subtype !== "success") {
+      const error = asString(record.error) || asString(record.result) || extractText(record) || "Claude Code error";
+      events.push({ type: "error", error });
+      return events;
+    }
 
     const text = asString(record.result) || extractText(record);
     if (text && state?.lastText && text.startsWith(state.lastText) && text !== state.lastText) {

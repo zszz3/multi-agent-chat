@@ -31,7 +31,8 @@ Chat 页面用于直接和 Agent 对话。
 - 选择 Channel / Provider 和模型。
 - 对正在运行的会话展示流式输出、工具事件、错误和运行状态。
 - 已经开始对齐 CLI 体验：Enter 发送、Shift+Enter 换行、会话历史、快捷搜索入口。
-- Codex 支持 `/status`、`/models`、`/plugins`、`/help` 等 slash command。
+- slash 补全按来源分组展示：`/app` 应用命令、runtime 原生命令元数据，以及当前本机 CLI 指纹下成功学到的 native command 建议。
+- Codex 可基于当前 runtime 元数据补全 `/model`、`/plugin`、`/skill`；本地 CLI runtime 的 learned native suggestion 只会在明确识别为无效命令时被立即逐出，网络/传输/退出类失败不会误删历史。
 
 如果一个会话已经开始和 Agent 对话，应用会锁定关键运行配置，避免同一条会话中途切换 Runtime / Channel / Model 导致上下文不一致。
 
@@ -282,6 +283,7 @@ npm run build
 常见本地数据：
 
 - `app.db`：聊天、任务、团队、Workflow、配置等持久化数据。
+- `app.db.runtime-commands.json`：runtime 命令覆盖和 learned native slash command 历史。
 - `model-channels.json`：Channel / Provider 配置。
 - renderer local storage：Provider Key / Token 等开发期本地凭据。
 - `.multi-agent-chat/`：Workflow 运行上下文和输出文档。

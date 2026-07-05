@@ -55,6 +55,7 @@ import type {
   RuntimeResumeCapabilities,
   RunTaskRequest,
   SendWorkflowDraftReplyRequest,
+  SlashCompletionGroup,
   StartWorkflowNodeRequest,
   ScheduledWorkflowFrequency,
   ScheduledWorkflowOperationResult,
@@ -103,7 +104,12 @@ import { CodexRpcClient } from "./agents/codex-rpc";
 import { codexEnvironmentForChannel } from "./agents/codex-env";
 import { claudeCliModelForChannel, claudeEnvironmentForChannel } from "./agents/claude-env";
 import { ClaudeRunner } from "./agents/claude-runner";
-import { createClaudeStreamState, normalizeClaudeStreamEvent } from "./agents/claude-stream";
+import {
+  classifyClaudeNativeCommandFailure,
+  createClaudeStreamState,
+  normalizeClaudeStreamEvent,
+} from "./agents/claude-stream";
+import { classifyCodexNativeCommandFailure } from "./agents/codex-events";
 import type { RuntimeCapabilities } from "./agents/runtime-capabilities";
 import type { InteractiveSessionContext } from "./agents/runtime-driver";
 import { createRuntimeDriverRegistry, RuntimeAgentExecutorFactory, RuntimeDriverRegistry, type AgentExecutorFactory } from "./agent-executor";
@@ -122,12 +128,17 @@ import {
 } from "./model-config";
 import { SqliteAppStore } from "./sqlite-store";
 import { resolveWorkDirFile } from "./local-file-preview";
+import { listSlashCompletionGroupsForRuntime, type RuntimeSlashCompletionInput } from "./runtime-command-completions";
 import {
   createEmptyRuntimeCommandState,
   loadOptionalRuntimeCommandState,
+  type NativeCommandFailureClassification,
+  recordNativeCommandFailure,
+  recordNativeCommandSuccess,
   runtimeCommandStatePathFor,
   saveRuntimeCommandState,
 } from "./runtime-command-store";
+import { listImportedSkillTemplates } from "./skill-installer";
 import { WorkflowRuntime, type WorkflowRunStateUpdate } from "./workflow-runtime";
 import { routeChatPrompt } from "./chat-command-router";
 const DEFAULT_AGENT: AgentId = "codex";
@@ -152,10 +163,35 @@ const MAX_WORKFLOW_OBJECTIVE_CHARS = 4000;
 const AGENT_TEST_TIMEOUT_MS = 45_000;
 const AGENT_TEST_PROMPT = "只回复 OK，不要调用任何工具。";
 
+interface PendingNativeSlashTurn {
+  runtimeId: AgentId;
+  cliFingerprint: string;
+  prompt: string;
+}
+
 interface ActiveWorkflowDraftRequest {
   requestId: string;
   assistantMessageId: string;
   content: string;
+}
+
+function isNativeSlashPrompt(prompt: string): boolean {
+  const trimmed = prompt.trimStart();
+  return trimmed.startsWith("/") && !trimmed.toLowerCase().startsWith("/app");
+}
+
+function classifyNativeCommandFailure(input: {
+  runtimeId: AgentId;
+  prompt: string;
+  error: string;
+}): NativeCommandFailureClassification {
+  if (input.runtimeId === "codex") {
+    return classifyCodexNativeCommandFailure({ prompt: input.prompt, error: input.error });
+  }
+  if (input.runtimeId === "claude") {
+    return classifyClaudeNativeCommandFailure({ prompt: input.prompt, error: input.error });
+  }
+  return "runtime_failure";
 }
 
 export function createWorkflowAgentTimeout(input: { timeoutMs: number; onTimeout: () => void }): { refresh: () => void; clear: () => void } {
@@ -1098,6 +1134,7 @@ class ChatState {
   title: string;
   sessionId: string | undefined = undefined;
   runtimeSession: ChatRuntimeSessionState | undefined = undefined;
+  pendingNativeSlashTurn: PendingNativeSlashTurn | undefined = undefined;
   running = false;
   messages: ChatMessage[] = [];
   pendingAssistantMessageId: string | undefined = undefined;
@@ -1533,6 +1570,41 @@ export class AgentHub {
       runtimeCommandConfigs: this.runtimeCommandConfigs.map((config) => cloneRuntimeCommandConfig(config)),
       learnedNativeCommands: this.learnedNativeCommands.map((record) => cloneLearnedNativeCommandRecord(record)),
     };
+  }
+
+  private managedBundledSkillsRoot(): string | undefined {
+    const anchor = this.storagePath ?? this.modelConfigPath;
+    return anchor ? path.join(path.dirname(anchor), "bundled-skills") : undefined;
+  }
+
+  private finalizeNativeSlashSuccess(run: RunState): void {
+    if (run.kind !== "chat" || !run.pendingNativeSlashTurn) return;
+    const nextState = recordNativeCommandSuccess(this.buildRuntimeCommandState(), {
+      runtimeId: run.pendingNativeSlashTurn.runtimeId,
+      cliFingerprint: run.pendingNativeSlashTurn.cliFingerprint,
+      prompt: run.pendingNativeSlashTurn.prompt,
+      at: Date.now(),
+    });
+    this.learnedNativeCommands = nextState.learnedNativeCommands.map((record) => cloneLearnedNativeCommandRecord(record));
+    run.pendingNativeSlashTurn = undefined;
+  }
+
+  private finalizeNativeSlashFailure(run: RunState, error: string, classification?: NativeCommandFailureClassification): void {
+    if (run.kind !== "chat" || !run.pendingNativeSlashTurn) return;
+    const nextState = recordNativeCommandFailure(this.buildRuntimeCommandState(), {
+      runtimeId: run.pendingNativeSlashTurn.runtimeId,
+      cliFingerprint: run.pendingNativeSlashTurn.cliFingerprint,
+      prompt: run.pendingNativeSlashTurn.prompt,
+      classification:
+        classification ??
+        classifyNativeCommandFailure({
+          runtimeId: run.pendingNativeSlashTurn.runtimeId,
+          prompt: run.pendingNativeSlashTurn.prompt,
+          error,
+        }),
+    });
+    this.learnedNativeCommands = nextState.learnedNativeCommands.map((record) => cloneLearnedNativeCommandRecord(record));
+    run.pendingNativeSlashTurn = undefined;
   }
 
   private normalizeModelIdForConfiguredAgent(configuredAgentId: string | undefined, modelId: string | undefined): string {
@@ -2434,6 +2506,65 @@ export class AgentHub {
     return this.workDir;
   }
 
+  async listSlashCompletionGroups(chatId: string, input: string): Promise<SlashCompletionGroup[]> {
+    const chat = this.chats.get(chatId);
+    if (!chat) return [];
+    const resolved = this.resolveConfiguredAgent(chat.configuredAgentId, chat.modelId);
+    const runtimeId = resolved?.runtimeAgentId ?? "codex";
+    const runtime = resolved?.runtime ?? this.runtimes.get(runtimeId);
+
+    let codexModels: Array<{ id: string }> = [];
+    let codexPlugins: Array<{ id: string }> = [];
+    if (runtimeId === "codex" && resolved?.runtime?.available) {
+      try {
+        const metadata = await this.withCodexAppServer(chat, async (client) => ({
+          models: (await this.readCodexModels(client))
+            .map((item) => asRecord(item))
+            .map((item) => asOptionalString(item?.id) ?? asOptionalString(item?.model))
+            .filter((item): item is string => Boolean(item))
+            .map((id) => ({ id })),
+          plugins: this.codexPluginSummaries(await client.request("plugin/list", { cwds: [this.workDir] })).map((plugin) => ({ id: plugin.id })),
+        }));
+        codexModels = metadata.models;
+        codexPlugins = metadata.plugins;
+      } catch {
+        codexModels = [];
+        codexPlugins = [];
+      }
+    }
+
+    let importedSkills: Array<{ id: string; name: string; description: string }> = [];
+    if (runtimeId === "codex") {
+      const bundledSkillsRoot = this.managedBundledSkillsRoot();
+      if (bundledSkillsRoot) {
+        try {
+          importedSkills = (await listImportedSkillTemplates(bundledSkillsRoot)).map((skill) => ({
+            id: skill.id,
+            name: skill.name,
+            description: skill.description,
+          }));
+        } catch {
+          importedSkills = [];
+        }
+      }
+    }
+
+    const slashCompletionInput: RuntimeSlashCompletionInput = {
+      runtimeId,
+      input,
+      learnedNativeCommands: this.learnedNativeCommands.map((record) => cloneLearnedNativeCommandRecord(record)),
+      codexModels,
+      codexPlugins,
+      importedSkills,
+      claudeCommands: [],
+    };
+    if (runtime?.fingerprint) {
+      slashCompletionInput.cliFingerprint = runtime.fingerprint;
+    }
+
+    return listSlashCompletionGroupsForRuntime(slashCompletionInput);
+  }
+
   snapshot(): AppSnapshot {
     return {
       detectedAt: Date.now(),
@@ -2609,6 +2740,7 @@ export class AgentHub {
     if (!chat || chat.running) return;
     const trimmedPrompt = prompt.trim();
     if (!trimmedPrompt) return;
+    chat.pendingNativeSlashTurn = undefined;
 
     const appRoute = routeChatPrompt("codex", trimmedPrompt);
     if (appRoute.kind === "app_command") {
@@ -2644,6 +2776,13 @@ export class AgentHub {
       chat.updatedAt = Date.now();
       this.emit();
       return;
+    }
+    if (route.kind === "runtime_slash" && resolved.runtime.fingerprint && isNativeSlashPrompt(forwardedPrompt)) {
+      chat.pendingNativeSlashTurn = {
+        runtimeId: resolved.runtimeAgentId,
+        cliFingerprint: resolved.runtime.fingerprint,
+        prompt: forwardedPrompt,
+      };
     }
 
     const driver = this.runtimeDrivers.driverFor(resolved.runtimeAgentId);
@@ -3003,6 +3142,7 @@ export class AgentHub {
     const stop = this.activeStops.get(chatId);
     this.activeStops.delete(chatId);
     if (stop) await stop();
+    this.finalizeNativeSlashFailure(chat, "Stopped", "interrupted");
     chat.running = false;
     if (chat.runtimeSession) {
       chat.runtimeSession.attachmentState = "interrupted";
@@ -3985,9 +4125,11 @@ export class AgentHub {
   }
 
   private markRunFailed(run: RunState, error: string): void {
+    this.finalizeNativeSlashFailure(run, error);
     run.running = false;
     run.lastError = error;
     if (run.kind === "task") run.status = "failed";
+    run.pendingAssistantMessageId = undefined;
     run.messages.push(createErrorMessage(error));
     run.updatedAt = Date.now();
     this.activeStops.delete(run.id);
@@ -4015,7 +4157,10 @@ export class AgentHub {
       developerInstructions,
       emit: (event) => this.handleAgentEvent(run, event),
       onExit: (code) => {
-        if (resolved.runtimeAgentId === "claude" && typeof code === "number" && code !== 0) run.lastError = `Claude exited with code ${code}`;
+        if (resolved.runtimeAgentId === "claude" && typeof code === "number" && code !== 0) {
+          run.lastError = `Claude exited with code ${code}`;
+          this.finalizeNativeSlashFailure(run, run.lastError, "runtime_failure");
+        }
         this.markRunExited(run);
         run.updatedAt = Date.now();
         this.activeStops.delete(run.id);
@@ -4460,6 +4605,7 @@ export class AgentHub {
     }
 
     if (event.type === "completed") {
+      this.finalizeNativeSlashSuccess(run);
       touchRuntimeSession("idle", true);
       if (event.content) {
         if (!run.pendingAssistantMessageId) {
@@ -4482,6 +4628,7 @@ export class AgentHub {
     }
 
     if (event.type === "error") {
+      this.finalizeNativeSlashFailure(run, event.error);
       touchRuntimeSession("interrupted", true);
       run.lastError = event.error;
       run.messages.push(createErrorMessage(event.error));

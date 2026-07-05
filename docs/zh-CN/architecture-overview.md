@@ -59,6 +59,8 @@ Renderer 触发操作
   -> renderer 更新界面
 ```
 
+Chat 的 slash completion 查询也走同一条 main-owned 边界：renderer 通过 IPC 请求补全分组，`AgentHub` 再基于应用命令、runtime 元数据和 learned native history 返回结果。这个查询没有继续塞进 `AppSnapshot`，因为它依赖 runtime 指纹、导入 skill 清单和运行时元数据。
+
 这个项目的 renderer 不是业务状态真源，真正的状态中心在主进程。
 
 ## 4. 各层职责概览
@@ -131,12 +133,15 @@ Renderer 触发操作
 
 renderer 基本上把这个 snapshot 当成“唯一业务状态源”。这也是为什么很多改动需要同时动 `shared types`、`main` 和 `renderer`。
 
+但也有少量状态故意不进入 `AppSnapshot`。例如 chat-native slash turn 的 pending bookkeeping 只用于主进程在一次 CLI turn 完成后记录成功或逐出 learned suggestion，不会持久化到 renderer snapshot，也不会泄露到 task / workflow 运行态。
+
 ## 6. 持久化方式
 
 当前持久化设计比较务实，重点不是复杂数据库建模，而是稳定存储应用快照和运行产物：
 
 - `app.db`：应用主状态
 - `app-chats.json`：聊天历史
+- `app.db.runtime-commands.json`：runtime 命令覆盖和按 runtime 指纹分区的 learned native slash history
 - `model-channels.json`：模型通道与 provider 配置
 - `.multi-agent-chat/workflows/...`：工作流运行上下文与产物
 
@@ -172,6 +177,13 @@ renderer 基本上把这个 snapshot 当成“唯一业务状态源”。这也�
 - API：直接 `fetch` 到兼容接口，保持 stateless one-shot
 
 `AgentHub` 仍然是状态真源，但逻辑 chat identity、resume metadata 和恢复归一化在 `AgentHub`，interactive 进程的附着、串行执行、空闲回收则由 `InteractiveSessionManager` 与 runtime-specific session helper 负责。
+
+native slash completion / learning 也沿用这条主进程边界：
+
+- `/app ...` 仍然只属于应用本地命名空间，不会被当成 native command 学习
+- learned native command 只从本地 CLI chat 的成功 turn 里记录
+- learned history 按 runtime id + CLI fingerprint 分区，避免跨安装串味
+- 只有 runtime-specific 的明确 invalid-command 证据才会逐出 learned entry；网络、传输、generic exit 和含糊错误不会误删历史
 
 ## 8. 前端组织方式
 

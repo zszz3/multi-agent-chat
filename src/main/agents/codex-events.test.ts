@@ -1,5 +1,5 @@
 import { describe, expect, test } from "vitest";
-import { createCodexStreamState, normalizeCodexNotification } from "./codex-events";
+import { classifyCodexNativeCommandFailure, createCodexStreamState, normalizeCodexNotification } from "./codex-events";
 
 describe("normalizeCodexNotification", () => {
   test("streams item agent message deltas", () => {
@@ -89,5 +89,14 @@ describe("normalizeCodexNotification", () => {
     expect(normalizeCodexNotification("turn/completed", { turn: { status: "completed" } }, state)).toEqual([
       { type: "completed" },
     ]);
+  });
+
+  test("classifies codex RPC unknown slash errors as invalid_command", () => {
+    expect(
+      classifyCodexNativeCommandFailure({
+        prompt: "/foo",
+        error: "turn/start: unknown slash command /foo",
+      }),
+    ).toBe("invalid_command");
   });
 });

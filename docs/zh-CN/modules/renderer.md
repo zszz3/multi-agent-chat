@@ -118,6 +118,14 @@ renderer 不是业务真源，业务状态主要来自主进程推送的 `AppSna
 - slash command 辅助
 - chat 配置锁定逻辑
 
+这里的 slash completion 渲染要保持“前端只展示、主进程做判断”的边界：
+
+- renderer 通过 preload / IPC 请求补全分组
+- chat UI 渲染这些 group 和 item
+- 不要在 renderer 里根据 `AppSnapshot` 自己拼 runtime-native command 列表
+
+原因是 native suggestion 依赖主进程里的 runtime 元数据和 learned history。比如 Codex 可以补全当前 model / plugin / imported skill，而 API runtime 不应该显示 learned native CLI suggestion。
+
 ### Config / Runtime
 
 这两块都和“Agent 可运行性”有关，但职责不同：
@@ -195,3 +203,4 @@ renderer 这层当前已有的关键测试之一是：
 - 能抽成 helper 的业务判断不要埋在 JSX 里
 - 可复用的前端逻辑移动到 `app/` 或 `ui/`
 - 只要改动跨 main / renderer 边界，优先先改 `shared` 类型
+- slash completion 的智能判断留在 main；renderer 负责展示结果，不负责推断 native runtime 行为

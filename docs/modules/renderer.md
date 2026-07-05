@@ -125,6 +125,14 @@ Files under `pages/chat/` handle:
 - slash command suggestions
 - chat configuration lock behavior
 
+Slash suggestion rendering in the renderer should stay declarative:
+
+- ask main for grouped slash completions
+- render the groups in the chat UI
+- avoid reconstructing runtime-native command catalogs from `AppSnapshot`
+
+That boundary matters because native suggestions depend on runtime metadata and learned native history that only exist in main. For example, Codex may expose current model/plugin/skill metadata, while API runtimes should never show learned native CLI suggestions.
+
 ### Config and Runtime
 
 These pages handle:
@@ -204,3 +212,4 @@ Because `App.tsx` is still the integration root, renderer regressions often surf
 - keep business rules out of JSX when shared helpers can express them more clearly
 - if a page helper is reusable across pages, move it to `app/` or `ui/`
 - when a change spans renderer and backend, update shared types first so the boundary stays explicit
+- keep slash completion intelligence in main; renderer should render the result, not infer native runtime behavior

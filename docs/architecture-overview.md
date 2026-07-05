@@ -59,6 +59,8 @@ Renderer UI action
   -> renderer state refresh
 ```
 
+Chat slash completion lookup follows the same boundary: the renderer asks main over IPC, and `AgentHub` resolves grouped completions from app commands, runtime metadata, and learned native history. That lookup is intentionally main-owned because it depends on runtime fingerprints and metadata that do not live in `AppSnapshot`.
+
 ## 4. Main Architectural Responsibilities
 
 ### Main Process
@@ -125,12 +127,15 @@ Important state domains include:
 
 The renderer treats this snapshot as its source of truth. Instead of maintaining a second business-state store in the UI, most mutations go through the main process and return an updated snapshot.
 
+Some main-process state is intentionally ephemeral and does not enter `AppSnapshot`. A current example is pending native slash bookkeeping for interactive chats: it is used to learn or evict native command suggestions after a turn completes, but it is not persisted or exposed to the renderer.
+
 ## 6. Persistence Model
 
 Persistence is intentionally simple:
 
 - `app.db`: application state store in SQLite
 - `app-chats.json`: chat history persistence path loaded by `AgentHub`
+- `app.db.runtime-commands.json`: runtime command overrides plus learned native slash history partitioned by runtime id and CLI fingerprint
 - `model-channels.json`: channel/provider configuration persistence path loaded by `AgentHub`
 - `.multi-agent-chat/workflows/...`: workflow run outputs and context stored in the active work directory
 
@@ -158,6 +163,13 @@ Each runtime still has a different backend:
 - API: direct HTTP request to provider-compatible endpoints
 
 `AgentHub` remains the state authority. It persists logical chat identity and runtime resume metadata, restores interactive chats in a detached state after app restart, and lets `InteractiveSessionManager` own serialized per-chat execution and idle sweeping.
+
+Native slash completion and learning stay scoped to local CLI chats:
+
+- `/app ...` remains the app-local namespace and is never learned as a native command
+- native command history is learned only from successful chat turns for local CLI runtimes
+- learned history is partitioned by runtime id and runtime fingerprint so stale suggestions do not bleed across installations
+- eviction is conservative and runtime-specific: only explicit invalid-command evidence clears a learned entry, while transport failures, generic exits, and ambiguous runtime errors do not
 
 The same high-level concepts are reused across chat, task, and workflow execution:
 

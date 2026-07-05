@@ -3,6 +3,7 @@ import path from "node:path";
 import type { AgentId, LearnedNativeCommandRecord, RuntimeCommandConfig } from "../shared/types";
 
 const RUNTIME_COMMAND_STATE_VERSION = 1;
+export type NativeCommandFailureClassification = "invalid_command" | "transport_failure" | "runtime_failure" | "interrupted";
 
 export interface RuntimeCommandStateFile {
   version: typeof RUNTIME_COMMAND_STATE_VERSION;
@@ -54,6 +55,16 @@ export function createEmptyRuntimeCommandState(): RuntimeCommandStateFile {
     runtimeCommandConfigs: [],
     learnedNativeCommands: [],
   };
+}
+
+function commandStemFromPrompt(prompt: string): string {
+  return prompt.trim().split(/\s+/, 1)[0] ?? "";
+}
+
+function shouldTrackNativeCommand(runtimeId: AgentId, prompt: string): boolean {
+  if (runtimeId === "api") return false;
+  const stem = commandStemFromPrompt(prompt);
+  return stem.startsWith("/") && stem !== "/app";
 }
 
 export function normalizeRuntimeCommandState(state: RuntimeCommandStateFile): RuntimeCommandStateFile {
@@ -176,4 +187,68 @@ export async function saveRuntimeCommandState(filePath: string, state: RuntimeCo
   const tempPath = `${filePath}.${process.pid}.${Date.now()}.tmp`;
   await writeFile(tempPath, `${JSON.stringify(normalized, null, 2)}\n`, "utf8");
   await rename(tempPath, filePath);
+}
+
+export function recordNativeCommandSuccess(
+  state: RuntimeCommandStateFile,
+  input: { runtimeId: AgentId; cliFingerprint: string; prompt: string; at: number },
+): RuntimeCommandStateFile {
+  if (!shouldTrackNativeCommand(input.runtimeId, input.prompt) || !input.cliFingerprint.trim()) return state;
+  const commandStem = commandStemFromPrompt(input.prompt);
+  const existing = state.learnedNativeCommands.find(
+    (item) =>
+      item.runtimeId === input.runtimeId &&
+      item.cliFingerprint === input.cliFingerprint &&
+      item.commandStem === commandStem,
+  );
+  const nextRecord: LearnedNativeCommandRecord = existing
+    ? {
+        ...existing,
+        example: input.prompt.trim(),
+        successCount: existing.successCount + 1,
+        lastUsedAt: input.at,
+      }
+    : {
+        runtimeId: input.runtimeId,
+        cliFingerprint: input.cliFingerprint,
+        commandStem,
+        example: input.prompt.trim(),
+        successCount: 1,
+        lastUsedAt: input.at,
+      };
+  return normalizeRuntimeCommandState({
+    ...state,
+    learnedNativeCommands: [
+      ...state.learnedNativeCommands.filter(
+        (item) =>
+          !(
+            item.runtimeId === input.runtimeId &&
+            item.cliFingerprint === input.cliFingerprint &&
+            item.commandStem === commandStem
+          ),
+      ),
+      nextRecord,
+    ],
+  });
+}
+
+export function recordNativeCommandFailure(
+  state: RuntimeCommandStateFile,
+  input: { runtimeId: AgentId; cliFingerprint: string; prompt: string; classification: NativeCommandFailureClassification },
+): RuntimeCommandStateFile {
+  if (input.classification !== "invalid_command" || !shouldTrackNativeCommand(input.runtimeId, input.prompt) || !input.cliFingerprint.trim()) {
+    return state;
+  }
+  const commandStem = commandStemFromPrompt(input.prompt);
+  return normalizeRuntimeCommandState({
+    ...state,
+    learnedNativeCommands: state.learnedNativeCommands.filter(
+      (item) =>
+        !(
+          item.runtimeId === input.runtimeId &&
+          item.cliFingerprint === input.cliFingerprint &&
+          item.commandStem === commandStem
+        ),
+    ),
+  });
 }

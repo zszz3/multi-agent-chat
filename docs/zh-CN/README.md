@@ -4,10 +4,10 @@
 
 ## 文档列表
 
-- `architecture-overview.md`：项目整体架构、运行流程、`oneshot` / `interactive` 执行边界和数据流
-- `modules/main.md`：Electron 主进程、应用状态中心和 interactive runtime / session 编排文档
+- `architecture-overview.md`：项目整体架构、运行流程、`oneshot` / `interactive` 执行边界，以及 main-owned slash completion / native command 学习与持久化边界
+- `modules/main.md`：Electron 主进程、应用状态中心、interactive runtime / session 编排，以及 native slash completion provider / learned history 文档
 - `modules/preload.md`：preload 桥接层开发文档
-- `modules/renderer.md`：React 渲染层和页面模块开发文档
+- `modules/renderer.md`：React 渲染层、页面模块，以及 chat slash completion 渲染边界文档
 - `modules/shared.md`：共享类型、预设、工作流图辅助逻辑和技能元数据文档
 - `modules/mcp.md`：MCP 服务与 bridge 集成开发文档
 

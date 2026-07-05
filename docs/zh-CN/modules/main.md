@@ -23,6 +23,8 @@
 - `agents/interactive-session-manager.ts`：interactive runtime 的按 chat 排队和 idle-detach 编排
 - `agents/codex-interactive-session.ts`：可复用的 Codex chat attachment
 - `agents/claude-interactive-session.ts`：可复用的 Claude chat attachment
+- `runtime-command-completions.ts`：应用命令、runtime 元数据和 learned native history 的 slash completion provider
+- `runtime-command-store.ts`：runtime 命令覆盖与 learned native command 持久化
 - `model-config.ts`：channel 归一化、配置导入导出、Codex 配置生成
 - `provider-balance.ts`：provider 余额查询
 - `scheduled-workflow-cloud.ts`：调度工作流的云端同步逻辑
@@ -62,6 +64,8 @@
 - 发送 prompt，收集事件流，写回 chat session
 - 在应用重启后把 interactive chat 恢复成 `detached` 的安全状态
 - 统一协调 interactive session 的 idle sweep 与恢复路径
+- 解析 chat slash completion 分组并提供 main-owned native metadata
+- 对 chat-only 的 native slash turn 记录 learned success / eviction
 - 创建、运行、停止 task
 - 创建和运行 team / team run
 - 管理 workflow store、workflow draft 和 workflow run
@@ -70,6 +74,25 @@
 很多“看起来像前端功能”的问题，真正的逻辑都在 `AgentHub`。
 
 如果你要查一个功能改动真正落在哪里，优先看这里。
+
+## Slash Completion 边界
+
+slash completion 查询故意放在主进程：
+
+- renderer 只负责请求和渲染分组
+- `AgentHub` 决定有哪些 completion group
+- `/app` 命令来自共享应用命令定义
+- runtime-native metadata 由 runtime-aware provider 提供，例如 Codex model / plugin / imported skill
+- learned native suggestion 来自主进程持久化的成功历史，并按 runtime id + CLI fingerprint 分区
+
+不要试图仅靠 `AppSnapshot` 在 renderer 里重建这套逻辑。runtime 指纹、导入 skill 清单和当前 Codex 元数据本来就是 main 才有的上下文。
+
+native slash outcome tracking 也只属于 chat：
+
+- 只有 chat 的 runtime slash turn 会创建 pending bookkeeping
+- success、显式 error、start failure、stop/interruption、Claude exit-only failure 都会结束这段 bookkeeping
+- task / workflow 不复用这套 native slash 学习状态
+- 只有明确 invalid-command 证据才会逐出 learned history；其余失败保持 transport / runtime failure 的保守分类
 
 ## 执行层
 
@@ -129,6 +152,7 @@
 
 - `hub.loadModelChannels(...)`
 - `hub.loadPersistedState(...)`
+- `runtimeCommandStatePathFor(...)`
 - `SqliteAppStore`
 
 当前持久化特点：
@@ -142,6 +166,13 @@
 - 保持旧数据兼容
 - 保持可选字段容错
 - 确保序列化后的快照还能被恢复
+
+runtime command 的持久化与主 snapshot 分开。`<storage-path>.runtime-commands.json` 负责保存：
+
+- runtime 命令 override
+- learned native slash command history
+
+其中 learned history 按 runtime id 和 CLI fingerprint 分区，避免旧建议跨本地安装误用。
 
 ## Scheduled Workflow
 
@@ -179,6 +210,8 @@ renderer 只负责展示和触发，不应该自己处理：
 这一层的关键测试大多已经与源码放在一起，例如：
 
 - `agent-hub.test.ts`
+- `runtime-command-store.test.ts`
+- `runtime-command-completions.test.ts`
 - `mcp-bridge.test.ts`
 - `model-config.test.ts`
 - `provider-balance.test.ts`

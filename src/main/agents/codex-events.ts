@@ -1,4 +1,5 @@
 import type { AgentEvent } from "../../shared/types";
+import type { NativeCommandFailureClassification } from "../runtime-command-store";
 
 export interface CodexStreamState {
   lastText: string;
@@ -112,6 +113,20 @@ function extractItemText(item: Record<string, unknown> | undefined): string {
   }
 
   return "";
+}
+
+function isTransportFailureMessage(message: string): boolean {
+  return /\b(?:enoent|econnrefused|econnreset|timed out|timeout|connection|spawn)\b/i.test(message);
+}
+
+export function classifyCodexNativeCommandFailure(input: {
+  prompt: string;
+  error: string;
+}): NativeCommandFailureClassification {
+  if (!input.prompt.trimStart().startsWith("/")) return "runtime_failure";
+  if (/\b(?:unknown|unsupported|invalid)\s+slash\s+command\b/i.test(input.error)) return "invalid_command";
+  if (isTransportFailureMessage(input.error)) return "transport_failure";
+  return "runtime_failure";
 }
 
 export function normalizeCodexNotification(

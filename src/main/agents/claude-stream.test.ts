@@ -1,5 +1,5 @@
 import { describe, expect, test } from "vitest";
-import { createClaudeStreamState, normalizeClaudeStreamEvent } from "./claude-stream";
+import { classifyClaudeNativeCommandFailure, createClaudeStreamState, normalizeClaudeStreamEvent } from "./claude-stream";
 
 describe("normalizeClaudeStreamEvent", () => {
   test("extracts assistant text from Claude stream-json messages", () => {
@@ -81,5 +81,28 @@ describe("normalizeClaudeStreamEvent", () => {
       { type: "session", sessionId: "session-123" },
       { type: "completed" },
     ]);
+  });
+
+  test("maps result error payloads to error events", () => {
+    expect(
+      normalizeClaudeStreamEvent({
+        type: "result",
+        subtype: "error",
+        session_id: "session-123",
+        result: "Unknown slash command /foo",
+      }),
+    ).toEqual([
+      { type: "session", sessionId: "session-123" },
+      { type: "error", error: "Unknown slash command /foo" },
+    ]);
+  });
+
+  test("classifies generic Claude exit failures as runtime_failure instead of invalid_command", () => {
+    expect(
+      classifyClaudeNativeCommandFailure({
+        prompt: "/foo",
+        error: "Claude exited with code 1",
+      }),
+    ).toBe("runtime_failure");
   });
 });
