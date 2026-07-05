@@ -7,6 +7,21 @@ interface UseSlashCommandCompletionsInput {
   runtimeId: AgentId;
 }
 
+export async function listSlashCompletionsFromApi(
+  api: {
+    listSlashCompletions?: (chatId: string, input: string) => Promise<SlashCompletionGroup[]>;
+  },
+  chatId: string,
+  input: string,
+): Promise<SlashCompletionGroup[]> {
+  if (typeof api.listSlashCompletions !== "function") return [];
+  try {
+    return await api.listSlashCompletions(chatId, input);
+  } catch {
+    return [];
+  }
+}
+
 export function useSlashCommandCompletions(input: UseSlashCommandCompletionsInput): SlashCompletionGroup[] {
   const [groups, setGroups] = useState<SlashCompletionGroup[]>([]);
 
@@ -18,13 +33,9 @@ export function useSlashCommandCompletions(input: UseSlashCommandCompletionsInpu
     }
 
     let cancelled = false;
-    void window.multiAgentChat
-      .listSlashCompletions(input.chatId, input.prompt)
+    void listSlashCompletionsFromApi(window.multiAgentChat, input.chatId, input.prompt)
       .then((next) => {
         if (!cancelled) setGroups(next);
-      })
-      .catch(() => {
-        if (!cancelled) setGroups([]);
       });
 
     return () => {
