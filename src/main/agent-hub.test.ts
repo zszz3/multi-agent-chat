@@ -1630,7 +1630,7 @@ fs.writeFileSync(${JSON.stringify(argsPath)}, process.argv.slice(2).join("\\n") 
     }
   });
 
-  test("reuses cached Claude slash metadata across repeated completion lookups", async () => {
+  test("reuses cached Claude slash metadata within the cache window", async () => {
     const homeDir = await mkdtemp(path.join(os.tmpdir(), "multi-agent-chat-claude-slash-cache-home-"));
     const workDir = path.join(homeDir, "workspace");
     const commandPath = path.join(workDir, ".claude", "commands", "frontend", "component.md");
@@ -1648,6 +1648,8 @@ fs.writeFileSync(${JSON.stringify(argsPath)}, process.argv.slice(2).join("\\n") 
       "utf8",
     );
 
+    vi.useFakeTimers();
+    vi.setSystemTime(new Date("2026-07-05T00:00:00.000Z"));
     vi.stubEnv("HOME", homeDir);
     vi.stubEnv("USERPROFILE", homeDir);
     try {
@@ -1680,6 +1682,7 @@ fs.writeFileSync(${JSON.stringify(argsPath)}, process.argv.slice(2).join("\\n") 
         "utf8",
       );
 
+      vi.advanceTimersByTime(1_000);
       const secondGroups = await hub.listSlashCompletionGroups(chat.id, "/");
       const secondMetadata = secondGroups.find((group) => group.id === "native_metadata");
       expect(secondMetadata?.items).toEqual(
@@ -1691,6 +1694,76 @@ fs.writeFileSync(${JSON.stringify(argsPath)}, process.argv.slice(2).join("\\n") 
         ]),
       );
     } finally {
+      vi.useRealTimers();
+      vi.unstubAllEnvs();
+    }
+  });
+
+  test("refreshes cached Claude slash metadata after the cache window elapses", async () => {
+    const homeDir = await mkdtemp(path.join(os.tmpdir(), "multi-agent-chat-claude-slash-refresh-home-"));
+    const workDir = path.join(homeDir, "workspace");
+    const commandPath = path.join(workDir, ".claude", "commands", "frontend", "component.md");
+    await mkdir(path.dirname(commandPath), { recursive: true });
+    await writeFile(
+      commandPath,
+      [
+        "---",
+        'description: "Initial frontend component description."',
+        "---",
+        "",
+        "Create a component.",
+        "",
+      ].join("\n"),
+      "utf8",
+    );
+
+    vi.useFakeTimers();
+    vi.setSystemTime(new Date("2026-07-05T00:00:00.000Z"));
+    vi.stubEnv("HOME", homeDir);
+    vi.stubEnv("USERPROFILE", homeDir);
+    try {
+      const hub = new AgentHub({ codex: "missing-codex-for-test", claude: "missing-claude-for-test" });
+      addConfiguredAgents(hub, [configuredAgent("claude-agent", { runtimeAgentId: "claude", name: "Claude Agent" })]);
+      hub.setWorkDir(workDir);
+      const chat = hub.createChat("claude-agent");
+
+      const firstGroups = await hub.listSlashCompletionGroups(chat.id, "/");
+      const firstMetadata = firstGroups.find((group) => group.id === "native_metadata");
+      expect(firstMetadata?.items).toEqual(
+        expect.arrayContaining([
+          expect.objectContaining({
+            id: "claude:frontend:component",
+            description: "Initial frontend component description.",
+          }),
+        ]),
+      );
+
+      await writeFile(
+        commandPath,
+        [
+          "---",
+          'description: "Updated description that should appear after cache expiry."',
+          "---",
+          "",
+          "Create a component.",
+          "",
+        ].join("\n"),
+        "utf8",
+      );
+
+      vi.advanceTimersByTime(10_000);
+      const secondGroups = await hub.listSlashCompletionGroups(chat.id, "/");
+      const secondMetadata = secondGroups.find((group) => group.id === "native_metadata");
+      expect(secondMetadata?.items).toEqual(
+        expect.arrayContaining([
+          expect.objectContaining({
+            id: "claude:frontend:component",
+            description: "Updated description that should appear after cache expiry.",
+          }),
+        ]),
+      );
+    } finally {
+      vi.useRealTimers();
       vi.unstubAllEnvs();
     }
   });

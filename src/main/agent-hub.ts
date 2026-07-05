@@ -162,6 +162,7 @@ const MAX_WORKFLOW_TEXT_ARTIFACT_CHARS = 8000;
 const MAX_WORKFLOW_TITLE_CHARS = 160;
 const MAX_WORKFLOW_OBJECTIVE_CHARS = 4000;
 const AGENT_TEST_TIMEOUT_MS = 45_000;
+const CLAUDE_SLASH_METADATA_CACHE_TTL_MS = 5_000;
 const AGENT_TEST_PROMPT = "只回复 OK，不要调用任何工具。";
 
 interface PendingNativeSlashTurn {
@@ -179,6 +180,7 @@ interface ClaudeCommandMetadata {
 
 interface CachedMetadataEntry<T> {
   value?: T;
+  loadedAt?: number;
   inFlight?: Promise<T>;
 }
 
@@ -2624,13 +2626,16 @@ export class AgentHub {
   private async getClaudeSlashMetadata(workDir: string): Promise<ClaudeCommandMetadata[]> {
     const key = this.claudeSlashMetadataCacheKey(workDir);
     const cached = this.claudeSlashMetadataCache.get(key);
-    if (cached?.value) return cached.value;
     if (cached?.inFlight) return cached.inFlight;
+    if (cached?.value && cached.loadedAt !== undefined && Date.now() - cached.loadedAt < CLAUDE_SLASH_METADATA_CACHE_TTL_MS) {
+      return cached.value;
+    }
 
-    const entry: CachedMetadataEntry<ClaudeCommandMetadata[]> = {};
+    const entry: CachedMetadataEntry<ClaudeCommandMetadata[]> = cached ?? {};
     const load = loadClaudeSlashMetadata(workDir)
       .then((metadata) => {
         entry.value = metadata;
+        entry.loadedAt = Date.now();
         delete entry.inFlight;
         return metadata;
       })
