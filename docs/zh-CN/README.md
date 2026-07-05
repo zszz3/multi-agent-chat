@@ -4,8 +4,8 @@
 
 ## 文档列表
 
-- `architecture-overview.md`：项目整体架构、运行流程、模块边界和数据流
-- `modules/main.md`：Electron 主进程和应用状态中心开发文档
+- `architecture-overview.md`：项目整体架构、运行流程、`oneshot` / `interactive` 执行边界和数据流
+- `modules/main.md`：Electron 主进程、应用状态中心和 interactive runtime / session 编排文档
 - `modules/preload.md`：preload 桥接层开发文档
 - `modules/renderer.md`：React 渲染层和页面模块开发文档
 - `modules/shared.md`：共享类型、预设、工作流图辅助逻辑和技能元数据文档
@@ -23,7 +23,7 @@
 
 ## 按改动范围选文档
 
-- 改桌面生命周期、IPC、持久化、Agent 执行：看 `modules/main.md`
+- 改桌面生命周期、IPC、持久化、runtime 附着或恢复行为：看 `modules/main.md`
 - 改 renderer 可调用 API：看 `modules/preload.md`
 - 改页面、布局、交互、前端状态组织：看 `modules/renderer.md`
 - 改跨层数据结构、共享辅助逻辑：看 `modules/shared.md`

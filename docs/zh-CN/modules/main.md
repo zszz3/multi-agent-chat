@@ -18,7 +18,11 @@
 
 - `index.ts`：Electron 启动、窗口创建、IPC 注册、本地服务启动
 - `agent-hub.ts`：应用状态中心和主要业务编排层
-- `agent-executor.ts`：Codex / Claude / API 的统一执行适配层
+- `agent-executor.ts`：薄 runtime driver registry 和 one-shot 执行桥
+- `agents/runtime-driver.ts`：共享 runtime capability 与 interactive session 契约
+- `agents/interactive-session-manager.ts`：interactive runtime 的按 chat 排队和 idle-detach 编排
+- `agents/codex-interactive-session.ts`：可复用的 Codex chat attachment
+- `agents/claude-interactive-session.ts`：可复用的 Claude chat attachment
 - `model-config.ts`：channel 归一化、配置导入导出、Codex 配置生成
 - `provider-balance.ts`：provider 余额查询
 - `scheduled-workflow-cloud.ts`：调度工作流的云端同步逻辑
@@ -56,6 +60,8 @@
 - 管理 configured agents 和 channels
 - 创建、切换、删除 chat
 - 发送 prompt，收集事件流，写回 chat session
+- 在应用重启后把 interactive chat 恢复成 `detached` 的安全状态
+- 统一协调 interactive session 的 idle sweep 与恢复路径
 - 创建、运行、停止 task
 - 创建和运行 team / team run
 - 管理 workflow store、workflow draft 和 workflow run
@@ -67,22 +73,27 @@
 
 ## 执行层
 
-执行统一入口是 `RuntimeAgentExecutorFactory`。
+执行层现在明确分成两种风格：
 
-它根据 runtime 选择不同后端：
+- `oneshot`：每次 task、workflow 或 stateless API 调用各起一次执行
+- `interactive`：每个逻辑 chat 背后维护一个可惰性附着的 runtime session
 
-- Codex：`CodexRpcClient`
-- Claude：`ClaudeRunner`
-- API：HTTP 请求
+选择边界仍然从 `RuntimeAgentExecutorFactory` 进入，但真正的 runtime 分发已经下沉到 driver registry。
 
-这一层的意义是把“执行一个 Agent”抽象成统一接口，让 chat、task、workflow 都能复用。
+当前后端形态是：
+
+- Codex：one-shot 和 interactive 都复用 `CodexRpcClient`，chat 复用由 `CodexInteractiveSession` 管理
+- Claude：one-shot 和 interactive 都复用 `ClaudeRunner`，chat 复用由 `ClaudeInteractiveSession` 管理
+- API：继续保持纯 HTTP one-shot
+
+`AgentHub` 仍然拥有 snapshot、持久化和恢复语义，但 interactive 进程的生命周期已经收敛到 `InteractiveSessionManager` 和 `src/main/agents/` 下的 runtime-specific session helper。
 
 开发时要尽量保持这个边界：
 
-- 运行时差异留在执行层
-- 上层功能只关心 prompt、model、channel、事件流和 session
+- runtime 差异留在 driver / session / transport 层
+- 上层功能只关心 prompt、model、channel、事件流和逻辑 session
 
-不要把 provider 特殊逻辑散落到 task、workflow、chat 的高层逻辑里。
+不要把 provider 或 runtime-specific 特殊逻辑散落到 task、workflow、chat 的高层逻辑里。
 
 ## IPC 设计
 

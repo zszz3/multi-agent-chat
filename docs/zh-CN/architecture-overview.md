@@ -80,7 +80,11 @@ Renderer 触发操作
 
 - `src/main/index.ts`：主进程启动、窗口创建、IPC 注册、本地服务启动
 - `src/main/agent-hub.ts`：应用状态中心和主要业务编排层
-- `src/main/agent-executor.ts`：不同 Agent Runtime 的统一执行入口
+- `src/main/agent-executor.ts`：薄 runtime driver registry 和 one-shot 执行桥
+- `src/main/agents/runtime-driver.ts`：共享 runtime capability 与 interactive session 契约
+- `src/main/agents/interactive-session-manager.ts`：按 chat 串行执行的 interactive 队列与中心化 idle-detach sweep
+- `src/main/agents/codex-interactive-session.ts`：Codex chat 的长期附着边界
+- `src/main/agents/claude-interactive-session.ts`：Claude chat 的共享 session 边界
 - `src/main/sqlite-store.ts`：SQLite 持久化封装
 
 ### `src/preload`
@@ -154,15 +158,20 @@ renderer 基本上把这个 snapshot 当成“唯一业务状态源”。这也�
 - `claude`
 - `api`
 
-统一入口在 `src/main/agent-executor.ts`，由 `RuntimeAgentExecutorFactory` 负责根据 runtime 创建对应执行器。
+统一入口在 `src/main/agent-executor.ts`，但它现在更接近“按 runtime 分发的薄注册表”，而不是一层同时承担所有会话生命周期的重逻辑。
 
-三个执行后端分别是：
+主进程里的执行风格已经明确分成两类：
 
-- Codex：通过 `CodexRpcClient` 走 RPC 风格交互
-- Claude：通过 `ClaudeRunner` 包装 CLI 子进程
-- API：直接 `fetch` 到兼容接口
+- `oneshot`：一次请求对应一次执行，主要用于 task、workflow 和 stateless API 调用
+- `interactive`：一个逻辑 chat 对应一个可惰性附着的 runtime session
 
-不管是聊天、任务还是 workflow，整体都复用同一套执行抽象，这样避免了“每个功能都各自实现一套 provider 逻辑”。
+三个 runtime 后端分别是：
+
+- Codex：通过 `CodexRpcClient` 走 RPC 风格交互，chat 复用由 `CodexInteractiveSession` 管理
+- Claude：通过 `ClaudeRunner` 包装 CLI 子进程，chat 复用由 `ClaudeInteractiveSession` 管理
+- API：直接 `fetch` 到兼容接口，保持 stateless one-shot
+
+`AgentHub` 仍然是状态真源，但逻辑 chat identity、resume metadata 和恢复归一化在 `AgentHub`，interactive 进程的附着、串行执行、空闲回收则由 `InteractiveSessionManager` 与 runtime-specific session helper 负责。
 
 ## 8. 前端组织方式
 
