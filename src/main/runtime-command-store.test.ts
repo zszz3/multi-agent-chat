@@ -1,8 +1,8 @@
-import { mkdtemp, readFile } from "node:fs/promises";
+import { mkdtemp, readFile, writeFile } from "node:fs/promises";
 import os from "node:os";
 import path from "node:path";
 import { describe, expect, test } from "vitest";
-import { loadRuntimeCommandState, saveRuntimeCommandState } from "./runtime-command-store";
+import { loadOptionalRuntimeCommandState, loadRuntimeCommandState, saveRuntimeCommandState } from "./runtime-command-store";
 
 describe("runtime command state", () => {
   test("loads an empty state when the file does not exist", async () => {
@@ -10,6 +10,19 @@ describe("runtime command state", () => {
     const state = await loadRuntimeCommandState(path.join(dir, "missing.json"));
 
     expect(state).toEqual({
+      version: 1,
+      runtimeCommandConfigs: [],
+      learnedNativeCommands: [],
+    });
+  });
+
+  test("treats a corrupt sidecar as unavailable instead of throwing", async () => {
+    const dir = await mkdtemp(path.join(os.tmpdir(), "multi-agent-chat-runtime-command-store-"));
+    const filePath = path.join(dir, "corrupt.json");
+    await writeFile(filePath, "{", "utf8");
+
+    await expect(loadOptionalRuntimeCommandState(filePath)).resolves.toBeUndefined();
+    await expect(loadRuntimeCommandState(filePath)).resolves.toEqual({
       version: 1,
       runtimeCommandConfigs: [],
       learnedNativeCommands: [],

@@ -1,4 +1,4 @@
-import { mkdir, readFile, writeFile } from "node:fs/promises";
+import { mkdir, readFile, rename, writeFile } from "node:fs/promises";
 import path from "node:path";
 import type { AgentId, LearnedNativeCommandRecord, RuntimeCommandConfig } from "../shared/types";
 
@@ -163,7 +163,7 @@ export async function loadOptionalRuntimeCommandState(filePath: string): Promise
     };
     return normalizeRuntimeCommandState(state);
   } catch (error) {
-    if ((error as NodeJS.ErrnoException | undefined)?.code === "ENOENT") {
+    if ((error as NodeJS.ErrnoException | undefined)?.code === "ENOENT" || error instanceof SyntaxError) {
       return undefined;
     }
     throw error;
@@ -173,5 +173,7 @@ export async function loadOptionalRuntimeCommandState(filePath: string): Promise
 export async function saveRuntimeCommandState(filePath: string, state: RuntimeCommandStateFile): Promise<void> {
   const normalized = normalizeRuntimeCommandState(state);
   await mkdir(path.dirname(filePath), { recursive: true });
-  await writeFile(filePath, `${JSON.stringify(normalized, null, 2)}\n`, "utf8");
+  const tempPath = `${filePath}.${process.pid}.${Date.now()}.tmp`;
+  await writeFile(tempPath, `${JSON.stringify(normalized, null, 2)}\n`, "utf8");
+  await rename(tempPath, filePath);
 }

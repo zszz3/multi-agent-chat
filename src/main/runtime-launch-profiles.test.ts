@@ -121,6 +121,38 @@ describe("createRuntimeLaunchProfiles", () => {
     ]);
   });
 
+  test("still reaches the darwin shell-hydrated fallback when env override equals the bare default command", async () => {
+    const probeCalls: string[] = [];
+    const profile = createRuntimeLaunchProfiles({
+      shellPathLookup: async () => ["/opt/homebrew/bin"],
+      probeVersion: async ({ executable }) => {
+        probeCalls.push(executable);
+        if (executable === "claude") throw new Error("spawn claude ENOENT");
+        if (executable === path.posix.join("/opt/homebrew/bin", "claude")) return "2.1.123";
+        throw new Error(`unexpected executable: ${executable}`);
+      },
+    }).driverFor("claude");
+
+    const resolved = await profile.resolveCommand({
+      runtimeId: "claude",
+      env: { CLAUDE_PATH: "claude" },
+      platform: "darwin",
+    });
+
+    expect(resolved).toMatchObject({
+      executable: path.posix.join("/opt/homebrew/bin", "claude"),
+      command: path.posix.join("/opt/homebrew/bin", "claude"),
+      source: "shell_hydrated_path",
+      version: "2.1.123",
+      available: true,
+    });
+    expect(probeCalls).toEqual([
+      "claude",
+      "claude",
+      path.posix.join("/opt/homebrew/bin", "claude"),
+    ]);
+  });
+
   test("changes the cli fingerprint when executable, fixed args, or version changes", () => {
     const base = buildCliFingerprint({
       executable: "codex",

@@ -82,8 +82,8 @@ function runtimeCandidate(
 }
 
 function appendCandidate(target: RuntimeLaunchCandidate[], candidate: RuntimeLaunchCandidate): void {
-  const key = `${candidate.executable}\u0000${candidate.fixedArgs.join("\u0000")}`;
-  const existing = target.some((item) => `${item.executable}\u0000${item.fixedArgs.join("\u0000")}` === key);
+  const key = `${candidate.source}\u0000${candidate.executable}\u0000${candidate.fixedArgs.join("\u0000")}`;
+  const existing = target.some((item) => `${item.source}\u0000${item.executable}\u0000${item.fixedArgs.join("\u0000")}` === key);
   if (!existing) target.push(candidate);
 }
 

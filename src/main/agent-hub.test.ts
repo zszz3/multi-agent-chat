@@ -8,6 +8,7 @@ import { projectNodeStates } from "../shared/workflow-run";
 import type { AgentChannel, AgentId, ChatRuntimeSessionState, ConfiguredAgent } from "../shared/types";
 import { RuntimeDriverRegistry } from "./agent-executor";
 import type { AgentExecutionContext, AgentExecutorFactory } from "./agent-executor";
+import { runtimeCommandStatePathFor } from "./runtime-command-store";
 import { writeNodeCliLauncher } from "./test-cli-fixtures";
 
 function configuredAgent(
@@ -1780,6 +1781,47 @@ fs.writeFileSync(${JSON.stringify(argsPath)}, process.argv.slice(2).join("\\n") 
     await restored.loadPersistedState(storagePath);
 
     expect(restored.snapshot().runtimeCommandConfigs).toEqual(persistedConfigs);
+  });
+
+  test("ignores a corrupt runtime-command sidecar during persisted-state load", async () => {
+    const dir = await mkdtemp(path.join(os.tmpdir(), "multi-agent-chat-corrupt-runtime-sidecar-"));
+    const storagePath = path.join(dir, "app-chats.json");
+    await writeFile(
+      storagePath,
+      JSON.stringify({
+        version: 3,
+        activeChatId: "chat-1",
+        workDir: dir,
+        sessions: [
+          {
+            id: "chat-1",
+            title: "Recovered chat",
+            configuredAgentId: "default-agent",
+            modelId: DEFAULT_MODEL_ID,
+            sessionId: undefined,
+            createdAt: 1710000000000,
+            updatedAt: 1710000000000,
+          },
+        ],
+        messages: [],
+        events: [],
+        tasks: [],
+        taskMessages: [],
+        taskEvents: [],
+        teams: [],
+        teamRuns: [],
+        runtimeCommandConfigs: [],
+      }),
+      "utf8",
+    );
+    await writeFile(runtimeCommandStatePathFor(storagePath), "{", "utf8");
+
+    const restored = new AgentHub({ codex: "bootstrap-codex", claude: "bootstrap-claude" });
+    await expect(restored.loadPersistedState(storagePath)).resolves.toBeUndefined();
+
+    const snapshot = restored.snapshot();
+    expect(snapshot.activeChatId).toBe("chat-1");
+    expect(snapshot.chats.find((item) => item.id === "chat-1")?.title).toBe("Recovered chat");
   });
 
   test("migrates a legacy chat sessionId into detached runtime resume state", async () => {
