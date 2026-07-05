@@ -13,6 +13,15 @@ interface RuntimeCommandPolicy {
   unsupportedSlashMessage?: (input: string) => string;
 }
 
+function escapeRegExp(input: string): string {
+  return input.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
+}
+
+const APP_COMMAND_PREFIX_PATTERN = new RegExp(`^${escapeRegExp(APP_COMMAND_PREFIX)}(?:\\s|$)`, "i");
+const DEFAULT_APP_COMMAND_ID: AppCommandId = "help";
+const DEFAULT_APP_COMMAND_TEXT =
+  APP_COMMANDS.find((item) => item.id === DEFAULT_APP_COMMAND_ID)?.command ?? `${APP_COMMAND_PREFIX} help`;
+
 const POLICIES: Record<AgentId, RuntimeCommandPolicy> = {
   codex: {
     runtimeId: "codex",
@@ -32,7 +41,7 @@ const POLICIES: Record<AgentId, RuntimeCommandPolicy> = {
 export function routeChatPrompt(runtimeId: AgentId, rawInput: string): ChatCommandRoute {
   const input = rawInput.trim();
 
-  if (/^\/app(?:\s|$)/i.test(input)) {
+  if (APP_COMMAND_PREFIX_PATTERN.test(input)) {
     const [, ...parts] = input.split(/\s+/);
     const commandName = (parts[0] ?? "help").toLowerCase();
     const descriptor = APP_COMMANDS.find((item) => item.id === commandName);
@@ -40,8 +49,8 @@ export function routeChatPrompt(runtimeId: AgentId, rawInput: string): ChatComma
     if (!descriptor) {
       return {
         kind: "app_command",
-        commandId: "help",
-        commandText: "/app help",
+        commandId: DEFAULT_APP_COMMAND_ID,
+        commandText: DEFAULT_APP_COMMAND_TEXT,
         args: [],
       };
     }

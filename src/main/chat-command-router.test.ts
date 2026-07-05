@@ -43,6 +43,19 @@ describe("routeChatPrompt", () => {
     });
   });
 
+  test.each(["/appstatus", "/application", "/AppStatus"] as const)(
+    "keeps near-prefix input %s on the runtime/native slash path",
+    (input) => {
+      expect(routeChatPrompt("codex", input)).toEqual({ kind: "runtime_slash", prompt: input });
+      expect(routeChatPrompt("claude", input)).toEqual({ kind: "runtime_slash", prompt: input });
+      expect(routeChatPrompt("api", input)).toEqual({
+        kind: "unsupported_runtime_slash",
+        prompt: input,
+        reason: "Native slash commands are not supported by API runtimes. Use /app help for app-local commands.",
+      });
+    },
+  );
+
   test("routes bare slash to the runtime for codex and claude", () => {
     expect(routeChatPrompt("codex", "/help")).toEqual({ kind: "runtime_slash", prompt: "/help" });
     expect(routeChatPrompt("claude", "/status")).toEqual({ kind: "runtime_slash", prompt: "/status" });
