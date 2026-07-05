@@ -120,6 +120,7 @@ interface RuntimePageProps {
   selectedChannelId: string;
   runtimes?: AgentRuntime[];
   runtimeCommandConfigs?: RuntimeCommandConfig[];
+  runtimeCommandArgsDrafts?: Partial<Record<AgentId, string>>;
   runtimeCommandConfigDirty?: boolean;
   providerKeys: Record<string, string>;
   codexPluginCatalog: CodexPluginCatalogItem[];
@@ -158,6 +159,7 @@ export function RuntimePage({
   selectedChannelId,
   runtimes = [],
   runtimeCommandConfigs = [],
+  runtimeCommandArgsDrafts = {},
   runtimeCommandConfigDirty = false,
   providerKeys,
   codexPluginCatalog,
@@ -237,7 +239,8 @@ export function RuntimePage({
     [runtimeCommandConfigs, selectedRuntime],
   );
   const selectedRuntimeCommandExecutable = selectedRuntimeCommandConfig?.override?.executable ?? "";
-  const selectedRuntimeCommandArgs = formatRuntimeCommandArgs(selectedRuntimeCommandConfig?.override?.fixedArgs);
+  const selectedRuntimeCommandArgs =
+    runtimeCommandArgsDrafts[selectedRuntime] ?? formatRuntimeCommandArgs(selectedRuntimeCommandConfig?.override?.fixedArgs);
   const selectedRuntimeResolvedCommand = formatResolvedRuntimeCommand(selectedResolvedRuntime);
   const selectedRuntimeResolvedSource = runtimeSourceLabel(selectedResolvedRuntime?.source, language);
   const supportsRuntimeCommandOverrides = selectedRuntime !== "api";

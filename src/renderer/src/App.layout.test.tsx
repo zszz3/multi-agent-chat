@@ -1075,6 +1075,9 @@ describe("ConfigPage", () => {
             },
           },
         ]}
+        runtimeCommandArgsDrafts={{
+          codex: '--profile "team-b',
+        }}
         runtimeCommandConfigDirty
         onUpdateChannel={() => undefined}
         onAddModel={() => undefined}
@@ -1104,7 +1107,7 @@ describe("ConfigPage", () => {
     expect(html).toContain("aria-label=\"Runtime executable override\"");
     expect(html).toContain("value=\"/custom/bin/codex\"");
     expect(html).toContain("aria-label=\"Runtime fixed args override\"");
-    expect(html).toContain("value=\"--profile team-b\"");
+    expect(html).toContain("value=\"--profile &quot;team-b\"");
     expect(html).toContain("Provider");
     expect(html).toContain("aria-label=\"Provider API key\"");
     expect(html).toContain("value=\"saved-key\"");

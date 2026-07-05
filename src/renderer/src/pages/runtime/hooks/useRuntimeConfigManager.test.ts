@@ -322,6 +322,79 @@ describe("runtime command config helpers", () => {
 });
 
 describe("useRuntimeConfigManager runtime command saves", () => {
+  test("keeps incomplete quoted fixed-args text visible while editing", async () => {
+    const saveRuntimeCommandConfigs = vi.fn();
+    const harness = await createRuntimeConfigManagerHarness({
+      snapshot: makeSnapshot({
+        runtimes: [
+          {
+            id: "codex",
+            label: "Codex",
+            command: "codex",
+            version: "0.1.0",
+            available: true,
+          },
+        ],
+      }),
+      chatApi: { saveRuntimeCommandConfigs },
+    });
+
+    await harness.act(() => {
+      harness.current.updateRuntimeCommandArgs("codex", '--profile "team red');
+    });
+    await harness.act(() => harness.current.saveRuntimeCommandConfigs());
+
+    expect(harness.current.runtimeCommandArgsDrafts.codex).toBe('--profile "team red');
+    expect(saveRuntimeCommandConfigs).not.toHaveBeenCalled();
+    expect(harness.current.configStatus).toBe("Complete the fixed args input before saving for Codex.");
+    expect(harness.current.runtimeCommandConfigs).toEqual([
+      {
+        runtimeId: "codex",
+        override: {
+          executable: "",
+          fixedArgs: ["--profile", "team red"],
+        },
+      },
+    ]);
+    expect(harness.current.runtimeCommandConfigDirty).toBe(true);
+
+    harness.dispose();
+  });
+
+  test("keeps Windows path fixed-args text unchanged while editing", async () => {
+    const harness = await createRuntimeConfigManagerHarness({
+      snapshot: makeSnapshot({
+        runtimes: [
+          {
+            id: "codex",
+            label: "Codex",
+            command: "codex",
+            version: "0.1.0",
+            available: true,
+          },
+        ],
+      }),
+      chatApi: {},
+    });
+
+    await harness.act(() => {
+      harness.current.updateRuntimeCommandArgs("codex", '--config C:\\Program Files\\Codex');
+    });
+
+    expect(harness.current.runtimeCommandArgsDrafts.codex).toBe('--config C:\\Program Files\\Codex');
+    expect(harness.current.runtimeCommandConfigs).toEqual([
+      {
+        runtimeId: "codex",
+        override: {
+          executable: "",
+          fixedArgs: ["--config", "C:\\Program", "Files\\Codex"],
+        },
+      },
+    ]);
+
+    harness.dispose();
+  });
+
   test("keeps args-only drafts local and reports that executable is required before saving fixed args", async () => {
     const saveRuntimeCommandConfigs = vi.fn();
     const harness = await createRuntimeConfigManagerHarness({

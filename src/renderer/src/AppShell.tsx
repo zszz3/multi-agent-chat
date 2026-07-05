@@ -225,6 +225,7 @@ export function AppShell() {
     configChannels,
     selectedConfigChannelId,
     runtimeCommandConfigs,
+    runtimeCommandArgsDrafts,
     runtimeCommandConfigDirty,
     configStatus,
     codexPluginCatalog,
@@ -892,6 +893,7 @@ export function AppShell() {
             selectedChannelId={selectedConfigChannelId}
             runtimes={snapshot.runtimes}
             runtimeCommandConfigs={runtimeCommandConfigs}
+            runtimeCommandArgsDrafts={runtimeCommandArgsDrafts}
             runtimeCommandConfigDirty={runtimeCommandConfigDirty}
             providerKeys={providerKeys}
             codexPluginCatalog={codexPluginCatalog}
