@@ -81,6 +81,12 @@ function runtimeCandidate(
   };
 }
 
+function appendCandidate(target: RuntimeLaunchCandidate[], candidate: RuntimeLaunchCandidate): void {
+  const key = `${candidate.executable}\u0000${candidate.fixedArgs.join("\u0000")}`;
+  const existing = target.some((item) => `${item.executable}\u0000${item.fixedArgs.join("\u0000")}` === key);
+  if (!existing) target.push(candidate);
+}
+
 function firstAvailableRecord(env: NodeJS.ProcessEnv | Record<string, string | undefined>, name: string): string | undefined {
   const value = env[name];
   return typeof value === "string" && value.trim() ? value.trim() : undefined;
@@ -88,8 +94,10 @@ function firstAvailableRecord(env: NodeJS.ProcessEnv | Record<string, string | u
 
 function profileCandidates(spec: RuntimeLaunchSpec, input: RuntimeCommandResolutionInput): RuntimeLaunchCandidate[] {
   const env = input.env ?? process.env;
+  const candidates: RuntimeLaunchCandidate[] = [];
   if (input.override?.executable) {
-    return [
+    appendCandidate(
+      candidates,
       runtimeCandidate(
         {
           executable: input.override.executable,
@@ -97,13 +105,14 @@ function profileCandidates(spec: RuntimeLaunchSpec, input: RuntimeCommandResolut
         },
         input.override.fixedArgs,
       ),
-    ];
+    );
   }
   const envExecutable = firstAvailableRecord(env, spec.envVar);
   if (envExecutable) {
-    return [runtimeCandidate({ executable: envExecutable, source: "env_override" })];
+    appendCandidate(candidates, runtimeCandidate({ executable: envExecutable, source: "env_override" }));
   }
-  return [runtimeCandidate({ executable: spec.executable, source: "path" })];
+  appendCandidate(candidates, runtimeCandidate({ executable: spec.executable, source: "path" }));
+  return candidates;
 }
 
 async function resolveShellHydratedCandidate(
@@ -185,7 +194,9 @@ export function createRuntimeLaunchProfiles(options: RuntimeLaunchProfileOptions
         async resolveCommand(input: RuntimeCommandResolutionInput): Promise<ResolvedRuntimeCommand> {
           const env = input.env ?? process.env;
           const candidates = profileCandidates(spec, input);
-          const lastBaseCandidate = candidates[candidates.length - 1] ?? runtimeCandidate({ executable: spec.executable, source: "path" });
+          const pathCandidate = candidates.find((candidate) => candidate.source === "path") ?? runtimeCandidate({ executable: spec.executable, source: "path" });
+          let lastError: string | undefined;
+          let pathProbeFailed = false;
 
           for (const candidate of candidates) {
             try {
@@ -204,44 +215,40 @@ export function createRuntimeLaunchProfiles(options: RuntimeLaunchProfileOptions
                 env,
               });
             } catch (error) {
-              if (candidate.source !== "path") {
-                return unavailableResolution({
-                  runtimeId,
-                  candidate,
-                  error: error instanceof Error ? error.message : String(error),
-                });
-              }
-
-              const shellCandidates = await resolveShellHydratedCandidate(spec, input, options.shellPathLookup);
-              for (const shellCandidate of shellCandidates) {
-                try {
-                  const version = await options.probeVersion({
-                    runtimeId,
-                    executable: shellCandidate.executable,
-                    fixedArgs: shellCandidate.fixedArgs,
-                    env,
-                  });
-                  return successfulResolution({
-                    runtimeId,
-                    executable: shellCandidate.executable,
-                    fixedArgs: shellCandidate.fixedArgs,
-                    source: shellCandidate.source,
-                    version,
-                    env,
-                  });
-                } catch {
-                  // Keep trying hydrated PATH candidates.
-                }
-              }
-              return unavailableResolution({
-                runtimeId,
-                candidate: lastBaseCandidate,
-                error: error instanceof Error ? error.message : String(error),
-              });
+              lastError = error instanceof Error ? error.message : String(error);
+              if (candidate.source === "path") pathProbeFailed = true;
             }
           }
 
-          return unavailableResolution({ runtimeId, candidate: lastBaseCandidate });
+          if (pathProbeFailed) {
+            const shellCandidates = await resolveShellHydratedCandidate(spec, input, options.shellPathLookup);
+            for (const shellCandidate of shellCandidates) {
+              try {
+                const version = await options.probeVersion({
+                  runtimeId,
+                  executable: shellCandidate.executable,
+                  fixedArgs: shellCandidate.fixedArgs,
+                  env,
+                });
+                return successfulResolution({
+                  runtimeId,
+                  executable: shellCandidate.executable,
+                  fixedArgs: shellCandidate.fixedArgs,
+                  source: shellCandidate.source,
+                  version,
+                  env,
+                });
+              } catch (error) {
+                lastError = error instanceof Error ? error.message : String(error);
+              }
+            }
+          }
+
+          return unavailableResolution({
+            runtimeId,
+            candidate: pathCandidate,
+            ...(lastError ? { error: lastError } : {}),
+          });
         },
       };
       return [runtimeId, driver];

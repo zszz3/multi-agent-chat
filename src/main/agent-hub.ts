@@ -40,6 +40,7 @@ import type {
   AnswerWorkflowGateRequest,
   RegisteredArtifact,
   RegisterArtifactRequest,
+  LearnedNativeCommandRecord,
   RuntimeCommandConfig,
   GeneratedConfigFile,
   ImportedCodexConfig,
@@ -121,6 +122,12 @@ import {
 } from "./model-config";
 import { SqliteAppStore } from "./sqlite-store";
 import { resolveWorkDirFile } from "./local-file-preview";
+import {
+  createEmptyRuntimeCommandState,
+  loadOptionalRuntimeCommandState,
+  runtimeCommandStatePathFor,
+  saveRuntimeCommandState,
+} from "./runtime-command-store";
 import { WorkflowRuntime, type WorkflowRunStateUpdate } from "./workflow-runtime";
 import { routeChatPrompt } from "./chat-command-router";
 const DEFAULT_AGENT: AgentId = "codex";
@@ -468,6 +475,17 @@ function cloneRuntimeCommandConfig(config: RuntimeCommandConfig): RuntimeCommand
           },
         }
       : {}),
+  };
+}
+
+function cloneLearnedNativeCommandRecord(record: LearnedNativeCommandRecord): LearnedNativeCommandRecord {
+  return {
+    runtimeId: record.runtimeId,
+    cliFingerprint: record.cliFingerprint,
+    commandStem: record.commandStem,
+    example: record.example,
+    successCount: record.successCount,
+    lastUsedAt: record.lastUsedAt,
   };
 }
 
@@ -1221,6 +1239,7 @@ export class AgentHub {
   private artifacts: RegisteredArtifact[] = [];
   private channels: AgentChannel[] = createDefaultChannels();
   private runtimeCommandConfigs: RuntimeCommandConfig[] = [];
+  private learnedNativeCommands: LearnedNativeCommandRecord[] = [];
   private storagePath: string | undefined = undefined;
   private sqliteStore: SqliteAppStore | undefined = undefined;
   private modelConfigPath: string | undefined = undefined;
@@ -1300,6 +1319,7 @@ export class AgentHub {
 
   async loadPersistedState(storagePath: string, legacyJsonPath?: string): Promise<void> {
     this.storagePath = storagePath;
+    await this.loadRuntimeCommandStateForStorage(storagePath, legacyJsonPath);
     if (path.extname(storagePath) === ".db") {
       this.sqliteStore = new SqliteAppStore(storagePath);
       try {
@@ -1463,6 +1483,23 @@ export class AgentHub {
 
   private runtimeFixedArgsFor(runtimeId: AgentId): string[] {
     return [...(this.runtimes.get(runtimeId)?.fixedArgs ?? this.runtimeCommandConfigFor(runtimeId)?.override?.fixedArgs ?? [])];
+  }
+
+  private async loadRuntimeCommandStateForStorage(storagePath: string, legacyJsonPath?: string): Promise<void> {
+    const persistedState =
+      (await loadOptionalRuntimeCommandState(runtimeCommandStatePathFor(storagePath))) ??
+      (legacyJsonPath ? await loadOptionalRuntimeCommandState(runtimeCommandStatePathFor(legacyJsonPath)) : undefined);
+    if (!persistedState) return;
+    this.runtimeCommandConfigs = persistedState.runtimeCommandConfigs.map((config) => cloneRuntimeCommandConfig(config));
+    this.learnedNativeCommands = persistedState.learnedNativeCommands.map((record) => cloneLearnedNativeCommandRecord(record));
+  }
+
+  private buildRuntimeCommandState() {
+    return {
+      ...createEmptyRuntimeCommandState(),
+      runtimeCommandConfigs: this.runtimeCommandConfigs.map((config) => cloneRuntimeCommandConfig(config)),
+      learnedNativeCommands: this.learnedNativeCommands.map((record) => cloneLearnedNativeCommandRecord(record)),
+    };
   }
 
   private normalizeModelIdForConfiguredAgent(configuredAgentId: string | undefined, modelId: string | undefined): string {
@@ -5464,8 +5501,13 @@ export class AgentHub {
     if (this.persistInFlight) await this.persistInFlight;
 
     const payload = this.buildPersistedPayload();
+    const runtimeCommandStatePath = runtimeCommandStatePathFor(this.storagePath);
+    const runtimeCommandState = this.buildRuntimeCommandState();
     if (this.sqliteStore) {
-      this.persistInFlight = this.sqliteStore.save(payload);
+      this.persistInFlight = (async () => {
+        await this.sqliteStore!.save(payload);
+        await saveRuntimeCommandState(runtimeCommandStatePath, runtimeCommandState);
+      })();
       try {
         await this.persistInFlight;
       } catch (error) {
@@ -5482,6 +5524,7 @@ export class AgentHub {
       await mkdir(path.dirname(targetPath), { recursive: true });
       await writeFile(tempPath, `${JSON.stringify(payload, null, 2)}\n`, "utf8");
       await rename(tempPath, targetPath);
+      await saveRuntimeCommandState(runtimeCommandStatePath, runtimeCommandState);
     })();
 
     try {

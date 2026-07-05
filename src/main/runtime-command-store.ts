@@ -10,6 +10,10 @@ export interface RuntimeCommandStateFile {
   learnedNativeCommands: LearnedNativeCommandRecord[];
 }
 
+export function runtimeCommandStatePathFor(storagePath: string): string {
+  return `${storagePath}.runtime-commands.json`;
+}
+
 function isAgentId(value: unknown): value is AgentId {
   return value === "codex" || value === "claude" || value === "api";
 }
@@ -141,6 +145,11 @@ function parseLearnedNativeCommands(raw: unknown): LearnedNativeCommandRecord[] 
 }
 
 export async function loadRuntimeCommandState(filePath: string): Promise<RuntimeCommandStateFile> {
+  const state = await loadOptionalRuntimeCommandState(filePath);
+  return state ?? createEmptyRuntimeCommandState();
+}
+
+export async function loadOptionalRuntimeCommandState(filePath: string): Promise<RuntimeCommandStateFile | undefined> {
   try {
     const raw = JSON.parse(await readFile(filePath, "utf8")) as {
       version?: number;
@@ -155,7 +164,7 @@ export async function loadRuntimeCommandState(filePath: string): Promise<Runtime
     return normalizeRuntimeCommandState(state);
   } catch (error) {
     if ((error as NodeJS.ErrnoException | undefined)?.code === "ENOENT") {
-      return createEmptyRuntimeCommandState();
+      return undefined;
     }
     throw error;
   }

@@ -1763,6 +1763,25 @@ fs.writeFileSync(${JSON.stringify(argsPath)}, process.argv.slice(2).join("\\n") 
     ]);
   });
 
+  test("persists runtime command configs across an AgentHub restart", async () => {
+    const dir = await mkdtemp(path.join(os.tmpdir(), "multi-agent-chat-runtime-configs-"));
+    const storagePath = path.join(dir, "app-chats.json");
+    const persistedConfigs = [
+      { runtimeId: "claude", override: { executable: "/custom/bin/claude", fixedArgs: ["--dangerously-skip-permissions"] } },
+      { runtimeId: "codex", override: { executable: "/custom/bin/codex", fixedArgs: ["--profile", "team-a"] } },
+    ];
+    const hub = new AgentHub({ codex: "bootstrap-codex", claude: "bootstrap-claude" });
+
+    await hub.loadPersistedState(storagePath);
+    (hub as any).runtimeCommandConfigs = persistedConfigs;
+    await hub.flushPersistence();
+
+    const restored = new AgentHub({ codex: "bootstrap-codex", claude: "bootstrap-claude" });
+    await restored.loadPersistedState(storagePath);
+
+    expect(restored.snapshot().runtimeCommandConfigs).toEqual(persistedConfigs);
+  });
+
   test("migrates a legacy chat sessionId into detached runtime resume state", async () => {
     const dir = await mkdtemp(path.join(os.tmpdir(), "multi-agent-chat-runtime-session-migration-"));
     const storagePath = path.join(dir, "app-chats.json");
