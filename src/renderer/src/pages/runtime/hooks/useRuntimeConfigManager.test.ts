@@ -263,6 +263,23 @@ describe("codexRuntimeAvailability", () => {
 });
 
 describe("runtime command config helpers", () => {
+  test("preserves unquoted Windows path args", () => {
+    expect(runtimeCommandArgsFromText("--config C:\\tmp\\team-a")).toEqual(["--config", "C:\\tmp\\team-a"]);
+  });
+
+  test("preserves quoted Windows path args with spaces", () => {
+    expect(runtimeCommandArgsFromText('--config "C:\\Program Files\\Codex"')).toEqual(["--config", "C:\\Program Files\\Codex"]);
+  });
+
+  test("preserves quoted args with spaces", () => {
+    expect(runtimeCommandArgsFromText('--profile "team space" --sandbox workspace-write')).toEqual([
+      "--profile",
+      "team space",
+      "--sandbox",
+      "workspace-write",
+    ]);
+  });
+
   test("seed runtime executor drafts from snapshot configs and update them per runtime", () => {
     const snapshotConfigs: RuntimeCommandConfig[] = [
       {

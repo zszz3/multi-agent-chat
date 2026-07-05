@@ -74,16 +74,17 @@ export function runtimeCommandArgsFromText(rawText: string): string[] {
   const tokens: string[] = [];
   let current = "";
   let quote: '"' | "'" | undefined;
-  let escaping = false;
 
-  for (const char of rawText) {
-    if (escaping) {
+  for (let index = 0; index < rawText.length; index += 1) {
+    const char = rawText[index]!;
+    if (quote && char === "\\") {
+      const next = rawText[index + 1];
+      if (next === quote || next === "\\") {
+        current += next;
+        index += 1;
+        continue;
+      }
       current += char;
-      escaping = false;
-      continue;
-    }
-    if (char === "\\") {
-      escaping = true;
       continue;
     }
     if (quote) {
@@ -108,7 +109,6 @@ export function runtimeCommandArgsFromText(rawText: string): string[] {
     current += char;
   }
 
-  if (escaping) current += "\\";
   if (current) tokens.push(current);
   return tokens;
 }
