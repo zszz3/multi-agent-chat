@@ -361,10 +361,20 @@ export function useRuntimeConfigManager({
       return;
     }
 
-    const persistableConfigs = runtimeCommandConfigsRef.current.flatMap((config) => {
-      const executable = config.override?.executable.trim() || snapshot.runtimes.find((runtime) => runtime.id === config.runtimeId)?.command.trim() || "";
+    const invalidRuntimeConfig = runtimeCommandConfigsRef.current.find((config) => {
+      const executable = config.override?.executable.trim() ?? "";
       const fixedArgs = Array.isArray(config.override?.fixedArgs) ? config.override.fixedArgs.filter((item): item is string => typeof item === "string") : [];
-      if (!executable && fixedArgs.length === 0) return [];
+      return !executable && fixedArgs.length > 0;
+    });
+    if (invalidRuntimeConfig) {
+      setConfigStatus(`Provide an executable before saving fixed args for ${agentLabel(invalidRuntimeConfig.runtimeId)}.`);
+      return;
+    }
+
+    const persistableConfigs = runtimeCommandConfigsRef.current.flatMap((config) => {
+      const executable = config.override?.executable.trim() ?? "";
+      const fixedArgs = Array.isArray(config.override?.fixedArgs) ? config.override.fixedArgs.filter((item): item is string => typeof item === "string") : [];
+      if (!executable) return [];
       return [
         {
           runtimeId: config.runtimeId,
@@ -385,7 +395,7 @@ export function useRuntimeConfigManager({
     } catch (error) {
       setConfigStatus(error instanceof Error ? error.message : String(error));
     }
-  }, [chatApi, setSnapshot, snapshot.runtimes, syncRuntimeCommandConfigsFromSnapshot]);
+  }, [chatApi, setSnapshot, syncRuntimeCommandConfigsFromSnapshot]);
 
   const updateConfigChannel = useCallback((channelId: string, updater: (channel: AgentChannel) => AgentChannel) => {
     setBalanceResults((current) => {
