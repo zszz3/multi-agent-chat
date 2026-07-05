@@ -9,9 +9,16 @@ Introduce a runtime-extensible command-routing architecture for chat input so th
 ### Context
 
 - Branch: `fix/native-command-support`
-- Status: Proposed
+- Status: Implemented on `fix/native-command-support`; follow-up metadata questions remain open
 - Audience: fresh implementation agents with no prior chat context
 - Source of truth: this document defines native-command routing and completion boundaries for this repository
+
+### Implementation Outcome
+
+- Shared `/app` command ownership now lives in a single registry and the chat router only keeps `/app ...` as app-local.
+- `AgentHub` now forwards bare slash prompts to Codex and Claude, while API runtimes reject non-`/app` slash commands honestly.
+- Runtime launch profiles, persisted executor overrides, grouped slash completions, runtime-specific metadata providers, and learned native command history are all landed on this branch.
+- Architecture and module docs were updated in both English and `zh-CN`; the execution ledger lives in `docs/superpowers/plans/2026-07-05-native-command-routing-implementation.md`.
 
 ### Scope
 
