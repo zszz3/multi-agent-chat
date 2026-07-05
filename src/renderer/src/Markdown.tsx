@@ -1,4 +1,5 @@
 import { Fragment, useMemo, useState, type ReactNode } from "react";
+import { normalizeLineEndings } from "../../shared/line-endings";
 
 function CodeBlock({ language, code }: { language: string | undefined; code: string }) {
   const [copied, setCopied] = useState(false);
@@ -145,7 +146,8 @@ function parseBlocks(text: string): Block[] {
 }
 
 export function Markdown({ text }: { text: string }) {
-  const blocks = useMemo(() => parseBlocks(text), [text]);
+  const normalizedText = useMemo(() => normalizeLineEndings(text), [text]);
+  const blocks = useMemo(() => parseBlocks(normalizedText), [normalizedText]);
   return (
     <div className="md-body">
       {blocks.map((block, blockIndex) => {

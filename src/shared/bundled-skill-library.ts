@@ -1,3 +1,4 @@
+import { normalizeLineEndings } from "./line-endings";
 import type { SkillTemplate } from "./types";
 
 interface BundledSkillMetadata {
@@ -43,10 +44,11 @@ function sourcePathFor(filePath: string): string {
 }
 
 function parseFrontmatter(markdown: string): Record<string, string> {
-  if (!markdown.startsWith("---\n")) return {};
-  const end = markdown.indexOf("\n---", 4);
+  const normalizedMarkdown = normalizeLineEndings(markdown);
+  if (!normalizedMarkdown.startsWith("---\n")) return {};
+  const end = normalizedMarkdown.indexOf("\n---", 4);
   if (end === -1) return {};
-  const frontmatter = markdown.slice(4, end).split("\n");
+  const frontmatter = normalizedMarkdown.slice(4, end).split("\n");
   const values: Record<string, string> = {};
   for (const line of frontmatter) {
     const match = line.match(/^([A-Za-z0-9_-]+):\s*(.*)$/);
