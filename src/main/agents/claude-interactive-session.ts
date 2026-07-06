@@ -164,22 +164,24 @@ export class ClaudeInteractiveSession implements InteractiveSession {
       this.resumeState?.runtimeId === "claude"
         ? this.resumeState
         : undefined;
+    const previousNative = previousResume?.native;
+    const previousAppContext = previousResume?.appContext;
 
     this.resumeState = {
       runtimeId: "claude",
       native: {
         sessionId,
-        ...(previousResume?.native.projectKey ? { projectKey: previousResume.native.projectKey } : {}),
-        ...(previousResume?.native.subpaths ? { subpaths: [...previousResume.native.subpaths] } : {}),
+        ...(previousNative?.projectKey !== undefined ? { projectKey: previousNative.projectKey } : {}),
+        ...(previousNative?.subpaths !== undefined ? { subpaths: [...previousNative.subpaths] } : {}),
       },
       appContext: {
         cwd: this.context.workDir,
         modelId: this.context.modelId,
-        ...(previousResume?.appContext.claudeConfigDir
-          ? { claudeConfigDir: previousResume.appContext.claudeConfigDir }
+        ...(previousAppContext?.claudeConfigDir !== undefined
+          ? { claudeConfigDir: previousAppContext.claudeConfigDir }
           : {}),
-        ...(previousResume?.appContext.sessionStoreRef
-          ? { sessionStoreRef: previousResume.appContext.sessionStoreRef }
+        ...(previousAppContext?.sessionStoreRef !== undefined
+          ? { sessionStoreRef: previousAppContext.sessionStoreRef }
           : {}),
       },
     };

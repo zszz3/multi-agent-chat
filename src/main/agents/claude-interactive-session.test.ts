@@ -212,6 +212,106 @@ describe("ClaudeInteractiveSession", () => {
     });
   });
 
+  test("refreshes a native-only Claude resume state without throwing and repopulates app context", async () => {
+    const dir = await mkdtemp(path.join(os.tmpdir(), "multi-agent-chat-claude-native-only-refresh-"));
+    let forwardEvent: ((event: { type: string; [key: string]: unknown }) => void) | undefined;
+    const session = new ClaudeInteractiveSession(
+      {
+        ...baseClaudeContext(dir),
+        resumeState: {
+          runtimeId: "claude",
+          native: {
+            sessionId: "claude-session-1",
+          },
+        },
+        syncState: () => undefined,
+      },
+      {
+        now: () => 1000,
+        capabilities: runtimeSessionCapabilities(),
+        createTransport: () => ({
+          kind: "stream-json",
+          startTurn: async (input) => {
+            forwardEvent = input.onEvent as (event: { type: string; [key: string]: unknown }) => void;
+            return { stop: async () => undefined };
+          },
+          interrupt: async () => undefined,
+          detach: async () => undefined,
+        }),
+      },
+    );
+
+    await session.sendPrompt("first");
+
+    expect(() => forwardEvent?.({ type: "session", sessionId: "claude-session-2" })).not.toThrow();
+    expect(session.snapshot().resumeState).toEqual({
+      runtimeId: "claude",
+      native: {
+        sessionId: "claude-session-2",
+      },
+      appContext: {
+        cwd: dir,
+        modelId: "claude-sonnet-4-6",
+      },
+    });
+  });
+
+  test("preserves defined empty-string Claude resume metadata on session refresh", async () => {
+    const dir = await mkdtemp(path.join(os.tmpdir(), "multi-agent-chat-claude-empty-metadata-refresh-"));
+    let forwardEvent: ((event: { type: string; [key: string]: unknown }) => void) | undefined;
+    const session = new ClaudeInteractiveSession(
+      {
+        ...baseClaudeContext(dir),
+        resumeState: {
+          runtimeId: "claude",
+          native: {
+            sessionId: "claude-session-1",
+            projectKey: "",
+            subpaths: ["worker-1"],
+          },
+          appContext: {
+            cwd: dir,
+            modelId: "claude-sonnet-4-6",
+            claudeConfigDir: "",
+            sessionStoreRef: "",
+          },
+        },
+        syncState: () => undefined,
+      },
+      {
+        now: () => 1000,
+        capabilities: runtimeSessionCapabilities(),
+        createTransport: () => ({
+          kind: "stream-json",
+          startTurn: async (input) => {
+            forwardEvent = input.onEvent as (event: { type: string; [key: string]: unknown }) => void;
+            return { stop: async () => undefined };
+          },
+          interrupt: async () => undefined,
+          detach: async () => undefined,
+        }),
+      },
+    );
+
+    await session.sendPrompt("first");
+    forwardEvent?.({ type: "session", sessionId: "claude-session-2" });
+
+    expect(session.snapshot().resumeState).toEqual({
+      runtimeId: "claude",
+      native: {
+        sessionId: "claude-session-2",
+        projectKey: "",
+        subpaths: ["worker-1"],
+      },
+      appContext: {
+        cwd: dir,
+        modelId: "claude-sonnet-4-6",
+        claudeConfigDir: "",
+        sessionStoreRef: "",
+      },
+    });
+  });
+
   test("drops late Claude turn events after interrupt clears the active turn", async () => {
     const dir = await mkdtemp(path.join(os.tmpdir(), "multi-agent-chat-claude-interrupt-"));
     const emitted: Array<{ type: string; [key: string]: unknown }> = [];
