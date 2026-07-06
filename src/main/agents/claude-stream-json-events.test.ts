@@ -49,5 +49,19 @@ describe("normalizeClaudeStreamJsonEvent", () => {
         content: "Provide PROD_API_KEY",
       },
     ]);
+
+    expect(
+      normalizeClaudeStreamJsonEvent({
+        type: "user_input_response",
+        requestId: "input-1",
+        content: "token-123",
+      }),
+    ).toEqual([
+      {
+        type: "user_input_response",
+        requestId: "input-1",
+        content: "token-123",
+      },
+    ]);
   });
 });

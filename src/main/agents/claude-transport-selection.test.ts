@@ -18,7 +18,7 @@ function selectTransport() {
 }
 
 describe("selectClaudeInteractiveTransport", () => {
-  test("defaults to the stream-json transport with detach and restart resume support", () => {
+  test("defaults to the stream-json transport with detach and restart resume support when the selector is unset", () => {
     delete process.env.CLAUDE_INTERACTIVE_TRANSPORT;
 
     const selection = selectTransport();
@@ -32,22 +32,8 @@ describe("selectClaudeInteractiveTransport", () => {
     });
   });
 
-  test("uses the runner compatibility transport when CLAUDE_INTERACTIVE_TRANSPORT=runner", () => {
-    process.env.CLAUDE_INTERACTIVE_TRANSPORT = "runner";
-
-    const selection = selectTransport();
-
-    expect(selection.createTransport().kind).toBe("runner");
-    expect(selection.resume).toMatchObject({
-      supportsInProcessConversationResume: true,
-      supportsResumeAfterDetach: false,
-      supportsResumeAfterAppRestart: false,
-      supportsTurnResume: false,
-    });
-  });
-
-  test("does not accept the legacy cli selector for the runner compatibility transport", () => {
-    process.env.CLAUDE_INTERACTIVE_TRANSPORT = "cli";
+  test("treats an empty selector as the default stream-json transport", () => {
+    process.env.CLAUDE_INTERACTIVE_TRANSPORT = "   ";
 
     const selection = selectTransport();
 
@@ -60,11 +46,51 @@ describe("selectClaudeInteractiveTransport", () => {
     });
   });
 
+  test("accepts an explicit trimmed stream-json selector", () => {
+    process.env.CLAUDE_INTERACTIVE_TRANSPORT = " stream-json ";
+
+    const selection = selectTransport();
+
+    expect(selection.createTransport().kind).toBe("stream-json");
+    expect(selection.resume).toMatchObject({
+      supportsInProcessConversationResume: true,
+      supportsResumeAfterDetach: true,
+      supportsResumeAfterAppRestart: true,
+      supportsTurnResume: false,
+    });
+  });
+
+  test("uses the runner compatibility transport when CLAUDE_INTERACTIVE_TRANSPORT=runner", () => {
+    process.env.CLAUDE_INTERACTIVE_TRANSPORT = " runner ";
+
+    const selection = selectTransport();
+
+    expect(selection.createTransport().kind).toBe("runner");
+    expect(selection.resume).toMatchObject({
+      supportsInProcessConversationResume: true,
+      supportsResumeAfterDetach: false,
+      supportsResumeAfterAppRestart: false,
+      supportsTurnResume: false,
+    });
+  });
+
+  test("rejects the legacy cli selector and tells the operator to use runner instead", () => {
+    process.env.CLAUDE_INTERACTIVE_TRANSPORT = "cli";
+
+    expect(() => selectTransport()).toThrow('Use "runner" instead.');
+  });
+
   test("rejects the reserved sdk transport key until an official Claude programmatic API exists", () => {
-    process.env.CLAUDE_INTERACTIVE_TRANSPORT = "sdk";
+    process.env.CLAUDE_INTERACTIVE_TRANSPORT = " sdk ";
 
     expect(() => selectTransport()).toThrow(
       "Official Claude programmatic SDK transport is not implemented for the installed package surface.",
     );
+  });
+
+  test("rejects unknown selector values with a clear operator-facing error", () => {
+    process.env.CLAUDE_INTERACTIVE_TRANSPORT = "bogus";
+
+    expect(() => selectTransport()).toThrow('Use "runner" instead.');
   });
 });

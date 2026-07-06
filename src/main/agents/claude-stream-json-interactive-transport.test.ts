@@ -103,4 +103,55 @@ describe("ClaudeStreamJsonInteractiveTransport", () => {
       { type: "completed", content: "Hello" },
     ]);
   });
+
+  test("forwards approval and input events from onStreamJsonEvent into shared AgentEvent output", async () => {
+    const { ClaudeStreamJsonInteractiveTransport } = await import("./claude-stream-json-interactive-transport");
+    const emitted: AgentEvent[] = [];
+    const transport = new ClaudeStreamJsonInteractiveTransport({
+      executable: "claude",
+      envForTurn: () => ({ PATH: process.env.PATH ?? "" }),
+      streamJsonModelForTurn: (modelId) => modelId,
+      loadBindings: async () => ({
+        startTurn: async (input) => {
+          input.onStreamJsonEvent({
+            type: "approval_request",
+            requestId: "approval-1",
+            prompt: "Allow Bash?",
+            toolName: "Bash",
+          });
+          input.onStreamJsonEvent({
+            type: "approval_response",
+            requestId: "approval-1",
+            decision: "approved",
+            reason: "ok",
+          });
+          input.onStreamJsonEvent({
+            type: "user_input_request",
+            requestId: "input-1",
+            prompt: "Provide token",
+          });
+          input.onStreamJsonEvent({
+            type: "user_input_response",
+            requestId: "input-1",
+            content: "token-123",
+          });
+          return { interrupt: async () => undefined, stop: async () => undefined };
+        },
+      }),
+    });
+
+    await transport.startTurn({
+      prompt: "hello",
+      modelId: "claude-sonnet-4-6",
+      cwd: "C:/repo",
+      onEvent: (event) => emitted.push(event),
+    });
+
+    expect(emitted).toEqual([
+      { type: "approval_request", requestId: "approval-1", content: "Allow Bash?", metadata: { toolName: "Bash" } },
+      { type: "approval_response", requestId: "approval-1", decision: "approved", content: "ok" },
+      { type: "user_input_request", requestId: "input-1", content: "Provide token" },
+      { type: "user_input_response", requestId: "input-1", content: "token-123" },
+    ]);
+  });
 });
