@@ -84,8 +84,9 @@ The key entry files are:
 - `src/main/agents/interactive-session-manager.ts`: per-chat interactive queue plus central idle-detach sweep
 - `src/main/agents/codex-interactive-session.ts`: long-lived Codex chat attachment boundary
 - `src/main/agents/claude-interactive-session.ts`: shared Claude chat attachment boundary
-- `src/main/agents/claude-transport-selection.ts`: Claude SDK-vs-CLI compatibility selection plus truthful resume capability claims
-- `src/main/agents/claude-sdk-bindings.ts`: official Claude package-backed stream-json binding layer
+- `src/main/agents/claude-transport-selection.ts`: Claude `stream-json` vs `runner` selection plus the reserved future `sdk` slot
+- `src/main/agents/claude-stream-json-bindings.ts`: official Claude package-backed `stream-json` compatibility binding layer
+- `src/main/agents/claude-stream-json-events.ts`: normalization of package-backed Claude `stream-json` events into shared chat events
 - `src/main/agents/hermes-runner.ts`: minimal JSON-line CLI adapter proving the future-runtime onboarding path
 - `src/main/sqlite-store.ts`: small SQLite persistence wrapper
 
@@ -160,14 +161,15 @@ Each runtime still has a different backend:
 
 - Codex: RPC-style interaction through `CodexRpcClient` plus `CodexInteractiveSession` for reusable chat attachment
 - Claude: shared `ClaudeInteractiveSession` plus a selectable interactive transport
-- default Claude backend: SDK-backed transport through `claude-sdk-bindings.ts`
-- compatibility Claude backend: CLI `stream-json` re-entry transport
+- default Claude backend: package-backed `stream-json` compatibility transport through `claude-stream-json-bindings.ts`
+- conservative Claude fallback: `runner` transport through `ClaudeRunner`
+- future Claude backend: a true official programmatic SDK transport is reserved for the `sdk` selector and is not implemented on the current package surface
 - API: direct HTTP request to provider-compatible endpoints
 - Hermes: minimal one-shot JSON-line CLI runner through `src/main/agents/hermes-runner.ts`
 
 `AgentHub` remains the state authority. It persists logical chat identity, runtime resume metadata, and structured approval or user-input request lifecycles, restores interactive chats in a detached state after app restart, downgrades abandoned live requests to non-live state, and lets `InteractiveSessionManager` own serialized per-chat execution and idle sweeping.
 
-Claude SDK interaction events are normalized in `src/main/agents/claude-sdk-events.ts` before they reach shared chat history.
+Claude `stream-json` interaction events are normalized in `src/main/agents/claude-stream-json-events.ts` before they reach shared chat history.
 Interactive reconfigure classification lives in `src/main/agents/session-reconfigure.ts`, and chat state can persist an optional per-chat `channelId` override instead of treating the configured-agent channel as immutable forever.
 The same `RuntimeDriver` contract now proves future-runtime onboarding by letting Hermes plug workflow, test, and cleanup behavior in at the driver layer instead of reopening `AgentHub`.
 

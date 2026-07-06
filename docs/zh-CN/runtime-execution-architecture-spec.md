@@ -2,7 +2,7 @@
 
 日期：2026-07-04
 分支：`feat/claude-interactive-runtime`
-状态：Phase 1 已落地；Claude 官方 SDK transport 已落地；approval / user-input 事件已归一化为共享 AgentEvent；interactive reconfigure 已按 hot-safe / attach-boundary / identity-breaking 分类落地；CLI re-entry 仅保留为显式兼容 fallback
+状态：Phase 1 已落地；Claude 当前默认后端是基于官方包拉起的 `stream-json` 兼容 transport；`CLAUDE_INTERACTIVE_TRANSPORT=runner` 保留为更保守的兼容 fallback；`sdk` 仅保留为未来官方程序化接入占位；approval / user-input 事件已归一化为共享 AgentEvent；interactive reconfigure 已按 hot-safe / attach-boundary / identity-breaking 分类落地
 范围：Codex、Claude、API 以及未来本地 runtime（如 Hermes）的执行结构
 
 ## 当前落地状态（2026-07-05）
@@ -19,7 +19,7 @@
 
 在此之后继续补齐的当前能力：
 
-- Claude 现在默认走官方包支撑的 SDK-backed transport，并保留 `ClaudeCliInteractiveTransport` 作为显式兼容 fallback
+- Claude 现在默认走基于官方包拉起的 `stream-json` 兼容 transport，并保留 `CLAUDE_INTERACTIVE_TRANSPORT=runner` 作为更保守的显式兼容 fallback
 - Claude 的 resume capability 声明现在会跟随激活中的 transport 选择保持一致
 - interactive session reconfigure 现在通过共享 planner 分类，并通过同一个 per-chat queue 串行进入 session
 
@@ -108,7 +108,7 @@ npm test -- src/main/agent-hub.test.ts src/main/agents/session-reconfigure.test.
 - `oneshot`：一次 prompt 或请求对应一次执行
 - `interactive`：一个长期逻辑 chat session 对应一个 chat，runtime 进程按需附着
 
-这里要统一的是生命周期与编排边界，不是底层协议。Codex 可以继续保留原生 app-server RPC，Claude 可以走 SDK 拉起子进程，API 继续保持 HTTP。共享边界应该是执行风格、capability、事件模型和 session 生命周期。
+这里要统一的是生命周期与编排边界，不是底层协议。Codex 可以继续保留原生 app-server RPC，Claude 当前默认走基于官方包拉起的 `stream-json` 兼容 transport，API 继续保持 HTTP；真正官方程序化 SDK transport 仍属于后续工作。共享边界应该是执行风格、capability、事件模型和 session 生命周期。
 
 ## 问题定义
 
@@ -145,7 +145,7 @@ npm test -- src/main/agent-hub.test.ts src/main/agents/session-reconfigure.test.
 - 一条 capability-driven 的 `AgentHub` 编排路径，而不是 Claude-only 或 Codex-only 的 chat 控制分支
 - 一套共享 interactive-session 管理模型，明确区分 logical chat session 与 runtime attachment
 - Codex chat 作为 `interactive` runtime 落地，具备懒附着、进程复用、空闲 detach 和原生 thread resume
-- Claude chat 作为 `interactive` runtime 落地，官方 SDK 拉起的子进程路径成为首选后端，PTY 不能是默认架构
+- Claude chat 作为 `interactive` runtime 落地，当前默认后端是基于官方包拉起的 `stream-json` 兼容 transport，`runner` 是显式兼容回退路径，而真正官方程序化 SDK transport 仍属于后续工作；PTY 不能是默认架构
 - API runtime 保持不变，继续是 stateless `oneshot`
 - 持久化与应用重启后的恢复行为，符合本规范中的 continuation 与 downgrade 规则
 - 有验证可以证明 runtime reuse、stale-event rejection、idle detach 以及 continuation fallback 的正确性
@@ -174,7 +174,7 @@ npm test -- src/main/agent-hub.test.ts src/main/agents/session-reconfigure.test.
 架构应当尽量保留各个 runtime 已验证的底层协议：
 
 - Codex 继续保留原生 app-server RPC。
-- Claude interactive 优先选官方 SDK 拉起的子进程 session，而不是 PTY。
+- Claude interactive 当前优先选基于官方包拉起的 `stream-json` 兼容 session；`runner` 作为更保守的兼容回退路径；真正官方程序化 SDK transport 仍保留为后续工作，而不是 PTY。
 - API runtime 继续保持 HTTP one-shot。
 
 应用要统一的是生命周期、capability 与共享事件处理，而不是为了统一而统一底层 transport。
@@ -437,7 +437,7 @@ runtime 不得声明比其底层 transport 实际能保证的更强恢复语义�
 - 如果集成层有意依赖 Codex rollout 对动态工具的持久化，则 `dynamicTools` 可以不必重复作为最小恢复句柄的一部分
   - 官方依据：App Server 会在 `thread/resume` 时恢复已持久化的 `dynamicTools`，前提是客户端没有传入新的替代项
 
-对于 Claude Agent SDK / Claude Code，官方 native resume 契约是 session-transcript-based：
+对于 Claude Code 当前兼容 transport 以及未来可能接入的官方程序化 SDK，native resume 契约都围绕 session transcript：
 
 - `sessionId` 是必需的 native-resume 标识
   - 官方依据：SDK 的 `resume` 需要已捕获的 `session_id`
@@ -663,9 +663,10 @@ Codex 的 task、workflow、runtime test 在第一阶段继续保持 `oneshot`�
 Claude chat 继续保持 `interactive`，但后端选型要调整。
 
 - 逻辑 chat-session 抽象继续保留
-- 首选后端是官方 SDK 拉起的子进程 session
-- one-shot CLI re-entry 可以在迁移期间作为兼容 transport 留在同一 session 接口后面
-- 只要 SDK 路径能满足生命周期与事件要求，PTY 就不能作为默认架构
+- 当前默认后端是基于官方包拉起的 `stream-json` 兼容 session
+- `CLAUDE_INTERACTIVE_TRANSPORT=runner` 可以作为更保守的兼容 transport 留在同一 session 接口后面
+- `sdk` 仅保留为未来官方程序化 transport 的占位选择；在当前包表面下显式请求它应失败并提示未实现
+- 只要 `stream-json` 或未来官方程序化 SDK 路径能满足生命周期与事件要求，PTY 就不能作为默认架构
 - 打开或恢复 Claude chat 时，不得提前拉起子进程
 - 第一次发送 prompt 或 continue 时，才懒附着子进程
 - 如果附着进程超过 1 小时无活动，应用应关闭该进程，但逻辑 chat session 仍然保持可恢复
@@ -720,7 +721,8 @@ API runtime 保持原样：
 - `src/main/agents/process-lease.ts`
 - `src/main/agents/codex-interactive-session.ts`
 - `src/main/agents/claude-interactive-session.ts`
-- `src/main/agents/claude-sdk-interactive-transport.ts`
+- `src/main/agents/claude-stream-json-interactive-transport.ts`
+- `src/main/agents/claude-runner-interactive-transport.ts`
 
 后续如果要迁到 `runtimes/` 子目录也可以，但不是第一阶段必须动作。
 
@@ -755,8 +757,9 @@ API runtime 保持原样：
 ### Step 3：Claude interactive 后端收敛
 
 - 保留当前 Claude interactive session 边界
-- 新增 SDK-backed transport
-- CLI re-entry transport 只作为兼容后端存在
+- 保留基于官方包拉起的 `stream-json` 兼容 transport 作为当前默认后端
+- `runner` 只作为更保守的兼容回退后端存在
+- `sdk` 仅保留为未来官方程序化 transport 的占位选择；在当前包表面下显式请求它应失败并提示未实现
 - PTY 只保留为实验性、显式 opt-in 路径
 
 验收标准：

@@ -40,7 +40,9 @@ Unify main-process runtime execution around two product-facing styles, `oneshot`
 #### Protocol strategy
 
 - Codex keeps native app-server RPC.
-- Claude interactive execution defaults to an SDK-backed subprocess transport.
+- Claude interactive execution defaults to the package-backed `stream-json` compatibility transport.
+- `CLAUDE_INTERACTIVE_TRANSPORT=runner` remains the conservative compatibility fallback.
+- A true official programmatic SDK backend remains future work until the installed package exposes a verified programmatic surface.
 - API stays HTTP-based and one-shot.
 - The shared boundary unifies lifecycle and orchestration, not wire protocol details.
 
@@ -195,8 +197,9 @@ The exact filenames may change, but the design should converge on these responsi
   - task, workflow, and runtime test remain `oneshot`
 - Claude
   - chat stays `interactive`
-  - default backend is SDK-backed subprocess transport
-  - one-shot CLI re-entry remains an explicit compatibility backend behind the same session boundary
+  - default backend is the package-backed `stream-json` compatibility transport
+  - `runner` remains an explicit compatibility backend behind the same session boundary
+  - a true official programmatic SDK backend stays reserved for a future slice once the package surface is verified
   - PTY stays experimental and opt-in
   - task, workflow, and runtime test remain `oneshot`
 - API
@@ -216,10 +219,14 @@ The exact filenames may change, but the design should converge on these responsi
   - `src/main/agents/runtime-driver.ts`
   - `src/main/agents/runtime-capabilities.ts`
   - `src/main/agents/interactive-session-manager.ts`
-  - `src/main/agents/process-lease.ts`
+- `src/main/agents/process-lease.ts`
 - `src/main/agents/codex-interactive-session.ts`
 - `src/main/agents/claude-interactive-session.ts`
-- `src/main/agents/claude-sdk-interactive-transport.ts`
+- `src/main/agents/claude-transport-selection.ts`
+- `src/main/agents/claude-stream-json-interactive-transport.ts`
+- `src/main/agents/claude-runner-interactive-transport.ts`
+- `src/main/agents/claude-stream-json-bindings.ts`
+- `src/main/agents/claude-stream-json-events.ts`
 - `src/main/agents/hermes-runner.ts`
 
 ### Implementation slices
@@ -253,8 +260,9 @@ Acceptance criteria:
 #### Slice 3: Claude interactive backend consolidation
 
 - Keep the shared Claude interactive-session boundary.
-- Add an SDK-backed transport implementation.
-- Keep CLI re-entry only as compatibility transport during migration.
+- Keep the package-backed `stream-json` compatibility transport as the default backend.
+- Keep `runner` only as the explicit compatibility transport during this phase.
+- Reserve a true official programmatic SDK transport for a later slice once the package surface is verified.
 - Leave PTY experimental.
 
 Acceptance criteria:
@@ -263,6 +271,7 @@ Acceptance criteria:
 - Structured approval and user-input events are normalized into the shared `AgentEvent` surface.
 - Pending approval and user-input requests degrade to non-live state after stop, detach, or app restart.
 - Idle timeout detaches the process while preserving logical session continuity.
+- Explicit `CLAUDE_INTERACTIVE_TRANSPORT=sdk` requests fail honestly until a verified official programmatic API exists.
 
 #### Slice 4: future-runtime onboarding path
 
@@ -283,7 +292,11 @@ Acceptance criteria:
   - `src/main/agents/codex-interactive-session.test.ts`
   - `src/main/agents/codex-rpc.test.ts`
   - `src/main/agents/claude-interactive-session.test.ts`
-  - `src/main/agents/claude-interactive-transport-*.test.ts`
+  - `src/main/agents/claude-transport-selection.test.ts`
+  - `src/main/agents/claude-stream-json-events.test.ts`
+  - `src/main/agents/claude-stream-json-interactive-transport.test.ts`
+  - `src/main/agents/claude-runner.test.ts`
+  - `src/main/agents/claude-stream.test.ts`
   - `src/main/agents/detect.test.ts`
   - `src/main/agents/hermes-runner.test.ts`
 

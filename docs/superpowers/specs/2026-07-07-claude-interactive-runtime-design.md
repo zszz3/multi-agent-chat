@@ -39,7 +39,7 @@ This spec covers:
 
 - Claude chat execution in the Electron main process
 - the shared Claude interactive-session boundary
-- SDK versus CLI transport selection
+- package-backed `stream-json` versus `runner` compatibility transport selection, with `sdk` reserved for a future official programmatic backend
 - persisted Claude resume metadata
 - structured approval and user-input event lifecycles
 - interactive-session reconfigure behavior
@@ -63,8 +63,10 @@ The branch already has the following major pieces in place:
 
 - `ClaudeInteractiveSession` exists as the shared Claude chat session boundary
 - Claude now uses a dedicated transport contract instead of hard-wiring all behavior into one session class
-- `ClaudeCliInteractiveTransport` exists as an explicit CLI compatibility transport
+- `ClaudeStreamJsonInteractiveTransport` exists as the default package-backed `stream-json` compatibility transport
+- `ClaudeRunnerInteractiveTransport` exists as the more conservative compatibility fallback
 - `claude-transport-selection.ts` centralizes backend selection and advertised resume capabilities
+- `claude-stream-json-bindings.ts` and `claude-stream-json-events.ts` own the current package-backed stream-json glue
 - `AgentEvent` and `ChatEvent` already include structured approval and user-input lifecycle variants
 - `AgentHub` persists approval and user-input request events and expires abandoned live requests on stop or restore
 - `chat-event-display.tsx` renders pending and expired approval or input requests honestly
@@ -72,23 +74,25 @@ The branch already has the following major pieces in place:
 - per-chat `channelId` overrides already exist
 - `InteractiveSessionManager` already serializes `reconfigure(...)` through the same per-chat queue used for prompt dispatch
 
-### Current Mismatch With The 2026-07-06 Plans
+### Current Truth After The Transport-Renaming Cleanup
 
-The branch is not yet consistent with the transport plan's required end state.
+The branch now uses truthful transport names, but it still does not have a verified official programmatic Claude SDK backend.
 
 What is true right now:
 
 - the branch installs `@anthropic-ai/claude-code`
-- the default Claude selection path is named `sdk`
-- `ClaudeSdkInteractiveTransport` exists
+- the default Claude selection path is `stream-json`
+- `ClaudeStreamJsonInteractiveTransport` is the default backend
+- `CLAUDE_INTERACTIVE_TRANSPORT=runner` selects `ClaudeRunnerInteractiveTransport`
+- explicit `CLAUDE_INTERACTIVE_TRANSPORT=sdk` requests fail with "Official Claude programmatic SDK transport is not implemented for the installed package surface."
 
 What is also true right now:
 
-- `src/main/agents/claude-sdk-bindings.ts` still launches Claude through `spawnCli(...)`
-- the so-called SDK bindings still assemble CLI flags such as `--print` and `--output-format stream-json`
-- the checked-in SDK surface artifact does not yet prove a verified programmatic Claude turn API is being used
+- `src/main/agents/claude-stream-json-bindings.ts` still launches the package-provided `claude` binary
+- the default bindings still assemble CLI flags such as `--print` and `--output-format stream-json`
+- the checked-in package-surface artifact shows `exports: (none)`, `main: (none)`, and `verified programmatic export surface: not verified`
 
-Therefore this branch must not currently be described as "default Claude interactive is truly SDK-backed" in the strict sense intended by the 2026-07-06 transport plan.
+Therefore this branch must currently be described as "default Claude interactive uses the official package-backed `stream-json` compatibility transport," not as "truly SDK-backed" in the strict programmatic sense intended by the 2026-07-06 transport plan.
 
 ### Important Partial Successes
 
@@ -104,8 +108,8 @@ Even though the transport goal is not fully met, several important contract chan
 Claude interactive work now sits in an awkward middle state:
 
 - the shared session boundary, event model, and reconfigure model largely match the intended architecture
-- the default transport naming and some docs imply an official SDK backend already exists
-- the actual default bindings layer still shells out to the Claude CLI
+- the transport naming is now truthful, but some docs still overstate the current backend as an official SDK integration
+- the actual default bindings layer still shells out through the Claude package's `stream-json` CLI surface
 
 That mismatch matters because it breaks three guarantees:
 
@@ -117,11 +121,12 @@ This spec resolves that by making the required end state explicit and by separat
 
 ## Required End State
 
-Claude interactive chat is complete only when all of the following are true:
+The broader future official-programmatic-SDK goal is complete only when all of the following are true:
 
 - the product-facing Claude chat path is `interactive`
 - the default Claude interactive backend is a true official SDK-backed transport
-- CLI re-entry remains available only as an explicit compatibility fallback
+- the current package-backed `stream-json` transport has either been replaced by that verified SDK backend or has been explicitly kept as a documented compatibility path
+- `runner` remains available only as an explicit compatibility fallback
 - `AgentHub` does not gain new top-level Claude branches to support backend selection
 - `ClaudeInteractiveSession` preserves and forwards the full Claude resume envelope honestly
 - resume capability claims shown to the app match the selected backend truthfully
@@ -137,15 +142,15 @@ The Claude runtime path must stay split into four responsibilities:
 
 1. `AgentHub`
    - owns chat state, persistence, event application, and renderer-visible truth
-   - must not own SDK-versus-CLI transport branching
+   - must not own transport-selection branching
 2. `ClaudeInteractiveSession`
    - owns lazy attach, turn lifecycle, attachment state, stale-event rejection, and session snapshotting
    - must remain the only product-facing Claude interactive session abstraction
 3. Claude transport layer
-   - owns backend selection between SDK and CLI compatibility implementations
+   - owns backend selection between the package-backed `stream-json` default, the `runner` fallback, and any future official programmatic SDK implementation
    - must expose one shared transport contract to the session
 4. Claude bindings and event adapters
-   - own raw SDK or CLI protocol glue
+   - own raw `stream-json`, `runner`, or future official SDK protocol glue
    - normalize backend-specific events into the shared event surface
 
 ### Default Implementation Targets
@@ -154,10 +159,10 @@ The repo should continue to converge around these files and responsibilities:
 
 - `src/main/agents/claude-interactive-session.ts`
 - `src/main/agents/claude-interactive-transport.ts`
-- `src/main/agents/claude-cli-interactive-transport.ts`
-- `src/main/agents/claude-sdk-interactive-transport.ts`
-- `src/main/agents/claude-sdk-bindings.ts`
-- `src/main/agents/claude-sdk-events.ts`
+- `src/main/agents/claude-stream-json-interactive-transport.ts`
+- `src/main/agents/claude-runner-interactive-transport.ts`
+- `src/main/agents/claude-stream-json-bindings.ts`
+- `src/main/agents/claude-stream-json-events.ts`
 - `src/main/agents/claude-transport-selection.ts`
 - `src/main/agents/session-reconfigure.ts`
 - `src/main/agent-hub.ts`
@@ -167,7 +172,7 @@ The repo should continue to converge around these files and responsibilities:
 
 The shared transport contract must remain small and Claude-specific:
 
-- `kind: "sdk" | "cli"`
+- current transport kinds: `"stream-json"` and `"runner"`
 - `startTurn(...)`
 - `interrupt()`
 - `detach()`
@@ -182,11 +187,13 @@ The transport input must include:
 
 This contract already exists and should remain the session boundary even if the internal SDK adapter changes.
 
-### SDK-Backed Means A Real Programmatic API
+On this branch, `sdk` is a reserved future selector, not a current transport kind. Explicitly requesting it must fail until a real official programmatic backend exists.
+
+### Future SDK-Backed Means A Real Programmatic API
 
 For this repo, a Claude backend only counts as "SDK-backed" if:
 
-- `claude-sdk-bindings.ts` imports an official Claude package API at runtime
+- the backend imports an official Claude package API at runtime
 - turn execution is driven through that imported programmatic API
 - event streaming comes from that API rather than from parsing CLI stdout intended for a shell user
 
@@ -194,35 +201,37 @@ The following do not count as SDK-backed:
 
 - depending on `@anthropic-ai/claude-code` but never importing its programmatic surface
 - spawning the `claude` binary that ships inside the package
-- wrapping CLI JSON output in a file named `claude-sdk-bindings.ts`
+- wrapping CLI JSON output in `claude-stream-json-bindings.ts`
 
 If the currently installed official package does not expose a verified programmatic API, then the branch must not claim the SDK goal is complete. In that case the work remains blocked on one of these outcomes:
 
 - a verified official export from the same package
 - a verified official successor package
-- an explicit product decision to keep CLI compatibility as the default and update the docs accordingly
+- an explicit product decision to keep the package-backed compatibility transport as the default and update the docs accordingly
 
-### SDK Surface Verification Rule
+### Package Surface Verification Rule
 
-Before claiming completion, the branch must keep a checked-in artifact that shows the official surface it actually depends on.
+Before claiming completion, the branch must keep a checked-in artifact that shows the official package surface it actually depends on.
 
 That artifact must answer:
 
-- which package was inspected
-- which version was installed
-- which exported symbols or documented API entry points were found
-- which exact export the bindings layer calls
+- which package name and version were inspected
+- which `type`, `bin.claude`, `main`, and `exports` fields were found
+- whether a verified programmatic export surface is `present` or `not verified`
+- which `files[]` entries the package declares
+- which top-level files are actually present
 
-The bindings layer must depend only on verified surface area captured by that artifact. It must not invent an unofficial `query(...)`-style API without proof that the installed package actually exposes it.
+If a future official programmatic SDK backend lands, the artifact must also identify the exact verified export the bindings layer calls. Until then, the artifact must make the absence of a verified programmatic export surface explicit instead of implying that one exists.
 
-### CLI Compatibility Transport
+### Runner Compatibility Transport
 
-The CLI transport remains valid only as a compatibility path behind the same session contract.
+The `runner` transport remains valid only as a compatibility path behind the same session contract.
 
 Rules:
 
-- it must be selected only by an explicit override such as `CLAUDE_INTERACTIVE_TRANSPORT=cli`
-- it must not be described as the preferred default once a real SDK path exists
+- it must be selected only by an explicit override such as `CLAUDE_INTERACTIVE_TRANSPORT=runner`
+- the legacy `cli` selector must stay rejected with guidance to use `runner` instead
+- it must not be described as the preferred default while the package-backed `stream-json` transport remains the branch default
 - its resume capability claims must stay conservative
 - it may continue to use `ClaudeRunner` and CLI `--resume <sessionId>` semantics
 
@@ -232,16 +241,19 @@ Transport selection and resume capability claims must stay in one place.
 
 Required behavior:
 
-- SDK default path:
+- package-backed `stream-json` default path:
   - `supportsInProcessConversationResume: true`
-  - `supportsResumeAfterDetach: true` only if the actual SDK path supports it in practice
-  - `supportsResumeAfterAppRestart: true` only if the actual SDK path supports it in practice
-- CLI compatibility path:
+  - `supportsResumeAfterDetach: true`
+  - `supportsResumeAfterAppRestart: true`
+- `runner` compatibility path:
   - `supportsInProcessConversationResume: true`
   - `supportsResumeAfterDetach: false`
   - `supportsResumeAfterAppRestart: false`
+- reserved future `sdk` path:
+  - must not be selectable until a verified official programmatic backend exists
+  - once implemented, its resume claims must reflect its actual behavior rather than inheriting the `stream-json` defaults
 
-The repo must not advertise stronger resume support just because the selected transport is named `sdk`.
+The repo must not advertise stronger resume support just because the package comes from an official source or because a future selector is named `sdk`.
 
 ### Resume Metadata Model
 
@@ -267,7 +279,7 @@ Rules:
 
 Claude backend-specific signals must be normalized in two stages:
 
-1. raw backend event -> stable `ClaudeSdkEvent`-style internal union
+1. raw backend event -> stable Claude transport-event union (currently `ClaudeStreamJsonEvent` for the default backend)
 2. stable Claude event -> shared `AgentEvent`
 
 The rest of the app must only depend on shared events such as:
@@ -382,8 +394,9 @@ This repo no longer needs one brand-new Claude architecture build. It needs a cl
 ### Slice 1: Correct The Transport Truth Boundary
 
 - keep the shared transport seam
-- keep the CLI compatibility transport
-- replace the fake SDK bindings with a real official programmatic integration
+- keep the package-backed `stream-json` compatibility transport as the truthful default
+- keep the `runner` compatibility transport
+- keep `sdk` reserved for a future official programmatic integration
 - if no verified programmatic API exists yet, downgrade the docs and default-transport claims instead of papering over the gap
 
 ### Slice 2: Preserve Full Claude Resume Semantics
@@ -416,8 +429,9 @@ This repo no longer needs one brand-new Claude architecture build. It needs a cl
 - Do not widen this slice into PTY terminal emulation work
 - Do not add new top-level Claude branches in `AgentHub`
 - Do not weaken request-lifecycle honesty for the sake of smoother UI
-- Do not advertise resume-after-detach or resume-after-restart support on the CLI compatibility path
+- Do not advertise resume-after-detach or resume-after-restart support on the `runner` compatibility path
 - Do not call a package-backed CLI wrapper "SDK-backed"
+- Do not repurpose the reserved `sdk` selector for the current `stream-json` transport
 - Do not silently retry the same user prompt across two Claude backends after one backend already streamed partial turn output
 
 ## Verification
@@ -425,14 +439,7 @@ This repo no longer needs one brand-new Claude architecture build. It needs a cl
 Minimum verification for this spec:
 
 - `npm run typecheck`
-- `npm test -- src/main/agent-hub.test.ts`
-- `npm test -- src/main/agents/claude-interactive-session.test.ts`
-- `npm test -- src/main/agents/claude-sdk-interactive-transport.test.ts`
-- `npm test -- src/main/agents/claude-sdk-events.test.ts`
-- `npm test -- src/main/agents/session-reconfigure.test.ts`
-- `npm test -- src/main/agents/interactive-session-manager.test.ts`
-- `npm test -- src/renderer/src/pages/chat/chat-event-display.test.tsx`
-- `npm test -- src/main/agents/claude-runner.test.ts src/main/agents/claude-stream.test.ts`
+- `npm test -- src/main/agents/claude-transport-selection.test.ts src/main/agents/claude-stream-json-events.test.ts src/main/agents/claude-stream-json-interactive-transport.test.ts src/main/agents/claude-interactive-session.test.ts src/main/agent-hub.test.ts src/main/agents/session-reconfigure.test.ts src/main/agents/interactive-session-manager.test.ts src/renderer/src/pages/chat/chat-event-display.test.tsx src/main/agents/claude-runner.test.ts src/main/agents/claude-stream.test.ts`
 
 Critical proof points:
 
@@ -440,22 +447,26 @@ Critical proof points:
 - the first prompt lazily attaches a backend
 - the session passes the full Claude resume envelope into transport startup
 - the selected backend's advertised resume capabilities match reality
+- explicit `CLAUDE_INTERACTIVE_TRANSPORT=sdk` requests fail honestly until a verified official programmatic backend exists
 - approval and user-input events are normalized, persisted, and expired honestly
 - running-turn reconfigure changes stage instead of mutating the live turn
-- idle detach and stale-event rejection still work after the SDK integration changes
+- idle detach and stale-event rejection still work after the stream-json and runner truth-sync changes
 
 ## Definition Of Done
 
-This Claude runtime slice is done only when:
+The current docs-and-artifact truth-sync slice is done only when:
 
-- the default Claude chat backend is truly official SDK-backed on this branch
-- the CLI transport remains available only as an explicit compatibility fallback
+- the default Claude chat backend is described truthfully as the package-backed `stream-json` compatibility transport
+- the `runner` transport remains available only as an explicit compatibility fallback
+- explicit `sdk` selection fails honestly and is documented as future-only
 - docs no longer overstate SDK completion before the code proves it
 - `ClaudeInteractiveSession` forwards and preserves full Claude resume metadata honestly
 - transport selection and resume capability claims are truthful
 - approval and user-input lifecycle handling remains durable and honest
 - reconfigure behavior remains staged and conservative
 - the focused verification set passes
+
+The broader future official-programmatic-SDK goal is done only when the default Claude chat backend is truly official SDK-backed on this branch and the checked-in package-surface artifact identifies the exact verified export the bindings layer calls.
 
 ## Open Questions
 
