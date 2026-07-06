@@ -45,8 +45,12 @@ export class ClaudeSdkInteractiveTransport implements ClaudeInteractiveTransport
                 ? { subpaths: [...input.resumeState.native.subpaths] }
                 : {}),
             },
-            claudeConfigDir: input.resumeState.appContext?.claudeConfigDir,
-            sessionStoreRef: input.resumeState.appContext?.sessionStoreRef,
+            ...(input.resumeState.appContext?.claudeConfigDir !== undefined
+              ? { claudeConfigDir: input.resumeState.appContext.claudeConfigDir }
+              : {}),
+            ...(input.resumeState.appContext?.sessionStoreRef !== undefined
+              ? { sessionStoreRef: input.resumeState.appContext.sessionStoreRef }
+              : {}),
           }
         : {}),
       onSdkEvent: (event) => {

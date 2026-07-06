@@ -80,7 +80,7 @@ export async function loadClaudeSdkBindings(
 
       const state = createClaudeStreamState();
       const rl = createInterface({ input: proc.stdout });
-      bindClaudeSdkProcess(proc, rl, state, input.onSdkEvent);
+      bindClaudeSdkProcess(proc, proc.stderr, rl, state, input.onSdkEvent);
 
       return {
         interrupt: async () => {
@@ -96,6 +96,7 @@ export async function loadClaudeSdkBindings(
 
 function bindClaudeSdkProcess(
   proc: ChildProcess,
+  stderr: NodeJS.ReadableStream,
   rl: ReturnType<typeof createInterface>,
   state: ReturnType<typeof createClaudeStreamState>,
   onSdkEvent: (event: ClaudeSdkEvent) => void,
@@ -113,7 +114,7 @@ function bindClaudeSdkProcess(
     }
   });
 
-  proc.stderr.on("data", (chunk: Buffer) => {
+  stderr.on("data", (chunk: Buffer) => {
     const text = chunk.toString().trim();
     if (text) {
       onSdkEvent({ type: "error", error: text });

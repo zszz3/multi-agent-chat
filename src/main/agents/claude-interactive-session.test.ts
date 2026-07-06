@@ -66,8 +66,9 @@ describe("ClaudeInteractiveSession", () => {
         now: () => 1000,
         capabilities: runtimeSessionCapabilities(),
         createTransport: () => ({
+          kind: "sdk",
           startTurn: async (input) => {
-            starts.push({ resumeState: input.resumeState });
+            starts.push(input.resumeState ? { resumeState: input.resumeState } : {});
             input.onEvent({ type: "completed", content: "reply" });
             return { stop: async () => undefined };
           },
@@ -115,6 +116,7 @@ describe("ClaudeInteractiveSession", () => {
         now: () => 1000,
         capabilities: runtimeSessionCapabilities(),
         createTransport: () => ({
+          kind: "sdk",
           startTurn: async (input) => {
             starts.push({
               prompt: input.prompt,
@@ -161,6 +163,7 @@ describe("ClaudeInteractiveSession", () => {
         now: () => 1000,
         capabilities: runtimeSessionCapabilities(),
         createTransport: () => ({
+          kind: "sdk",
           startTurn: async (input) => {
             forwardEvent = input.onEvent as (event: { type: string; [key: string]: unknown }) => void;
             input.onEvent({ type: "session", sessionId: "claude-session-1" });
