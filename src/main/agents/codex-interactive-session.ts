@@ -3,6 +3,7 @@ import type { AgentEvent, ChatRuntimeSessionState, PersistedResumeState } from "
 import type { InteractiveSession, InteractiveSessionContext } from "./runtime-driver";
 import { ProcessLease } from "./process-lease";
 import { CodexRpcClient } from "./codex-rpc";
+import { planSessionReconfigure } from "./session-reconfigure";
 
 interface CodexInteractiveSessionOptions {
   createCodexClient: (input: {
@@ -22,6 +23,7 @@ export class CodexInteractiveSession implements InteractiveSession {
   private attachmentGeneration = 0;
   private activeTurnId: string | undefined;
   private lastMeaningfulActivityAt: number | undefined;
+  private pendingContext: InteractiveSessionContext | undefined;
 
   constructor(
     private context: InteractiveSessionContext,
@@ -32,10 +34,24 @@ export class CodexInteractiveSession implements InteractiveSession {
   }
 
   reconfigure(context: InteractiveSessionContext): void {
-    this.context = context;
-    if (!this.client && context.resumeState?.runtimeId === "codex") {
+    const plan = planSessionReconfigure(this.context, context);
+    this.context = { ...this.context, ...plan.applyNow };
+    if (plan.invalidateResume) {
+      this.resumeState = undefined;
+    } else if (!this.client && context.resumeState?.runtimeId === "codex") {
       this.resumeState = { ...context.resumeState };
     }
+
+    const nextContext = { ...this.context, ...plan.applyOnNextAttach };
+    if (this.attachmentState === "running" && Object.keys(plan.applyOnNextAttach).length > 0) {
+      this.pendingContext = nextContext;
+      this.context.syncState?.(this.snapshot());
+      return;
+    }
+
+    this.context = nextContext;
+    this.pendingContext = undefined;
+    this.context.syncState?.(this.snapshot());
   }
 
   async ensureAttached(): Promise<void> {
@@ -165,6 +181,7 @@ export class CodexInteractiveSession implements InteractiveSession {
     } finally {
       this.attachmentState = "detached";
       this.activeTurnId = undefined;
+      this.applyPendingContextIfIdle();
       this.touch();
       this.context.syncState?.(this.snapshot());
     }
@@ -197,10 +214,12 @@ export class CodexInteractiveSession implements InteractiveSession {
     if (event.type === "completed") {
       this.attachmentState = "idle";
       this.activeTurnId = undefined;
+      this.applyPendingContextIfIdle();
       this.touch();
     } else if (event.type === "error") {
       this.attachmentState = "interrupted";
       this.activeTurnId = undefined;
+      this.applyPendingContextIfIdle();
       this.touch();
     } else if (event.type === "delta" || event.type === "meta" || event.type === "system" || event.type === "tool_call" || event.type === "tool_result" || event.type === "handoff") {
       this.touch();
@@ -219,5 +238,12 @@ export class CodexInteractiveSession implements InteractiveSession {
 
   private touch(): void {
     this.lastMeaningfulActivityAt = this.now();
+  }
+
+  private applyPendingContextIfIdle(): void {
+    if (!this.pendingContext) return;
+    if (this.attachmentState === "running") return;
+    this.context = this.pendingContext;
+    this.pendingContext = undefined;
   }
 }

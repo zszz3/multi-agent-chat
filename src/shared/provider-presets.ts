@@ -519,4 +519,10 @@ export const AGENT_PROVIDER_PRESETS: AgentProviderPreset[] = [
     usesApiKey: true,
     models: [{ id: DEFAULT_MODEL_ID, label: "Default" }],
   },
+  {
+    id: "hermes-local",
+    label: "Hermes",
+    runtimeAgentId: "hermes",
+    models: FALLBACK_MODEL_OPTIONS.hermes,
+  },
 ];

@@ -4,12 +4,14 @@ import type { AgentChannel, AgentId, AgentModelOption, AgentRuntime, ConfiguredA
 export function agentLabel(agentId: AgentId): string {
   if (agentId === "codex") return "Codex";
   if (agentId === "claude") return "Claude Code";
+  if (agentId === "hermes") return "Hermes";
   return "API";
 }
 
 export function agentAccent(agentId: AgentId): string {
   if (agentId === "codex") return "agent-codex";
   if (agentId === "claude") return "agent-claude";
+  if (agentId === "hermes") return "agent-hermes";
   return "agent-api";
 }
 

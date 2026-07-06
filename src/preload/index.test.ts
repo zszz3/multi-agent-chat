@@ -65,6 +65,7 @@ describe("preload skill API", () => {
   test("keeps runtime session typing stable across the preload snapshot surface", () => {
     expectTypeOf<Awaited<ReturnType<MultiAgentChatApi["getSnapshot"]>>>().toEqualTypeOf<AppSnapshot>();
     expectTypeOf<ChatSession["runtimeSession"]>().toEqualTypeOf<ChatRuntimeSessionState | undefined>();
+    expectTypeOf<ChatSession["channelId"]>().toEqualTypeOf<string | undefined>();
   });
 });
 

@@ -28,6 +28,20 @@ function runtimeSessionCapabilities(): ChatRuntimeSessionState["capabilities"] {
   };
 }
 
+function baseClaudeContext(dir: string) {
+  return {
+    chatId: "chat-1",
+    configuredAgentId: "claude-agent",
+    runtimeId: "claude" as const,
+    runtime: claudeRuntime("claude"),
+    channelId: "claude-code",
+    workDir: dir,
+    modelId: "claude-sonnet-4-6",
+    developerInstructions: "test",
+    emit: () => undefined,
+  };
+}
+
 describe("ClaudeInteractiveSession", () => {
   test("passes the persisted Claude resume envelope into the transport", async () => {
     const dir = await mkdtemp(path.join(os.tmpdir(), "multi-agent-chat-claude-resume-envelope-"));
@@ -192,5 +206,53 @@ describe("ClaudeInteractiveSession", () => {
     expect(session.snapshot()).toMatchObject({
       attachmentState: "interrupted",
     });
+  });
+
+  test("stages a Claude model change until the running turn finishes", async () => {
+    const dir = await mkdtemp(path.join(os.tmpdir(), "multi-agent-chat-claude-reconfigure-"));
+    const startedModels: string[] = [];
+    const syncStates: ChatRuntimeSessionState[] = [];
+    let forwardEvent: ((event: { type: string; [key: string]: unknown }) => void) | undefined;
+    const session = new ClaudeInteractiveSession(
+      {
+        ...baseClaudeContext(dir),
+        syncState: (state) => syncStates.push(state),
+      },
+      {
+        capabilities: runtimeSessionCapabilities(),
+        now: () => 1000,
+        createTransport: () => ({
+          kind: "sdk",
+          startTurn: async (input) => {
+            startedModels.push(input.modelId ?? "default");
+            forwardEvent = input.onEvent as (event: { type: string; [key: string]: unknown }) => void;
+            input.onEvent({ type: "session", sessionId: "claude-session-1" });
+            return { stop: async () => undefined };
+          },
+          interrupt: async () => undefined,
+          detach: async () => undefined,
+        }),
+      },
+    );
+
+    await session.sendPrompt("first");
+    const syncCountBeforeReconfigure = syncStates.length;
+
+    session.reconfigure({
+      ...baseClaudeContext(dir),
+      modelId: "claude-opus-4-6",
+      syncState: (state) => syncStates.push(state),
+    });
+
+    expect(syncStates).toHaveLength(syncCountBeforeReconfigure + 1);
+    expect(session.snapshot()).toMatchObject({
+      attachmentState: "running",
+      resumeState: { runtimeId: "claude", native: { sessionId: "claude-session-1" } },
+    });
+
+    forwardEvent?.({ type: "completed", content: "reply:first" });
+    await session.sendPrompt("second");
+
+    expect(startedModels).toEqual(["claude-sonnet-4-6", "claude-opus-4-6"]);
   });
 });

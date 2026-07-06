@@ -7,7 +7,11 @@ export type ClaudeSdkEvent =
   | { type: "session"; sessionId: string }
   | { type: "delta"; content: string }
   | { type: "completed"; content?: string }
-  | { type: "error"; error: string };
+  | { type: "error"; error: string }
+  | { type: "approval_request"; requestId: string; prompt: string; toolName?: string }
+  | { type: "approval_response"; requestId: string; decision: "approved" | "rejected"; reason?: string }
+  | { type: "user_input_request"; requestId: string; prompt: string }
+  | { type: "user_input_response"; requestId: string; content: string };
 
 export interface ClaudeSdkBindingTurnHandle {
   interrupt(): Promise<void>;
@@ -105,6 +109,11 @@ function bindClaudeSdkProcess(
     if (!line.trim()) return;
     try {
       const raw = JSON.parse(line) as unknown;
+      const structured = fromRawClaudeSdkEvent(raw);
+      if (structured) {
+        onSdkEvent(structured);
+        return;
+      }
       for (const event of normalizeClaudeStreamEvent(raw, state)) {
         const normalized = toClaudeSdkEvent(event);
         if (normalized) onSdkEvent(normalized);
@@ -145,6 +154,46 @@ function toClaudeSdkEvent(
   }
   if (event.type === "error") {
     return { type: "error", error: event.error };
+  }
+  return undefined;
+}
+
+function fromRawClaudeSdkEvent(raw: unknown): ClaudeSdkEvent | undefined {
+  if (!raw || typeof raw !== "object") return undefined;
+  const record = raw as Record<string, unknown>;
+  if (record.type === "approval_request" && typeof record.requestId === "string" && typeof record.prompt === "string") {
+    return {
+      type: "approval_request",
+      requestId: record.requestId,
+      prompt: record.prompt,
+      ...(typeof record.toolName === "string" ? { toolName: record.toolName } : {}),
+    };
+  }
+  if (
+    record.type === "approval_response" &&
+    typeof record.requestId === "string" &&
+    (record.decision === "approved" || record.decision === "rejected")
+  ) {
+    return {
+      type: "approval_response",
+      requestId: record.requestId,
+      decision: record.decision,
+      ...(typeof record.reason === "string" ? { reason: record.reason } : {}),
+    };
+  }
+  if (record.type === "user_input_request" && typeof record.requestId === "string" && typeof record.prompt === "string") {
+    return {
+      type: "user_input_request",
+      requestId: record.requestId,
+      prompt: record.prompt,
+    };
+  }
+  if (record.type === "user_input_response" && typeof record.requestId === "string" && typeof record.content === "string") {
+    return {
+      type: "user_input_response",
+      requestId: record.requestId,
+      content: record.content,
+    };
   }
   return undefined;
 }

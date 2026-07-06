@@ -29,6 +29,47 @@ function runtimeSessionCapabilities(): ChatRuntimeSessionState["capabilities"] {
   };
 }
 
+function baseCodexContextWithResume(workDir: string) {
+  return {
+    chatId: "chat-1",
+    configuredAgentId: "codex-agent",
+    runtimeId: "codex" as const,
+    runtime: codexRuntime("codex"),
+    channelId: "codex-openai",
+    workDir,
+    modelId: "gpt-5.5",
+    developerInstructions: "test",
+    resumeState: { runtimeId: "codex" as const, native: { threadId: "thread-1" } },
+    emit: () => undefined,
+    syncState: () => undefined,
+  };
+}
+
+function codexSessionOptions(clientOverrides: Partial<{
+  start: () => Promise<void>;
+  request: (method: string) => Promise<unknown>;
+  shutdown: () => Promise<void>;
+  interruptTurn: (threadId: string, turnId: string | undefined) => Promise<void>;
+}> = {}) {
+  return {
+    capabilities: runtimeSessionCapabilities(),
+    now: () => 1000,
+    createCodexClient: () =>
+      ({
+        start: async () => undefined,
+        request: async (method: string) =>
+          method === "thread/resume"
+            ? { thread: { id: "thread-1" } }
+            : method === "turn/start"
+              ? { turn: { id: "turn-1" } }
+              : {},
+        interruptTurn: async () => undefined,
+        shutdown: async () => undefined,
+        ...clientOverrides,
+      }) as any,
+  };
+}
+
 describe("CodexInteractiveSession", () => {
   test("shuts down the Codex client if attach fails after process start", async () => {
     const dir = await mkdtemp(path.join(os.tmpdir(), "multi-agent-chat-codex-attach-fail-"));
@@ -174,5 +215,14 @@ describe("CodexInteractiveSession", () => {
 
     expect(client.interruptTurn).toHaveBeenCalledWith("thread-1", "turn-1");
     expect(session.snapshot().attachmentState).toBe("interrupted");
+  });
+
+  test("clears the Codex native resume handle when workDir changes", async () => {
+    const dir = await mkdtemp(path.join(os.tmpdir(), "multi-agent-chat-codex-reconfigure-"));
+    const session = new CodexInteractiveSession(baseCodexContextWithResume(dir), codexSessionOptions());
+
+    session.reconfigure({ ...baseCodexContextWithResume(dir), workDir: "C:/other-repo" });
+
+    expect(session.snapshot().resumeState).toBeUndefined();
   });
 });

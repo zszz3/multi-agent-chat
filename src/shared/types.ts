@@ -1,4 +1,4 @@
-export type AgentId = "codex" | "claude" | "api";
+export type AgentId = "codex" | "claude" | "api" | "hermes";
 
 export interface AgentRuntime {
   id: AgentId;
@@ -199,6 +199,9 @@ export interface RuntimeInteractionCapabilities {
   supportsUserInputRequests: boolean;
 }
 
+export type InteractionRequestState = "live" | "resolved" | "expired";
+export type ApprovalDecision = "approved" | "rejected";
+
 export type PersistedResumeState =
   | {
       runtimeId: "codex";
@@ -231,6 +234,10 @@ export type AgentEvent =
   | { type: "tool_call"; content: string; name?: string; metadata?: Record<string, unknown> }
   | { type: "tool_result"; content: string; name?: string; metadata?: Record<string, unknown> }
   | { type: "handoff"; content: string; fromAgentId?: AgentId; toAgentId?: AgentId; metadata?: Record<string, unknown> }
+  | { type: "approval_request"; requestId: string; content: string; metadata?: Record<string, unknown> }
+  | { type: "approval_response"; requestId: string; decision: ApprovalDecision; content?: string; metadata?: Record<string, unknown> }
+  | { type: "user_input_request"; requestId: string; content: string; metadata?: Record<string, unknown> }
+  | { type: "user_input_response"; requestId: string; content: string; metadata?: Record<string, unknown> }
   | { type: "completed"; content?: string }
   | { type: "error"; error: string };
 
@@ -251,13 +258,26 @@ export interface ChatMessage {
 
 export interface ChatEvent {
   id: string;
-  type: "meta" | "system" | "tool_call" | "tool_result" | "handoff" | "error";
+  type:
+    | "meta"
+    | "system"
+    | "tool_call"
+    | "tool_result"
+    | "handoff"
+    | "approval_request"
+    | "approval_response"
+    | "user_input_request"
+    | "user_input_response"
+    | "error";
   content: string;
   timestamp: number;
   agentId?: AgentId;
   name?: string;
   fromAgentId?: AgentId;
   toAgentId?: AgentId;
+  requestId?: string;
+  requestState?: InteractionRequestState;
+  decision?: ApprovalDecision;
   metadata?: Record<string, unknown>;
 }
 
@@ -266,6 +286,7 @@ export interface ChatSession {
   title: string;
   configuredAgentId: string;
   modelId: string;
+  channelId?: string;
   sessionId: string | undefined;
   runtimeSession?: ChatRuntimeSessionState;
   running: boolean;

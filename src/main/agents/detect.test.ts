@@ -49,4 +49,27 @@ describe("detectAgentRuntimes", () => {
       }),
     );
   });
+
+  test("detects a Hermes CLI from HERMES_PATH", async () => {
+    vi.resetModules();
+    vi.stubEnv("HERMES_PATH", "C:\\Users\\demo\\AppData\\Local\\Programs\\Hermes\\hermes.cmd");
+
+    const execCli = vi.fn(async (request: { executable: string; args?: string[] }) => {
+      if (request.executable === "C:\\Users\\demo\\AppData\\Local\\Programs\\Hermes\\hermes.cmd") {
+        return { stdout: "hermes-cli 1.2.3\n", stderr: "" };
+      }
+      throw new Error(`unexpected executable: ${request.executable}`);
+    });
+
+    vi.doMock("../cli-launcher", () => ({ execCli }));
+    const { detectAgentRuntimes } = await import("./detect");
+
+    const runtimes = await detectAgentRuntimes();
+    expect(runtimes.find((runtime) => runtime.id === "hermes")).toMatchObject({
+      id: "hermes",
+      command: "C:\\Users\\demo\\AppData\\Local\\Programs\\Hermes\\hermes.cmd",
+      available: true,
+      version: "1.2.3",
+    });
+  });
 });

@@ -2,6 +2,7 @@ import type { ChatRuntimeSessionState, PersistedResumeState } from "../../shared
 import type { InteractiveSession, InteractiveSessionContext } from "./runtime-driver";
 import { ProcessLease } from "./process-lease";
 import type { ClaudeInteractiveTransport, ClaudeInteractiveTransportHandle } from "./claude-interactive-transport";
+import { planSessionReconfigure } from "./session-reconfigure";
 
 interface ClaudeInteractiveSessionOptions {
   createTransport: () => ClaudeInteractiveTransport;
@@ -19,6 +20,7 @@ export class ClaudeInteractiveSession implements InteractiveSession {
   private attachmentGeneration = 0;
   private activeTurnId: string | undefined;
   private lastMeaningfulActivityAt: number | undefined;
+  private pendingContext: InteractiveSessionContext | undefined;
 
   constructor(
     private context: InteractiveSessionContext,
@@ -30,10 +32,24 @@ export class ClaudeInteractiveSession implements InteractiveSession {
   }
 
   reconfigure(context: InteractiveSessionContext): void {
-    this.context = context;
-    if (context.resumeState?.runtimeId === "claude") {
+    const plan = planSessionReconfigure(this.context, context);
+    this.context = { ...this.context, ...plan.applyNow };
+    if (plan.invalidateResume) {
+      this.resumeState = undefined;
+    } else if (context.resumeState?.runtimeId === "claude") {
       this.resumeState = { ...context.resumeState };
     }
+
+    const nextContext = { ...this.context, ...plan.applyOnNextAttach };
+    if (this.attachmentState === "running" && Object.keys(plan.applyOnNextAttach).length > 0) {
+      this.pendingContext = nextContext;
+      this.context.syncState?.(this.snapshot());
+      return;
+    }
+
+    this.context = nextContext;
+    this.pendingContext = undefined;
+    this.context.syncState?.(this.snapshot());
   }
 
   async ensureAttached(): Promise<void> {
@@ -89,6 +105,7 @@ export class ClaudeInteractiveSession implements InteractiveSession {
     this.handle = undefined;
     this.attachmentState = "detached";
     this.activeTurnId = undefined;
+    this.applyPendingContextIfIdle();
     this.touch();
     this.context.syncState?.(this.snapshot());
   }
@@ -127,10 +144,12 @@ export class ClaudeInteractiveSession implements InteractiveSession {
     } else if (event.type === "completed") {
       this.attachmentState = "idle";
       this.activeTurnId = undefined;
+      this.applyPendingContextIfIdle();
       this.touch();
     } else if (event.type === "error") {
       this.attachmentState = "interrupted";
       this.activeTurnId = undefined;
+      this.applyPendingContextIfIdle();
       this.touch();
     } else {
       this.touch();
@@ -142,5 +161,12 @@ export class ClaudeInteractiveSession implements InteractiveSession {
 
   private touch(): void {
     this.lastMeaningfulActivityAt = this.now();
+  }
+
+  private applyPendingContextIfIdle(): void {
+    if (!this.pendingContext) return;
+    if (this.attachmentState === "running") return;
+    this.context = this.pendingContext;
+    this.pendingContext = undefined;
   }
 }

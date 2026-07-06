@@ -10,11 +10,12 @@ If a renderer feature changes the actual behavior of chats, tasks, workflows, ag
 
 - `index.ts`: Electron bootstrap, BrowserWindow creation, IPC registration, local bridge startup
 - `agent-hub.ts`: central app state container and domain orchestration layer
-- `agent-executor.ts`: thin runtime driver registry and one-shot execution bridge
-- `agents/runtime-driver.ts`: shared runtime capability and interactive session interfaces
+- `agent-executor.ts`: runtime driver registry, one-shot execution bridge, and driver-owned workflow or runtime-test dispatch
+- `agents/runtime-driver.ts`: shared runtime capability and interactive session interfaces plus optional workflow/test/cleanup hooks
 - `agents/interactive-session-manager.ts`: per-chat queueing and idle-detach orchestration for interactive runtimes
 - `agents/codex-interactive-session.ts`: reusable Codex chat attachment
 - `agents/claude-interactive-session.ts`: reusable Claude chat attachment
+- `agents/hermes-runner.ts`: minimal JSON-line CLI adapter for the Hermes proof runtime
 - `model-config.ts`: channel normalization, Codex config generation/import, preset-backed config handling
 - `provider-balance.ts`: provider balance queries
 - `scheduled-workflow-cloud.ts`: cloud sync for scheduled workflows
@@ -74,8 +75,10 @@ Backends:
 - Codex one-shot and interactive paths use `CodexRpcClient`, with chat reuse managed by `CodexInteractiveSession`
 - Claude one-shot and interactive paths use `ClaudeRunner`, with chat reuse managed by `ClaudeInteractiveSession`
 - API runtime uses direct `fetch`
+- Hermes currently stays one-shot and uses `HermesRunner`
 
 `AgentHub` still owns snapshot state and persisted recovery metadata, but interactive process lifecycle now sits behind `InteractiveSessionManager` and the runtime-specific session helpers under `src/main/agents/`.
+Workflow invocation, runtime-channel testing, and session-artifact cleanup now dispatch through `RuntimeDriver` hooks, so future runtimes can onboard without adding new product-level `if (runtimeId === "...")` branches in `AgentHub`.
 
 This layer should stay runtime-agnostic from the perspective of higher-level features. Chat, task, and workflow code should not duplicate provider-specific logic.
 

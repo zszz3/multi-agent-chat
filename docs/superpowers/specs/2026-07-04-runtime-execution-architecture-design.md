@@ -9,7 +9,7 @@ Unify main-process runtime execution around two product-facing styles, `oneshot`
 ### Context
 
 - Branch: `feat/claude-interactive-runtime`
-- Status: Phase 2 implemented on top of the completed shared interactive-session slice
+- Status: Phase 2 implemented on top of the completed shared interactive-session slice, including structured Claude approval and user-input events plus staged interactive reconfigure behavior
 - Audience: fresh implementation agents with no prior chat context
 - Source of truth: this document defines the runtime-execution boundaries for this repository; current checkout state wins over historical branch assumptions
 
@@ -80,6 +80,7 @@ Unify main-process runtime execution around two product-facing styles, `oneshot`
 #### Reconfigure policy
 
 - Treat `reconfigure(context)` as a controlled session operation.
+- Persist per-chat channel overrides separately from configured-agent defaults.
 - Reconfiguration fields fall into three buckets:
   - hot-safe metadata
   - attach-boundary fields that apply on next attach or reattach
@@ -153,6 +154,7 @@ The exact filenames may change, but the design should converge on these responsi
   - declares runtime identity and capabilities
   - creates a one-shot runner
   - optionally creates an interactive session
+  - may own workflow invocation, runtime-channel testing, and session-artifact cleanup hooks
 - `InteractiveSession`
   - `ensureAttached()`
   - `sendPrompt(...)`
@@ -200,10 +202,9 @@ The exact filenames may change, but the design should converge on these responsi
 - API
   - chat, task, workflow, and runtime test all remain `oneshot`
 - Future runtimes such as Hermes
-  - add a driver
-  - declare capabilities
-  - add one-shot and or interactive implementations
-  - avoid new top-level `AgentHub` branches
+  - Hermes now exists as a minimal one-shot proof runtime
+  - workflow invocation, runtime-channel testing, and session-artifact cleanup now dispatch through driver-owned hooks
+  - future runtimes add a driver, declare capabilities, and add one-shot and or interactive implementations without widening top-level `AgentHub` branches
 
 #### Default implementation targets
 
@@ -216,9 +217,10 @@ The exact filenames may change, but the design should converge on these responsi
   - `src/main/agents/runtime-capabilities.ts`
   - `src/main/agents/interactive-session-manager.ts`
   - `src/main/agents/process-lease.ts`
-  - `src/main/agents/codex-interactive-session.ts`
-  - `src/main/agents/claude-interactive-session.ts`
-  - `src/main/agents/claude-sdk-interactive-transport.ts`
+- `src/main/agents/codex-interactive-session.ts`
+- `src/main/agents/claude-interactive-session.ts`
+- `src/main/agents/claude-sdk-interactive-transport.ts`
+- `src/main/agents/hermes-runner.ts`
 
 ### Implementation slices
 
@@ -258,16 +260,19 @@ Acceptance criteria:
 Acceptance criteria:
 
 - Claude transport can swap without changing `AgentHub` or the shared runtime boundary.
-- Structured approval or permission events can surface when backend support exists.
+- Structured approval and user-input events are normalized into the shared `AgentEvent` surface.
+- Pending approval and user-input requests degrade to non-live state after stop, detach, or app restart.
 - Idle timeout detaches the process while preserving logical session continuity.
 
 #### Slice 4: future-runtime onboarding path
 
-- Document or implement a new runtime driver such as Hermes.
-- Keep the diff runtime-local plus shared tests.
+- Prove the future-runtime onboarding path with a concrete Hermes driver.
+- Keep the diff runtime-local plus shared driver tests.
 
 Acceptance criteria:
 
+- Hermes exists as a minimal one-shot proof runtime on this branch.
+- Workflow invocation, runtime-channel testing, and session-artifact cleanup dispatch through `RuntimeDriver` hooks.
 - A new runtime can be added without widening product-level branching in `AgentHub`.
 
 ### Testing
@@ -279,6 +284,8 @@ Acceptance criteria:
   - `src/main/agents/codex-rpc.test.ts`
   - `src/main/agents/claude-interactive-session.test.ts`
   - `src/main/agents/claude-interactive-transport-*.test.ts`
+  - `src/main/agents/detect.test.ts`
+  - `src/main/agents/hermes-runner.test.ts`
 
 Critical behaviors to prove:
 
@@ -301,5 +308,4 @@ Critical behaviors to prove:
 ### Open Questions
 
 - What Codex protocol-level interrupt contract should be preferred over process shutdown?
-- Which Claude SDK event shapes should map to shared approval and user-input events?
 - If a future runtime needs more than a string resume handle, should the repo widen session references immediately or in a later slice?

@@ -18,25 +18,48 @@ export class InteractiveSessionManager {
   constructor(private readonly options: InteractiveSessionManagerOptions) {}
 
   getOrCreate(chatId: string, context: InteractiveSessionContext): InteractiveSession {
+    return this.getOrCreateManaged(chatId, context).session;
+  }
+
+  private getOrCreateManaged(chatId: string, context: InteractiveSessionContext): ManagedInteractiveSession {
     const existing = this.sessions.get(chatId);
-    if (existing) {
-      existing.session.reconfigure(context);
-      return existing.session;
-    }
+    if (existing) return existing;
     const session = this.options.createSession(context);
-    this.sessions.set(chatId, {
+    const managed = {
       session,
       queue: Promise.resolve(),
       lease: new ProcessLease(session.snapshot().attachmentGeneration),
-    });
-    return session;
+    };
+    this.sessions.set(chatId, managed);
+    return managed;
   }
 
-  async dispatch(chatId: string, work: (session: InteractiveSession, lease: ProcessLease) => Promise<void>): Promise<void> {
-    const managed = this.sessions.get(chatId);
+  async dispatch(
+    chatId: string,
+    context: InteractiveSessionContext,
+    work: (session: InteractiveSession, lease: ProcessLease) => Promise<void>,
+  ): Promise<void>;
+  async dispatch(chatId: string, work: (session: InteractiveSession, lease: ProcessLease) => Promise<void>): Promise<void>;
+  async dispatch(
+    chatId: string,
+    contextOrWork: InteractiveSessionContext | ((session: InteractiveSession, lease: ProcessLease) => Promise<void>),
+    maybeWork?: (session: InteractiveSession, lease: ProcessLease) => Promise<void>,
+  ): Promise<void> {
+    const managed =
+      typeof contextOrWork === "function"
+        ? this.sessions.get(chatId)
+        : this.getOrCreateManaged(chatId, contextOrWork);
     if (!managed) throw new Error(`Unknown interactive session: ${chatId}`);
 
-    const run = managed.queue.catch(() => undefined).then(() => work(managed.session, managed.lease));
+    const work = typeof contextOrWork === "function" ? contextOrWork : maybeWork;
+    if (!work) throw new Error(`Interactive session dispatch for ${chatId} is missing work.`);
+
+    const run = managed.queue.catch(() => undefined).then(async () => {
+      if (typeof contextOrWork !== "function") {
+        managed.session.reconfigure(contextOrWork);
+      }
+      await work(managed.session, managed.lease);
+    });
     managed.queue = run.then(
       () => undefined,
       () => undefined,

@@ -1,4 +1,4 @@
-import type { AgentChannel, AgentEvent, AgentId, AgentRuntime } from "../shared/types";
+import type { AgentChannel, AgentEvent, AgentId, AgentRuntime, WorkflowAgentResponse } from "../shared/types";
 import { DEFAULT_MODEL_ID, runtimeModelId } from "../shared/models";
 import { codexEnvironmentForChannel } from "./agents/codex-env";
 import { claudeCliModelForChannel, claudeEnvironmentForChannel } from "./agents/claude-env";
@@ -7,8 +7,16 @@ import { selectClaudeInteractiveTransport } from "./agents/claude-transport-sele
 import { ClaudeRunner } from "./agents/claude-runner";
 import { CodexInteractiveSession } from "./agents/codex-interactive-session";
 import { CodexRpcClient } from "./agents/codex-rpc";
-import type { RuntimeDriver } from "./agents/runtime-driver";
+import { HermesRunner } from "./agents/hermes-runner";
+import type {
+  RuntimeChannelTestContext,
+  RuntimeDriver,
+  RuntimeSessionCleanupContext,
+  RuntimeWorkflowRequestContext,
+} from "./agents/runtime-driver";
 import { codexAppServerConfigArgs } from "./model-config";
+
+const HERMES_AGENT_TEST_PROMPT = "Reply with OK only.";
 
 export interface AgentExecutionContext {
   runId: string;
@@ -43,6 +51,9 @@ interface RuntimeAgentExecutorFactoryOptions {
     method: string,
     params: Record<string, unknown>,
   ) => void;
+  askWorkflowByRuntime?: Partial<Record<AgentId, (input: RuntimeWorkflowRequestContext) => Promise<WorkflowAgentResponse>>>;
+  testChannelByRuntime?: Partial<Record<AgentId, (input: RuntimeChannelTestContext) => Promise<string>>>;
+  deleteSessionArtifactsByRuntime?: Partial<Record<AgentId, (input: RuntimeSessionCleanupContext) => Promise<void>>>;
 }
 
 function defaultResumeCapabilities() {
@@ -89,6 +100,90 @@ function defaultOneShotCapabilities(runtimeId: AgentId) {
   };
 }
 
+async function runHermesWorkflow(
+  input: RuntimeWorkflowRequestContext,
+  options: RuntimeAgentExecutorFactoryOptions,
+): Promise<WorkflowAgentResponse> {
+  let content = "";
+  let sessionId = input.sessionId;
+  let exitCode: number | null = 0;
+  let stderr = "";
+  let runnerError: string | undefined;
+
+  const runner = new HermesRunner({
+    executable: input.runtime.command || options.executables.hermes,
+    cwd: input.workDir,
+    prompt: input.prompt,
+    modelId: input.modelId,
+    onEvent: (event) => {
+      if (event.type === "session") {
+        sessionId = event.sessionId;
+        return;
+      }
+      if (event.type === "delta") {
+        content += event.content;
+        input.onEvent?.({ requestId: input.requestId, type: "delta", content: event.content });
+        return;
+      }
+      if (event.type === "completed") {
+        const completedContent = typeof event.content === "string" ? event.content : content;
+        if (!content && typeof event.content === "string") content = event.content;
+        input.onEvent?.({ requestId: input.requestId, type: "completed", content: completedContent.trim(), sessionId });
+        return;
+      }
+      if (event.type === "error") {
+        runnerError = event.error;
+        input.onEvent?.({ requestId: input.requestId, type: "error", error: event.error });
+      }
+    },
+    onStderr: (text) => {
+      stderr += text;
+    },
+    onExit: (code) => {
+      exitCode = code;
+    },
+  });
+
+  await runner.start();
+
+  const output = content.trim();
+  if (runnerError) throw new Error(runnerError);
+  if (exitCode !== 0) {
+    throw new Error(`Hermes exited with ${exitCode ?? "unknown"}: ${(stderr.trim() || output || "no output").slice(0, 800)}`);
+  }
+  return { content: output, sessionId };
+}
+
+async function runHermesChannelTest(
+  input: RuntimeChannelTestContext,
+  options: RuntimeAgentExecutorFactoryOptions,
+): Promise<string> {
+  input.emit({ type: "phase", content: `Launching Hermes with model ${runtimeModelId(input.modelId) ?? "default"}.` });
+  input.emit({ type: "user", content: HERMES_AGENT_TEST_PROMPT });
+
+  const response = await runHermesWorkflow(
+    {
+      requestId: "agent-test",
+      prompt: HERMES_AGENT_TEST_PROMPT,
+      runtime: input.runtime,
+      channelId: input.channelId,
+      modelId: input.modelId,
+      workDir: input.workDir,
+      onEvent: (event) => {
+        if (event.type === "delta") input.emit({ type: "assistant_delta", content: event.content });
+        if (event.type === "error") input.emit({ type: "error", content: event.error });
+      },
+    },
+    options,
+  );
+
+  if (!response.content.trim()) {
+    throw new Error("Hermes completed without assistant text.");
+  }
+  input.emit({ type: "assistant", content: response.content });
+  return response.content;
+}
+
 export class RuntimeDriverRegistry {
   constructor(private readonly drivers: RuntimeDriver[]) {}
 
@@ -100,6 +195,9 @@ export class RuntimeDriverRegistry {
 }
 
 export function createRuntimeDriverRegistry(options: RuntimeAgentExecutorFactoryOptions): RuntimeDriverRegistry {
+  const askWorkflowByRuntime = options.askWorkflowByRuntime ?? {};
+  const testChannelByRuntime = options.testChannelByRuntime ?? {};
+  const deleteSessionArtifactsByRuntime = options.deleteSessionArtifactsByRuntime ?? {};
   const codexDriver: RuntimeDriver = {
     runtimeId: "codex",
     getCapabilities: () => ({
@@ -141,6 +239,9 @@ export function createRuntimeDriverRegistry(options: RuntimeAgentExecutorFactory
           return client;
         },
       }),
+    askWorkflow: askWorkflowByRuntime.codex,
+    testChannel: testChannelByRuntime.codex,
+    deleteSessionArtifacts: deleteSessionArtifactsByRuntime.codex,
   };
   const claudeSelection = (input: {
     runtime: AgentRuntime;
@@ -175,13 +276,27 @@ export function createRuntimeDriverRegistry(options: RuntimeAgentExecutorFactory
         createTransport: selection.createTransport,
       });
     },
+    askWorkflow: askWorkflowByRuntime.claude,
+    testChannel: testChannelByRuntime.claude,
+    deleteSessionArtifacts: deleteSessionArtifactsByRuntime.claude,
   };
   const apiDriver: RuntimeDriver = {
     runtimeId: "api",
     getCapabilities: () => defaultOneShotCapabilities("api"),
     createOneShotExecutor: (context) => new ApiAgentExecutor(context, options),
+    askWorkflow: askWorkflowByRuntime.api,
+    testChannel: testChannelByRuntime.api,
+    deleteSessionArtifacts: deleteSessionArtifactsByRuntime.api,
   };
-  return new RuntimeDriverRegistry([codexDriver, claudeDriver, apiDriver]);
+  const hermesDriver: RuntimeDriver = {
+    runtimeId: "hermes",
+    getCapabilities: () => defaultOneShotCapabilities("hermes"),
+    createOneShotExecutor: (context) => new HermesAgentExecutor(context, options),
+    askWorkflow: (input) => runHermesWorkflow(input, options),
+    testChannel: (input) => runHermesChannelTest(input, options),
+    deleteSessionArtifacts: async () => undefined,
+  };
+  return new RuntimeDriverRegistry([codexDriver, claudeDriver, apiDriver, hermesDriver]);
 }
 
 export class RuntimeAgentExecutorFactory implements AgentExecutorFactory {
@@ -417,5 +532,34 @@ class ApiAgentExecutor implements AgentExecutor {
     const content = first?.message?.content ?? first?.text ?? parsed.output_text;
     if (typeof content === "string") return content;
     return JSON.stringify(parsed, null, 2);
+  }
+}
+
+class HermesAgentExecutor implements AgentExecutor {
+  private runner: HermesRunner | undefined;
+
+  constructor(
+    private readonly context: AgentExecutionContext,
+    private readonly options: RuntimeAgentExecutorFactoryOptions,
+  ) {}
+
+  async start(): Promise<void> {
+    const runner = new HermesRunner({
+      executable: this.context.runtime.command || this.options.executables.hermes,
+      cwd: this.context.workDir,
+      prompt: this.context.prompt,
+      modelId: this.context.modelId,
+      onEvent: this.context.emit,
+      onExit: (code) => {
+        this.context.onExit(code);
+      },
+    });
+    this.runner = runner;
+    await runner.start();
+  }
+
+  async stop(): Promise<void> {
+    await this.runner?.stop();
+    this.runner = undefined;
   }
 }

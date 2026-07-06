@@ -67,6 +67,42 @@ describe("InteractiveSessionManager", () => {
     expect(session.reconfigure).toHaveBeenCalledTimes(0);
   });
 
+  test("dispatch reconfigures the existing session inside the queue before the next send", async () => {
+    const seen: string[] = [];
+    const manager = new InteractiveSessionManager({
+      createSession: () =>
+        ({
+          reconfigure: (context: { modelId: string }) => seen.push(`reconfigure:${context.modelId}`),
+          ensureAttached: async () => undefined,
+          sendPrompt: async (prompt: string) => seen.push(`prompt:${prompt}`),
+          interrupt: async () => undefined,
+          detach: async () => undefined,
+          detachIfStillExpired: async () => undefined,
+          snapshot: () => ({
+            executionStyle: "interactive" as const,
+            attachmentState: "detached" as const,
+            attachmentGeneration: 0,
+            capabilities: {
+              supportsInProcessConversationResume: true,
+              supportsResumeAfterDetach: true,
+              supportsResumeAfterAppRestart: true,
+              supportsTurnResume: false,
+              supportsInterrupt: true,
+              supportsContinue: true,
+              supportsApprovalRequests: true,
+              supportsUserInputRequests: true,
+            },
+          }),
+        }) as any,
+      now: () => 1000,
+    });
+
+    manager.getOrCreate("chat-1", { modelId: "old-model" } as any);
+    await (manager as any).dispatch("chat-1", { modelId: "new-model" } as any, (session: any) => session.sendPrompt("hello"));
+
+    expect(seen).toEqual(["reconfigure:new-model", "prompt:hello"]);
+  });
+
   test("idle sweep only detaches when generation and activity timestamp still match", async () => {
     const detachIfStillExpired = vi.fn(async () => undefined);
     let snapshot = {

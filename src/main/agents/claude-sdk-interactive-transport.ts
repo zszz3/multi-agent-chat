@@ -8,8 +8,8 @@ import {
   loadClaudeSdkBindings,
   type ClaudeSdkBindings,
   type ClaudeSdkBindingTurnHandle,
-  type ClaudeSdkEvent,
 } from "./claude-sdk-bindings";
+import { normalizeClaudeSdkEvent } from "./claude-sdk-events";
 
 interface ClaudeSdkInteractiveTransportOptions {
   executable: string;
@@ -80,17 +80,4 @@ export class ClaudeSdkInteractiveTransport implements ClaudeInteractiveTransport
     this.bindingHandle = undefined;
     this.handle = undefined;
   }
-}
-
-function normalizeClaudeSdkEvent(event: ClaudeSdkEvent): AgentEvent[] {
-  if (event.type === "session") {
-    return [{ type: "session", sessionId: event.sessionId }];
-  }
-  if (event.type === "delta") {
-    return [{ type: "delta", content: event.content }];
-  }
-  if (event.type === "completed") {
-    return event.content ? [{ type: "completed", content: event.content }] : [{ type: "completed" }];
-  }
-  return [{ type: "error", error: event.error }];
 }

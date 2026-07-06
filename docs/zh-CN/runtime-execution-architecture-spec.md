@@ -2,7 +2,7 @@
 
 日期：2026-07-04
 分支：`feat/claude-interactive-runtime`
-状态：Phase 1 已落地；Claude 官方 SDK transport 已落地；CLI re-entry 仅保留为显式兼容 fallback
+状态：Phase 1 已落地；Claude 官方 SDK transport 已落地；approval / user-input 事件已归一化为共享 AgentEvent；interactive reconfigure 已按 hot-safe / attach-boundary / identity-breaking 分类落地；CLI re-entry 仅保留为显式兼容 fallback
 范围：Codex、Claude、API 以及未来本地 runtime（如 Hermes）的执行结构
 
 ## 当前落地状态（2026-07-05）
@@ -13,18 +13,21 @@
 - Codex chat 已切到共享 interactive session 路径，支持单 chat 附着复用、idle detach 和 thread resume
 - Claude chat 已切到共享 interactive session 边界，支持惰性附着、session 复用、stop/interrupt 后的 stale-event rejection
 - `AgentHub` 已在启动后集中注册 idle sweep，并把重启恢复的 interactive chat 统一归一化为 `detached`
+- `AgentHub` 现已把 Claude approval / user-input 事件持久化为结构化 chat event，并在 stop 或重启恢复时把未完成请求降级为 non-live
+- chat state 现支持可持久化的 per-chat `channelId` override；running turn 中的 attach-boundary reconfigure 会暂存到下一次 attach，identity-breaking 变化会清空 native resume handle
 - API runtime 仍保持 stateless `oneshot`
 
-当前仍保留的后续项：
+在此之后继续补齐的当前能力：
 
 - Claude 现在默认走官方包支撑的 SDK-backed transport，并保留 `ClaudeCliInteractiveTransport` 作为显式兼容 fallback
 - Claude 的 resume capability 声明现在会跟随激活中的 transport 选择保持一致
+- interactive session reconfigure 现在通过共享 planner 分类，并通过同一个 per-chat queue 串行进入 session
 
 这一轮实际验证过的命令是：
 
 ```bash
 npm run typecheck
-npm test -- src/main/agent-hub.test.ts src/main/agents/interactive-session-manager.test.ts src/main/agents/codex-interactive-session.test.ts src/main/agents/codex-rpc.test.ts src/main/agents/claude-interactive-session.test.ts src/main/agents/claude-runner.test.ts src/preload/index.test.ts
+npm test -- src/main/agent-hub.test.ts src/main/agents/session-reconfigure.test.ts src/main/agents/interactive-session-manager.test.ts src/main/agents/codex-interactive-session.test.ts src/main/agents/claude-interactive-session.test.ts src/preload/index.test.ts
 ```
 
 对应的关键提交为：
@@ -684,6 +687,11 @@ API runtime 保持原样：
 
 未来像 Hermes 这样的 runtime，接入方式应当是新增：
 
+- 已落地补充（2026-07-06）：
+- Hermes 现在已经有一个最小 one-shot proof runtime。
+- `RuntimeDriver` 现在还拥有 workflow 调用、runtime-channel 测试和 session-artifact cleanup hooks。
+- 新增 runtime 时，这三类路径不再需要在 `AgentHub` 里扩产品层分支。
+
 - runtime driver
 - capability 定义
 - one-shot runner 和/或 interactive session
@@ -754,7 +762,7 @@ API runtime 保持原样：
 验收标准：
 
 - Claude interactive transport 可以替换，而不需要改 `AgentHub` 或共享 runtime adapter 契约
-- 当后端支持时，approval / permission 处理能作为结构化事件暴露出来
+- approval / user-input 事件会归一化为共享事件，并在 stop、detach 或重启后把未完成请求降级为 non-live
 - 空闲超过 1 小时的 Claude 附着进程会被 detach，但逻辑 chat session 仍然保持可恢复
 
 ### Step 4：未来 runtime 接入路径验证
@@ -814,7 +822,6 @@ API runtime 保持原样：
 ## 开放问题
 
 - Codex chat session 中，协议级 interrupt 的精确定义是什么，何时优先于进程 shutdown？
-- Claude SDK 的哪些事件形态应映射为共享 approval / user-input 事件？
 - 当未来 runtime 需要比字符串更复杂的恢复句柄时，是否单独推进 `sessionId` 到 richer session reference 的升级？
 
 ## 成功标准

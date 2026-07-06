@@ -71,6 +71,7 @@ import { generatedConfigChannels, normalizeConfigChannelsForStorage, selectConfi
 import { AGENT_PROVIDER_PRESETS, CODEX_DEFAULT_PRESET_ID } from "../../shared/provider-presets";
 import { SKILL_TEMPLATES } from "../../shared/skill-templates";
 import { firstWorkflowQuestionForObjective } from "../../shared/workflow-agent";
+import { formatTime } from "./app/format";
 import { loadCodexDefaultConfigFromRuntimeApi } from "./pages/runtime/runtime-utils";
 import type {
   AgentChannel,
@@ -398,7 +399,7 @@ const teamRuns: TeamRun[] = [
   },
 ];
 
-const styles = readFileSync(new URL("./styles.css", import.meta.url), "utf8");
+const styles = readFileSync(new URL("./styles.css", import.meta.url), "utf8").replace(/\r\n/g, "\n");
 
 function cssSelectorsForDeclaration(declaration: RegExp): string[] {
   return Array.from(styles.matchAll(/([^{}]+)\{([^{}]*)\}/g)).flatMap((match) => {
@@ -879,9 +880,9 @@ describe("Sidebar history panels", () => {
     );
 
     expect(html).toContain("chat-row-status is-running");
-    expect(html).toContain("Running | 12:00 AM");
+    expect(html).toContain(`Running | ${formatTime(runningChat.updatedAt)}`);
     expect(html).toContain("chat-row-status is-idle");
-    expect(html).toContain("Idle | 12:00 AM");
+    expect(html).toContain(`Idle | ${formatTime(idleChat.updatedAt)}`);
     expect(html).not.toContain("Replied");
     expect(html).not.toContain("Stopped");
   });

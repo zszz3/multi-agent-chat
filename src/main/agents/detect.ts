@@ -4,6 +4,7 @@ import { execCli } from "../cli-launcher";
 const AGENT_COMMANDS: Record<Exclude<AgentId, "api">, { label: string; env: string; executable: string }> = {
   codex: { label: "Codex", env: "CODEX_PATH", executable: "codex" },
   claude: { label: "Claude Code", env: "CLAUDE_PATH", executable: "claude" },
+  hermes: { label: "Hermes", env: "HERMES_PATH", executable: "hermes" },
 };
 
 export function parseCliVersion(raw: string): string {
@@ -54,5 +55,5 @@ async function detectOne(id: AgentId): Promise<AgentRuntime> {
 }
 
 export async function detectAgentRuntimes(): Promise<AgentRuntime[]> {
-  return Promise.all([detectOne("codex"), detectOne("claude"), detectOne("api")]);
+  return Promise.all([detectOne("codex"), detectOne("claude"), detectOne("api"), detectOne("hermes")]);
 }

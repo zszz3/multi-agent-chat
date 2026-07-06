@@ -102,4 +102,34 @@ describe("ClaudeSdkInteractiveTransport", () => {
       { type: "completed", content: "Hello" },
     ]);
   });
+
+  test("forwards normalized approval and input events from the SDK binding", async () => {
+    const emitted: AgentEvent[] = [];
+    const transport = new ClaudeSdkInteractiveTransport({
+      executable: "claude",
+      envForTurn: () => ({ PATH: process.env.PATH ?? "" }),
+      sdkModelForTurn: (modelId) => modelId,
+      loadBindings: async () => ({
+        startTurn: async (input) => {
+          input.onSdkEvent({ type: "approval_request", requestId: "approval-1", prompt: "Allow Bash?" });
+          input.onSdkEvent({ type: "approval_response", requestId: "approval-1", decision: "approved", reason: "ok" });
+          input.onSdkEvent({ type: "user_input_request", requestId: "input-1", prompt: "Provide token" });
+          return { interrupt: async () => undefined, stop: async () => undefined };
+        },
+      }),
+    });
+
+    await transport.startTurn({
+      prompt: "hello",
+      modelId: "claude-sonnet-4-6",
+      cwd: "C:/repo",
+      onEvent: (event) => emitted.push(event),
+    });
+
+    expect(emitted).toEqual([
+      { type: "approval_request", requestId: "approval-1", content: "Allow Bash?" },
+      { type: "approval_response", requestId: "approval-1", decision: "approved", content: "ok" },
+      { type: "user_input_request", requestId: "input-1", content: "Provide token" },
+    ]);
+  });
 });

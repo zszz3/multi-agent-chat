@@ -25,7 +25,15 @@ function configuredAgent(
     name: options.name ?? id,
     description: "",
     runtimeAgentId,
-    channelId: options.channelId ?? (runtimeAgentId === "claude" ? "claude-code" : runtimeAgentId === "api" ? "api-openai" : "codex-openai"),
+    channelId:
+      options.channelId ??
+      (runtimeAgentId === "claude"
+        ? "claude-code"
+        : runtimeAgentId === "api"
+          ? "api-openai"
+          : runtimeAgentId === "hermes"
+            ? "hermes-local"
+            : "codex-openai"),
     modelId: options.modelId ?? DEFAULT_MODEL_ID,
     tags: [],
     createdAt: 1710000000000,
@@ -77,6 +85,53 @@ function oneshotChatCapabilities(runtimeId: AgentId) {
   };
 }
 
+function runtimeSessionCapabilities(): ChatRuntimeSessionState["capabilities"] {
+  return {
+    supportsInProcessConversationResume: true,
+    supportsResumeAfterDetach: true,
+    supportsResumeAfterAppRestart: true,
+    supportsTurnResume: false,
+    supportsInterrupt: true,
+    supportsContinue: true,
+    supportsApprovalRequests: true,
+    supportsUserInputRequests: true,
+  };
+}
+
+function createHubWithTwoCodexChannels(): AgentHub {
+  const hub = new AgentHub({ codex: "missing-codex-for-test", claude: "missing-claude-for-test" });
+  (hub as any).channels = [
+    {
+      id: "codex-openai",
+      agentId: "codex",
+      label: "Codex OpenAI",
+      models: [{ id: "default", label: "Default" }, { id: "gpt-5.5", label: "GPT-5.5" }],
+    },
+    {
+      id: "codex-openrouter",
+      agentId: "codex",
+      label: "Codex OpenRouter",
+      models: [{ id: "default", label: "Default" }, { id: "gpt-5.5", label: "GPT-5.5" }],
+    },
+    {
+      id: "claude-code",
+      agentId: "claude",
+      label: "Claude Code",
+      models: [{ id: "default", label: "Default" }],
+    },
+  ];
+  return hub;
+}
+
+function createHubWithCodexAndClaudeAgents(): AgentHub {
+  const hub = createHubWithTwoCodexChannels();
+  addConfiguredAgents(hub, [
+    configuredAgent("codex-agent", { runtimeAgentId: "codex", channelId: "codex-openai", modelId: "gpt-5.5" }),
+    configuredAgent("claude-agent", { runtimeAgentId: "claude", channelId: "claude-code", modelId: "default" }),
+  ]);
+  return hub;
+}
+
 test("uses the SDK transport by default and exposes Claude resume-after-detach capabilities only on that path", async () => {
   const hub = new AgentHub({ codex: "missing-codex-for-test", claude: "claude" });
   addConfiguredAgents(hub, [configuredAgent("claude-agent", { runtimeAgentId: "claude", name: "Claude Agent" })]);
@@ -101,7 +156,7 @@ test("falls back to the CLI compatibility transport when CLAUDE_INTERACTIVE_TRAN
   process.env.CLAUDE_INTERACTIVE_TRANSPORT = "cli";
   try {
     const capabilities = createRuntimeDriverRegistry({
-      executables: { codex: "codex", claude: "claude", api: "api" },
+      executables: { codex: "codex", claude: "claude", api: "api", hermes: "hermes" },
       channelById: () => undefined,
       respondToCodexServerRequest: () => undefined,
     }).driverFor("claude").getCapabilities({
@@ -120,6 +175,48 @@ test("falls back to the CLI compatibility transport when CLAUDE_INTERACTIVE_TRAN
     if (original === undefined) delete process.env.CLAUDE_INTERACTIVE_TRANSPORT;
     else process.env.CLAUDE_INTERACTIVE_TRANSPORT = original;
   }
+});
+
+test("askWorkflowAgent delegates to the registered runtime driver hook", async () => {
+  const workflow = vi.fn(async () => ({ content: "hermes workflow", sessionId: "hermes-session-1" }));
+  const hub = new AgentHub(
+    { codex: "missing-codex-for-test", claude: "missing-claude-for-test", hermes: "missing-hermes-for-test" } as any,
+    undefined,
+    new RuntimeDriverRegistry([
+      {
+        runtimeId: "hermes",
+        getCapabilities: () => oneshotChatCapabilities("hermes"),
+        createOneShotExecutor: () => ({ start: async () => undefined, stop: async () => undefined }),
+        askWorkflow: workflow,
+      },
+    ]),
+  );
+
+  (hub as any).channels = [
+    ...(hub as any).channels,
+    {
+      id: "hermes-local",
+      agentId: "hermes",
+      label: "Hermes",
+      models: [{ id: "default", label: "Default" }],
+    },
+  ];
+  (hub as any).runtimes.set("hermes", {
+    id: "hermes",
+    label: "Hermes",
+    command: "hermes",
+    version: "test",
+    available: true,
+  });
+  addConfiguredAgents(hub, [configuredAgent("hermes-agent", { runtimeAgentId: "hermes", channelId: "hermes-local" })]);
+
+  const response = await hub.askWorkflowAgent({
+    prompt: "Plan the repo",
+    configuredAgentId: "hermes-agent",
+  });
+
+  expect(response).toEqual({ content: "hermes workflow", sessionId: "hermes-session-1" });
+  expect(workflow).toHaveBeenCalled();
 });
 
 async function writeCodexAppServerFake(dir: string): Promise<{ executable: string; callsPath: string }> {
@@ -1350,7 +1447,47 @@ fs.writeFileSync(${JSON.stringify(argsPath)}, process.argv.slice(2).join("\\n") 
     expect(activeChat?.configuredAgentId).toBe("default-agent");
   });
 
-  test("does not change configured agent after a conversation has started", () => {
+  test("setChatChannel stores a same-runtime channel override even after the first prompt", async () => {
+    const hub = new AgentHub({ codex: "missing-codex-for-test", claude: "missing-claude-for-test" });
+    (hub as any).channels = [
+      {
+        id: "codex-openai",
+        agentId: "codex",
+        label: "Codex OpenAI",
+        models: [{ id: "default", label: "Default" }, { id: "gpt-5.5", label: "GPT-5.5" }],
+      },
+      {
+        id: "codex-openrouter",
+        agentId: "codex",
+        label: "Codex OpenRouter",
+        models: [{ id: "default", label: "Default" }, { id: "gpt-5.5", label: "GPT-5.5" }],
+      },
+    ];
+
+    const chat = hub.createChat();
+    const raw = (hub as any).chats.get(chat.id);
+    raw.messages.push({ id: "m-1", role: "user", content: "hello", timestamp: 1 });
+
+    hub.setChatChannel(chat.id, "codex-openrouter");
+
+    expect(hub.snapshot().chats.find((item) => item.id === chat.id)).toMatchObject({
+      id: chat.id,
+      channelId: "codex-openrouter",
+    });
+  });
+
+  test("setChatModel updates the stored model after chat history exists", () => {
+    const hub = createHubWithTwoCodexChannels();
+    const chat = hub.createChat();
+    const raw = (hub as any).chats.get(chat.id);
+    raw.messages.push({ id: "m-1", role: "assistant", content: "hello", timestamp: 1 });
+
+    hub.setChatModel(chat.id, "gpt-5.5");
+
+    expect(hub.snapshot().chats.find((item) => item.id === chat.id)?.modelId).toBe("gpt-5.5");
+  });
+
+  test("allows chat configuration changes after a conversation has started", () => {
     const hub = new AgentHub();
     addConfiguredAgents(hub, [configuredAgent("claude-agent", { runtimeAgentId: "claude", name: "Claude Agent" })]);
     const chatId = hub.snapshot().activeChatId!;
@@ -1363,7 +1500,30 @@ fs.writeFileSync(${JSON.stringify(argsPath)}, process.argv.slice(2).join("\\n") 
     hub.setChatModel(chatId, "gpt-5.5");
 
     const activeChat = hub.snapshot().chats.find((item) => item.id === chatId);
-    expect(activeChat?.configuredAgentId).toBe("default-agent");
+    expect(activeChat?.configuredAgentId).toBe("claude-agent");
+  });
+
+  test("setChatAgent clears the old native handle when the runtime family changes", () => {
+    const hub = createHubWithCodexAndClaudeAgents();
+    const chat = hub.createChat("codex-agent");
+    const raw = (hub as any).chats.get(chat.id);
+    raw.sessionId = "thread-1";
+    raw.runtimeSession = {
+      executionStyle: "interactive",
+      attachmentState: "idle",
+      attachmentGeneration: 1,
+      resumeState: { runtimeId: "codex", native: { threadId: "thread-1" } },
+      capabilities: runtimeSessionCapabilities(),
+    };
+    raw.messages.push({ id: "m-1", role: "assistant", content: "hello", timestamp: 1 });
+
+    hub.setChatAgent(chat.id, "claude-agent");
+
+    expect(hub.snapshot().chats.find((item) => item.id === chat.id)).toMatchObject({
+      configuredAgentId: "claude-agent",
+      sessionId: undefined,
+    });
+    expect(hub.snapshot().chats.find((item) => item.id === chat.id)?.runtimeSession?.resumeState).toBeUndefined();
   });
 
   test("stores agent session ids without adding transcript messages", () => {
@@ -1376,6 +1536,22 @@ fs.writeFileSync(${JSON.stringify(argsPath)}, process.argv.slice(2).join("\\n") 
     const activeChat = hub.snapshot().chats.find((item) => item.id === chatId);
     expect(activeChat?.sessionId).toBe("session-123");
     expect(activeChat?.messages).toEqual([]);
+  });
+
+  test("restoreChatState keeps a stored channel override only when it still matches the configured runtime", () => {
+    const hub = new AgentHub({ codex: "missing-codex-for-test", claude: "missing-claude-for-test" });
+    const restored = (hub as any).restoreChatState({
+      id: "chat-1",
+      title: "Chat",
+      configuredAgentId: "default-agent",
+      channelId: "codex-openai",
+      modelId: "default",
+      messages: [],
+      createdAt: 0,
+      updatedAt: 0,
+    });
+
+    expect(restored?.channelId).toBe("codex-openai");
   });
 
   test("does not append final completed content after streamed assistant text", () => {
@@ -1407,6 +1583,37 @@ fs.writeFileSync(${JSON.stringify(argsPath)}, process.argv.slice(2).join("\\n") 
       content: "I will inspect files.Found the files.",
       events: [expect.objectContaining({ type: "meta", content: "→ shell_command\nls" })],
     });
+  });
+
+  test("stores approval request and response pairs and resolves the pending request", () => {
+    const hub = new AgentHub({ codex: "missing-codex-for-test", claude: "missing-claude-for-test" });
+    const chat = (hub as any).createChatState("default-agent");
+
+    (hub as any).handleAgentEvent(chat, {
+      type: "approval_request",
+      requestId: "approval-1",
+      content: "Allow Bash?",
+    });
+    (hub as any).handleAgentEvent(chat, {
+      type: "approval_response",
+      requestId: "approval-1",
+      decision: "approved",
+      content: "Allowed",
+    });
+
+    const assistant = chat.messages.find((message: { role: string }) => message.role === "assistant");
+    expect(assistant?.events).toEqual([
+      expect.objectContaining({
+        type: "approval_request",
+        requestId: "approval-1",
+        requestState: "resolved",
+      }),
+      expect.objectContaining({
+        type: "approval_response",
+        requestId: "approval-1",
+        decision: "approved",
+      }),
+    ]);
   });
 
   test("reads Codex status through app-server RPC without starting an agent conversation", async () => {
@@ -2011,6 +2218,50 @@ fs.writeFileSync(${JSON.stringify(argsPath)}, process.argv.slice(2).join("\\n") 
         supportsUserInputRequests: false,
       },
     });
+  });
+
+  test("downgrades pending approval and input requests to expired on restore", () => {
+    const hub = new AgentHub({ codex: "missing-codex-for-test", claude: "missing-claude-for-test" });
+    const restored = (hub as any).restoreChatState({
+      id: "chat-1",
+      title: "Chat",
+      configuredAgentId: "default-agent",
+      modelId: "default",
+      runtimeSession: {
+        executionStyle: "interactive",
+        attachmentState: "running",
+        attachmentGeneration: 9,
+        capabilities: {
+          supportsInProcessConversationResume: true,
+          supportsResumeAfterDetach: false,
+          supportsResumeAfterAppRestart: false,
+          supportsTurnResume: false,
+          supportsInterrupt: true,
+          supportsContinue: true,
+          supportsApprovalRequests: true,
+          supportsUserInputRequests: true,
+        },
+      },
+      messages: [
+        {
+          id: "msg-1",
+          role: "assistant",
+          content: "",
+          timestamp: 0,
+          events: [
+            { id: "evt-1", type: "approval_request", content: "Allow Bash?", requestId: "approval-1", requestState: "live", timestamp: 1 },
+            { id: "evt-2", type: "user_input_request", content: "Provide token", requestId: "input-1", requestState: "live", timestamp: 2 },
+          ],
+        },
+      ],
+      createdAt: 0,
+      updatedAt: 0,
+    });
+
+    expect(restored?.messages[0]?.events).toEqual([
+      expect.objectContaining({ type: "approval_request", requestState: "expired" }),
+      expect.objectContaining({ type: "user_input_request", requestState: "expired" }),
+    ]);
   });
 
   test("persists execution channel config in app state and restores it ahead of legacy channel file", async () => {

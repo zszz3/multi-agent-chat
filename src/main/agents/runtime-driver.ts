@@ -1,4 +1,13 @@
-import type { AgentEvent, AgentId, AgentRuntime, ChatRuntimeSessionState, PersistedResumeState } from "../../shared/types";
+import type {
+  AgentEvent,
+  AgentId,
+  AgentRuntime,
+  AgentTestEvent,
+  ChatRuntimeSessionState,
+  PersistedResumeState,
+  WorkflowAgentEvent,
+  WorkflowAgentResponse,
+} from "../../shared/types";
 import type { AgentExecutionContext, AgentExecutor } from "../agent-executor";
 import type { RuntimeCapabilities } from "./runtime-capabilities";
 
@@ -22,6 +31,30 @@ export interface InteractiveSessionContext {
   syncState?: (state: ChatRuntimeSessionState) => void;
 }
 
+export interface RuntimeWorkflowRequestContext {
+  requestId: string;
+  prompt: string;
+  runtime: AgentRuntime;
+  channelId: string;
+  modelId: string;
+  workDir: string;
+  sessionId?: string | undefined;
+  onEvent?: ((event: WorkflowAgentEvent) => void) | undefined;
+}
+
+export interface RuntimeChannelTestContext {
+  runtime: AgentRuntime;
+  channelId: string;
+  modelId: string;
+  workDir: string;
+  emit: (event: Omit<AgentTestEvent, "agentId" | "timestamp">) => void;
+}
+
+export interface RuntimeSessionCleanupContext {
+  sessionId: string;
+  workDir: string;
+}
+
 export interface InteractiveSession {
   reconfigure(context: InteractiveSessionContext): void;
   ensureAttached(): Promise<void>;
@@ -41,4 +74,7 @@ export interface RuntimeDriver {
   getCapabilities(runtime: AgentRuntime): RuntimeCapabilities;
   createOneShotExecutor(context: AgentExecutionContext): AgentExecutor;
   createInteractiveSession?(context: InteractiveSessionContext): InteractiveSession;
+  askWorkflow?: ((input: RuntimeWorkflowRequestContext) => Promise<WorkflowAgentResponse>) | undefined;
+  testChannel?: ((input: RuntimeChannelTestContext) => Promise<string>) | undefined;
+  deleteSessionArtifacts?: ((input: RuntimeSessionCleanupContext) => Promise<void>) | undefined;
 }

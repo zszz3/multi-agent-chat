@@ -168,6 +168,7 @@ interface PersistedChatSessionRecord {
   title: string;
   configuredAgentId: string;
   modelId?: string;
+  channelId?: string;
   sessionId: string | undefined;
   lastError: string | undefined;
   createdAt: number;
@@ -311,6 +312,7 @@ function createErrorMessage(content: string): ChatMessage {
 function defaultTitle(agentId: AgentId): string {
   if (agentId === "codex") return "New Codex chat";
   if (agentId === "claude") return "New Claude chat";
+  if (agentId === "hermes") return "New Hermes chat";
   return "New API chat";
 }
 
@@ -337,7 +339,7 @@ function titleFromPrompt(prompt: string): string {
 }
 
 function isAgentId(value: unknown): value is AgentId {
-  return value === "codex" || value === "claude" || value === "api";
+  return value === "codex" || value === "claude" || value === "api" || value === "hermes";
 }
 
 function isMessageRole(value: unknown): value is ChatMessage["role"] {
@@ -345,7 +347,26 @@ function isMessageRole(value: unknown): value is ChatMessage["role"] {
 }
 
 function isChatEventType(value: unknown): value is ChatEvent["type"] {
-  return value === "meta" || value === "system" || value === "tool_call" || value === "tool_result" || value === "handoff" || value === "error";
+  return (
+    value === "meta" ||
+    value === "system" ||
+    value === "tool_call" ||
+    value === "tool_result" ||
+    value === "handoff" ||
+    value === "approval_request" ||
+    value === "approval_response" ||
+    value === "user_input_request" ||
+    value === "user_input_response" ||
+    value === "error"
+  );
+}
+
+function isInteractionRequestState(value: unknown): value is "live" | "resolved" | "expired" {
+  return value === "live" || value === "resolved" || value === "expired";
+}
+
+function isApprovalDecision(value: unknown): value is "approved" | "rejected" {
+  return value === "approved" || value === "rejected";
 }
 
 function isTaskRunStatus(value: unknown): value is TaskRunStatus {
@@ -829,6 +850,7 @@ function formatElapsed(ms: number): string {
 function agentLabel(agentId: AgentId): string {
   if (agentId === "codex") return "Codex";
   if (agentId === "claude") return "Claude Code";
+  if (agentId === "hermes") return "Hermes";
   return "API";
 }
 
@@ -1022,6 +1044,7 @@ class ChatState {
   readonly kind = "chat";
   id: string = randomUUID();
   title: string;
+  channelId: string | undefined = undefined;
   sessionId: string | undefined = undefined;
   runtimeSession: ChatRuntimeSessionState | undefined = undefined;
   running = false;
@@ -1206,6 +1229,7 @@ export class AgentHub {
       codex: executables.codex ?? process.env.CODEX_PATH ?? "codex",
       claude: executables.claude ?? process.env.CLAUDE_PATH ?? "claude",
       api: executables.api ?? "api",
+      hermes: executables.hermes ?? process.env.HERMES_PATH ?? "hermes",
     };
     this.runtimeDrivers =
       runtimeDrivers ??
@@ -1214,6 +1238,48 @@ export class AgentHub {
         channelById: (channelId) => this.channelById(channelId),
         respondToCodexServerRequest: (client, id, method, params) => {
           this.respondToCodexServerRequest(client, id, method, params);
+        },
+        askWorkflowByRuntime: {
+          codex: (input) =>
+            this.askCodexWorkflowAgent({
+              requestId: input.requestId,
+              prompt: input.prompt,
+              runtime: input.runtime,
+              channelId: input.channelId,
+              modelId: input.modelId,
+              workDir: input.workDir,
+              sessionId: input.sessionId,
+              onEvent: input.onEvent,
+            }),
+          claude: (input) =>
+            this.askClaudeWorkflowAgent({
+              requestId: input.requestId,
+              prompt: input.prompt,
+              runtime: input.runtime,
+              channelId: input.channelId,
+              modelId: input.modelId,
+              workDir: input.workDir,
+              sessionId: input.sessionId,
+              onEvent: input.onEvent,
+            }),
+          api: (input) =>
+            this.askApiWorkflowAgent({
+              requestId: input.requestId,
+              prompt: input.prompt,
+              channelId: input.channelId,
+              modelId: input.modelId,
+              sessionId: input.sessionId,
+              onEvent: input.onEvent,
+            }),
+        },
+        testChannelByRuntime: {
+          codex: (input) => this.testCodexAgent(this.channelOrThrow(input.channelId), input.modelId, input.workDir, input.emit),
+          claude: (input) => this.testClaudeAgent(this.channelOrThrow(input.channelId), input.modelId, input.workDir, input.emit),
+          api: (input) => this.testApiAgent(this.channelOrThrow(input.channelId), input.modelId, input.emit),
+        },
+        deleteSessionArtifactsByRuntime: {
+          codex: async (input) => this.deleteCodexSessionArtifacts(input.sessionId),
+          claude: async (input) => this.deleteClaudeSessionArtifacts(input.workDir, input.sessionId),
         },
       });
     this.executorFactory =
@@ -1388,11 +1454,19 @@ export class AgentHub {
     return fallbackId ? this.configuredAgents.get(fallbackId) : undefined;
   }
 
-  private resolveConfiguredAgent(configuredAgentId: string | undefined, modelIdOverride?: string): ResolvedConfiguredAgent | undefined {
+  private resolveConfiguredAgent(
+    configuredAgentId: string | undefined,
+    modelIdOverride?: string,
+    channelIdOverride?: string,
+  ): ResolvedConfiguredAgent | undefined {
     const agent = this.configuredAgentOrDefault(configuredAgentId);
     if (!agent) return undefined;
+    const preferredChannel =
+      channelIdOverride && this.channelById(channelIdOverride)?.agentId === agent.runtimeAgentId
+        ? this.channelById(channelIdOverride)
+        : this.channelById(agent.channelId);
     const channel =
-      this.channelById(agent.channelId) ??
+      preferredChannel ??
       this.channels.find((item) => item.agentId === agent.runtimeAgentId) ??
       this.channels[0];
     if (!channel) return undefined;
@@ -1413,8 +1487,30 @@ export class AgentHub {
     };
   }
 
-  private normalizeModelIdForConfiguredAgent(configuredAgentId: string | undefined, modelId: string | undefined): string {
-    return this.resolveConfiguredAgent(configuredAgentId, modelId)?.modelId ?? DEFAULT_MODEL_ID;
+  private channelOrThrow(channelId: string): AgentChannel {
+    const channel = this.channelById(channelId);
+    if (!channel) throw new Error(`Channel ${channelId} was not found.`);
+    return channel;
+  }
+
+  private runtimeForDriver(runtimeAgentId: AgentId): AgentRuntime {
+    return (
+      this.runtimes.get(runtimeAgentId) ?? {
+        id: runtimeAgentId,
+        label: agentLabel(runtimeAgentId),
+        command: this.executables[runtimeAgentId],
+        version: null,
+        available: false,
+      }
+    );
+  }
+
+  private normalizeModelIdForConfiguredAgent(
+    configuredAgentId: string | undefined,
+    modelId: string | undefined,
+    channelIdOverride?: string,
+  ): string {
+    return this.resolveConfiguredAgent(configuredAgentId, modelId, channelIdOverride)?.modelId ?? DEFAULT_MODEL_ID;
   }
 
   async testConfiguredAgent(agentId: string, onEvent?: (event: AgentTestEvent) => void): Promise<AgentTestResult> {
@@ -1441,12 +1537,15 @@ export class AgentHub {
     try {
       emit({ type: "phase", content: `Testing ${agent.name || agent.id} with ${agentLabel(agent.runtimeAgentId)} / ${channel.providerName ?? channel.label}.` });
       emit({ type: "user", content: AGENT_TEST_PROMPT });
-      const output =
-        agent.runtimeAgentId === "api"
-          ? await this.testApiAgent(channel, agent.modelId, emit)
-          : agent.runtimeAgentId === "codex"
-            ? await this.testCodexAgent(channel, agent.modelId, emit)
-            : await this.testClaudeAgent(channel, agent.modelId, emit);
+      const driver = this.runtimeDrivers.driverFor(agent.runtimeAgentId);
+      if (!driver.testChannel) throw new Error(`${agent.runtimeAgentId} runtime testing is not configured.`);
+      const output = await driver.testChannel({
+        runtime: this.runtimeForDriver(agent.runtimeAgentId),
+        channelId: channel.id,
+        modelId: agent.modelId,
+        workDir: this.workDir,
+        emit,
+      });
       const elapsedMs = Date.now() - startedAt;
       return {
         ...base,
@@ -1490,12 +1589,15 @@ export class AgentHub {
     try {
       emit({ type: "phase", content: `Testing ${agentLabel(channel.agentId)} / ${channel.providerName ?? channel.label}.` });
       emit({ type: "user", content: AGENT_TEST_PROMPT });
-      const output =
-        channel.agentId === "api"
-          ? await this.testApiAgent(channel, modelId, emit)
-          : channel.agentId === "codex"
-            ? await this.testCodexAgent(channel, modelId, emit)
-            : await this.testClaudeAgent(channel, modelId, emit);
+      const driver = this.runtimeDrivers.driverFor(channel.agentId);
+      if (!driver.testChannel) throw new Error(`${channel.agentId} runtime testing is not configured.`);
+      const output = await driver.testChannel({
+        runtime: this.runtimeForDriver(channel.agentId),
+        channelId: channel.id,
+        modelId,
+        workDir: this.workDir,
+        emit,
+      });
       const elapsedMs = Date.now() - startedAt;
       return {
         ...base,
@@ -1590,12 +1692,34 @@ export class AgentHub {
 
   setChatAgent(chatId: string, configuredAgentId: string): void {
     const chat = this.chats.get(chatId);
-    if (!chat || !this.canConfigureChat(chat)) return;
     const configuredAgent = this.configuredAgentOrDefault(configuredAgentId);
     if (!configuredAgent) return;
+    if (!chat) return;
+
+    const before = this.resolveConfiguredAgent(chat.configuredAgentId, chat.modelId, chat.channelId);
     chat.configuredAgentId = configuredAgent.id;
-    chat.modelId = this.normalizeModelIdForConfiguredAgent(configuredAgent.id, configuredAgent.modelId);
+    chat.channelId = undefined;
+    chat.modelId = this.normalizeModelIdForConfiguredAgent(configuredAgent.id, configuredAgent.modelId, chat.channelId);
     if (!hasAgentConversationMessages(chat.messages)) chat.title = configuredAgent.name || configuredAgent.id;
+
+    const after = this.resolveConfiguredAgent(chat.configuredAgentId, chat.modelId, chat.channelId);
+    if (before?.runtimeAgentId !== after?.runtimeAgentId && (chat.sessionId || chat.runtimeSession || hasAgentConversationMessages(chat.messages))) {
+      chat.sessionId = undefined;
+      if (chat.runtimeSession) {
+        delete chat.runtimeSession.resumeState;
+        chat.runtimeSession.attachmentState = "detached";
+        chat.runtimeSession.attachmentGeneration = 0;
+        delete chat.runtimeSession.activeTurnId;
+      }
+      this.appendEventToAssistant(chat, {
+        id: randomUUID(),
+        type: "system",
+        content: "Runtime session reset after agent change.",
+        timestamp: Date.now(),
+      });
+      void this.interactiveSessions.dispose(chat.id, "error");
+    }
+
     chat.updatedAt = Date.now();
     this.activeChatId = chatId;
     this.emit();
@@ -1603,8 +1727,8 @@ export class AgentHub {
 
   setChatModel(chatId: string, modelId: string): void {
     const chat = this.chats.get(chatId);
-    if (!chat || !this.canConfigureChat(chat)) return;
-    const normalizedModelId = this.normalizeModelIdForConfiguredAgent(chat.configuredAgentId, modelId);
+    if (!chat) return;
+    const normalizedModelId = this.normalizeModelIdForConfiguredAgent(chat.configuredAgentId, modelId, chat.channelId);
     if (chat.modelId === normalizedModelId) return;
     chat.modelId = normalizedModelId;
     chat.updatedAt = Date.now();
@@ -1613,12 +1737,15 @@ export class AgentHub {
   }
 
   setChatChannel(chatId: string, channelId: string): void {
-    void chatId;
-    void channelId;
-  }
-
-  private canConfigureChat(chat: ChatState): boolean {
-    return !chat.running && !chat.sessionId && !hasAgentConversationMessages(chat.messages);
+    const chat = this.chats.get(chatId);
+    const configuredAgent = chat ? this.configuredAgentOrDefault(chat.configuredAgentId) : undefined;
+    const channel = this.channelById(channelId);
+    if (!chat || !configuredAgent || !channel || channel.agentId !== configuredAgent.runtimeAgentId) return;
+    chat.channelId = channel.id;
+    chat.modelId = this.normalizeModelIdForConfiguredAgent(chat.configuredAgentId, chat.modelId, chat.channelId);
+    chat.updatedAt = Date.now();
+    this.activeChatId = chatId;
+    this.emit();
   }
 
   setWorkDir(workDir: string): void {
@@ -2452,7 +2579,7 @@ export class AgentHub {
 
   private syncInteractiveChatState(chat: ChatState, state: ChatRuntimeSessionState): void {
     const nextState = cloneRuntimeSessionState(state);
-    const resolved = this.resolveConfiguredAgent(chat.configuredAgentId, chat.modelId);
+    const resolved = this.resolveConfiguredAgent(chat.configuredAgentId, chat.modelId, chat.channelId);
     const runtimeId = resolved?.runtimeAgentId ?? "codex";
     if (!nextState.resumeState) {
       const resumeState = this.interactiveResumeState(chat, runtimeId);
@@ -2492,7 +2619,7 @@ export class AgentHub {
       return;
     }
 
-    const resolved = this.resolveConfiguredAgent(chat.configuredAgentId, chat.modelId);
+    const resolved = this.resolveConfiguredAgent(chat.configuredAgentId, chat.modelId, chat.channelId);
     if (!resolved) {
       chat.messages.push(createErrorMessage("No configured agent is selected."));
       chat.lastError = "No configured agent selected";
@@ -2538,7 +2665,7 @@ export class AgentHub {
           await this.interactiveSessions.interrupt(chat.id);
           this.syncInteractiveChatState(chat, interactiveSession.snapshot());
         });
-        await this.interactiveSessions.dispatch(chat.id, async (managed, lease) => {
+        await this.interactiveSessions.dispatch(chat.id, context, async (managed, lease) => {
           await managed.ensureAttached();
           const attachedState = managed.snapshot();
           lease.syncAttachmentGeneration(attachedState.attachmentGeneration);
@@ -2611,7 +2738,7 @@ export class AgentHub {
   }
 
   private async slashStatus(chat: ChatState): Promise<string> {
-    const resolved = this.resolveConfiguredAgent(chat.configuredAgentId, chat.modelId);
+    const resolved = this.resolveConfiguredAgent(chat.configuredAgentId, chat.modelId, chat.channelId);
     if (resolved?.runtimeAgentId !== "codex") return "Codex app-server status\nThis status command is only available for Codex chats.";
 
     try {
@@ -2653,7 +2780,7 @@ export class AgentHub {
   }
 
   private async slashModels(chat: ChatState): Promise<string> {
-    const resolved = this.resolveConfiguredAgent(chat.configuredAgentId, chat.modelId);
+    const resolved = this.resolveConfiguredAgent(chat.configuredAgentId, chat.modelId, chat.channelId);
     if (resolved?.runtimeAgentId !== "codex") return "Codex models\nModel catalog is only available for Codex chats.";
 
     try {
@@ -2681,7 +2808,7 @@ export class AgentHub {
     if (args.length > 0 && args[0] !== "list") {
       return "Plugins\nOnly /plugins and /plugin list are supported here for now.";
     }
-    const resolved = this.resolveConfiguredAgent(chat.configuredAgentId, chat.modelId);
+    const resolved = this.resolveConfiguredAgent(chat.configuredAgentId, chat.modelId, chat.channelId);
     if (resolved?.runtimeAgentId !== "codex") return "Plugins\nPlugins are currently Codex-specific in this app.";
 
     try {
@@ -2713,7 +2840,7 @@ export class AgentHub {
 
   private async withCodexAppServer<T>(chat: ChatState, callback: (client: CodexRpcClient) => Promise<T>): Promise<T> {
     const executable = this.executables.codex;
-    const resolved = this.resolveConfiguredAgent(chat.configuredAgentId, chat.modelId);
+    const resolved = this.resolveConfiguredAgent(chat.configuredAgentId, chat.modelId, chat.channelId);
     if (!resolved || resolved.runtimeAgentId !== "codex") {
       throw new Error("Codex app-server requires a Codex configured agent.");
     }
@@ -2860,13 +2987,18 @@ export class AgentHub {
     const workDir = input.workDir?.trim() || this.workDir;
 
     const requestId = input.requestId ?? randomUUID();
-    if (resolved.runtimeAgentId === "codex") {
-      return this.askCodexWorkflowAgent({ requestId, prompt, runtime, channelId, modelId, workDir, sessionId: input.sessionId, onEvent });
-    }
-    if (resolved.runtimeAgentId === "api") {
-      return this.askApiWorkflowAgent({ requestId, prompt, channelId, modelId, sessionId: input.sessionId, onEvent });
-    }
-    return this.askClaudeWorkflowAgent({ requestId, prompt, runtime, channelId, modelId, workDir, sessionId: input.sessionId, onEvent });
+    const driver = this.runtimeDrivers.driverFor(resolved.runtimeAgentId);
+    if (!driver.askWorkflow) throw new Error(`${resolved.runtimeAgentId} workflow execution is not configured.`);
+    return driver.askWorkflow({
+      requestId,
+      prompt,
+      runtime,
+      channelId,
+      modelId,
+      workDir,
+      sessionId: input.sessionId,
+      onEvent,
+    });
   }
 
   async stopChat(chatId: string): Promise<void> {
@@ -2881,6 +3013,7 @@ export class AgentHub {
       chat.runtimeSession.lastMeaningfulActivityAt = Date.now();
       delete chat.runtimeSession.activeTurnId;
     }
+    chat.messages = this.expirePendingInteractionEvents(chat.messages);
     chat.messages.push(createErrorMessage("Stopped"));
     chat.updatedAt = Date.now();
     this.emit();
@@ -3037,38 +3170,12 @@ export class AgentHub {
   }
 
   private async deleteAgentSession(run: RunState): Promise<void> {
-    const resolved = this.resolveConfiguredAgent(run.configuredAgentId, run.modelId);
+    const resolved = this.resolveConfiguredAgent(run.configuredAgentId, run.modelId, run.kind === "chat" ? run.channelId : undefined);
     if (!run.sessionId || !resolved) return;
-    if (resolved.runtimeAgentId === "codex") {
-      try {
-        await execCli({
-          executable: this.executables.codex,
-          args: ["archive", run.sessionId],
-          cwd: process.cwd(),
-          env: process.env,
-          timeout: 10_000,
-          windowsHide: true,
-          maxBuffer: 1024 * 64,
-        });
-      } catch (error) {
-        console.warn(`Failed to archive Codex session ${run.sessionId}:`, error);
-      }
-      try {
-        await deleteCodexSessionFiles(codexHome(), run.sessionId);
-      } catch (error) {
-        console.warn(`Failed to delete local Codex session ${run.sessionId}:`, error);
-      }
-      return;
-    }
-
-    if (resolved.runtimeAgentId === "claude") {
-      const workDir = "workDir" in run ? run.workDir : this.workDir;
-      try {
-        await rm(claudeProjectStoragePath(workDir, run.sessionId), { force: true });
-      } catch (error) {
-        console.warn(`Failed to delete Claude session ${run.sessionId}:`, error);
-      }
-    }
+    const driver = this.runtimeDrivers.driverFor(resolved.runtimeAgentId);
+    if (!driver.deleteSessionArtifacts) return;
+    const workDir = "workDir" in run ? run.workDir : this.workDir;
+    await driver.deleteSessionArtifacts({ sessionId: run.sessionId, workDir });
   }
 
   private createChatState(configuredAgentId: string): ChatState {
@@ -3530,7 +3637,10 @@ export class AgentHub {
   private normalizeRunSelections(): void {
     for (const chat of this.chats.values()) {
       chat.configuredAgentId = this.configuredAgentOrDefault(chat.configuredAgentId)?.id ?? this.defaultConfiguredAgentId();
-      chat.modelId = this.normalizeModelIdForConfiguredAgent(chat.configuredAgentId, chat.modelId);
+      if (chat.channelId && this.channelById(chat.channelId)?.agentId !== this.configuredAgentOrDefault(chat.configuredAgentId)?.runtimeAgentId) {
+        chat.channelId = undefined;
+      }
+      chat.modelId = this.normalizeModelIdForConfiguredAgent(chat.configuredAgentId, chat.modelId, chat.channelId);
     }
     for (const task of this.tasks.values()) {
       task.configuredAgentId = this.configuredAgentOrDefault(task.configuredAgentId)?.id ?? this.defaultConfiguredAgentId();
@@ -3550,6 +3660,7 @@ export class AgentHub {
       title: chat.title,
       configuredAgentId: chat.configuredAgentId,
       modelId: chat.modelId,
+      ...(chat.channelId ? { channelId: chat.channelId } : {}),
       sessionId: chat.sessionId,
       ...(chat.runtimeSession ? { runtimeSession: cloneRuntimeSessionState(chat.runtimeSession) } : {}),
       running: chat.running,
@@ -4009,7 +4120,7 @@ export class AgentHub {
     });
   }
 
-  private async testCodexAgent(channel: AgentChannel, modelId: string, emit: AgentTestEmit): Promise<string> {
+  private async testCodexAgent(channel: AgentChannel, modelId: string, workDir: string, emit: AgentTestEmit): Promise<string> {
     const args = [
       "exec",
       "--ephemeral",
@@ -4026,7 +4137,7 @@ export class AgentHub {
     const result = await runStreamingCommand({
       executable: this.executables.codex,
       args,
-      cwd: this.workDir,
+      cwd: workDir,
       env: codexEnvironmentForChannel(channel),
       timeoutMs: AGENT_TEST_TIMEOUT_MS,
       onStdoutLine: (line) => {
@@ -4045,7 +4156,7 @@ export class AgentHub {
     throw new Error(stderrText ? `Codex completed without assistant text. stderr: ${stderrText}` : "Codex completed without assistant text.");
   }
 
-  private async testClaudeAgent(channel: AgentChannel, modelId: string, emit: AgentTestEmit): Promise<string> {
+  private async testClaudeAgent(channel: AgentChannel, modelId: string, workDir: string, emit: AgentTestEmit): Promise<string> {
     const cliModel = claudeCliModelForChannel(channel, modelId);
     const env = claudeEnvironmentForChannel(channel, modelId, process.env);
     const envModel = typeof env.ANTHROPIC_MODEL === "string" ? env.ANTHROPIC_MODEL : "default";
@@ -4067,7 +4178,7 @@ export class AgentHub {
     const result = await runStreamingCommand({
       executable: this.executables.claude,
       args,
-      cwd: this.workDir,
+      cwd: workDir,
       env,
       timeoutMs: AGENT_TEST_TIMEOUT_MS,
       onStdoutLine: (line) => {
@@ -4077,7 +4188,7 @@ export class AgentHub {
       },
       onStderr: (text) => emit({ type: "stderr", content: text }),
     });
-    const deletedSessions = await deleteClaudeTestSessions(this.workDir, sessionIds);
+    const deletedSessions = await deleteClaudeTestSessions(workDir, sessionIds);
     if (deletedSessions > 0) emit({ type: "phase", content: `Deleted ${deletedSessions} Claude test session${deletedSessions === 1 ? "" : "s"}.` });
     if (result.timedOut) throw new Error(`Claude test timed out after ${formatElapsed(AGENT_TEST_TIMEOUT_MS)} without producing a final response.`);
     if (result.code !== 0) {
@@ -4109,6 +4220,35 @@ export class AgentHub {
     if (!output) throw new Error("API returned an empty response.");
     emit({ type: "assistant", content: output });
     return output;
+  }
+
+  private async deleteCodexSessionArtifacts(sessionId: string): Promise<void> {
+    try {
+      await execCli({
+        executable: this.executables.codex,
+        args: ["archive", sessionId],
+        cwd: process.cwd(),
+        env: process.env,
+        timeout: 10_000,
+        windowsHide: true,
+        maxBuffer: 1024 * 64,
+      });
+    } catch (error) {
+      console.warn(`Failed to archive Codex session ${sessionId}:`, error);
+    }
+    try {
+      await deleteCodexSessionFiles(codexHome(), sessionId);
+    } catch (error) {
+      console.warn(`Failed to delete local Codex session ${sessionId}:`, error);
+    }
+  }
+
+  private async deleteClaudeSessionArtifacts(workDir: string, sessionId: string): Promise<void> {
+    try {
+      await rm(claudeProjectStoragePath(workDir, sessionId), { force: true });
+    } catch (error) {
+      console.warn(`Failed to delete Claude session ${sessionId}:`, error);
+    }
   }
 
   private async askApiWorkflowAgent(input: {
@@ -4278,7 +4418,7 @@ export class AgentHub {
     if (event.type === "session") {
       run.sessionId = event.sessionId;
       if (runtimeSession) {
-        const resolved = this.resolveConfiguredAgent(run.configuredAgentId, run.modelId);
+        const resolved = this.resolveConfiguredAgent(run.configuredAgentId, run.modelId, run.kind === "chat" ? run.channelId : undefined);
         const runtimeId = resolved?.runtimeAgentId ?? "codex";
         runtimeSession.resumeState =
           runtimeId === "claude"
@@ -4317,6 +4457,39 @@ export class AgentHub {
         ...("fromAgentId" in event && event.fromAgentId ? { fromAgentId: event.fromAgentId } : {}),
         ...("toAgentId" in event && event.toAgentId ? { toAgentId: event.toAgentId } : {}),
         ...("metadata" in event && event.metadata ? { metadata: event.metadata } : {}),
+      });
+      run.updatedAt = Date.now();
+      this.emit();
+      return;
+    }
+
+    if (event.type === "approval_request" || event.type === "user_input_request") {
+      touchRuntimeSession("running");
+      this.appendEventToAssistant(run, {
+        id: randomUUID(),
+        type: event.type,
+        content: event.content,
+        requestId: event.requestId,
+        requestState: "live",
+        timestamp: Date.now(),
+        ...(event.metadata ? { metadata: event.metadata } : {}),
+      });
+      run.updatedAt = Date.now();
+      this.emit();
+      return;
+    }
+
+    if (event.type === "approval_response" || event.type === "user_input_response") {
+      touchRuntimeSession("running");
+      this.resolvePendingRequest(run, event.requestId, event.type === "approval_response" ? "approval_request" : "user_input_request");
+      this.appendEventToAssistant(run, {
+        id: randomUUID(),
+        type: event.type,
+        content: event.content ?? "",
+        requestId: event.requestId,
+        timestamp: Date.now(),
+        ...(event.type === "approval_response" ? { decision: event.decision } : {}),
+        ...(event.metadata ? { metadata: event.metadata } : {}),
       });
       run.updatedAt = Date.now();
       this.emit();
@@ -4377,6 +4550,35 @@ export class AgentHub {
     }
 
     message.events = [...(message.events ?? []), event];
+  }
+
+  private resolvePendingRequest(run: RunState, requestId: string, type: "approval_request" | "user_input_request"): void {
+    for (const message of [...run.messages].reverse()) {
+      const existing = [...(message.events ?? [])]
+        .reverse()
+        .find((item) => item.type === type && item.requestId === requestId && item.requestState === "live");
+      if (existing) {
+        existing.requestState = "resolved";
+        return;
+      }
+    }
+  }
+
+  private expirePendingInteractionEvents(messages: ChatMessage[]): ChatMessage[] {
+    return messages.map((message) => ({
+      ...message,
+      ...(message.events
+        ? {
+            events: message.events.map((event) =>
+              event.type === "approval_request" || event.type === "user_input_request"
+                ? event.requestState === "live"
+                  ? { ...event, requestState: "expired" as const }
+                  : event
+                : event,
+            ),
+          }
+        : {}),
+    }));
   }
 
   private emit(): void {
@@ -4717,6 +4919,16 @@ export class AgentHub {
       this.normalizeModelIdForConfiguredAgent(configuredAgent.id, asOptionalString(record.modelId) ?? configuredAgent.modelId),
       configuredAgent.name || "New Chat",
     );
+    const channelId = asOptionalString(record.channelId);
+    chat.channelId =
+      channelId && this.channelById(channelId)?.agentId === configuredAgent.runtimeAgentId
+        ? channelId
+        : undefined;
+    chat.modelId = this.normalizeModelIdForConfiguredAgent(
+      configuredAgent.id,
+      asOptionalString(record.modelId) ?? configuredAgent.modelId,
+      chat.channelId,
+    );
     chat.id = asOptionalString(record.id) ?? chat.id;
     chat.title = asOptionalString(record.title) ?? (configuredAgent.name || "New Chat");
     chat.sessionId = asOptionalString(record.sessionId);
@@ -4728,7 +4940,7 @@ export class AgentHub {
     const messages = Array.isArray(record.messages)
       ? record.messages.map((message) => this.restoreMessage(message)).filter((message): message is ChatMessage => Boolean(message))
       : [];
-    chat.messages = this.normalizeRestoredMessages(messages);
+    chat.messages = this.expirePendingInteractionEvents(this.normalizeRestoredMessages(messages));
     const migratedLegacyRuntimeSession = this.migrateLegacyRuntimeSession({
       id: chat.id,
       title: chat.title,
@@ -5217,6 +5429,10 @@ export class AgentHub {
     if (name) event.name = name;
     if (isAgentId(record.fromAgentId)) event.fromAgentId = record.fromAgentId;
     if (isAgentId(record.toAgentId)) event.toAgentId = record.toAgentId;
+    const requestId = asOptionalString(record.requestId);
+    if (requestId) event.requestId = requestId;
+    if (isInteractionRequestState(record.requestState)) event.requestState = record.requestState;
+    if (isApprovalDecision(record.decision)) event.decision = record.decision;
     const metadata = asRecord(record.metadata);
     if (metadata) event.metadata = metadata;
     return event;
@@ -5272,6 +5488,7 @@ export class AgentHub {
         title: chat.title,
         configuredAgentId: chat.configuredAgentId,
         modelId: chat.modelId,
+        ...(chat.channelId ? { channelId: chat.channelId } : {}),
         sessionId: chat.sessionId,
         ...(chat.runtimeSession ? { runtimeSession: cloneRuntimeSessionState(chat.runtimeSession) } : {}),
         lastError: chat.lastError,
