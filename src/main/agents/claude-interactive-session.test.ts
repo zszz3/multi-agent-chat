@@ -2,7 +2,7 @@ import { mkdtemp } from "node:fs/promises";
 import os from "node:os";
 import path from "node:path";
 import { describe, expect, test } from "vitest";
-import type { AgentRuntime, ChatRuntimeSessionState } from "../../shared/types";
+import type { AgentRuntime, ChatRuntimeSessionState, PersistedResumeState } from "../../shared/types";
 import { ClaudeInteractiveSession } from "./claude-interactive-session";
 
 function claudeRuntime(command: string): AgentRuntime {
@@ -29,6 +29,72 @@ function runtimeSessionCapabilities(): ChatRuntimeSessionState["capabilities"] {
 }
 
 describe("ClaudeInteractiveSession", () => {
+  test("passes the persisted Claude resume envelope into the transport", async () => {
+    const dir = await mkdtemp(path.join(os.tmpdir(), "multi-agent-chat-claude-resume-envelope-"));
+    const starts: Array<{
+      resumeState?: Extract<PersistedResumeState, { runtimeId: "claude" }>;
+    }> = [];
+
+    const session = new ClaudeInteractiveSession(
+      {
+        chatId: "chat-1",
+        configuredAgentId: "claude-agent",
+        runtimeId: "claude",
+        runtime: claudeRuntime("claude"),
+        channelId: "claude-code",
+        workDir: dir,
+        modelId: "claude-sonnet-4-6",
+        developerInstructions: "test",
+        resumeState: {
+          runtimeId: "claude",
+          native: {
+            sessionId: "claude-session-1",
+            projectKey: "project-1",
+            subpaths: ["subagent-a"],
+          },
+          appContext: {
+            cwd: dir,
+            modelId: "claude-sonnet-4-6",
+            claudeConfigDir: "C:/claude-config",
+            sessionStoreRef: "session-store-a",
+          },
+        },
+        emit: () => undefined,
+        syncState: () => undefined,
+      },
+      {
+        now: () => 1000,
+        capabilities: runtimeSessionCapabilities(),
+        createTransport: () => ({
+          startTurn: async (input) => {
+            starts.push({ resumeState: input.resumeState });
+            input.onEvent({ type: "completed", content: "reply" });
+            return { stop: async () => undefined };
+          },
+          interrupt: async () => undefined,
+          detach: async () => undefined,
+        }),
+      },
+    );
+
+    await session.sendPrompt("hello");
+
+    expect(starts[0]?.resumeState).toMatchObject({
+      runtimeId: "claude",
+      native: {
+        sessionId: "claude-session-1",
+        projectKey: "project-1",
+        subpaths: ["subagent-a"],
+      },
+      appContext: {
+        cwd: dir,
+        modelId: "claude-sonnet-4-6",
+        claudeConfigDir: "C:/claude-config",
+        sessionStoreRef: "session-store-a",
+      },
+    });
+  });
+
   test("does not spawn Claude until the first prompt and reuses the same session id for follow-up prompts", async () => {
     const dir = await mkdtemp(path.join(os.tmpdir(), "multi-agent-chat-claude-session-"));
     const starts: Array<{ prompt: string; sessionId?: string }> = [];
@@ -52,9 +118,9 @@ describe("ClaudeInteractiveSession", () => {
           startTurn: async (input) => {
             starts.push({
               prompt: input.prompt,
-              ...(input.sessionId ? { sessionId: input.sessionId } : {}),
+              ...(input.resumeState?.native.sessionId ? { sessionId: input.resumeState.native.sessionId } : {}),
             });
-            input.onEvent({ type: "session", sessionId: input.sessionId ?? "claude-session-1" });
+            input.onEvent({ type: "session", sessionId: input.resumeState?.native.sessionId ?? "claude-session-1" });
             input.onEvent({ type: "completed", content: `reply:${input.prompt}` });
             return { stop: async () => undefined };
           },

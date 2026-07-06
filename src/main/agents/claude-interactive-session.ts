@@ -1,7 +1,7 @@
 import type { ChatRuntimeSessionState, PersistedResumeState } from "../../shared/types";
 import type { InteractiveSession, InteractiveSessionContext } from "./runtime-driver";
 import { ProcessLease } from "./process-lease";
-import type { ClaudeInteractiveTransport, ClaudeInteractiveTransportHandle } from "./claude-sdk-interactive-transport";
+import type { ClaudeInteractiveTransport, ClaudeInteractiveTransportHandle } from "./claude-interactive-transport";
 
 interface ClaudeInteractiveSessionOptions {
   createTransport: () => ClaudeInteractiveTransport;
@@ -56,9 +56,9 @@ export class ClaudeInteractiveSession implements InteractiveSession {
     try {
       this.handle = await this.transport.startTurn({
         prompt,
-        sessionId: this.resumeState?.runtimeId === "claude" ? this.resumeState.native.sessionId : undefined,
         modelId: this.context.modelId,
         cwd: this.context.workDir,
+        ...(this.resumeState?.runtimeId === "claude" ? { resumeState: this.resumeState } : {}),
         onEvent: (event) => {
           if (!this.lease.matchesAttachment(generation)) return;
           if (event.type !== "session" && this.activeTurnId !== turnId) return;
