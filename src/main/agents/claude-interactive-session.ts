@@ -135,11 +135,7 @@ export class ClaudeInteractiveSession implements InteractiveSession {
 
   private handleEvent(event: { type: string } & Record<string, unknown>): void {
     if (event.type === "session" && typeof event.sessionId === "string") {
-      this.resumeState = {
-        runtimeId: "claude",
-        native: { sessionId: event.sessionId },
-        appContext: { cwd: this.context.workDir, modelId: this.context.modelId },
-      };
+      this.refreshClaudeResumeState(event.sessionId);
       this.touch();
     } else if (event.type === "completed") {
       this.attachmentState = "idle";
@@ -161,6 +157,32 @@ export class ClaudeInteractiveSession implements InteractiveSession {
 
   private touch(): void {
     this.lastMeaningfulActivityAt = this.now();
+  }
+
+  private refreshClaudeResumeState(sessionId: string): void {
+    const previousResume =
+      this.resumeState?.runtimeId === "claude"
+        ? this.resumeState
+        : undefined;
+
+    this.resumeState = {
+      runtimeId: "claude",
+      native: {
+        sessionId,
+        ...(previousResume?.native.projectKey ? { projectKey: previousResume.native.projectKey } : {}),
+        ...(previousResume?.native.subpaths ? { subpaths: [...previousResume.native.subpaths] } : {}),
+      },
+      appContext: {
+        cwd: this.context.workDir,
+        modelId: this.context.modelId,
+        ...(previousResume?.appContext.claudeConfigDir
+          ? { claudeConfigDir: previousResume.appContext.claudeConfigDir }
+          : {}),
+        ...(previousResume?.appContext.sessionStoreRef
+          ? { sessionStoreRef: previousResume.appContext.sessionStoreRef }
+          : {}),
+      },
+    };
   }
 
   private applyPendingContextIfIdle(): void {

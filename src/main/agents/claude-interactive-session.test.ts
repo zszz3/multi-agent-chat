@@ -156,6 +156,62 @@ describe("ClaudeInteractiveSession", () => {
     ]);
   });
 
+  test("preserves prior Claude resume metadata when a session event only refreshes the session id", async () => {
+    const dir = await mkdtemp(path.join(os.tmpdir(), "multi-agent-chat-claude-session-refresh-"));
+    let forwardEvent: ((event: { type: string; [key: string]: unknown }) => void) | undefined;
+    const session = new ClaudeInteractiveSession(
+      {
+        ...baseClaudeContext(dir),
+        resumeState: {
+          runtimeId: "claude",
+          native: {
+            sessionId: "claude-session-1",
+            projectKey: "project-1",
+            subpaths: ["worker-1"],
+          },
+          appContext: {
+            cwd: dir,
+            modelId: "claude-sonnet-4-6",
+            claudeConfigDir: "C:/claude-config",
+            sessionStoreRef: "session-store-a",
+          },
+        },
+        syncState: () => undefined,
+      },
+      {
+        now: () => 1000,
+        capabilities: runtimeSessionCapabilities(),
+        createTransport: () => ({
+          kind: "stream-json",
+          startTurn: async (input) => {
+            forwardEvent = input.onEvent as (event: { type: string; [key: string]: unknown }) => void;
+            return { stop: async () => undefined };
+          },
+          interrupt: async () => undefined,
+          detach: async () => undefined,
+        }),
+      },
+    );
+
+    await session.sendPrompt("first");
+    forwardEvent?.({ type: "session", sessionId: "claude-session-2" });
+
+    expect(session.snapshot().resumeState).toEqual({
+      runtimeId: "claude",
+      native: {
+        sessionId: "claude-session-2",
+        projectKey: "project-1",
+        subpaths: ["worker-1"],
+      },
+      appContext: {
+        cwd: dir,
+        modelId: "claude-sonnet-4-6",
+        claudeConfigDir: "C:/claude-config",
+        sessionStoreRef: "session-store-a",
+      },
+    });
+  });
+
   test("drops late Claude turn events after interrupt clears the active turn", async () => {
     const dir = await mkdtemp(path.join(os.tmpdir(), "multi-agent-chat-claude-interrupt-"));
     const emitted: Array<{ type: string; [key: string]: unknown }> = [];
