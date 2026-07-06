@@ -3,7 +3,7 @@ import { DEFAULT_MODEL_ID, runtimeModelId } from "../shared/models";
 import { codexEnvironmentForChannel } from "./agents/codex-env";
 import { claudeCliModelForChannel, claudeEnvironmentForChannel } from "./agents/claude-env";
 import { ClaudeInteractiveSession } from "./agents/claude-interactive-session";
-import { ClaudeCliInteractiveTransport } from "./agents/claude-cli-interactive-transport";
+import { selectClaudeInteractiveTransport } from "./agents/claude-transport-selection";
 import { ClaudeRunner } from "./agents/claude-runner";
 import { CodexInteractiveSession } from "./agents/codex-interactive-session";
 import { CodexRpcClient } from "./agents/codex-rpc";
@@ -142,39 +142,39 @@ export function createRuntimeDriverRegistry(options: RuntimeAgentExecutorFactory
         },
       }),
   };
+  const claudeSelection = (input: {
+    runtime: AgentRuntime;
+    channelId: string;
+    modelId: string;
+  }) => {
+    const channel = options.channelById(input.channelId);
+    return selectClaudeInteractiveTransport({
+      executable: input.runtime.command || options.executables.claude,
+      cliModelForTurn: (modelId) => claudeCliModelForChannel(channel, modelId ?? input.modelId),
+      sdkModelForTurn: (modelId) => claudeCliModelForChannel(channel, modelId ?? input.modelId),
+      envForTurn: (modelId) => claudeEnvironmentForChannel(channel, modelId ?? input.modelId, process.env),
+    });
+  };
   const claudeDriver: RuntimeDriver = {
     runtimeId: "claude",
-    getCapabilities: () => ({
+    getCapabilities: (runtime) => ({
       ...defaultInteractiveCapabilities("claude"),
-      resume: {
-        supportsInProcessConversationResume: true,
-        supportsResumeAfterDetach: false,
-        supportsResumeAfterAppRestart: false,
-        supportsTurnResume: false,
-      },
+      resume: claudeSelection({ runtime, channelId: "claude-code", modelId: DEFAULT_MODEL_ID }).resume,
     }),
     createOneShotExecutor: (context) => new ClaudeAgentExecutor(context, options),
-    createInteractiveSession: (context) =>
-      new ClaudeInteractiveSession(context, {
+    createInteractiveSession: (context) => {
+      const selection = claudeSelection(context);
+      return new ClaudeInteractiveSession(context, {
         capabilities: {
-          supportsInProcessConversationResume: true,
-          supportsResumeAfterDetach: false,
-          supportsResumeAfterAppRestart: false,
-          supportsTurnResume: false,
+          ...selection.resume,
           supportsInterrupt: true,
           supportsContinue: true,
           supportsApprovalRequests: true,
           supportsUserInputRequests: true,
         },
-        createTransport: () => {
-          const channel = options.channelById(context.channelId);
-          return new ClaudeCliInteractiveTransport({
-            executable: context.runtime.command || options.executables.claude,
-            cliModelForTurn: (modelId) => claudeCliModelForChannel(channel, modelId ?? context.modelId),
-            envForTurn: (modelId) => claudeEnvironmentForChannel(channel, modelId ?? context.modelId, process.env),
-          });
-        },
-      }),
+        createTransport: selection.createTransport,
+      });
+    },
   };
   const apiDriver: RuntimeDriver = {
     runtimeId: "api",

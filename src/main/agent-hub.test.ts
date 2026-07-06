@@ -6,7 +6,7 @@ import { AgentHub, createWorkflowAgentTimeout } from "./agent-hub";
 import { DEFAULT_MODEL_ID } from "../shared/models";
 import { projectNodeStates } from "../shared/workflow-run";
 import type { AgentChannel, AgentId, ChatRuntimeSessionState, ConfiguredAgent } from "../shared/types";
-import { RuntimeDriverRegistry } from "./agent-executor";
+import { createRuntimeDriverRegistry, RuntimeDriverRegistry } from "./agent-executor";
 import type { AgentExecutionContext, AgentExecutorFactory } from "./agent-executor";
 import { writeNodeCliLauncher } from "./test-cli-fixtures";
 
@@ -76,6 +76,51 @@ function oneshotChatCapabilities(runtimeId: AgentId) {
     },
   };
 }
+
+test("uses the SDK transport by default and exposes Claude resume-after-detach capabilities only on that path", async () => {
+  const hub = new AgentHub({ codex: "missing-codex-for-test", claude: "claude" });
+  addConfiguredAgents(hub, [configuredAgent("claude-agent", { runtimeAgentId: "claude", name: "Claude Agent" })]);
+
+  const capabilities = (hub as any).runtimeDrivers.driverFor("claude").getCapabilities({
+    id: "claude",
+    label: "Claude",
+    command: "claude",
+    version: "test",
+    available: true,
+  });
+
+  expect(capabilities.resume).toMatchObject({
+    supportsInProcessConversationResume: true,
+    supportsResumeAfterDetach: true,
+    supportsResumeAfterAppRestart: true,
+  });
+});
+
+test("falls back to the CLI compatibility transport when CLAUDE_INTERACTIVE_TRANSPORT=cli", async () => {
+  const original = process.env.CLAUDE_INTERACTIVE_TRANSPORT;
+  process.env.CLAUDE_INTERACTIVE_TRANSPORT = "cli";
+  try {
+    const capabilities = createRuntimeDriverRegistry({
+      executables: { codex: "codex", claude: "claude", api: "api" },
+      channelById: () => undefined,
+      respondToCodexServerRequest: () => undefined,
+    }).driverFor("claude").getCapabilities({
+      id: "claude",
+      label: "Claude",
+      command: "claude",
+      version: "test",
+      available: true,
+    });
+
+    expect(capabilities.resume).toMatchObject({
+      supportsResumeAfterDetach: false,
+      supportsResumeAfterAppRestart: false,
+    });
+  } finally {
+    if (original === undefined) delete process.env.CLAUDE_INTERACTIVE_TRANSPORT;
+    else process.env.CLAUDE_INTERACTIVE_TRANSPORT = original;
+  }
+});
 
 async function writeCodexAppServerFake(dir: string): Promise<{ executable: string; callsPath: string }> {
   const callsPath = path.join(dir, "calls.jsonl");
