@@ -16,7 +16,7 @@ export interface ClaudeInteractiveTurnInput {
 }
 
 export interface ClaudeInteractiveTransport {
-  readonly kind: "sdk" | "cli";
+  readonly kind: "stream-json" | "runner";
   startTurn(input: ClaudeInteractiveTurnInput): Promise<ClaudeInteractiveTransportHandle>;
   interrupt(): Promise<void>;
   detach(): Promise<void>;

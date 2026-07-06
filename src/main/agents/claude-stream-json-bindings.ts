@@ -3,7 +3,7 @@ import { createInterface } from "node:readline";
 import { createClaudeStreamState, normalizeClaudeStreamEvent } from "./claude-stream";
 import { spawnCli } from "../cli-launcher";
 
-export type ClaudeSdkEvent =
+export type ClaudeStreamJsonEvent =
   | { type: "session"; sessionId: string }
   | { type: "delta"; content: string }
   | { type: "completed"; content?: string }
@@ -13,12 +13,12 @@ export type ClaudeSdkEvent =
   | { type: "user_input_request"; requestId: string; prompt: string }
   | { type: "user_input_response"; requestId: string; content: string };
 
-export interface ClaudeSdkBindingTurnHandle {
+export interface ClaudeStreamJsonBindingTurnHandle {
   interrupt(): Promise<void>;
   stop(): Promise<void>;
 }
 
-export interface ClaudeSdkBindingTurnInput {
+export interface ClaudeStreamJsonBindingTurnInput {
   prompt: string;
   cwd: string;
   model: string | undefined;
@@ -30,20 +30,20 @@ export interface ClaudeSdkBindingTurnInput {
   };
   claudeConfigDir?: string;
   sessionStoreRef?: string;
-  onSdkEvent: (event: ClaudeSdkEvent) => void;
+  onStreamJsonEvent: (event: ClaudeStreamJsonEvent) => void;
 }
 
-export interface ClaudeSdkBindings {
-  startTurn(input: ClaudeSdkBindingTurnInput): Promise<ClaudeSdkBindingTurnHandle>;
+export interface ClaudeStreamJsonBindings {
+  startTurn(input: ClaudeStreamJsonBindingTurnInput): Promise<ClaudeStreamJsonBindingTurnHandle>;
 }
 
-interface LoadClaudeSdkBindingsOptions {
+interface LoadClaudeStreamJsonBindingsOptions {
   executable?: string;
 }
 
-export async function loadClaudeSdkBindings(
-  options: LoadClaudeSdkBindingsOptions = {},
-): Promise<ClaudeSdkBindings> {
+export async function loadClaudeStreamJsonBindings(
+  options: LoadClaudeStreamJsonBindingsOptions = {},
+): Promise<ClaudeStreamJsonBindings> {
   const executable = options.executable?.trim() || "claude";
 
   return {
@@ -79,12 +79,12 @@ export async function loadClaudeSdkBindings(
       });
 
       if (!proc.stdout || !proc.stderr) {
-        throw new Error("Claude SDK binding failed to create stdout/stderr pipes");
+        throw new Error("Claude stream-json binding failed to create stdout/stderr pipes");
       }
 
       const state = createClaudeStreamState();
       const rl = createInterface({ input: proc.stdout });
-      bindClaudeSdkProcess(proc, proc.stderr, rl, state, input.onSdkEvent);
+      bindClaudeStreamJsonProcess(proc, proc.stderr, rl, state, input.onStreamJsonEvent);
 
       return {
         interrupt: async () => {
@@ -98,25 +98,25 @@ export async function loadClaudeSdkBindings(
   };
 }
 
-function bindClaudeSdkProcess(
+function bindClaudeStreamJsonProcess(
   proc: ChildProcess,
   stderr: NodeJS.ReadableStream,
   rl: ReturnType<typeof createInterface>,
   state: ReturnType<typeof createClaudeStreamState>,
-  onSdkEvent: (event: ClaudeSdkEvent) => void,
+  onStreamJsonEvent: (event: ClaudeStreamJsonEvent) => void,
 ): void {
   rl.on("line", (line) => {
     if (!line.trim()) return;
     try {
       const raw = JSON.parse(line) as unknown;
-      const structured = fromRawClaudeSdkEvent(raw);
+      const structured = fromRawClaudeStreamJsonEvent(raw);
       if (structured) {
-        onSdkEvent(structured);
+        onStreamJsonEvent(structured);
         return;
       }
       for (const event of normalizeClaudeStreamEvent(raw, state)) {
-        const normalized = toClaudeSdkEvent(event);
-        if (normalized) onSdkEvent(normalized);
+        const normalized = toClaudeStreamJsonEvent(event);
+        if (normalized) onStreamJsonEvent(normalized);
       }
     } catch {
       // Ignore non-JSON noise from the CLI wrapper.
@@ -126,12 +126,12 @@ function bindClaudeSdkProcess(
   stderr.on("data", (chunk: Buffer) => {
     const text = chunk.toString().trim();
     if (text) {
-      onSdkEvent({ type: "error", error: text });
+      onStreamJsonEvent({ type: "error", error: text });
     }
   });
 
   proc.on("error", (error) => {
-    onSdkEvent({ type: "error", error: error.message });
+    onStreamJsonEvent({ type: "error", error: error.message });
     rl.close();
   });
 
@@ -140,9 +140,9 @@ function bindClaudeSdkProcess(
   });
 }
 
-function toClaudeSdkEvent(
+function toClaudeStreamJsonEvent(
   event: ReturnType<typeof normalizeClaudeStreamEvent>[number],
-): ClaudeSdkEvent | undefined {
+): ClaudeStreamJsonEvent | undefined {
   if (event.type === "session") {
     return { type: "session", sessionId: event.sessionId };
   }
@@ -158,7 +158,7 @@ function toClaudeSdkEvent(
   return undefined;
 }
 
-function fromRawClaudeSdkEvent(raw: unknown): ClaudeSdkEvent | undefined {
+function fromRawClaudeStreamJsonEvent(raw: unknown): ClaudeStreamJsonEvent | undefined {
   if (!raw || typeof raw !== "object") return undefined;
   const record = raw as Record<string, unknown>;
   if (record.type === "approval_request" && typeof record.requestId === "string" && typeof record.prompt === "string") {
@@ -188,7 +188,11 @@ function fromRawClaudeSdkEvent(raw: unknown): ClaudeSdkEvent | undefined {
       prompt: record.prompt,
     };
   }
-  if (record.type === "user_input_response" && typeof record.requestId === "string" && typeof record.content === "string") {
+  if (
+    record.type === "user_input_response" &&
+    typeof record.requestId === "string" &&
+    typeof record.content === "string"
+  ) {
     return {
       type: "user_input_response",
       requestId: record.requestId,

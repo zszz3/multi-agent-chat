@@ -80,7 +80,7 @@ describe("ClaudeInteractiveSession", () => {
         now: () => 1000,
         capabilities: runtimeSessionCapabilities(),
         createTransport: () => ({
-          kind: "sdk",
+          kind: "stream-json",
           startTurn: async (input) => {
             starts.push(input.resumeState ? { resumeState: input.resumeState } : {});
             input.onEvent({ type: "completed", content: "reply" });
@@ -130,7 +130,7 @@ describe("ClaudeInteractiveSession", () => {
         now: () => 1000,
         capabilities: runtimeSessionCapabilities(),
         createTransport: () => ({
-          kind: "sdk",
+          kind: "stream-json",
           startTurn: async (input) => {
             starts.push({
               prompt: input.prompt,
@@ -177,7 +177,7 @@ describe("ClaudeInteractiveSession", () => {
         now: () => 1000,
         capabilities: runtimeSessionCapabilities(),
         createTransport: () => ({
-          kind: "sdk",
+          kind: "stream-json",
           startTurn: async (input) => {
             forwardEvent = input.onEvent as (event: { type: string; [key: string]: unknown }) => void;
             input.onEvent({ type: "session", sessionId: "claude-session-1" });
@@ -222,7 +222,7 @@ describe("ClaudeInteractiveSession", () => {
         capabilities: runtimeSessionCapabilities(),
         now: () => 1000,
         createTransport: () => ({
-          kind: "sdk",
+          kind: "stream-json",
           startTurn: async (input) => {
             startedModels.push(input.modelId ?? "default");
             forwardEvent = input.onEvent as (event: { type: string; [key: string]: unknown }) => void;

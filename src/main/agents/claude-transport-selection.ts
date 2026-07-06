@@ -1,7 +1,7 @@
 import type { RuntimeResumeCapabilities } from "../../shared/types";
 import type { ClaudeInteractiveTransport } from "./claude-interactive-transport";
-import { ClaudeCliInteractiveTransport } from "./claude-cli-interactive-transport";
-import { ClaudeSdkInteractiveTransport } from "./claude-sdk-interactive-transport";
+import { ClaudeRunnerInteractiveTransport } from "./claude-runner-interactive-transport";
+import { ClaudeStreamJsonInteractiveTransport } from "./claude-stream-json-interactive-transport";
 
 export interface ClaudeTransportSelection {
   createTransport: () => ClaudeInteractiveTransport;
@@ -11,13 +11,17 @@ export interface ClaudeTransportSelection {
 export function selectClaudeInteractiveTransport(input: {
   executable: string;
   cliModelForTurn: (modelId: string | undefined) => string | undefined;
-  sdkModelForTurn: (modelId: string | undefined) => string | undefined;
+  streamJsonModelForTurn: (modelId: string | undefined) => string | undefined;
   envForTurn: (modelId: string | undefined) => NodeJS.ProcessEnv;
 }): ClaudeTransportSelection {
-  if (process.env.CLAUDE_INTERACTIVE_TRANSPORT === "cli") {
+  if (process.env.CLAUDE_INTERACTIVE_TRANSPORT === "sdk") {
+    throw new Error("Official Claude programmatic SDK transport is not implemented for the installed package surface.");
+  }
+
+  if (process.env.CLAUDE_INTERACTIVE_TRANSPORT === "runner" || process.env.CLAUDE_INTERACTIVE_TRANSPORT === "cli") {
     return {
       createTransport: () =>
-        new ClaudeCliInteractiveTransport({
+        new ClaudeRunnerInteractiveTransport({
           executable: input.executable,
           cliModelForTurn: input.cliModelForTurn,
           envForTurn: input.envForTurn,
@@ -33,9 +37,9 @@ export function selectClaudeInteractiveTransport(input: {
 
   return {
     createTransport: () =>
-      new ClaudeSdkInteractiveTransport({
+      new ClaudeStreamJsonInteractiveTransport({
         executable: input.executable,
-        sdkModelForTurn: input.sdkModelForTurn,
+        streamJsonModelForTurn: input.streamJsonModelForTurn,
         envForTurn: input.envForTurn,
       }),
     resume: {

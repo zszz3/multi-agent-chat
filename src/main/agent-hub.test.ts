@@ -132,7 +132,7 @@ function createHubWithCodexAndClaudeAgents(): AgentHub {
   return hub;
 }
 
-test("uses the SDK transport by default and exposes Claude resume-after-detach capabilities only on that path", async () => {
+test("uses the stream-json transport by default and exposes Claude resume-after-detach capabilities only on that path", async () => {
   const hub = new AgentHub({ codex: "missing-codex-for-test", claude: "claude" });
   addConfiguredAgents(hub, [configuredAgent("claude-agent", { runtimeAgentId: "claude", name: "Claude Agent" })]);
 
@@ -151,9 +151,9 @@ test("uses the SDK transport by default and exposes Claude resume-after-detach c
   });
 });
 
-test("falls back to the CLI compatibility transport when CLAUDE_INTERACTIVE_TRANSPORT=cli", async () => {
+test("falls back to the runner compatibility transport when CLAUDE_INTERACTIVE_TRANSPORT=runner", async () => {
   const original = process.env.CLAUDE_INTERACTIVE_TRANSPORT;
-  process.env.CLAUDE_INTERACTIVE_TRANSPORT = "cli";
+  process.env.CLAUDE_INTERACTIVE_TRANSPORT = "runner";
   try {
     const capabilities = createRuntimeDriverRegistry({
       executables: { codex: "codex", claude: "claude", api: "api", hermes: "hermes" },

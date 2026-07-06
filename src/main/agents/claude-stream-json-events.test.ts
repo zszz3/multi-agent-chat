@@ -1,10 +1,11 @@
 import { describe, expect, test } from "vitest";
-import { normalizeClaudeSdkEvent } from "./claude-sdk-events";
 
-describe("normalizeClaudeSdkEvent", () => {
-  test("maps approval and input events into shared AgentEvent values", () => {
+describe("normalizeClaudeStreamJsonEvent", () => {
+  test("maps approval and input events into shared AgentEvent values", async () => {
+    const { normalizeClaudeStreamJsonEvent } = await import("./claude-stream-json-events");
+
     expect(
-      normalizeClaudeSdkEvent({
+      normalizeClaudeStreamJsonEvent({
         type: "approval_request",
         requestId: "approval-1",
         prompt: "Allow Bash to run `git status`?",
@@ -20,7 +21,7 @@ describe("normalizeClaudeSdkEvent", () => {
     ]);
 
     expect(
-      normalizeClaudeSdkEvent({
+      normalizeClaudeStreamJsonEvent({
         type: "approval_response",
         requestId: "approval-1",
         decision: "approved",
@@ -36,7 +37,7 @@ describe("normalizeClaudeSdkEvent", () => {
     ]);
 
     expect(
-      normalizeClaudeSdkEvent({
+      normalizeClaudeStreamJsonEvent({
         type: "user_input_request",
         requestId: "input-1",
         prompt: "Provide PROD_API_KEY",

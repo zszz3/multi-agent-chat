@@ -5,34 +5,34 @@ import type {
   ClaudeInteractiveTurnInput,
 } from "./claude-interactive-transport";
 import {
-  loadClaudeSdkBindings,
-  type ClaudeSdkBindings,
-  type ClaudeSdkBindingTurnHandle,
-} from "./claude-sdk-bindings";
-import { normalizeClaudeSdkEvent } from "./claude-sdk-events";
+  loadClaudeStreamJsonBindings,
+  type ClaudeStreamJsonBindings,
+  type ClaudeStreamJsonBindingTurnHandle,
+} from "./claude-stream-json-bindings";
+import { normalizeClaudeStreamJsonEvent } from "./claude-stream-json-events";
 
-interface ClaudeSdkInteractiveTransportOptions {
+interface ClaudeStreamJsonInteractiveTransportOptions {
   executable: string;
-  sdkModelForTurn: (modelId: string | undefined) => string | undefined;
+  streamJsonModelForTurn: (modelId: string | undefined) => string | undefined;
   envForTurn: (modelId: string | undefined) => NodeJS.ProcessEnv;
-  loadBindings?: (options?: { executable?: string }) => Promise<ClaudeSdkBindings>;
+  loadBindings?: (options?: { executable?: string }) => Promise<ClaudeStreamJsonBindings>;
 }
 
-export class ClaudeSdkInteractiveTransport implements ClaudeInteractiveTransport {
-  readonly kind = "sdk" as const;
+export class ClaudeStreamJsonInteractiveTransport implements ClaudeInteractiveTransport {
+  readonly kind = "stream-json" as const;
   private handle: ClaudeInteractiveTransportHandle | undefined;
-  private bindingHandle: ClaudeSdkBindingTurnHandle | undefined;
+  private bindingHandle: ClaudeStreamJsonBindingTurnHandle | undefined;
 
-  constructor(private readonly options: ClaudeSdkInteractiveTransportOptions) {}
+  constructor(private readonly options: ClaudeStreamJsonInteractiveTransportOptions) {}
 
   async startTurn(input: ClaudeInteractiveTurnInput): Promise<ClaudeInteractiveTransportHandle> {
-    const bindings = await (this.options.loadBindings ?? loadClaudeSdkBindings)({
+    const bindings = await (this.options.loadBindings ?? loadClaudeStreamJsonBindings)({
       executable: this.options.executable,
     });
     const bindingHandle = await bindings.startTurn({
       prompt: input.prompt,
       cwd: input.cwd,
-      model: this.options.sdkModelForTurn(input.modelId),
+      model: this.options.streamJsonModelForTurn(input.modelId),
       env: this.options.envForTurn(input.modelId),
       ...(input.resumeState
         ? {
@@ -53,8 +53,8 @@ export class ClaudeSdkInteractiveTransport implements ClaudeInteractiveTransport
               : {}),
           }
         : {}),
-      onSdkEvent: (event) => {
-        const normalized = normalizeClaudeSdkEvent(event);
+      onStreamJsonEvent: (event) => {
+        const normalized = normalizeClaudeStreamJsonEvent(event);
         for (const sharedEvent of normalized) input.onEvent(sharedEvent);
       },
     });

@@ -252,7 +252,7 @@ export function createRuntimeDriverRegistry(options: RuntimeAgentExecutorFactory
     return selectClaudeInteractiveTransport({
       executable: input.runtime.command || options.executables.claude,
       cliModelForTurn: (modelId) => claudeCliModelForChannel(channel, modelId ?? input.modelId),
-      sdkModelForTurn: (modelId) => claudeCliModelForChannel(channel, modelId ?? input.modelId),
+      streamJsonModelForTurn: (modelId) => claudeCliModelForChannel(channel, modelId ?? input.modelId),
       envForTurn: (modelId) => claudeEnvironmentForChannel(channel, modelId ?? input.modelId, process.env),
     });
   };

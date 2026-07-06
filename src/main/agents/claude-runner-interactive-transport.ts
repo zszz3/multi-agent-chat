@@ -5,17 +5,17 @@ import type {
   ClaudeInteractiveTurnInput,
 } from "./claude-interactive-transport";
 
-interface ClaudeCliInteractiveTransportOptions {
+interface ClaudeRunnerInteractiveTransportOptions {
   executable: string;
   cliModelForTurn: (modelId: string | undefined) => string | undefined;
   envForTurn: (modelId: string | undefined) => NodeJS.ProcessEnv;
 }
 
-export class ClaudeCliInteractiveTransport implements ClaudeInteractiveTransport {
-  readonly kind = "cli" as const;
+export class ClaudeRunnerInteractiveTransport implements ClaudeInteractiveTransport {
+  readonly kind = "runner" as const;
   private runner: ClaudeRunner | undefined;
 
-  constructor(private readonly options: ClaudeCliInteractiveTransportOptions) {}
+  constructor(private readonly options: ClaudeRunnerInteractiveTransportOptions) {}
 
   async startTurn(input: ClaudeInteractiveTurnInput): Promise<ClaudeInteractiveTransportHandle> {
     const runner = new ClaudeRunner({

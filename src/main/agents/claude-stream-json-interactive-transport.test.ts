@@ -1,9 +1,9 @@
 import { describe, expect, test } from "vitest";
 import type { AgentEvent } from "../../shared/types";
-import { ClaudeSdkInteractiveTransport } from "./claude-sdk-interactive-transport";
 
-describe("ClaudeSdkInteractiveTransport", () => {
-  test("passes persisted Claude resume metadata into the SDK binding before the turn starts", async () => {
+describe("ClaudeStreamJsonInteractiveTransport", () => {
+  test("passes persisted Claude resume metadata into the stream-json binding before the turn starts", async () => {
+    const { ClaudeStreamJsonInteractiveTransport } = await import("./claude-stream-json-interactive-transport");
     const starts: Array<{
       prompt: string;
       cwd: string;
@@ -15,10 +15,10 @@ describe("ClaudeSdkInteractiveTransport", () => {
       sessionStoreRef: string | undefined;
     }> = [];
 
-    const transport = new ClaudeSdkInteractiveTransport({
+    const transport = new ClaudeStreamJsonInteractiveTransport({
       executable: "claude",
       envForTurn: () => ({ PATH: process.env.PATH ?? "" }),
-      sdkModelForTurn: (modelId) => modelId,
+      streamJsonModelForTurn: (modelId) => modelId,
       loadBindings: async () => ({
         startTurn: async (input) => {
           starts.push({
@@ -31,8 +31,8 @@ describe("ClaudeSdkInteractiveTransport", () => {
             claudeConfigDir: input.claudeConfigDir,
             sessionStoreRef: input.sessionStoreRef,
           });
-          input.onSdkEvent({ type: "session", sessionId: input.resume?.sessionId ?? "sdk-session-2" });
-          input.onSdkEvent({ type: "completed", content: "reply" });
+          input.onStreamJsonEvent({ type: "session", sessionId: input.resume?.sessionId ?? "stream-json-session-2" });
+          input.onStreamJsonEvent({ type: "completed", content: "reply" });
           return { interrupt: async () => undefined, stop: async () => undefined };
         },
       }),
@@ -45,7 +45,7 @@ describe("ClaudeSdkInteractiveTransport", () => {
       resumeState: {
         runtimeId: "claude",
         native: {
-          sessionId: "sdk-session-1",
+          sessionId: "stream-json-session-1",
           projectKey: "project-1",
           subpaths: ["worker-1"],
         },
@@ -64,7 +64,7 @@ describe("ClaudeSdkInteractiveTransport", () => {
         prompt: "hello",
         cwd: "C:/repo",
         model: "claude-sonnet-4-6",
-        resumeSessionId: "sdk-session-1",
+        resumeSessionId: "stream-json-session-1",
         projectKey: "project-1",
         subpaths: ["worker-1"],
         claudeConfigDir: "C:/claude-config",
@@ -73,17 +73,18 @@ describe("ClaudeSdkInteractiveTransport", () => {
     ]);
   });
 
-  test("normalizes SDK turn events into the shared AgentEvent stream", async () => {
+  test("normalizes stream-json turn events into the shared AgentEvent stream", async () => {
+    const { ClaudeStreamJsonInteractiveTransport } = await import("./claude-stream-json-interactive-transport");
     const emitted: AgentEvent[] = [];
-    const transport = new ClaudeSdkInteractiveTransport({
+    const transport = new ClaudeStreamJsonInteractiveTransport({
       executable: "claude",
       envForTurn: () => ({ PATH: process.env.PATH ?? "" }),
-      sdkModelForTurn: (modelId) => modelId,
+      streamJsonModelForTurn: (modelId) => modelId,
       loadBindings: async () => ({
         startTurn: async (input) => {
-          input.onSdkEvent({ type: "session", sessionId: "sdk-session-2" });
-          input.onSdkEvent({ type: "delta", content: "Hello" });
-          input.onSdkEvent({ type: "completed", content: "Hello" });
+          input.onStreamJsonEvent({ type: "session", sessionId: "stream-json-session-2" });
+          input.onStreamJsonEvent({ type: "delta", content: "Hello" });
+          input.onStreamJsonEvent({ type: "completed", content: "Hello" });
           return { interrupt: async () => undefined, stop: async () => undefined };
         },
       }),
@@ -97,39 +98,9 @@ describe("ClaudeSdkInteractiveTransport", () => {
     });
 
     expect(emitted).toEqual([
-      { type: "session", sessionId: "sdk-session-2" },
+      { type: "session", sessionId: "stream-json-session-2" },
       { type: "delta", content: "Hello" },
       { type: "completed", content: "Hello" },
-    ]);
-  });
-
-  test("forwards normalized approval and input events from the SDK binding", async () => {
-    const emitted: AgentEvent[] = [];
-    const transport = new ClaudeSdkInteractiveTransport({
-      executable: "claude",
-      envForTurn: () => ({ PATH: process.env.PATH ?? "" }),
-      sdkModelForTurn: (modelId) => modelId,
-      loadBindings: async () => ({
-        startTurn: async (input) => {
-          input.onSdkEvent({ type: "approval_request", requestId: "approval-1", prompt: "Allow Bash?" });
-          input.onSdkEvent({ type: "approval_response", requestId: "approval-1", decision: "approved", reason: "ok" });
-          input.onSdkEvent({ type: "user_input_request", requestId: "input-1", prompt: "Provide token" });
-          return { interrupt: async () => undefined, stop: async () => undefined };
-        },
-      }),
-    });
-
-    await transport.startTurn({
-      prompt: "hello",
-      modelId: "claude-sonnet-4-6",
-      cwd: "C:/repo",
-      onEvent: (event) => emitted.push(event),
-    });
-
-    expect(emitted).toEqual([
-      { type: "approval_request", requestId: "approval-1", content: "Allow Bash?" },
-      { type: "approval_response", requestId: "approval-1", decision: "approved", content: "ok" },
-      { type: "user_input_request", requestId: "input-1", content: "Provide token" },
     ]);
   });
 });

@@ -1,7 +1,7 @@
 import type { AgentEvent } from "../../shared/types";
-import type { ClaudeSdkEvent } from "./claude-sdk-bindings";
+import type { ClaudeStreamJsonEvent } from "./claude-stream-json-bindings";
 
-export function normalizeClaudeSdkEvent(event: ClaudeSdkEvent): AgentEvent[] {
+export function normalizeClaudeStreamJsonEvent(event: ClaudeStreamJsonEvent): AgentEvent[] {
   if (event.type === "session") {
     return [{ type: "session", sessionId: event.sessionId }];
   }
