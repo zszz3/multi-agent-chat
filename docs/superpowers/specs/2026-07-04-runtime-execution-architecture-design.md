@@ -219,15 +219,15 @@ The exact filenames may change, but the design should converge on these responsi
   - `src/main/agents/runtime-driver.ts`
   - `src/main/agents/runtime-capabilities.ts`
   - `src/main/agents/interactive-session-manager.ts`
-- `src/main/agents/process-lease.ts`
-- `src/main/agents/codex-interactive-session.ts`
-- `src/main/agents/claude-interactive-session.ts`
-- `src/main/agents/claude-transport-selection.ts`
-- `src/main/agents/claude-stream-json-interactive-transport.ts`
-- `src/main/agents/claude-runner-interactive-transport.ts`
-- `src/main/agents/claude-stream-json-bindings.ts`
-- `src/main/agents/claude-stream-json-events.ts`
-- `src/main/agents/hermes-runner.ts`
+  - `src/main/agents/process-lease.ts`
+  - `src/main/agents/codex-interactive-session.ts`
+  - `src/main/agents/claude-interactive-session.ts`
+  - `src/main/agents/claude-transport-selection.ts`
+  - `src/main/agents/claude-stream-json-interactive-transport.ts`
+  - `src/main/agents/claude-runner-interactive-transport.ts`
+  - `src/main/agents/claude-stream-json-bindings.ts`
+  - `src/main/agents/claude-stream-json-events.ts`
+  - `src/main/agents/hermes-runner.ts`
 
 ### Implementation slices
 

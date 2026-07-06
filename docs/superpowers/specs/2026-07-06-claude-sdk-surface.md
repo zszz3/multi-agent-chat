@@ -8,6 +8,7 @@ Generated from `node scripts/inspect-claude-sdk.mjs` after installing `@anthropi
 - bin.claude: bin/claude.exe
 - main: (none)
 - exports: (none)
+- declared package.json entrypoint surface: not declared
 - verified programmatic export surface: not verified
 - files[] from package.json:
   - bin/claude.exe

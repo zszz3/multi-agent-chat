@@ -108,7 +108,7 @@ Even though the transport goal is not fully met, several important contract chan
 Claude interactive work now sits in an awkward middle state:
 
 - the shared session boundary, event model, and reconfigure model largely match the intended architecture
-- the transport naming is now truthful, but some docs still overstate the current backend as an official SDK integration
+- before this truth-sync pass, the 2026-07-06 transport-plan docs and related historical wording had overstated the current backend as an official SDK integration
 - the actual default bindings layer still shells out through the Claude package's `stream-json` CLI surface
 
 That mismatch matters because it breaks three guarantees:
