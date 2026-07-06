@@ -46,6 +46,20 @@ describe("selectClaudeInteractiveTransport", () => {
     });
   });
 
+  test("does not accept the legacy cli selector for the runner compatibility transport", () => {
+    process.env.CLAUDE_INTERACTIVE_TRANSPORT = "cli";
+
+    const selection = selectTransport();
+
+    expect(selection.createTransport().kind).toBe("stream-json");
+    expect(selection.resume).toMatchObject({
+      supportsInProcessConversationResume: true,
+      supportsResumeAfterDetach: true,
+      supportsResumeAfterAppRestart: true,
+      supportsTurnResume: false,
+    });
+  });
+
   test("rejects the reserved sdk transport key until an official Claude programmatic API exists", () => {
     process.env.CLAUDE_INTERACTIVE_TRANSPORT = "sdk";
 

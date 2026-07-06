@@ -18,7 +18,7 @@ export function selectClaudeInteractiveTransport(input: {
     throw new Error("Official Claude programmatic SDK transport is not implemented for the installed package surface.");
   }
 
-  if (process.env.CLAUDE_INTERACTIVE_TRANSPORT === "runner" || process.env.CLAUDE_INTERACTIVE_TRANSPORT === "cli") {
+  if (process.env.CLAUDE_INTERACTIVE_TRANSPORT === "runner") {
     return {
       createTransport: () =>
         new ClaudeRunnerInteractiveTransport({
