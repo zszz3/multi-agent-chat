@@ -84,6 +84,8 @@ The key entry files are:
 - `src/main/agents/interactive-session-manager.ts`: per-chat interactive queue plus central idle-detach sweep
 - `src/main/agents/codex-interactive-session.ts`: long-lived Codex chat attachment boundary
 - `src/main/agents/claude-interactive-session.ts`: shared Claude chat attachment boundary
+- `src/main/agents/claude-transport-selection.ts`: Claude SDK-vs-CLI compatibility selection plus truthful resume capability claims
+- `src/main/agents/claude-sdk-bindings.ts`: official Claude package-backed stream-json binding layer
 - `src/main/sqlite-store.ts`: small SQLite persistence wrapper
 
 ### Preload
@@ -154,7 +156,9 @@ The main process now supports two execution styles:
 Each runtime still has a different backend:
 
 - Codex: RPC-style interaction through `CodexRpcClient` plus `CodexInteractiveSession` for reusable chat attachment
-- Claude: CLI process wrapper through `ClaudeRunner` plus `ClaudeInteractiveSession` for shared chat attachment
+- Claude: shared `ClaudeInteractiveSession` plus a selectable interactive transport
+- default Claude backend: SDK-backed transport through `claude-sdk-bindings.ts`
+- compatibility Claude backend: CLI `stream-json` re-entry transport
 - API: direct HTTP request to provider-compatible endpoints
 
 `AgentHub` remains the state authority. It persists logical chat identity and runtime resume metadata, restores interactive chats in a detached state after app restart, and lets `InteractiveSessionManager` own serialized per-chat execution and idle sweeping.

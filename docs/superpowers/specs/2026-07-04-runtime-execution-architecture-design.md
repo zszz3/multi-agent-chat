@@ -9,7 +9,7 @@ Unify main-process runtime execution around two product-facing styles, `oneshot`
 ### Context
 
 - Branch: `feat/claude-interactive-runtime`
-- Status: Proposed
+- Status: Phase 2 implemented on top of the completed shared interactive-session slice
 - Audience: fresh implementation agents with no prior chat context
 - Source of truth: this document defines the runtime-execution boundaries for this repository; current checkout state wins over historical branch assumptions
 
@@ -40,7 +40,7 @@ Unify main-process runtime execution around two product-facing styles, `oneshot`
 #### Protocol strategy
 
 - Codex keeps native app-server RPC.
-- Claude interactive execution prefers an SDK-backed subprocess transport.
+- Claude interactive execution defaults to an SDK-backed subprocess transport.
 - API stays HTTP-based and one-shot.
 - The shared boundary unifies lifecycle and orchestration, not wire protocol details.
 
@@ -193,8 +193,8 @@ The exact filenames may change, but the design should converge on these responsi
   - task, workflow, and runtime test remain `oneshot`
 - Claude
   - chat stays `interactive`
-  - preferred backend becomes SDK-backed subprocess transport
-  - one-shot CLI re-entry may remain as a temporary compatibility backend behind the same session boundary
+  - default backend is SDK-backed subprocess transport
+  - one-shot CLI re-entry remains an explicit compatibility backend behind the same session boundary
   - PTY stays experimental and opt-in
   - task, workflow, and runtime test remain `oneshot`
 - API

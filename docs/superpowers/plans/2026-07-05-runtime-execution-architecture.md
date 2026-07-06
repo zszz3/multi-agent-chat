@@ -8,17 +8,22 @@
 
 **Tech Stack:** Electron main process, TypeScript, Vitest, Codex app-server RPC, Claude subprocess streaming, SQLite/JSON snapshot persistence.
 
-**Execution Status (2026-07-05):** Completed on `feat/claude-interactive-runtime`.
+**Execution Status (2026-07-06):** Phase 1 implementation completed on `feat/claude-interactive-runtime`; the Claude SDK transport follow-up also landed on the same branch.
+
+**Scope Note:** `Completed` here means the implementation slice defined by this plan is done. The broader runtime-execution architecture spec still has follow-up work pending, but the Claude SDK transport replacement called out by the original Phase 1 note is no longer pending on this branch.
 
 - Task 1 commit: `9862051` `feat: add runtime session contracts`
 - Task 2 commit: `aa48218` `feat: add interactive session manager`
 - Task 3 commit: `4a22260` `feat: reuse codex chat sessions`
 - Task 4 commit: `dbdfa5a` `feat: route claude chat through shared sessions`
 - Task 5 commit: `9b780ad` `docs: finalize runtime execution architecture`
+- Claude SDK seam follow-up: `b271037` `refactor: extract claude interactive transport seam`
+- Claude SDK transport follow-up: `c1bc92c` `feat: add claude sdk interactive transport`
+- Claude backend selection follow-up: `2d224c4` `feat: select claude sdk transport and truthful resume capabilities`
 - zh-CN doc sync follow-up: `6859613` `docs: sync zh-CN runtime architecture docs`
-- Focused verification completed:
+- Claude SDK follow-up verification completed:
   - `npm run typecheck`
-  - `npm test -- src/main/agent-hub.test.ts src/main/agents/interactive-session-manager.test.ts src/main/agents/codex-interactive-session.test.ts src/main/agents/codex-rpc.test.ts src/main/agents/claude-interactive-session.test.ts src/main/agents/claude-runner.test.ts src/preload/index.test.ts`
+  - `npm test -- src/main/agent-hub.test.ts src/main/agents/claude-interactive-session.test.ts src/main/agents/claude-sdk-interactive-transport.test.ts src/main/agents/claude-runner.test.ts src/main/agents/claude-stream.test.ts`
 
 ---
 

@@ -2,7 +2,7 @@
 
 日期：2026-07-04
 分支：`feat/claude-interactive-runtime`
-状态：Phase 1 已落地；Claude 官方 SDK transport 仍待后续补齐
+状态：Phase 1 已落地；Claude 官方 SDK transport 已落地；CLI re-entry 仅保留为显式兼容 fallback
 范围：Codex、Claude、API 以及未来本地 runtime（如 Hermes）的执行结构
 
 ## 当前落地状态（2026-07-05）
@@ -17,8 +17,8 @@
 
 当前仍保留的后续项：
 
-- Claude 现在走的是 `ClaudeCliInteractiveTransport` 兼容 transport，而不是官方 SDK-backed transport
-- 因此这份 spec 中“Claude 官方 SDK transport 成为首选后端”的要求还没有完全落地
+- Claude 现在默认走官方包支撑的 SDK-backed transport，并保留 `ClaudeCliInteractiveTransport` 作为显式兼容 fallback
+- Claude 的 resume capability 声明现在会跟随激活中的 transport 选择保持一致
 
 这一轮实际验证过的命令是：
 
