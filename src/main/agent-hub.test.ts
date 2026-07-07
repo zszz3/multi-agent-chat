@@ -8,6 +8,8 @@ import { projectNodeStates } from "../shared/workflow-run";
 import type { AgentChannel, AgentId, ChatRuntimeSessionState, ConfiguredAgent } from "../shared/types";
 import { createRuntimeDriverRegistry, RuntimeDriverRegistry } from "./agent-executor";
 import type { AgentExecutionContext, AgentExecutorFactory } from "./agent-executor";
+import { claudeCliModelForChannel } from "./agents/claude-env";
+import { ClaudeInteractiveSession } from "./agents/claude-interactive-session";
 import { writeNodeCliLauncher } from "./test-cli-fixtures";
 
 function configuredAgent(
@@ -132,7 +134,7 @@ function createHubWithCodexAndClaudeAgents(): AgentHub {
   return hub;
 }
 
-test("uses the stream-json transport by default and exposes Claude resume-after-detach capabilities only on that path", async () => {
+test("claude runtime advertises interactive resume support without transport-specific branching", async () => {
   const hub = new AgentHub({ codex: "missing-codex-for-test", claude: "claude" });
   addConfiguredAgents(hub, [configuredAgent("claude-agent", { runtimeAgentId: "claude", name: "Claude Agent" })]);
 
@@ -151,7 +153,7 @@ test("uses the stream-json transport by default and exposes Claude resume-after-
   });
 });
 
-test("falls back to the runner compatibility transport when CLAUDE_INTERACTIVE_TRANSPORT=runner", async () => {
+test("ignores legacy CLAUDE_INTERACTIVE_TRANSPORT selectors and keeps Claude resume semantics stable", async () => {
   const original = process.env.CLAUDE_INTERACTIVE_TRANSPORT;
   process.env.CLAUDE_INTERACTIVE_TRANSPORT = "runner";
   try {
@@ -168,13 +170,30 @@ test("falls back to the runner compatibility transport when CLAUDE_INTERACTIVE_T
     });
 
     expect(capabilities.resume).toMatchObject({
-      supportsResumeAfterDetach: false,
-      supportsResumeAfterAppRestart: false,
+      supportsInProcessConversationResume: true,
+      supportsResumeAfterDetach: true,
+      supportsResumeAfterAppRestart: true,
     });
   } finally {
     if (original === undefined) delete process.env.CLAUDE_INTERACTIVE_TRANSPORT;
     else process.env.CLAUDE_INTERACTIVE_TRANSPORT = original;
   }
+});
+
+test("api runtime advertises oneshot chat style", () => {
+  const capabilities = createRuntimeDriverRegistry({
+    executables: { codex: "codex", claude: "claude", api: "api", hermes: "hermes" },
+    channelById: () => undefined,
+    respondToCodexServerRequest: () => undefined,
+  }).driverFor("api").getCapabilities({
+    id: "api",
+    label: "API",
+    command: "api",
+    version: "test",
+    available: true,
+  });
+
+  expect(capabilities.chatStyle).toBe("oneshot");
 });
 
 test("askWorkflowAgent delegates to the registered runtime driver hook", async () => {
@@ -428,30 +447,6 @@ rl.on("line", (line) => {
 });
 `;
   const executable = await writeNodeCliLauncher(dir, "codex-turn-start-failure-fake", script);
-  return { executable, callsPath };
-}
-
-async function writeClaudeSequentialFake(dir: string): Promise<{ executable: string; callsPath: string }> {
-  const callsPath = path.join(dir, "claude-calls.jsonl");
-  const script = `#!/usr/bin/env node
-const fs = require("fs");
-
-const callsPath = ${JSON.stringify(callsPath)};
-const args = process.argv.slice(2);
-fs.appendFileSync(callsPath, JSON.stringify({ args }) + "\\n");
-
-const resumeIndex = args.indexOf("--resume");
-const sessionId = resumeIndex >= 0 && args[resumeIndex + 1] ? args[resumeIndex + 1] : "claude-session-1";
-const prompt = args[args.length - 1] || "";
-
-process.stdout.write(JSON.stringify({
-  type: "result",
-  subtype: "success",
-  session_id: sessionId,
-  result: "reply:" + prompt
-}) + "\\n");
-`;
-  const executable = await writeNodeCliLauncher(dir, "claude-sequential-fake", script);
   return { executable, callsPath };
 }
 
@@ -783,16 +778,59 @@ describe("AgentHub chat sessions", () => {
   });
 
   test("routes Claude chats through shared interactive sessions and reuses the same session id for follow-up prompts", async () => {
-    const dir = await mkdtemp(path.join(os.tmpdir(), "multi-agent-chat-claude-interactive-"));
-    const fake = await writeClaudeSequentialFake(dir);
-    const hub = new AgentHub({ codex: "missing-codex-for-test", claude: fake.executable });
+    const attachCalls: Array<{ modelId: string | undefined }> = [];
+    const sent: string[] = [];
+    let attached = false;
+    let forwardEvent: ((event: { type: string; [key: string]: unknown }) => void) | undefined;
+    const runtimeDrivers = new RuntimeDriverRegistry([
+      {
+        runtimeId: "claude",
+        getCapabilities: () => ({
+          ...interactiveChatCapabilities("claude"),
+          resume: {
+            supportsInProcessConversationResume: true,
+            supportsResumeAfterDetach: true,
+            supportsResumeAfterAppRestart: true,
+            supportsTurnResume: false,
+          },
+        }),
+        createOneShotExecutor: () => ({
+          start: async () => {
+            throw new Error("one-shot executor path should not run");
+          },
+          stop: async () => undefined,
+        }),
+        createInteractiveSession: (context: any) =>
+          new ClaudeInteractiveSession(context, {
+            capabilities: runtimeSessionCapabilities(),
+            sdkInteractive: {
+              isAttached: () => attached,
+              attach: async (input) => {
+                attached = true;
+                attachCalls.push({ modelId: input.modelId });
+                forwardEvent = input.onEvent as (event: { type: string; [key: string]: unknown }) => void;
+              },
+              sendUserMessage: async (content: string) => {
+                sent.push(content);
+                forwardEvent?.({ type: "session", sessionId: "claude-session-1" });
+                forwardEvent?.({ type: "completed", content: `reply:${content}` });
+              },
+              interrupt: async () => undefined,
+              detach: async () => {
+                attached = false;
+              },
+            },
+          }),
+      } as any,
+    ]);
+    const hub = new AgentHub({ codex: "missing-codex-for-test", claude: "missing-claude-for-test" }, undefined, runtimeDrivers);
     addConfiguredAgents(hub, [configuredAgent("claude-agent", { runtimeAgentId: "claude", name: "Claude Agent" })]);
     const chatId = hub.snapshot().activeChatId!;
     hub.setChatAgent(chatId, "claude-agent");
     (hub as any).runtimes.set("claude", {
       id: "claude",
       label: "Claude",
-      command: fake.executable,
+      command: "claude",
       version: "test",
       available: true,
     });
@@ -814,15 +852,8 @@ describe("AgentHub chat sessions", () => {
       (chat) => chat?.running === false,
     );
 
-    const calls = (await readFile(fake.callsPath, "utf8"))
-      .trim()
-      .split("\n")
-      .filter(Boolean)
-      .map((line) => JSON.parse(line) as { args: string[] });
-    expect(calls).toHaveLength(2);
-    expect(calls[0]?.args).not.toContain("--resume");
-    expect(calls[1]?.args).toContain("--resume");
-    expect(calls[1]?.args).toContain("claude-session-1");
+    expect(attachCalls).toHaveLength(1);
+    expect(sent).toEqual(["first", "second"]);
     expect(activeChat?.messages).toEqual([
       expect.objectContaining({ role: "user", content: "first" }),
       expect.objectContaining({ role: "assistant", content: "reply:first" }),
@@ -831,27 +862,70 @@ describe("AgentHub chat sessions", () => {
     ]);
   });
 
-  test("maps Claude interactive chat model ids through the channel-specific CLI alias before spawn", async () => {
+  test("maps Claude interactive chat model ids through the channel-specific alias before SDK attach", async () => {
     const dir = await mkdtemp(path.join(os.tmpdir(), "multi-agent-chat-claude-interactive-model-"));
-    const fake = await writeClaudeSequentialFake(dir);
+    const attachCalls: Array<{ modelId: string | undefined }> = [];
+    let attached = false;
+    let forwardEvent: ((event: { type: string; [key: string]: unknown }) => void) | undefined;
     const channelPath = path.join(dir, "model-channels.json");
-    const hub = new AgentHub({ codex: "missing-codex-for-test", claude: fake.executable });
-    await hub.loadModelChannels(channelPath);
-    await hub.saveModelChannels([
+    const deepseekClaudeChannel: AgentChannel = {
+      id: "claude-deepseek",
+      agentId: "claude",
+      label: "Claude DeepSeek",
+      providerName: "DeepSeek",
+      modelProvider: "deepseek-anthropic",
+      baseUrl: "https://api.deepseek.test/anthropic",
+      httpHeaders: { Authorization: "Bearer deepseek-key" },
+      models: [
+        { id: DEFAULT_MODEL_ID, label: "Default" },
+        { id: "deepseek-v4-flash", label: "DeepSeek V4 Flash" },
+      ],
+    };
+    const runtimeDrivers = new RuntimeDriverRegistry([
       {
-        id: "claude-deepseek",
-        agentId: "claude",
-        label: "Claude DeepSeek",
-        providerName: "DeepSeek",
-        modelProvider: "deepseek-anthropic",
-        baseUrl: "https://api.deepseek.test/anthropic",
-        httpHeaders: { Authorization: "Bearer deepseek-key" },
-        models: [
-          { id: DEFAULT_MODEL_ID, label: "Default" },
-          { id: "deepseek-v4-flash", label: "DeepSeek V4 Flash" },
-        ],
-      },
+        runtimeId: "claude",
+        getCapabilities: () => ({
+          ...interactiveChatCapabilities("claude"),
+          resume: {
+            supportsInProcessConversationResume: true,
+            supportsResumeAfterDetach: true,
+            supportsResumeAfterAppRestart: true,
+            supportsTurnResume: false,
+          },
+        }),
+        createOneShotExecutor: () => ({
+          start: async () => {
+            throw new Error("one-shot executor path should not run");
+          },
+          stop: async () => undefined,
+        }),
+        createInteractiveSession: (context: any) =>
+          new ClaudeInteractiveSession(context, {
+            capabilities: runtimeSessionCapabilities(),
+            resolveModelId: (interactiveContext) =>
+              claudeCliModelForChannel(deepseekClaudeChannel, interactiveContext.modelId) ?? interactiveContext.modelId,
+            sdkInteractive: {
+              isAttached: () => attached,
+              attach: async (input) => {
+                attached = true;
+                attachCalls.push({ modelId: input.modelId });
+                forwardEvent = input.onEvent as (event: { type: string; [key: string]: unknown }) => void;
+              },
+              sendUserMessage: async (content: string) => {
+                forwardEvent?.({ type: "session", sessionId: "claude-session-1" });
+                forwardEvent?.({ type: "completed", content: `reply:${content}` });
+              },
+              interrupt: async () => undefined,
+              detach: async () => {
+                attached = false;
+              },
+            },
+          }),
+      } as any,
     ]);
+    const hub = new AgentHub({ codex: "missing-codex-for-test", claude: "missing-claude-for-test" }, undefined, runtimeDrivers);
+    await hub.loadModelChannels(channelPath);
+    await hub.saveModelChannels([deepseekClaudeChannel]);
     addConfiguredAgents(
       hub,
       [configuredAgent("claude-agent", {
@@ -865,7 +939,7 @@ describe("AgentHub chat sessions", () => {
     (hub as any).runtimes.set("claude", {
       id: "claude",
       label: "Claude",
-      command: fake.executable,
+      command: "claude",
       version: "test",
       available: true,
     });
@@ -876,15 +950,8 @@ describe("AgentHub chat sessions", () => {
       (chat) => chat?.running === false,
     );
 
-    const calls = (await readFile(fake.callsPath, "utf8"))
-      .trim()
-      .split("\n")
-      .filter(Boolean)
-      .map((line) => JSON.parse(line) as { args: string[] });
-    expect(calls).toHaveLength(1);
-    expect(calls[0]?.args).toContain("--model");
-    expect(calls[0]?.args).toContain("claude-haiku-4-5");
-    expect(calls[0]?.args).not.toContain("deepseek-v4-flash");
+    expect(attachCalls).toHaveLength(1);
+    expect(attachCalls[0]?.modelId).toBe(claudeCliModelForChannel(deepseekClaudeChannel, "deepseek-v4-flash"));
   });
 
   test("marks chat failed when interactive session creation throws", async () => {
@@ -1165,6 +1232,74 @@ describe("AgentHub chat sessions", () => {
       expect(calls).toContainEqual({ args: ["archive", fake.sessionId] });
       // The local rollout file for the test session must be deleted, not just archived.
       await expect(readFile(sessionPath, "utf8")).rejects.toMatchObject({ code: "ENOENT" });
+    } finally {
+      vi.unstubAllEnvs();
+    }
+  });
+
+  test("tests Claude configured agents through the official SDK one-shot path without deleting local session files", async () => {
+    const homeDir = await mkdtemp(path.join(os.tmpdir(), "multi-agent-chat-claude-sdk-test-home-"));
+    const workDir = path.join(homeDir, "workspace");
+    const sessionId = "019ed5a0-0000-7000-8000-000000000456";
+    const projectSlug = workDir.replace(/[:\\/]/g, "-");
+    const sessionDir = path.join(homeDir, ".claude", "projects", projectSlug);
+    const sessionPath = path.join(sessionDir, `${sessionId}.jsonl`);
+    await mkdir(sessionDir, { recursive: true });
+    await writeFile(sessionPath, "{}\n", "utf8");
+    vi.stubEnv("HOME", homeDir);
+    const hub = new AgentHub({ codex: "missing-codex-for-test", claude: "missing-claude-for-test" });
+    await hub.loadModelChannels(path.join(homeDir, "claude-model-channels.json"));
+    await hub.saveModelChannels([
+      {
+        id: "claude-deepseek",
+        agentId: "claude",
+        label: "Claude DeepSeek",
+        providerName: "DeepSeek",
+        modelProvider: "deepseek-anthropic",
+        baseUrl: "https://api.deepseek.test/anthropic",
+        httpHeaders: { Authorization: "Bearer deepseek-key" },
+        models: [
+          { id: DEFAULT_MODEL_ID, label: "Default" },
+          { id: "deepseek-v4-flash", label: "DeepSeek V4 Flash" },
+        ],
+      },
+    ]);
+    hub.updateConfiguredAgents([
+      configuredAgent("claude-agent", {
+        runtimeAgentId: "claude",
+        channelId: "claude-deepseek",
+        modelId: "deepseek-v4-flash",
+      }),
+    ]);
+    hub.setWorkDir(workDir);
+    (hub as any).runtimes.set("claude", {
+      id: "claude",
+      label: "Claude",
+      command: "claude",
+      version: "test",
+      available: true,
+    });
+
+    const runOneShot = vi.fn(async (input: any) => {
+      input.onEvent({ type: "session", sessionId });
+      input.onEvent({ type: "delta", content: "SDK ok" });
+      input.onEvent({ type: "completed", content: "SDK ok" });
+    });
+    (hub as any).claudeSdkAdapter = { runOneShot };
+
+    try {
+      const result = await hub.testConfiguredAgent("claude-agent");
+
+      expect(result.ok).toBe(true);
+      expect(result.output).toBe("SDK ok");
+      expect(runOneShot).toHaveBeenCalledWith(
+        expect.objectContaining({
+          prompt: expect.stringContaining("OK"),
+          cwd: workDir,
+          modelId: "claude-haiku-4-5",
+        }),
+      );
+      await expect(readFile(sessionPath, "utf8")).resolves.toBe("{}\n");
     } finally {
       vi.unstubAllEnvs();
     }
@@ -1779,6 +1914,50 @@ fs.writeFileSync(${JSON.stringify(argsPath)}, process.argv.slice(2).join("\\n") 
     expect(calls.some((call) => call.method === "thread/start" && call.params.developerInstructions.includes("Final User Report"))).toBe(true);
   });
 
+  test("asks a Claude workflow agent through the official SDK one-shot path", async () => {
+    const dir = await mkdtemp(path.join(os.tmpdir(), "multi-agent-chat-claude-workflow-sdk-"));
+    const hub = new AgentHub({ codex: "missing-codex-for-test", claude: "missing-claude-for-test" });
+    addConfiguredAgents(hub, [configuredAgent("claude-agent", { runtimeAgentId: "claude", name: "Claude Agent" })]);
+    (hub as any).runtimes.set("claude", {
+      id: "claude",
+      label: "Claude",
+      command: "claude",
+      version: "test",
+      available: true,
+    });
+
+    const runOneShot = vi.fn(async (input: any) => {
+      input.onEvent({ type: "session", sessionId: "claude-session-7" });
+      input.onEvent({ type: "delta", content: "workflow-sdk" });
+      input.onEvent({ type: "completed", content: "workflow-sdk" });
+    });
+    (hub as any).claudeSdkAdapter = { runOneShot };
+
+    const events: any[] = [];
+    const response = await (hub as any).askWorkflowAgent(
+      {
+        requestId: "claude-workflow-test",
+        prompt: "Plan the repo",
+        configuredAgentId: "claude-agent",
+        workDir: dir,
+      },
+      (event: any) => events.push(event),
+    );
+
+    expect(response).toEqual({ content: "workflow-sdk", sessionId: "claude-session-7" });
+    expect(events).toEqual([
+      { requestId: "claude-workflow-test", type: "delta", content: "workflow-sdk" },
+      { requestId: "claude-workflow-test", type: "completed", content: "workflow-sdk", sessionId: "claude-session-7" },
+    ]);
+    expect(runOneShot).toHaveBeenCalledWith(
+      expect.objectContaining({
+        prompt: "Plan the repo",
+        cwd: dir,
+        developerInstructions: expect.stringContaining("workflow builder"),
+      }),
+    );
+  });
+
   test("keeps workflow draft replies in main-owned snapshot state", async () => {
     const dir = await mkdtemp(path.join(os.tmpdir(), "multi-agent-chat-workflow-draft-reply-"));
     const fake = await writeSequentialCodexFake(dir);
@@ -2052,6 +2231,28 @@ fs.writeFileSync(${JSON.stringify(argsPath)}, process.argv.slice(2).join("\\n") 
         native: { threadId: "thread-legacy-1" },
       },
     });
+  });
+
+  test("does not restore or migrate runtimeSession state for oneshot API chats", () => {
+    const hub = new AgentHub({ codex: "missing-codex-for-test", claude: "missing-claude-for-test", api: "api" } as any);
+    addConfiguredAgents(hub, [configuredAgent("api-agent", { runtimeAgentId: "api", name: "API Agent" })]);
+
+    const restored = (hub as any).restoreChatState({
+      id: "chat-api-1",
+      title: "API restore",
+      configuredAgentId: "api-agent",
+      modelId: DEFAULT_MODEL_ID,
+      sessionId: "legacy-api-session",
+      runtimeSession: {
+        executionStyle: "interactive",
+      },
+      messages: [],
+      createdAt: 1710000000000,
+      updatedAt: 1710000000000,
+    });
+
+    expect(restored.sessionId).toBe("legacy-api-session");
+    expect(restored.runtimeSession).toBeUndefined();
   });
 
   test("persists runtimeSession as V3 and restores durable fields while clearing ephemeral state", async () => {

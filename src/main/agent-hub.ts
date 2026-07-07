@@ -96,11 +96,10 @@ import { createWorkflowGraphFromObjective, parseWorkflowGraphUpsert, validateWor
 import { defaultWorkflowWorkDirSuffix } from "../shared/workflow-run";
 import { detectAgentRuntimes } from "./agents/detect";
 import { InteractiveSessionManager } from "./agents/interactive-session-manager";
+import { ClaudeAgentSdkAdapter } from "./agents/claude-agent-sdk";
 import { CodexRpcClient } from "./agents/codex-rpc";
 import { codexEnvironmentForChannel } from "./agents/codex-env";
-import { claudeCliModelForChannel, claudeEnvironmentForChannel } from "./agents/claude-env";
-import { ClaudeRunner } from "./agents/claude-runner";
-import { createClaudeStreamState, normalizeClaudeStreamEvent } from "./agents/claude-stream";
+import { claudeCliModelForChannel } from "./agents/claude-env";
 import type { RuntimeCapabilities } from "./agents/runtime-capabilities";
 import type { InteractiveSessionContext } from "./agents/runtime-driver";
 import { createRuntimeDriverRegistry, RuntimeAgentExecutorFactory, RuntimeDriverRegistry, type AgentExecutorFactory } from "./agent-executor";
@@ -626,99 +625,10 @@ function isCodexWarningMessage(message: string): boolean {
   return /skill descriptions were shortened/i.test(message) || /context budget/i.test(message);
 }
 
-function extractClaudePrintOutput(stdout: string): string {
-  let output = "";
-  const streamState = createClaudeStreamState();
-  for (const line of stdout.split(/\r?\n/)) {
-    if (!line.trim()) continue;
-    try {
-      const raw = JSON.parse(line) as unknown;
-      for (const event of normalizeClaudeStreamEvent(raw, streamState)) {
-        if (event.type === "delta") output += event.content;
-        if (event.type === "completed" && !output && event.content) output = event.content;
-      }
-    } catch {
-      // Ignore non-JSON noise.
-    }
-  }
-  return output.trim();
-}
-
-function handleClaudeTestLine(line: string, streamState: ReturnType<typeof createClaudeStreamState>, emit: AgentTestEmit): string[] {
-  try {
-    const raw = JSON.parse(line) as {
-      type?: string;
-      subtype?: string;
-      model?: unknown;
-      hook_name?: unknown;
-      outcome?: unknown;
-      result?: unknown;
-    };
-    const output: string[] = [];
-    if (raw.type === "system") {
-      if (raw.subtype === "init") {
-        const model = typeof raw.model === "string" ? raw.model : "default";
-        emit({ type: "phase", content: `Claude initialized with model ${model}.` });
-      } else if (typeof raw.hook_name === "string") {
-        const outcome = typeof raw.outcome === "string" ? ` (${raw.outcome})` : "";
-        emit({ type: "phase", content: `Claude ${raw.subtype ?? "system"}: ${raw.hook_name}${outcome}.` });
-      } else if (raw.subtype) {
-        emit({ type: "phase", content: `Claude system: ${raw.subtype}.` });
-      }
-    }
-    if (raw.type === "result" && typeof raw.result === "string") {
-      emit({ type: "assistant", content: raw.result });
-      output.push(raw.result);
-    }
-    for (const event of normalizeClaudeStreamEvent(raw, streamState)) {
-      if (event.type === "delta") {
-        emit({ type: "assistant_delta", content: event.content });
-        output.push(event.content);
-      }
-      if (event.type === "completed" && event.content) {
-        emit({ type: "assistant", content: event.content });
-        if (output.length === 0) output.push(event.content);
-      }
-      if (event.type === "tool_call" || event.type === "tool_result") {
-        emit({ type: "tool", content: event.content });
-      }
-      if (event.type === "error") {
-        emit({ type: "error", content: event.error });
-      }
-    }
-    return output;
-  } catch {
-    return [];
-  }
-}
-
-function extractClaudeSessionId(line: string): string | undefined {
-  try {
-    const raw = JSON.parse(line) as { session_id?: unknown; sessionId?: unknown };
-    const sessionId = typeof raw.session_id === "string" ? raw.session_id : typeof raw.sessionId === "string" ? raw.sessionId : undefined;
-    return sessionId && /^[0-9a-f-]{36}$/i.test(sessionId) ? sessionId : undefined;
-  } catch {
-    return undefined;
-  }
-}
-
 function claudeProjectStoragePath(workDir: string, sessionId: string): string {
   const slug = workDir.replace(/[:\\/]/g, "-");
   const homeDir = process.env.HOME || process.env.USERPROFILE || os.homedir();
   return path.join(homeDir, ".claude", "projects", slug, `${sessionId}.jsonl`);
-}
-
-async function deleteClaudeTestSessions(workDir: string, sessionIds: Iterable<string>): Promise<number> {
-  let deleted = 0;
-  for (const sessionId of sessionIds) {
-    try {
-      await rm(claudeProjectStoragePath(workDir, sessionId), { force: true });
-      deleted += 1;
-    } catch {
-      // Best-effort cleanup only; test result should not depend on local history deletion.
-    }
-  }
-  return deleted;
 }
 
 async function deleteCodexTestSessions(executable: string, home: string, sessionIds: Iterable<string>): Promise<number> {
@@ -1219,6 +1129,7 @@ export class AgentHub {
   private readonly interactiveSessions: InteractiveSessionManager;
   private readonly executables: Record<AgentId, string>;
   private readonly workflowRuntime: WorkflowRuntime;
+  private readonly claudeSdkAdapter: Pick<ClaudeAgentSdkAdapter, "runOneShot">;
 
   constructor(
     executables: Partial<Record<AgentId, string>> = {},
@@ -1231,6 +1142,7 @@ export class AgentHub {
       api: executables.api ?? "api",
       hermes: executables.hermes ?? process.env.HERMES_PATH ?? "hermes",
     };
+    this.claudeSdkAdapter = new ClaudeAgentSdkAdapter();
     this.runtimeDrivers =
       runtimeDrivers ??
       createRuntimeDriverRegistry({
@@ -4157,47 +4069,57 @@ export class AgentHub {
   }
 
   private async testClaudeAgent(channel: AgentChannel, modelId: string, workDir: string, emit: AgentTestEmit): Promise<string> {
-    const cliModel = claudeCliModelForChannel(channel, modelId);
-    const env = claudeEnvironmentForChannel(channel, modelId, process.env);
-    const envModel = typeof env.ANTHROPIC_MODEL === "string" ? env.ANTHROPIC_MODEL : "default";
-    const args = [
-      "--print",
-      "--output-format",
-      "stream-json",
-      "--verbose",
-      "--include-partial-messages",
-      "--permission-mode",
-      "bypassPermissions",
-      ...(cliModel ? ["--model", cliModel] : []),
-      AGENT_TEST_PROMPT,
-    ];
-    emit({ type: "phase", content: `Launching Claude Code with model ${cliModel ?? envModel}.` });
+    const sdkModel = claudeCliModelForChannel(channel, modelId);
+    emit({ type: "phase", content: `Launching Claude Code with model ${sdkModel ?? "default"}.` });
+    emit({ type: "user", content: AGENT_TEST_PROMPT });
+
     let output = "";
-    const sessionIds = new Set<string>();
-    const streamState = createClaudeStreamState();
-    const result = await runStreamingCommand({
-      executable: this.executables.claude,
-      args,
-      cwd: workDir,
-      env,
-      timeoutMs: AGENT_TEST_TIMEOUT_MS,
-      onStdoutLine: (line) => {
-        const sessionId = extractClaudeSessionId(line);
-        if (sessionId) sessionIds.add(sessionId);
-        for (const event of handleClaudeTestLine(line, streamState, emit)) output += event;
-      },
-      onStderr: (text) => emit({ type: "stderr", content: text }),
-    });
-    const deletedSessions = await deleteClaudeTestSessions(workDir, sessionIds);
-    if (deletedSessions > 0) emit({ type: "phase", content: `Deleted ${deletedSessions} Claude test session${deletedSessions === 1 ? "" : "s"}.` });
-    if (result.timedOut) throw new Error(`Claude test timed out after ${formatElapsed(AGENT_TEST_TIMEOUT_MS)} without producing a final response.`);
-    if (result.code !== 0) {
-      const detail = (result.stderr.trim() || output.trim() || result.stdout.trim()).slice(0, 800);
-      throw new Error(`Claude test exited with ${result.code ?? result.signal ?? "unknown"}: ${detail}`);
+    let completedContent: string | undefined;
+    let emittedAssistant = false;
+    let errorMessage: string | undefined;
+
+    try {
+      await this.claudeSdkAdapter.runOneShot({
+        prompt: AGENT_TEST_PROMPT,
+        cwd: workDir,
+        ...(sdkModel ? { modelId: sdkModel } : {}),
+        onEvent: (event) => {
+          if (event.type === "delta") {
+            output += event.content;
+            emit({ type: "assistant_delta", content: event.content });
+            return;
+          }
+          if (event.type === "completed") {
+            if (event.content) {
+              completedContent = event.content;
+              if (!emittedAssistant) {
+                emit({ type: "assistant", content: event.content });
+                emittedAssistant = true;
+              }
+            }
+            return;
+          }
+          if (event.type === "tool_call" || event.type === "tool_result") {
+            emit({ type: "tool", content: event.content });
+            return;
+          }
+          if (event.type === "error") {
+            errorMessage = event.error;
+            emit({ type: "error", content: event.error });
+          }
+        },
+      });
+    } catch (error) {
+      throw errorMessage
+        ? new Error(errorMessage)
+        : error instanceof Error
+          ? error
+          : new Error(String(error));
     }
-    if (output.trim()) return output.trim();
-    const stderrText = result.stderr.trim();
-    throw new Error(stderrText ? `Claude completed without assistant text. stderr: ${stderrText}` : "Claude completed without assistant text.");
+
+    const finalOutput = completedContent?.trim() || output.trim();
+    if (finalOutput) return finalOutput;
+    throw new Error("Claude completed without assistant text.");
   }
 
   private async testApiAgent(channel: AgentChannel, modelId: string, emit: AgentTestEmit): Promise<string> {
@@ -4290,61 +4212,55 @@ export class AgentHub {
     sessionId: string | undefined;
     onEvent: ((event: WorkflowAgentEvent) => void) | undefined;
   }): Promise<WorkflowAgentResponse> {
+    const channel = this.channelById(input.channelId);
+    const sdkModel = claudeCliModelForChannel(channel, input.modelId);
     let content = "";
+    let completedContent: string | undefined;
     let sessionId = input.sessionId;
     let errorMessage: string | undefined;
 
-    return new Promise<WorkflowAgentResponse>((resolve, reject) => {
-      let timeout: ReturnType<typeof createWorkflowAgentTimeout> | undefined;
-      let runner: ClaudeRunner | undefined;
-      let settled = false;
-      const settle = (callback: () => void): void => {
-        if (settled) return;
-        settled = true;
-        timeout?.clear();
-        callback();
-      };
-      timeout = createWorkflowAgentTimeout({
-        timeoutMs: WORKFLOW_AGENT_IDLE_TIMEOUT_MS,
-        onTimeout: () => {
-          void runner?.stop();
-          settle(() => reject(new Error("Workflow agent timed out after 10 minutes without activity")));
-        },
-      });
-      const channel = this.channelById(input.channelId);
-      runner = new ClaudeRunner({
-        executable: input.runtime.command || this.executables.claude,
-        cwd: input.workDir,
-        env: claudeEnvironmentForChannel(channel, input.modelId, process.env),
+    try {
+      await this.claudeSdkAdapter.runOneShot({
         prompt: input.prompt,
-        modelId: claudeCliModelForChannel(channel, input.modelId),
-        sessionId,
+        cwd: input.workDir,
+        ...(sdkModel ? { modelId: sdkModel } : {}),
+        developerInstructions: CODEX_WORKFLOW_DEVELOPER_INSTRUCTIONS,
+        ...(sessionId ? { resumeSessionId: sessionId } : {}),
         onEvent: (event) => {
-          timeout?.refresh();
           if (event.type === "delta") {
             content += event.content;
             input.onEvent?.({ requestId: input.requestId, type: "delta", content: event.content });
+            return;
           }
-          if (event.type === "completed" && !content && event.content) content = event.content;
-          if (event.type === "session") sessionId = event.sessionId;
+          if (event.type === "completed" && event.content) {
+            completedContent = event.content;
+            if (!content) content = event.content;
+            return;
+          }
+          if (event.type === "session") {
+            sessionId = event.sessionId;
+            return;
+          }
           if (event.type === "error") {
             errorMessage = event.error;
             input.onEvent?.({ requestId: input.requestId, type: "error", error: event.error });
           }
         },
-        onExit: (code) => {
-          if (code !== 0) {
-            settle(() => reject(new Error(errorMessage ?? `Claude exited with code ${code}`)));
-            return;
-          }
-          input.onEvent?.({ requestId: input.requestId, type: "completed", content: content.trim(), sessionId });
-          settle(() => resolve({ content: content.trim(), sessionId }));
-        },
       });
-      void runner.start().catch((error) => {
-        settle(() => reject(error instanceof Error ? error : new Error(String(error))));
-      });
-    });
+    } catch (error) {
+      throw errorMessage
+        ? new Error(errorMessage)
+        : error instanceof Error
+          ? error
+          : new Error(String(error));
+    }
+
+    const finalContent = completedContent?.trim() || content.trim();
+    if (!finalContent) {
+      throw new Error(errorMessage ?? "Claude workflow completed without assistant text.");
+    }
+    input.onEvent?.({ requestId: input.requestId, type: "completed", content: finalContent, sessionId });
+    return { content: finalContent, sessionId };
   }
 
   private resolveApiModel(channel: AgentChannel, modelId: string): string | undefined {
@@ -4799,6 +4715,7 @@ export class AgentHub {
   private migrateLegacyRuntimeSession(record: PersistedChatSessionRecord): ChatRuntimeSessionState | undefined {
     if (!record.sessionId) return undefined;
     const resolved = this.resolveConfiguredAgent(record.configuredAgentId, record.modelId);
+    if (!resolved || !this.runtimeSupportsInteractiveChat(resolved.runtimeAgentId)) return undefined;
     const runtimeId = resolved?.runtimeAgentId === "claude" ? "claude" : "codex";
     const resumeState: PersistedResumeState =
       runtimeId === "claude"
@@ -4811,6 +4728,11 @@ export class AgentHub {
       resumeState,
       capabilities: defaultRuntimeSessionCapabilities(),
     };
+  }
+
+  private runtimeSupportsInteractiveChat(runtimeAgentId: AgentId): boolean {
+    const driver = this.runtimeDrivers.driverFor(runtimeAgentId);
+    return driver.getCapabilities(this.runtimeForDriver(runtimeAgentId)).chatStyle === "interactive";
   }
 
   private restoreRuntimeSession(raw: unknown): ChatRuntimeSessionState | undefined {
@@ -4959,7 +4881,8 @@ export class AgentHub {
             resumeState: clonePersistedResumeState(migratedLegacyRuntimeSession.resumeState),
           }
         : restoredRuntimeSession;
-    const resolvedRuntimeSession = hydratedRuntimeSession ?? migratedLegacyRuntimeSession;
+    const supportsInteractiveRuntimeSession = this.runtimeSupportsInteractiveChat(configuredAgent.runtimeAgentId);
+    const resolvedRuntimeSession = supportsInteractiveRuntimeSession ? hydratedRuntimeSession ?? migratedLegacyRuntimeSession : undefined;
     chat.runtimeSession = resolvedRuntimeSession
       ? {
           ...cloneRuntimeSessionState(resolvedRuntimeSession),

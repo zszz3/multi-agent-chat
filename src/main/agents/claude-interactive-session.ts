@@ -1,20 +1,25 @@
 import type { ChatRuntimeSessionState, PersistedResumeState } from "../../shared/types";
 import type { InteractiveSession, InteractiveSessionContext } from "./runtime-driver";
+import { ClaudeAgentSdkInteractive } from "./claude-agent-sdk-interactive";
 import { ProcessLease } from "./process-lease";
-import type { ClaudeInteractiveTransport, ClaudeInteractiveTransportHandle } from "./claude-interactive-transport";
 import { planSessionReconfigure } from "./session-reconfigure";
 
+type ClaudeInteractiveSdkBinding = Pick<
+  ClaudeAgentSdkInteractive,
+  "isAttached" | "attach" | "sendUserMessage" | "interrupt" | "detach"
+>;
+
 interface ClaudeInteractiveSessionOptions {
-  createTransport: () => ClaudeInteractiveTransport;
+  sdkInteractive: ClaudeInteractiveSdkBinding;
   capabilities: ChatRuntimeSessionState["capabilities"];
+  resolveModelId?: (context: InteractiveSessionContext) => string | undefined;
   now?: () => number;
 }
 
 export class ClaudeInteractiveSession implements InteractiveSession {
   private readonly lease = new ProcessLease();
   private readonly now: () => number;
-  private readonly transport: ClaudeInteractiveTransport;
-  private handle: ClaudeInteractiveTransportHandle | undefined;
+  private readonly sdkInteractive: ClaudeInteractiveSdkBinding;
   private resumeState: PersistedResumeState | undefined;
   private attachmentState: ChatRuntimeSessionState["attachmentState"] = "detached";
   private attachmentGeneration = 0;
@@ -26,7 +31,7 @@ export class ClaudeInteractiveSession implements InteractiveSession {
     private context: InteractiveSessionContext,
     private readonly options: ClaudeInteractiveSessionOptions,
   ) {
-    this.transport = options.createTransport();
+    this.sdkInteractive = options.sdkInteractive;
     this.now = options.now ?? (() => Date.now());
     this.resumeState = context.resumeState?.runtimeId === "claude" ? { ...context.resumeState } : undefined;
   }
@@ -41,7 +46,10 @@ export class ClaudeInteractiveSession implements InteractiveSession {
     }
 
     const nextContext = { ...this.context, ...plan.applyOnNextAttach };
-    if (this.attachmentState === "running" && Object.keys(plan.applyOnNextAttach).length > 0) {
+    if (
+      Object.keys(plan.applyOnNextAttach).length > 0 &&
+      (this.attachmentState === "running" || this.sdkInteractive.isAttached())
+    ) {
       this.pendingContext = nextContext;
       this.context.syncState?.(this.snapshot());
       return;
@@ -53,34 +61,45 @@ export class ClaudeInteractiveSession implements InteractiveSession {
   }
 
   async ensureAttached(): Promise<void> {
+    if (this.pendingContext && this.attachmentState !== "running") {
+      if (this.sdkInteractive.isAttached()) {
+        await this.sdkInteractive.detach();
+      }
+      this.attachmentState = "detached";
+      this.applyPendingContextAfterDetach();
+    }
+
+    if (this.sdkInteractive.isAttached()) return;
     if (this.attachmentState !== "detached") return;
-    this.attachmentGeneration = this.lease.nextAttachmentGeneration();
+
+    const generation = this.lease.nextAttachmentGeneration();
+    this.attachmentGeneration = generation;
     this.attachmentState = "idle";
     this.touch();
     this.context.syncState?.(this.snapshot());
+
+    await this.sdkInteractive.attach({
+      cwd: this.context.workDir,
+      modelId: this.options.resolveModelId?.(this.context) ?? this.context.modelId,
+      developerInstructions: this.context.developerInstructions,
+      ...(this.resumeState?.runtimeId === "claude" ? { resumeSessionId: this.resumeState.native.sessionId } : {}),
+      onEvent: (event) => {
+        if (!this.lease.matchesAttachment(generation)) return;
+        if (event.type !== "session" && this.activeTurnId === undefined) return;
+        this.handleEvent(event);
+      },
+    });
   }
 
   async sendPrompt(prompt: string): Promise<void> {
     await this.ensureAttached();
-    const turnId = this.lease.nextTurnId();
-    const generation = this.lease.currentAttachmentGeneration();
-    this.activeTurnId = turnId;
+    this.activeTurnId = this.lease.nextTurnId();
     this.attachmentState = "running";
     this.touch();
     this.context.syncState?.(this.snapshot());
 
     try {
-      this.handle = await this.transport.startTurn({
-        prompt,
-        modelId: this.context.modelId,
-        cwd: this.context.workDir,
-        ...(this.resumeState?.runtimeId === "claude" ? { resumeState: this.resumeState } : {}),
-        onEvent: (event) => {
-          if (!this.lease.matchesAttachment(generation)) return;
-          if (event.type !== "session" && this.activeTurnId !== turnId) return;
-          this.handleEvent(event);
-        },
-      });
+      await this.sdkInteractive.sendUserMessage(prompt);
     } catch (error) {
       this.activeTurnId = undefined;
       this.attachmentState = "idle";
@@ -95,17 +114,15 @@ export class ClaudeInteractiveSession implements InteractiveSession {
     this.activeTurnId = undefined;
     this.touch();
     this.context.syncState?.(this.snapshot());
-    await this.transport.interrupt();
+    await this.sdkInteractive.interrupt();
   }
 
   async detach(reason: "idle_timeout" | "app_shutdown" | "error"): Promise<void> {
     void reason;
-    await this.handle?.stop();
-    await this.transport.detach();
-    this.handle = undefined;
+    await this.sdkInteractive.detach();
     this.attachmentState = "detached";
     this.activeTurnId = undefined;
-    this.applyPendingContextIfIdle();
+    this.applyPendingContextAfterDetach();
     this.touch();
     this.context.syncState?.(this.snapshot());
   }
@@ -140,12 +157,10 @@ export class ClaudeInteractiveSession implements InteractiveSession {
     } else if (event.type === "completed") {
       this.attachmentState = "idle";
       this.activeTurnId = undefined;
-      this.applyPendingContextIfIdle();
       this.touch();
     } else if (event.type === "error") {
       this.attachmentState = "interrupted";
       this.activeTurnId = undefined;
-      this.applyPendingContextIfIdle();
       this.touch();
     } else {
       this.touch();
@@ -187,9 +202,8 @@ export class ClaudeInteractiveSession implements InteractiveSession {
     };
   }
 
-  private applyPendingContextIfIdle(): void {
+  private applyPendingContextAfterDetach(): void {
     if (!this.pendingContext) return;
-    if (this.attachmentState === "running") return;
     this.context = this.pendingContext;
     this.pendingContext = undefined;
   }

@@ -1,10 +1,10 @@
 import type { AgentChannel, AgentEvent, AgentId, AgentRuntime, WorkflowAgentResponse } from "../shared/types";
 import { DEFAULT_MODEL_ID, runtimeModelId } from "../shared/models";
 import { codexEnvironmentForChannel } from "./agents/codex-env";
-import { claudeCliModelForChannel, claudeEnvironmentForChannel } from "./agents/claude-env";
+import { claudeCliModelForChannel } from "./agents/claude-env";
+import { ClaudeAgentSdkAdapter } from "./agents/claude-agent-sdk";
+import { ClaudeAgentSdkInteractive } from "./agents/claude-agent-sdk-interactive";
 import { ClaudeInteractiveSession } from "./agents/claude-interactive-session";
-import { selectClaudeInteractiveTransport } from "./agents/claude-transport-selection";
-import { ClaudeRunner } from "./agents/claude-runner";
 import { CodexInteractiveSession } from "./agents/codex-interactive-session";
 import { CodexRpcClient } from "./agents/codex-rpc";
 import { HermesRunner } from "./agents/hermes-runner";
@@ -198,6 +198,7 @@ export function createRuntimeDriverRegistry(options: RuntimeAgentExecutorFactory
   const askWorkflowByRuntime = options.askWorkflowByRuntime ?? {};
   const testChannelByRuntime = options.testChannelByRuntime ?? {};
   const deleteSessionArtifactsByRuntime = options.deleteSessionArtifactsByRuntime ?? {};
+  const claudeSdkAdapter = new ClaudeAgentSdkAdapter();
   const codexDriver: RuntimeDriver = {
     runtimeId: "codex",
     getCapabilities: () => ({
@@ -243,39 +244,43 @@ export function createRuntimeDriverRegistry(options: RuntimeAgentExecutorFactory
     testChannel: testChannelByRuntime.codex,
     deleteSessionArtifacts: deleteSessionArtifactsByRuntime.codex,
   };
-  const claudeSelection = (input: {
-    runtime: AgentRuntime;
-    channelId: string;
-    modelId: string;
-  }) => {
-    const channel = options.channelById(input.channelId);
-    return selectClaudeInteractiveTransport({
-      executable: input.runtime.command || options.executables.claude,
-      cliModelForTurn: (modelId) => claudeCliModelForChannel(channel, modelId ?? input.modelId),
-      streamJsonModelForTurn: (modelId) => claudeCliModelForChannel(channel, modelId ?? input.modelId),
-      envForTurn: (modelId) => claudeEnvironmentForChannel(channel, modelId ?? input.modelId, process.env),
-    });
-  };
   const claudeDriver: RuntimeDriver = {
     runtimeId: "claude",
-    getCapabilities: (runtime) => ({
+    getCapabilities: () => ({
       ...defaultInteractiveCapabilities("claude"),
-      resume: claudeSelection({ runtime, channelId: "claude-code", modelId: DEFAULT_MODEL_ID }).resume,
+      resume: {
+        supportsInProcessConversationResume: true,
+        supportsResumeAfterDetach: true,
+        supportsResumeAfterAppRestart: true,
+        supportsTurnResume: false,
+      },
     }),
-    createOneShotExecutor: (context) => new ClaudeAgentExecutor(context, options),
-    createInteractiveSession: (context) => {
-      const selection = claudeSelection(context);
-      return new ClaudeInteractiveSession(context, {
-        capabilities: {
-          ...selection.resume,
-          supportsInterrupt: true,
-          supportsContinue: true,
-          supportsApprovalRequests: true,
-          supportsUserInputRequests: true,
+    createOneShotExecutor: (context) =>
+      new ClaudeAgentExecutor(
+        context,
+        claudeSdkAdapter,
+        claudeCliModelForChannel(options.channelById(context.channelId), context.modelId),
+      ),
+    createInteractiveSession: (context) =>
+      new ClaudeInteractiveSession(
+        context,
+        {
+          capabilities: {
+            supportsInProcessConversationResume: true,
+            supportsResumeAfterDetach: true,
+            supportsResumeAfterAppRestart: true,
+            supportsTurnResume: false,
+            supportsInterrupt: true,
+            supportsContinue: true,
+            supportsApprovalRequests: true,
+            supportsUserInputRequests: true,
+          },
+          resolveModelId: (interactiveContext) =>
+            claudeCliModelForChannel(options.channelById(interactiveContext.channelId), interactiveContext.modelId) ??
+            interactiveContext.modelId,
+          sdkInteractive: new ClaudeAgentSdkInteractive(),
         },
-        createTransport: selection.createTransport,
-      });
-    },
+      ),
     askWorkflow: askWorkflowByRuntime.claude,
     testChannel: testChannelByRuntime.claude,
     deleteSessionArtifacts: deleteSessionArtifactsByRuntime.claude,
@@ -378,33 +383,44 @@ class CodexAgentExecutor implements AgentExecutor {
 }
 
 class ClaudeAgentExecutor implements AgentExecutor {
-  private runner: ClaudeRunner | undefined;
+  private abortController: AbortController | undefined;
 
   constructor(
     private readonly context: AgentExecutionContext,
-    private readonly options: RuntimeAgentExecutorFactoryOptions,
+    private readonly adapter: ClaudeAgentSdkAdapter,
+    private readonly resolvedModelId: string | undefined,
   ) {}
 
   async start(): Promise<void> {
-    const channel = this.options.channelById(this.context.channelId);
-    this.runner = new ClaudeRunner({
-      executable: this.context.runtime.command || this.options.executables.claude,
-      cwd: this.context.workDir,
-      env: claudeEnvironmentForChannel(channel, this.context.modelId, process.env),
-      prompt: this.context.prompt,
-      modelId: claudeCliModelForChannel(channel, this.context.modelId),
-      sessionId: this.context.sessionId,
-      onEvent: this.context.emit,
-      onExit: (code) => {
-        this.context.onExit(code);
-      },
-    });
-    await this.runner.start();
+    const abortController = new AbortController();
+    this.abortController = abortController;
+
+    try {
+      await this.adapter.runOneShot({
+        prompt: this.context.prompt,
+        cwd: this.context.workDir,
+        developerInstructions: this.context.developerInstructions,
+        onEvent: this.context.emit,
+        abortController,
+        ...(this.resolvedModelId ? { modelId: this.resolvedModelId } : {}),
+        ...(this.context.sessionId ? { resumeSessionId: this.context.sessionId } : {}),
+      });
+      this.context.onExit(0);
+    } catch (error) {
+      if (abortController.signal.aborted) {
+        this.context.onExit(null);
+        return;
+      }
+      this.context.emit({ type: "error", error: error instanceof Error ? error.message : String(error) });
+      this.context.onExit(1);
+    } finally {
+      this.abortController = undefined;
+    }
   }
 
   async stop(): Promise<void> {
-    await this.runner?.stop();
-    this.runner = undefined;
+    this.abortController?.abort();
+    this.abortController = undefined;
   }
 }
 
