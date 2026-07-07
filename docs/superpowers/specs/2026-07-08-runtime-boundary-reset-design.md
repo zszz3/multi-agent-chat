@@ -1,211 +1,185 @@
-# Runtime Boundary Reset Design
+# Runtime Boundary Reset Program Contract
 
 ## 2026-07-08
 
-### Goal
+### Status
 
-Replace the current implicit, partially runtime-specific main-process execution model with a strict runtime boundary that:
+Approved design for phased execution.
 
-- makes `runtimeId`, `executionMode`, and `continuationPolicy` explicit upper-layer inputs
-- removes app-level `sessionId` and runtime-specific resume semantics from `AgentHub`
-- routes all runtime entrypoints through a thin router plus layered driver/codec/session abstractions
-- drops all compatibility with legacy persisted runtime state and legacy Claude transport-era logic
+### Purpose
 
-### Audience
+This file is the top-level contract for the runtime boundary reset.
 
-- fresh agents with no prior branch history
-- engineers changing `src/main/`
-- doc maintainers updating runtime architecture guidance
+It exists to prevent a fresh agent from turning a strict architectural reset into a partial migration or a compatibility-preserving cleanup.
 
-### Scope
+This file is not an implementation plan.
 
-This design covers:
+### Why This Program Is Split
 
-- runtime request semantics for chat, task, workflow, configured-agent test, and cleanup
-- the main-process layering between `AgentHub`, router, drivers, codecs, and interactive sessions
-- app state and persisted runtime state boundaries
-- restore and continuation behavior
-- current default policies and future-safe extensibility rules
-- strict acceptance criteria and failure conditions
+The original single-spec version was too broad for a fresh agent with no branch history.
 
-This design does not cover:
+It mixed:
 
-- renderer redesign beyond the config fields required to drive the new runtime request model
-- MCP redesign
-- backward compatibility with old persisted state or legacy Claude transport logic
+- non-negotiable architecture semantics
+- request and persistence model changes
+- runtime-driver rewiring
+- product-surface defaults and final proof
 
-## Why This Reset Exists
+That shape is too easy to misread as "do everything in one pass" or "keep the old path alive until later."
 
-The current branch still mixes three concerns that should not share a layer:
+The reset is now split into a master contract plus serial phase specs.
 
-1. app-level orchestration
-2. runtime routing and execution
-3. runtime-native continuation and persistence semantics
+### How To Hand This To A Fresh Agent
 
-That leak shows up as `AgentHub` understanding runtime-native concepts such as Codex thread ids, Claude session ids, runtime-specific resume payloads, and legacy restore/migration behavior.
+- Give the agent the current repository state plus exactly one phase spec.
+- Do not assume the agent has read prior chat or prior specs.
+- Each phase spec must be treated as self-contained.
+- If a phase spec precondition is not true in the repository, the agent must stop and report a phase-ordering violation instead of improvising compatibility logic.
+- If a phase spec conflicts with this master contract, this file wins.
 
-The target architecture is stricter:
+### Non-Negotiable Semantics
 
-- upper layers decide what runtime to call and how to call it
-- router only routes
-- drivers express runtime behavior
-- codecs own runtime-native persisted payloads
-- app state never directly models runtime-native session handles
+#### 1. Explicit Runtime Request Contract
 
-## Core Principles
-
-### Explicit Request Semantics
-
-Every runtime request must be built from explicit upper-layer inputs:
+Upper layers must choose these fields explicitly:
 
 - `runtimeId`
 - `executionMode`
 - `continuationPolicy`
 - `runtimeConfig`
 
-No layer may infer these from old session state, old payloads, env flags, or transport-specific heuristics.
+Initial required supported config field:
 
-### Thin Router
+- `runtimeConfig.model`
 
-`RuntimeRouter` is a dispatch boundary only.
+These fields must not be inferred from:
 
-It may:
-
-- resolve the correct driver for a `runtimeId`
-- validate that the driver supports the requested surface and mode
-- forward the request to the correct driver entrypoint
-
-It may not:
-
-- interpret runtime-native continuation payloads
-- own persistence encoding or decoding
-- implement interactive lifecycle state machines
-- silently rewrite an unsupported request into a different mode
-
-### Driver-Owned Runtime Semantics
-
-`RuntimeDriver` owns runtime behavior.
-
-That includes:
-
-- supported surfaces
-- supported execution modes per surface
-- supported continuation policies per surface
-- one-shot execution
-- interactive session factory where supported
-- workflow execution
-- configured-agent testing
-- cleanup behavior
-
-### Codec-Owned Persisted Runtime State
-
-Any persisted runtime-native continuation state must be treated as opaque above the codec layer.
-
-`RuntimeStateCodec` is the only layer allowed to:
-
-- validate runtime-native persisted payload shape
-- decode that payload into driver-usable continuation state
-- encode updated continuation state for persistence
-
-`AgentHub` and `RuntimeRouter` must never parse driver-specific payload fields.
-
-### No Legacy Compatibility
-
-This reset is intentionally destructive with respect to old runtime state.
-
-The implementation must not:
-
-- migrate old top-level `sessionId`
-- migrate old `runtimeSession`
-- preserve malformed persisted runtime payloads through fallback logic
-- keep env-based compatibility selectors alive
-- preserve old Claude transport compatibility stories as part of the target architecture
-
-## Request Model
-
-### Runtime Identity
-
-The upper layer must choose the runtime explicitly through `runtimeId`.
-
-Examples:
-
-- `codex`
-- `claude`
-- `api`
-- future runtime ids
-
-Runtime identity must not be guessed from:
-
-- model names
-- provider names
-- prior persisted session handles
+- legacy persisted state
 - runtime-native payload contents
-- legacy compatibility flags
+- env flags
+- model-name heuristics
+- transport-specific assumptions
 
-### Execution Mode
+#### 2. Execution Mode And Continuation Policy Belong To The Upper Layer
 
-The upper layer must choose `executionMode` explicitly.
-
-Allowed values:
+Allowed execution modes:
 
 - `oneshot`
 - `interactive`
 
-`executionMode` is not derived from `runtimeId`.
-
-Instead:
-
-- callers request a mode
-- drivers declare which modes they support for a given surface
-- router validates support and dispatches
-
-### Continuation Policy
-
-The upper layer must choose `continuationPolicy` explicitly.
-
-Allowed values:
+Allowed continuation policies:
 
 - `fresh`
 - `resume-preferred`
 - `resume-required`
 
-Meaning:
-
-- `fresh`: do not attempt to continue prior runtime-native conversation state
-- `resume-preferred`: resume if usable runtime-native state exists, otherwise start fresh
-- `resume-required`: fail if usable runtime-native state does not exist
-
-This policy applies to both `oneshot` and `interactive`.
-
-### Runtime Config
-
-Requests must carry an extensible `runtimeConfig` object.
-
-Initial required supported field:
-
-- `model`
-
 Rules:
 
-- `model` must be explicitly configurable from the upper layer for chat and workflow requests in this reset
-- the shape must remain extensible for future runtime-specific but upper-layer-approved fields
-- upper layers may rely on defaults, but the request model must not hard-code defaults as the only path
+- `executionMode` is not derived from `runtimeId`
+- `continuationPolicy` applies to both `oneshot` and `interactive`
+- unsupported combinations must fail explicitly
+- no layer may silently downgrade `interactive` to `oneshot`
+- no layer may silently downgrade `resume-required` to `resume-preferred`
 
-## Surface Policy
+#### 3. Router Means Routing Only
 
-### Surface Definitions
+`RuntimeRouter` may:
 
-This design recognizes these request surfaces:
+- resolve the driver for a `runtimeId`
+- validate support for surface, mode, and continuation policy
+- dispatch to the correct driver entrypoint
 
-- `chat`
-- `task`
-- `workflow`
-- `configured-agent-test`
-- `cleanup`
+`RuntimeRouter` may not:
 
-### Current Product Defaults
+- decode runtime-native payloads
+- encode persisted runtime state
+- own interactive lifecycle state machines
+- rewrite unsupported requests into a different mode or policy
 
-The current product policy is:
+#### 4. Strict Layer Boundaries
+
+`AgentHub` owns:
+
+- app-owned ids such as `chatId`, `taskId`, and `workflowRunId`
+- app state
+- message/event lists
+- running/error/UI state
+- configured-agent and channel selection
+- persistence of app-owned data plus opaque runtime conversation envelopes
+- calls into the router using explicit request objects
+
+`AgentHub` does not own:
+
+- Codex thread semantics
+- Claude session semantics
+- runtime-native resume payload parsing
+- legacy runtime-session migration
+
+`RuntimeDriver` owns:
+
+- supported surfaces
+- supported execution modes per surface
+- supported continuation policies per surface
+- runtime execution behavior
+- interactive session creation where supported
+
+`RuntimeStateCodec` owns:
+
+- runtime-native persisted payload validation
+- runtime-native persisted payload decoding
+- runtime-native persisted payload encoding
+
+`InteractiveChatSession` owns:
+
+- attach
+- send
+- interrupt
+- detach
+- snapshot
+- interactive continuation updates
+
+#### 5. App State Must Stop Pretending To Be A Runtime Session
+
+App-level state must not expose:
+
+- top-level `sessionId`
+- app-level `resumeState`
+- parsed runtime-native handles
+
+If the app persists resumable runtime conversation state, it must persist it as an opaque envelope, not as runtime-native fields.
+
+Canonical envelope shape:
+
+- `runtimeId`
+- `codecVersion`
+- `payload`
+
+Canonical app-owned field names:
+
+- `runtimeState`
+- `runtimeConversation`
+
+The payload is opaque above the codec layer.
+
+#### 6. No Legacy Compatibility
+
+The reset is intentionally destructive with respect to old runtime state.
+
+The implementation must not:
+
+- migrate old top-level `sessionId`
+- migrate old `runtimeSession`
+- salvage malformed persisted runtime payloads
+- keep compatibility selectors alive under new names
+- preserve transitional Claude transport-era abstractions
+
+If persisted state on disk does not match the new schema, the entire persisted state must be discarded and reinitialized cleanly.
+
+There is no partial salvage path.
+
+#### 7. Product Defaults Are Defaults, Not Architecture Truths
+
+Current defaults:
 
 - `chat`
   - default `executionMode`: `interactive`
@@ -223,310 +197,98 @@ The current product policy is:
   - default `executionMode`: `oneshot`
   - default `continuationPolicy`: `fresh`
 
-These are defaults only, not architecture truths.
+These defaults must not be encoded as future-hostile rules.
 
-This design must not encode future-hostile rules such as:
+#### 8. Runtime Expectations
 
-- "chat is always interactive forever"
-- "workflow can never support interactive"
-- "oneshot can never resume prior runtime-native history"
+Claude:
 
-Instead, defaults are current product policy layered on top of a more general request model.
+- one-shot must use the official Claude Agent SDK single-message path
+- interactive must use the official Claude Agent SDK streaming-input path
 
-## Layered Architecture
+Codex:
 
-### 1. AgentHub
+- may keep runtime-specific continuation semantics internally
+- must hide them behind driver, codec, and session boundaries
 
-`AgentHub` owns only app-level orchestration and state.
+API and any additional registered runtimes:
 
-Allowed responsibilities:
+- must use the same explicit request contract
+- must declare their supported surfaces, modes, and continuation policies explicitly
 
-- app-owned ids such as `chatId`, `taskId`, `workflowRunId`
-- message lists
-- running/error/UI state
-- configured agent and channel selection
-- persistence of app-neutral state
-- calling the runtime router with explicit request objects
+### Program Phases
 
-Forbidden responsibilities:
+#### Phase 01
 
-- parsing runtime-native continuation payloads
-- constructing Claude or Codex resume payload shapes
-- understanding raw Codex thread ids or Claude session ids
-- migrating legacy runtime session formats
+File:
 
-### 2. RuntimeRouter
+- `docs/superpowers/specs/2026-07-08-runtime-phase-01-request-and-state-reset.md`
 
-`RuntimeRouter` owns dispatch.
+Goal:
 
-Allowed responsibilities:
+- define the explicit request contract
+- remove app-level `sessionId` and `resumeState`
+- introduce the new opaque runtime-conversation envelope
+- discard legacy persistence schemas instead of migrating them
 
-- select the driver for a given `runtimeId`
-- validate that the requested surface, mode, and continuation policy are supported
-- call the correct driver entrypoint
+#### Phase 02
 
-Forbidden responsibilities:
+File:
 
-- persistence encoding/decoding
-- interactive state transitions
-- runtime-native payload interpretation
+- `docs/superpowers/specs/2026-07-08-runtime-phase-02-router-driver-codec-cutover.md`
 
-### 3. RuntimeDriver
+Goal:
 
-Each runtime has one driver implementation.
+- install the strict `AgentHub` / `RuntimeRouter` / `RuntimeDriver` / `RuntimeStateCodec` / `InteractiveChatSession` boundaries
+- remove runtime-native parsing and restore logic from `AgentHub`
 
-Each driver must declare:
+#### Phase 03
 
-- supported surfaces
-- supported execution modes per surface
-- supported continuation policies per surface
-- default runtime config normalization rules, where needed
+File:
 
-Each driver must expose the runtime behaviors it supports:
+- `docs/superpowers/specs/2026-07-08-runtime-phase-03-runtime-driver-conformance.md`
 
-- one-shot execution
-- interactive chat session factory where supported
-- workflow execution
-- configured-agent test
-- cleanup
+Goal:
 
-### 4. RuntimeStateCodec
+- make each registered runtime conform to the new driver contract
+- ensure Claude one-shot and interactive both use the official SDK
+- keep continuation behavior behind codec/session boundaries
 
-Each runtime that persists resumable conversation state must own a codec.
+#### Phase 04
 
-The codec must:
+File:
 
-- define the persisted envelope version it understands
-- validate opaque payload shape
-- decode persisted runtime state into driver-usable continuation state
-- encode updated continuation state back into persisted form
+- `docs/superpowers/specs/2026-07-08-runtime-phase-04-surface-wiring-and-proof.md`
 
-The codec layer is what makes runtime-native payloads legal to persist without leaking their structure upward.
+Goal:
 
-### 5. InteractiveChatSession
+- wire product defaults and upper-layer config plumbing
+- delete compatibility-oriented tests and docs
+- prove the reset through type, search, test, and startup verification
 
-Interactive lifecycle is not a router concern.
+### Global Failure Conditions
 
-Interactive chat must be handled by runtime-owned session objects, such as:
+The overall program is incomplete if any of the following remain true:
 
-- `CodexInteractiveSession`
-- `ClaudeInteractiveSession`
-
-These session objects own:
-
-- attach
-- send
-- interrupt
-- detach
-- snapshot
-- interactive continuation updates
-
-They do not own app-level file schema design.
-
-## State Model
-
-### App-Level State
-
-App-level state must not contain:
-
-- top-level `sessionId`
-- `resumeState`
-- runtime-specific native handle fields
-
-The app-level state for a chat may contain only app-neutral runtime activity fields such as:
-
-- `executionMode`
-- `running`
-- `lastError`
-- `attachmentState`
-- `attachmentGeneration`
-- `activeTurnId`
-- `lastMeaningfulActivityAt`
-
-The app-level state for tasks and workflows must remain app-owned and runtime-neutral.
-
-### Persisted Runtime Conversation Envelope
-
-Persisted runtime continuation state must use an opaque envelope such as:
-
-- `runtimeId`
-- `codecVersion`
-- `payload`
-
-Rules:
-
-- `payload` is opaque outside the owning codec
-- the envelope does not appear under legacy names like `resumeState`
-- upper layers may store and replace the envelope, but may not inspect its fields
-
-### Persistence Scope
-
-Current product persistence rules:
-
-- chats may persist runtime conversation envelopes
-- tasks do not persist runtime conversation envelopes
-- workflows do not persist runtime conversation envelopes in this reset
-- configured-agent tests do not persist runtime conversation envelopes
-- cleanup never persists runtime conversation envelopes
-
-This is a current product rule, not a permanent architecture prohibition.
-
-If future product policy enables persisted workflow continuation, it must do so by reusing the same explicit request/driver/codec boundary rather than by reintroducing upper-layer runtime-native fields.
-
-## Restore And Continuation Rules
-
-### Restore
-
-Restore means reading app-owned state and any opaque runtime conversation envelope from disk.
-
-Rules:
-
-- only the new schema is legal
-- if the schema on disk is not the new schema, the entire persisted state is discarded
-- no partial salvage
-- no legacy migration
-- no best-effort fallback
-
-### Resume
-
-Resume means reusing a previously persisted runtime conversation envelope in a new request.
-
-Rules:
-
-- both `oneshot` and `interactive` requests may use resume behavior
-- resume behavior is controlled by explicit `continuationPolicy`
-- `resume-required` must fail when no usable runtime conversation envelope exists
-- `resume-preferred` may start fresh only when no usable runtime conversation envelope exists
-- no layer may silently reinterpret `resume-required` as `resume-preferred`
-
-### Interactive Restore Behavior
-
-When an interactive chat is restored after app restart:
-
-- its app-level attachment state must be `detached`
-- it must not eagerly reattach on boot
-- ephemeral in-flight fields must not be restored as running state
-- the next user action may trigger reattach through the driver/session layer
-
-## Current Runtime Expectations
-
-### Claude
-
-Claude must continue to use the official Claude Agent SDK:
-
-- one-shot uses the SDK single-message path
-- interactive uses the SDK streaming-input path
-
-This reset must not reintroduce:
-
-- legacy transport selectors
-- CLI-wrapper-as-SDK framing
-- transitional `stream-json` / `runner` compatibility targets
-
-### Codex
-
-Codex continues to use its own runtime-specific driver and interactive session implementation, but its native continuation state must remain hidden behind codec/session boundaries.
-
-### API
-
-API remains a one-shot runtime in current product policy unless and until a future spec expands its supported modes.
-
-Even so, it must still fit the same explicit request contract:
-
-- explicit `runtimeId`
-- explicit `executionMode`
-- explicit `continuationPolicy`
-- explicit `runtimeConfig`
-
-## Strict Removal Requirements
-
-The implementation of this design must delete, not preserve under new names:
-
-- legacy state migration helpers
-- malformed-state fallback compatibility behavior
-- top-level app `sessionId` usage
-- app-level `resumeState`
-- runtime-specific restore logic in `AgentHub`
-- legacy Claude compatibility selectors
-
-Tests that currently lock old compatibility behavior as correct must be deleted or rewritten.
-
-## Testing Requirements
-
-The implementation must prove all of the following:
-
-### Type And Search Proof
-
-- app-level types no longer expose top-level `sessionId`
-- app-level types no longer expose `resumeState`
-- `AgentHub` no longer parses runtime-native payload structure
-- code search shows legacy runtime migration helpers removed
-
-### Restore Proof
-
-- loading a legacy persistence schema discards the entire persisted state and initializes a clean new state
-- no legacy runtime session state is migrated
-- restored interactive chats come back `detached`
-
-### Request Model Proof
-
-- `runtimeId`, `executionMode`, `continuationPolicy`, and `runtimeConfig.model` flow from upper layer into runtime requests
-- unsupported combinations fail explicitly
-- router does not silently downgrade mode or continuation behavior
-
-### Runtime Proof
-
-- Claude one-shot uses the official SDK single-message path
-- Claude interactive uses the official SDK streaming-input path
-- oneshot requests may resume only through explicit continuation policy and usable runtime conversation state
-- current workflow/task/test/cleanup defaults remain one-shot
-
-### Startup Proof
-
-- after the refactor, the project still launches successfully through the real development startup path
-
-## Failure Conditions
-
-The implementation is incomplete if any of the following remain true:
-
-- `AgentHub` still contains runtime-specific restore or migration logic
+- `AgentHub` still parses runtime-native payload fields
 - app-level state still exposes top-level `sessionId`
-- app-level state still exposes `resumeState`
-- old schemas are migrated, partially recovered, or best-effort parsed
-- router interprets runtime-native payload fields directly
-- unsupported mode or continuation requests are silently downgraded
+- app-level state still exposes app-level `resumeState`
+- old schemas are migrated, partially restored, or best-effort parsed
+- router logic silently downgrades mode or continuation behavior
 - legacy env selectors still influence runtime selection or execution mode
-- tests still treat legacy migration behavior as correct target behavior
-- docs still describe compatibility with old runtime state or old Claude transport logic as a goal
+- Claude interactive is still framed through transitional transport compatibility abstractions instead of the official SDK path
+- docs still describe compatibility with old runtime state as a goal
 
-## Definition Of Done
+### Whole-Program Definition Of Done
 
-This design is implemented only when all of the following are true:
+This reset is complete only when all of the following are true:
 
-- the request model makes `runtimeId`, `executionMode`, `continuationPolicy`, and `runtimeConfig.model` explicit
-- `AgentHub` is reduced to app-level orchestration and no longer models runtime-native continuation semantics
-- router, driver, codec, and interactive session responsibilities are separated according to this design
-- top-level app `sessionId` and `resumeState` are removed
-- old persistence schemas are discarded without migration
-- Claude continues to use the official SDK for both one-shot and interactive paths
-- tests, code search, typecheck, and real startup verification all prove the strict abstraction boundary
-
-## Files This Design Intends To Guide
-
-- `src/main/agent-hub.ts`
-- `src/main/agent-executor.ts`
-- `src/main/agents/runtime-driver.ts`
-- new router and codec files under `src/main/agents/`
-- `src/main/agents/codex-interactive-session.ts`
-- `src/main/agents/claude-interactive-session.ts`
-- runtime request and app-state types under `src/shared/`
-- canonical runtime docs under `docs/`
-
-## Superseded Direction
-
-This design supersedes any branch-local direction that still assumes:
-
-- app-level `sessionId` as a generic cross-runtime abstraction
-- `AgentHub` as the place where runtime-native continuation payloads are interpreted
-- compatibility with old persisted runtime state
-- legacy Claude transport compatibility as part of the target runtime architecture
+- upper-layer runtime requests make `runtimeId`, `executionMode`, `continuationPolicy`, and `runtimeConfig.model` explicit
+- app-level `sessionId` and app-level `resumeState` are removed
+- persisted runtime continuation state is stored only as an opaque envelope
+- `AgentHub` is reduced to app-level orchestration
+- router, driver, codec, and interactive session responsibilities are separated cleanly
+- all registered runtimes conform to the same explicit contract
+- Claude one-shot and interactive both use the official SDK
+- legacy runtime-state migration paths are deleted
+- tests, typecheck, search checks, and real startup proof confirm the new boundary
