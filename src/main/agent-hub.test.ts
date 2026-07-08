@@ -2141,7 +2141,7 @@ fs.writeFileSync(${JSON.stringify(argsPath)}, process.argv.slice(2).join("\\n") 
     expect(calls.some((call) => call.method === "thread/start" && call.params.developerInstructions.includes("Final User Report"))).toBe(true);
   });
 
-  test("asks a Claude workflow agent through the official SDK one-shot path", async () => {
+  test("asks a Claude workflow agent through the official SDK one-shot path without resuming when continuationPolicy is fresh", async () => {
     const dir = await mkdtemp(path.join(os.tmpdir(), "multi-agent-chat-claude-workflow-sdk-"));
     const hub = new AgentHub({ codex: "missing-codex-for-test", claude: "missing-claude-for-test" });
     addConfiguredAgents(hub, [configuredAgent("claude-agent", { runtimeAgentId: "claude", name: "Claude Agent" })]);
@@ -2174,6 +2174,7 @@ fs.writeFileSync(${JSON.stringify(argsPath)}, process.argv.slice(2).join("\\n") 
         executionMode: "oneshot",
         continuationPolicy: "fresh",
         runtimeConfig: { model: DEFAULT_MODEL_ID },
+        runtimeConversation: runtimeConversation("claude", { native: { sessionId: "claude-session-old" } }),
       },
       (event: any) => events.push(event),
     );
@@ -2191,13 +2192,57 @@ fs.writeFileSync(${JSON.stringify(argsPath)}, process.argv.slice(2).join("\\n") 
         runtimeConversation: runtimeConversation("claude", { native: { sessionId: "claude-session-7" } }),
       },
     ]);
-    expect(runOneShot).toHaveBeenCalledWith(
-      expect.objectContaining({
-        prompt: "Plan the repo",
-        cwd: dir,
-        developerInstructions: expect.stringContaining("workflow builder"),
-      }),
-    );
+    const oneShotInput = runOneShot.mock.calls[0]?.[0];
+    expect(oneShotInput).toMatchObject({
+      prompt: "Plan the repo",
+      cwd: dir,
+      developerInstructions: expect.stringContaining("workflow builder"),
+    });
+    expect(oneShotInput?.resumeSessionId).toBeUndefined();
+  });
+
+  test("resumes a Claude workflow agent through the official SDK one-shot path when continuationPolicy is resume-preferred", async () => {
+    const dir = await mkdtemp(path.join(os.tmpdir(), "multi-agent-chat-claude-workflow-sdk-resume-"));
+    const hub = new AgentHub({ codex: "missing-codex-for-test", claude: "missing-claude-for-test" });
+    addConfiguredAgents(hub, [configuredAgent("claude-agent", { runtimeAgentId: "claude", name: "Claude Agent" })]);
+    (hub as any).runtimes.set("claude", {
+      id: "claude",
+      label: "Claude",
+      command: "claude",
+      version: "test",
+      available: true,
+    });
+
+    const runOneShot = vi.fn(async (input: any) => {
+      input.onEvent({ type: "delta", content: "workflow-resumed" });
+      input.onEvent({ type: "completed", content: "workflow-resumed" });
+    });
+    (hub as any).claudeSdkAdapter = { runOneShot };
+
+    const priorConversation = runtimeConversation("claude", { native: { sessionId: "claude-session-9" } });
+    const response = await (hub as any).askWorkflowAgent({
+      requestId: "claude-workflow-resume-test",
+      prompt: "Continue the repo plan",
+      configuredAgentId: "claude-agent",
+      workDir: dir,
+      runtimeId: "claude",
+      executionMode: "oneshot",
+      continuationPolicy: "resume-preferred",
+      runtimeConfig: { model: DEFAULT_MODEL_ID },
+      runtimeConversation: priorConversation,
+    });
+
+    expect(response).toEqual({
+      content: "workflow-resumed",
+      runtimeConversation: priorConversation,
+    });
+    const oneShotInput = runOneShot.mock.calls[0]?.[0];
+    expect(oneShotInput).toMatchObject({
+      prompt: "Continue the repo plan",
+      cwd: dir,
+      developerInstructions: expect.stringContaining("workflow builder"),
+      resumeSessionId: "claude-session-9",
+    });
   });
 
   test("keeps workflow draft replies in main-owned snapshot state", async () => {
