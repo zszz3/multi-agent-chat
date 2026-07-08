@@ -9,9 +9,10 @@ This directory contains project documentation for the Electron desktop app.
 
 ## Documents
 
-- `architecture-overview.md`: overall architecture, runtime flow, the one-shot vs interactive execution boundary, and data flow
+- `architecture-overview.md`: overall architecture, runtime flow, the SDK-backed `oneshot` / `interactive` execution boundary, and data flow
+- `runtime-execution-architecture-spec.md`: pointer to the canonical runtime boundary reset contract and phase specs
 - `renderer-refactor-progress-2026-06-28.md`: current progress, validation status, and remaining work for the renderer shell/provider/service refactor
-- `modules/main.md`: Electron main process, application state hub, and interactive runtime/session orchestration
+- `modules/main.md`: Electron main process, application state hub, official Claude SDK runtime wiring, and interactive session orchestration
 - `modules/preload.md`: preload bridge and renderer-facing API surface
 - `modules/renderer.md`: React renderer structure, page modules, and UI state flow
 - `modules/shared.md`: shared types, presets, workflow graph helpers, and bundled skill metadata
@@ -20,6 +21,12 @@ This directory contains project documentation for the Electron desktop app.
 ## How To Use These Docs
 
 Read `architecture-overview.md` first if you are new to the repository.
+
+If you are working on runtime execution specifically, read:
+
+- `runtime-execution-architecture-spec.md`
+- `superpowers/specs/2026-07-08-runtime-boundary-reset-design.md`
+- the relevant `superpowers/specs/2026-07-08-runtime-phase-0x-*.md` file for the phase you are changing
 
 If you prefer Chinese, start with `zh-CN/README.md`.
 

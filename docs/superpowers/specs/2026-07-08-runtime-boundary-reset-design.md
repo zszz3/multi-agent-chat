@@ -4,7 +4,9 @@
 
 ### Status
 
-Approved design for phased execution.
+Implemented on 2026-07-08.
+
+All four phases now land together on the current branch, including the final product-boundary wiring, canonical doc cleanup, and verification proof from phase 04.
 
 ### Purpose
 
@@ -251,7 +253,7 @@ File:
 Goal:
 
 - make each registered runtime conform to the new driver contract
-- ensure Claude one-shot and interactive both use the official SDK
+- preserve and verify the official Claude SDK path while bringing the remaining runtimes onto the same contract
 - keep continuation behavior behind codec/session boundaries
 
 #### Phase 04

@@ -4,9 +4,9 @@
 
 ### Status
 
-Approved design for the third execution phase.
+Implemented on 2026-07-08.
 
-Branch-truth notes were corrected on 2026-07-08 after the phase-02 strictness fixes landed in the working tree.
+Branch-truth re-audit on 2026-07-08 confirmed that the driver registry keeps Codex, Claude, API, and Hermes behind the explicit routed contract while preserving the official Claude SDK path.
 
 ### This File Is Self-Contained
 
@@ -20,6 +20,16 @@ The agent must not assume prior chat history or prior spec context.
 ### Objective
 
 Make every registered runtime conform to the new routed runtime contract, with strict runtime-owned continuation behavior and strict Claude SDK usage.
+
+### Implementation Result
+
+Current branch evidence for this phase now includes:
+
+- `src/main/agent-executor.ts` registering Codex, Claude, API, and Hermes through one runtime-driver registry with explicit `surfaceSupport`
+- `src/main/agents/runtime-router.ts` rejecting unsupported surface, mode, continuation-policy, and runtime-conversation combinations instead of silently falling back
+- `src/main/agents/claude-agent-sdk.ts`, `src/main/agents/claude-agent-sdk-interactive.ts`, and `src/main/agents/claude-interactive-session.ts` as the only Claude one-shot and interactive target architecture
+- `src/main/agents/codex-interactive-session.ts` and `src/main/agents/interactive-session-manager.ts` keeping Codex continuation and attachment behavior behind session boundaries
+- `src/main/agent-hub.test.ts`, `src/main/agents/runtime-router.test.ts`, and the Claude/Codex interactive-session tests covering the explicit routed contract
 
 ### Current Repository Note
 

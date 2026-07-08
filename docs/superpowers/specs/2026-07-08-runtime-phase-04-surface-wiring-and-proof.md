@@ -4,7 +4,9 @@
 
 ### Status
 
-Approved design for the fourth execution phase.
+Implemented on 2026-07-08.
+
+Phase-04 verification on 2026-07-08 closed the remaining canonical-doc and product-boundary wiring gaps.
 
 ### This File Is Self-Contained
 
@@ -23,6 +25,16 @@ Finish the reset at the product boundary:
 - remove compatibility-oriented tests and docs
 - prove the reset through verification and real startup
 
+### Implementation Result
+
+Current branch evidence for this phase now includes:
+
+- `src/main/agent-hub.ts` selecting chat, task, and workflow runtime defaults explicitly at the app boundary and only forwarding `runtimeConversation` when the selected continuation policy allows it
+- `src/main/agent-hub.ts` honoring explicit workflow request fields for `runtimeId`, `executionMode`, `continuationPolicy`, and `runtimeConfig.model` instead of reconstructing them from generic session semantics
+- `src/main/agent-hub.test.ts` covering support-matrix-driven chat defaults, explicit workflow fresh-vs-resume behavior, and task oneshot defaults
+- `docs/README.md`, `docs/runtime-execution-architecture-spec.md`, `docs/architecture-overview.md`, `docs/modules/main.md`, and the `docs/zh-CN/` mirrors pointing to the 2026-07-08 boundary reset contract as the canonical runtime story
+- deletion of the 2026-07-07 runtime-modes doc set so the repository no longer presents the old runtime story beside the reset contract
+
 ### Required Preconditions
 
 Before changing code, verify that the repository already satisfies all of the following:
@@ -34,6 +46,8 @@ Before changing code, verify that the repository already satisfies all of the fo
 - Claude one-shot and interactive already use the official SDK paths
 
 If any precondition is false, stop and report a phase-ordering violation.
+
+At execution time, treat SDK-backed Claude files in `src/main/agents/claude-agent-sdk.ts`, `src/main/agents/claude-agent-sdk-interactive.ts`, and their call sites as the current repository truth unless the code proves otherwise.
 
 ### Non-Negotiable Invariants
 
@@ -116,6 +130,8 @@ Delete or rewrite any test that treats the following as correct behavior:
 
 Docs must be updated so that the canonical runtime story matches the new boundary exactly.
 
+For Claude specifically, docs and tests must describe the SDK-backed one-shot and streaming-input paths as the only target architecture, not as one option among legacy transport variants.
+
 #### 5. Prove The Reset With Real Verification
 
 This phase must end with proof, not assertion.
@@ -154,6 +170,28 @@ The phase is not done until code search confirms the following:
 - no doc still presents legacy runtime-state compatibility as a goal
 - no test still encodes legacy runtime migration as correct target behavior
 - no upper-layer request builder still relies on implicit runtime-mode inference
+
+### Verification Result
+
+Commands run for this phase:
+
+- `npm run typecheck`
+- `npm test -- src/main/agent-hub.test.ts src/main/agents/runtime-router.test.ts src/main/agents/interactive-session-manager.test.ts src/main/agents/codex-interactive-session.test.ts src/main/agents/claude-interactive-session.test.ts src/preload/index.test.ts`
+- `Select-String` search checks over the canonical runtime docs for `stream-json`, `transport selection`, `runtimeSession`, `resumeSessionId`, `session id`, and `resume metadata`
+- `Select-String` search checks over `src/main/agent-hub.ts`, `src/renderer/src/AppShell.tsx`, and `src/renderer/src/pages/skills/SkillsPage.tsx` for `capabilities.chatStyle`, `resumeState`, `runtimeSession`, and `resumeSessionId`
+- real startup proof through `npm run dev`, with logs captured to `C:\\tmp\\multi-agent-chat-dev.log` and `C:\\tmp\\multi-agent-chat-dev.err`
+
+Observed proof results:
+
+- `npm run typecheck` passed
+- focused Vitest runtime suite passed (`141 passed`)
+- canonical runtime docs no longer contain the searched legacy-architecture phrases
+- renderer and request-builder entrypoints no longer contain `resumeState`, `runtimeSession`, or `resumeSessionId`; `capabilities.chatStyle` remains only in `runtimeStateFromCapabilities`, not in upper-layer request building
+- `npm run dev` built the Electron main bundle and preload bundle, started the renderer dev server at `http://localhost:5176/`, and reached `start electron app...`
+
+Startup note:
+
+- Electron emitted disk-cache permission warnings on this Windows machine during startup proof, but they did not prevent the main bundle build, preload build, renderer dev server startup, or Electron app launch
 
 ### Fail-Fast Conditions
 

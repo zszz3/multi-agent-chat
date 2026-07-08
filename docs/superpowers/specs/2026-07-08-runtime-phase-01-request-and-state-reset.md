@@ -4,7 +4,9 @@
 
 ### Status
 
-Approved design for the first execution phase.
+Implemented on 2026-07-08.
+
+Post-review state-boundary fixes on 2026-07-08 closed the remaining stale `runtimeConversation` and reset-path edge cases before later phases continued.
 
 ### This File Is Self-Contained
 
@@ -21,17 +23,23 @@ Replace the legacy app/request/state contract with an explicit runtime request m
 
 This phase establishes the data model that every later phase depends on.
 
-### Why This Phase Exists
+### Implementation Result
 
-Current branch evidence shows the old boundary is still present in core types and restore logic:
+Current branch evidence for this phase now includes:
 
-- [src/shared/types.ts](C:/Users/29768/Desktop/multi-agent-chat/src/shared/types.ts:214) still defines `PersistedResumeState`, `ChatSession.sessionId`, `TaskRun.sessionId`, `WorkflowAgentRequest.sessionId`, and `WorkflowAgentResponse.sessionId`
-- [src/main/agent-executor.ts](C:/Users/29768/Desktop/multi-agent-chat/src/main/agent-executor.ts:29) still takes `sessionId` as a generic runtime input
-- [src/main/agent-hub.ts](C:/Users/29768/Desktop/multi-agent-chat/src/main/agent-hub.ts:4716) still migrates legacy `sessionId` into runtime-native resume data
-- [src/main/agent-hub.ts](C:/Users/29768/Desktop/multi-agent-chat/src/main/agent-hub.ts:4738) still parses `resumeState` directly
-- [src/main/agent-hub.ts](C:/Users/29768/Desktop/multi-agent-chat/src/main/agent-hub.ts:4832) still restores chats from top-level `sessionId` plus `runtimeSession`
+- [src/shared/types.ts](C:/Users/29768/Desktop/multi-agent-chat/src/shared/types.ts:195) defines the opaque `RuntimeConversation` envelope, and [src/shared/types.ts](C:/Users/29768/Desktop/multi-agent-chat/src/shared/types.ts:201) defines the explicit `RuntimeRequest` contract with `runtimeId`, `executionMode`, `continuationPolicy`, and `runtimeConfig`
+- [src/shared/types.ts](C:/Users/29768/Desktop/multi-agent-chat/src/shared/types.ts:290), [src/shared/types.ts](C:/Users/29768/Desktop/multi-agent-chat/src/shared/types.ts:309), and [src/shared/types.ts](C:/Users/29768/Desktop/multi-agent-chat/src/shared/types.ts:334) expose app-owned `runtimeState` / `runtimeConversation` boundaries without top-level app `sessionId` or app-visible `resumeState`
+- [src/main/agent-hub.ts](C:/Users/29768/Desktop/multi-agent-chat/src/main/agent-hub.ts:4251) restores only the V4 persisted app schema, and [src/main/agent-hub.ts](C:/Users/29768/Desktop/multi-agent-chat/src/main/agent-hub.ts:4359) rejects non-V4 payloads so persisted state is reinitialized instead of migrated
+- [src/main/agent-hub.ts](C:/Users/29768/Desktop/multi-agent-chat/src/main/agent-hub.ts:3130), [src/main/agent-hub.ts](C:/Users/29768/Desktop/multi-agent-chat/src/main/agent-hub.ts:1652), and [src/main/agent-hub.ts](C:/Users/29768/Desktop/multi-agent-chat/src/main/agent-hub.ts:2395) keep `runtimeConversation` app-owned and opaque by clearing stale state through workflow patch/reset and interactive chat sync paths instead of preserving legacy compatibility fallbacks
 
-If this phase is skipped, every later router/driver cleanup will still be standing on the wrong app contract.
+### Corrected Branch Truth
+
+The current branch now satisfies the phase-01 reset:
+
+- shared runtime requests use the explicit app-owned contract
+- app state persists runtime continuation only as opaque `runtimeConversation` envelopes
+- restore rejects legacy state instead of salvaging `sessionId`, `runtimeSession`, or malformed runtime payloads
+- later phases may assume there is no app-visible `PersistedResumeState`, no top-level app `sessionId`, and no legacy persistence migration path left to preserve
 
 ### Non-Negotiable Invariants
 

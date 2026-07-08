@@ -22,7 +22,10 @@
 - `agents/runtime-driver.ts`：共享 runtime capability 与 interactive session 契约
 - `agents/interactive-session-manager.ts`：interactive runtime 的按 chat 排队和 idle-detach 编排
 - `agents/codex-interactive-session.ts`：可复用的 Codex chat attachment
-- `agents/claude-interactive-session.ts`：可复用的 Claude chat attachment
+- `agents/claude-agent-sdk.ts`：官方 Claude Agent SDK 的 one-shot 适配层
+- `agents/claude-agent-sdk-interactive.ts`：官方 Claude Agent SDK 的 streaming-input helper
+- `agents/claude-interactive-session.ts`：基于官方 SDK 的可复用 Claude chat attachment
+- `agents/claude-stream.ts`：共享 Claude 事件归一化 helper
 - `model-config.ts`：channel 归一化、配置导入导出、Codex 配置生成
 - `provider-balance.ts`：provider 余额查询
 - `scheduled-workflow-cloud.ts`：调度工作流的云端同步逻辑
@@ -83,15 +86,16 @@
 当前后端形态是：
 
 - Codex：one-shot 和 interactive 都复用 `CodexRpcClient`，chat 复用由 `CodexInteractiveSession` 管理
-- Claude：one-shot 和 interactive 都复用 `ClaudeRunner`，chat 复用由 `ClaudeInteractiveSession` 管理
-- API：继续保持纯 HTTP one-shot
+- Claude：one-shot 通过 `ClaudeAgentSdkAdapter`，interactive 通过 `ClaudeInteractiveSession` + `ClaudeAgentSdkInteractive`
+- API：直接 `fetch`，并保持 one-shot only
 
-`AgentHub` 仍然拥有 snapshot、持久化和恢复语义，但 interactive 进程的生命周期已经收敛到 `InteractiveSessionManager` 和 `src/main/agents/` 下的 runtime-specific session helper。
+`AgentHub` 仍然拥有 snapshot，以及应用自有 `runtimeState` / `runtimeConversation` 的持久化语义，但 interactive 进程的生命周期已经收敛到 `InteractiveSessionManager` 和 `src/main/agents/` 下的 runtime-specific session helper。
+在进入 `RuntimeRouter` 之前，main 层上游现在会显式构建 `runtimeId`、`executionMode`、`continuationPolicy`、`runtimeConfig.model` 这组 runtime 请求字段，而不是继续依赖通用 `sessionId` 语义或 runtime-native payload 解析。
 
 开发时要尽量保持这个边界：
 
 - runtime 差异留在 driver / session / transport 层
-- 上层功能只关心 prompt、model、channel、事件流和逻辑 session
+- 上层功能只关心 prompt、channel、`runtimeId`、`executionMode`、`continuationPolicy`、`runtimeConfig.model`、事件流，以及可选的 opaque `runtimeConversation`
 
 不要把 provider 或 runtime-specific 特殊逻辑散落到 task、workflow、chat 的高层逻辑里。
 

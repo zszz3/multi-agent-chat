@@ -14,7 +14,10 @@ If a renderer feature changes the actual behavior of chats, tasks, workflows, ag
 - `agents/runtime-driver.ts`: shared runtime capability and interactive session interfaces plus optional workflow/test/cleanup hooks
 - `agents/interactive-session-manager.ts`: per-chat queueing and idle-detach orchestration for interactive runtimes
 - `agents/codex-interactive-session.ts`: reusable Codex chat attachment
-- `agents/claude-interactive-session.ts`: reusable Claude chat attachment
+- `agents/claude-agent-sdk.ts`: official Claude Agent SDK one-shot adapter
+- `agents/claude-agent-sdk-interactive.ts`: official Claude Agent SDK streaming-input helper
+- `agents/claude-interactive-session.ts`: reusable Claude chat attachment backed by the official SDK
+- `agents/claude-stream.ts`: shared Claude event normalization helpers
 - `agents/hermes-runner.ts`: minimal JSON-line CLI adapter for the Hermes proof runtime
 - `model-config.ts`: channel normalization, Codex config generation/import, preset-backed config handling
 - `provider-balance.ts`: provider balance queries
@@ -73,11 +76,12 @@ The selection boundary lives in `RuntimeAgentExecutorFactory` plus the runtime d
 Backends:
 
 - Codex one-shot and interactive paths use `CodexRpcClient`, with chat reuse managed by `CodexInteractiveSession`
-- Claude one-shot and interactive paths use `ClaudeRunner`, with chat reuse managed by `ClaudeInteractiveSession`
-- API runtime uses direct `fetch`
+- Claude one-shot uses `ClaudeAgentSdkAdapter`, while interactive chat reuse is managed by `ClaudeInteractiveSession` plus `ClaudeAgentSdkInteractive`
+- API runtime uses direct `fetch` and stays one-shot only
 - Hermes currently stays one-shot and uses `HermesRunner`
 
-`AgentHub` still owns snapshot state and persisted recovery metadata, but interactive process lifecycle now sits behind `InteractiveSessionManager` and the runtime-specific session helpers under `src/main/agents/`.
+`AgentHub` still owns snapshot state plus app-owned `runtimeState` and opaque `runtimeConversation` persistence, but interactive process lifecycle now sits behind `InteractiveSessionManager` and the runtime-specific session helpers under `src/main/agents/`.
+Before crossing into `RuntimeRouter`, upper layers in main now build explicit runtime requests with `runtimeId`, `executionMode`, `continuationPolicy`, and `runtimeConfig.model` instead of relying on generic `sessionId` semantics or runtime-native payload parsing.
 Workflow invocation, runtime-channel testing, and session-artifact cleanup now dispatch through `RuntimeDriver` hooks, so future runtimes can onboard without adding new product-level `if (runtimeId === "...")` branches in `AgentHub`.
 
 This layer should stay runtime-agnostic from the perspective of higher-level features. Chat, task, and workflow code should not duplicate provider-specific logic.
