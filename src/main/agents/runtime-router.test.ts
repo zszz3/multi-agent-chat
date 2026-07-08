@@ -464,6 +464,240 @@ describe("RuntimeRouter", () => {
     expect(createOneShotExecutor).toHaveBeenCalledWith(context);
   });
 
+  test("rejects resume-required one-shot requests when runtimeConversation is missing", () => {
+    const executor = {
+      start: async () => undefined,
+      stop: async () => undefined,
+    } satisfies AgentExecutor;
+    const createOneShotExecutor = vi.fn((_context: AgentExecutionContext) => executor);
+    const router = new RuntimeRouter(
+      new RuntimeDriverRegistry([
+        createDriver({
+          runtimeId: "codex",
+          surfaceSupport: [
+            {
+              surface: "task",
+              executionModes: ["oneshot"],
+              continuationPolicies: ["fresh", "resume-required"],
+            },
+          ],
+          getCapabilities: () => interactiveCapabilities("codex"),
+          runtimeStateCodec: {
+            runtimeId: "codex",
+            restorePersistedConversation: () => undefined,
+            cloneConversation: (conversation) => conversation,
+            decodeConversation: () => ({ native: { threadId: "thread-1" } }),
+            encodeConversation: (payload) => ({
+              runtimeId: "codex",
+              codecVersion: "v1",
+              payload,
+            }),
+          },
+          createOneShotExecutor,
+        }),
+      ]),
+    );
+
+    expect(() =>
+      router.createOneShotExecutor({
+        runId: "task-resume-required-1",
+        runKind: "task",
+        prompt: "Inspect the repo",
+        runtimeId: "codex",
+        executionMode: "oneshot",
+        continuationPolicy: "resume-required",
+        runtimeConfig: { model: "gpt-5.5" },
+        runtime: {
+          id: "codex",
+          label: "Codex",
+          version: "test",
+          available: true,
+          command: "codex",
+        },
+        channelId: "codex-openai",
+        workDir: "C:/repo",
+        developerInstructions: "",
+        emit: () => undefined,
+        onExit: () => undefined,
+      } satisfies AgentExecutionContext),
+    ).toThrow(/codex task oneshot requires runtimeConversation for continuation policy resume-required/i);
+    expect(createOneShotExecutor).not.toHaveBeenCalled();
+  });
+
+  test("rejects one-shot requests that use runtimeConversation owned by another runtime", () => {
+    const executor = {
+      start: async () => undefined,
+      stop: async () => undefined,
+    } satisfies AgentExecutor;
+    const createOneShotExecutor = vi.fn((_context: AgentExecutionContext) => executor);
+    const router = new RuntimeRouter(
+      new RuntimeDriverRegistry([
+        createDriver({
+          runtimeId: "codex",
+          surfaceSupport: [
+            {
+              surface: "task",
+              executionModes: ["oneshot"],
+              continuationPolicies: ["fresh", "resume-preferred"],
+            },
+          ],
+          getCapabilities: () => interactiveCapabilities("codex"),
+          runtimeStateCodec: {
+            runtimeId: "codex",
+            restorePersistedConversation: () => undefined,
+            cloneConversation: (conversation) => conversation,
+            decodeConversation: () => ({ native: { threadId: "thread-1" } }),
+            encodeConversation: (payload) => ({
+              runtimeId: "codex",
+              codecVersion: "v1",
+              payload,
+            }),
+          },
+          createOneShotExecutor,
+        }),
+      ]),
+    );
+
+    expect(() =>
+      router.createOneShotExecutor({
+        runId: "task-cross-runtime-1",
+        runKind: "task",
+        prompt: "Inspect the repo",
+        runtimeId: "codex",
+        executionMode: "oneshot",
+        continuationPolicy: "resume-preferred",
+        runtimeConversation: {
+          runtimeId: "claude",
+          codecVersion: "v1",
+          payload: { native: { sessionId: "claude-session-1" } },
+        },
+        runtimeConfig: { model: "gpt-5.5" },
+        runtime: {
+          id: "codex",
+          label: "Codex",
+          version: "test",
+          available: true,
+          command: "codex",
+        },
+        channelId: "codex-openai",
+        workDir: "C:/repo",
+        developerInstructions: "",
+        emit: () => undefined,
+        onExit: () => undefined,
+      } satisfies AgentExecutionContext),
+    ).toThrow(/codex cannot use runtimeConversation owned by claude/i);
+    expect(createOneShotExecutor).not.toHaveBeenCalled();
+  });
+
+  test("rejects resume-required workflow requests when runtimeConversation is missing", async () => {
+    const askWorkflow = vi.fn(async (_input: RuntimeWorkflowRequestContext) => ({ content: "workflow ok" }));
+    const router = new RuntimeRouter(
+      new RuntimeDriverRegistry([
+        createDriver({
+          runtimeId: "codex",
+          surfaceSupport: [
+            {
+              surface: "workflow",
+              executionModes: ["oneshot"],
+              continuationPolicies: ["fresh", "resume-required"],
+            },
+          ],
+          getCapabilities: () => interactiveCapabilities("codex"),
+          runtimeStateCodec: {
+            runtimeId: "codex",
+            restorePersistedConversation: () => undefined,
+            cloneConversation: (conversation) => conversation,
+            decodeConversation: () => ({ native: { threadId: "thread-1" } }),
+            encodeConversation: (payload) => ({
+              runtimeId: "codex",
+              codecVersion: "v1",
+              payload,
+            }),
+          },
+          askWorkflow,
+        }),
+      ]),
+    );
+
+    await expect(
+      router.askWorkflow({
+        requestId: "wf-resume-required-1",
+        prompt: "Plan it",
+        runtimeId: "codex",
+        executionMode: "oneshot",
+        continuationPolicy: "resume-required",
+        runtimeConfig: { model: "gpt-5.5" },
+        runtime: {
+          id: "codex",
+          label: "Codex",
+          version: "test",
+          available: true,
+          command: "codex",
+        },
+        channelId: "codex-openai",
+        workDir: "C:/repo",
+      } satisfies RuntimeWorkflowRequestContext),
+    ).rejects.toThrow(/codex workflow oneshot requires runtimeConversation for continuation policy resume-required/i);
+    expect(askWorkflow).not.toHaveBeenCalled();
+  });
+
+  test("rejects workflow requests that use runtimeConversation owned by another runtime", async () => {
+    const askWorkflow = vi.fn(async (_input: RuntimeWorkflowRequestContext) => ({ content: "workflow ok" }));
+    const router = new RuntimeRouter(
+      new RuntimeDriverRegistry([
+        createDriver({
+          runtimeId: "codex",
+          surfaceSupport: [
+            {
+              surface: "workflow",
+              executionModes: ["oneshot"],
+              continuationPolicies: ["fresh", "resume-preferred"],
+            },
+          ],
+          getCapabilities: () => interactiveCapabilities("codex"),
+          runtimeStateCodec: {
+            runtimeId: "codex",
+            restorePersistedConversation: () => undefined,
+            cloneConversation: (conversation) => conversation,
+            decodeConversation: () => ({ native: { threadId: "thread-1" } }),
+            encodeConversation: (payload) => ({
+              runtimeId: "codex",
+              codecVersion: "v1",
+              payload,
+            }),
+          },
+          askWorkflow,
+        }),
+      ]),
+    );
+
+    await expect(
+      router.askWorkflow({
+        requestId: "wf-cross-runtime-1",
+        prompt: "Plan it",
+        runtimeId: "codex",
+        executionMode: "oneshot",
+        continuationPolicy: "resume-preferred",
+        runtimeConversation: {
+          runtimeId: "claude",
+          codecVersion: "v1",
+          payload: { native: { sessionId: "claude-session-1" } },
+        },
+        runtimeConfig: { model: "gpt-5.5" },
+        runtime: {
+          id: "codex",
+          label: "Codex",
+          version: "test",
+          available: true,
+          command: "codex",
+        },
+        channelId: "codex-openai",
+        workDir: "C:/repo",
+      } satisfies RuntimeWorkflowRequestContext),
+    ).rejects.toThrow(/codex cannot use runtimeConversation owned by claude/i);
+    expect(askWorkflow).not.toHaveBeenCalled();
+  });
+
   test("fresh one-shot requests still dispatch for same-runtime envelopes when the runtime has no codec", () => {
     const executor = {
       start: async () => undefined,
@@ -714,6 +948,121 @@ describe("RuntimeRouter", () => {
 
     expect(createInteractiveSession).toHaveBeenCalledTimes(1);
     expect(createInteractiveSession.mock.calls[0]![0].runtimeConversation).toBeUndefined();
+  });
+
+  test("rejects resume-required interactive session requests when runtimeConversation is missing", () => {
+    const session = createInteractiveSessionStub();
+    const createInteractiveSession = vi.fn((_context: InteractiveSessionContext) => session);
+    const router = new RuntimeRouter(
+      new RuntimeDriverRegistry([
+        createDriver({
+          runtimeId: "codex",
+          surfaceSupport: [
+            {
+              surface: "chat",
+              executionModes: ["interactive"],
+              continuationPolicies: ["fresh", "resume-required"],
+            },
+          ],
+          getCapabilities: () => interactiveCapabilities("codex"),
+          runtimeStateCodec: {
+            runtimeId: "codex",
+            restorePersistedConversation: () => undefined,
+            cloneConversation: (conversation) => conversation,
+            decodeConversation: () => ({ native: { threadId: "thread-1" } }),
+            encodeConversation: (payload) => ({
+              runtimeId: "codex",
+              codecVersion: "v1",
+              payload,
+            }),
+          },
+          createInteractiveSession,
+        }),
+      ]),
+    );
+
+    expect(() =>
+      router.createInteractiveSession({
+        chatId: "chat-resume-required-1",
+        configuredAgentId: "agent-1",
+        runtimeId: "codex",
+        executionMode: "interactive",
+        continuationPolicy: "resume-required",
+        runtimeConfig: { model: "gpt-5.5" },
+        runtime: {
+          id: "codex",
+          label: "Codex",
+          version: "test",
+          available: true,
+          command: "codex",
+        },
+        channelId: "codex-openai",
+        workDir: "C:/repo",
+        developerInstructions: "",
+        emit: () => undefined,
+      } satisfies InteractiveSessionContext),
+    ).toThrow(/codex chat interactive requires runtimeConversation for continuation policy resume-required/i);
+    expect(createInteractiveSession).not.toHaveBeenCalled();
+  });
+
+  test("rejects interactive session requests that use runtimeConversation owned by another runtime", () => {
+    const session = createInteractiveSessionStub();
+    const createInteractiveSession = vi.fn((_context: InteractiveSessionContext) => session);
+    const router = new RuntimeRouter(
+      new RuntimeDriverRegistry([
+        createDriver({
+          runtimeId: "codex",
+          surfaceSupport: [
+            {
+              surface: "chat",
+              executionModes: ["interactive"],
+              continuationPolicies: ["fresh", "resume-preferred"],
+            },
+          ],
+          getCapabilities: () => interactiveCapabilities("codex"),
+          runtimeStateCodec: {
+            runtimeId: "codex",
+            restorePersistedConversation: () => undefined,
+            cloneConversation: (conversation) => conversation,
+            decodeConversation: () => ({ native: { threadId: "thread-1" } }),
+            encodeConversation: (payload) => ({
+              runtimeId: "codex",
+              codecVersion: "v1",
+              payload,
+            }),
+          },
+          createInteractiveSession,
+        }),
+      ]),
+    );
+
+    expect(() =>
+      router.createInteractiveSession({
+        chatId: "chat-cross-runtime-1",
+        configuredAgentId: "agent-1",
+        runtimeId: "codex",
+        executionMode: "interactive",
+        continuationPolicy: "resume-preferred",
+        runtimeConversation: {
+          runtimeId: "claude",
+          codecVersion: "v1",
+          payload: { native: { sessionId: "claude-session-1" } },
+        },
+        runtimeConfig: { model: "gpt-5.5" },
+        runtime: {
+          id: "codex",
+          label: "Codex",
+          version: "test",
+          available: true,
+          command: "codex",
+        },
+        channelId: "codex-openai",
+        workDir: "C:/repo",
+        developerInstructions: "",
+        emit: () => undefined,
+      } satisfies InteractiveSessionContext),
+    ).toThrow(/codex cannot use runtimeConversation owned by claude/i);
+    expect(createInteractiveSession).not.toHaveBeenCalled();
   });
 
   test("passes codec-cloned runtimeConversation through to non-fresh requests", async () => {
