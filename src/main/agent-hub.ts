@@ -48,8 +48,10 @@ import type {
   ProviderBalanceResult,
   RunWorkflowGraphRequest,
   RunAgentTeamRequest,
+  RuntimeContinuationPolicy,
   RuntimeInteractionCapabilities,
   RuntimeConversation,
+  RuntimeExecutionMode,
   RuntimeResumeCapabilities,
   RunTaskRequest,
   SendWorkflowDraftReplyRequest,
@@ -101,7 +103,7 @@ import { CodexRpcClient } from "./agents/codex-rpc";
 import { codexEnvironmentForChannel } from "./agents/codex-env";
 import { claudeCliModelForChannel } from "./agents/claude-env";
 import type { RuntimeCapabilities } from "./agents/runtime-capabilities";
-import type { InteractiveSessionContext, InteractiveSessionSnapshot, RuntimeDriverRegistry } from "./agents/runtime-driver";
+import type { InteractiveSessionContext, InteractiveSessionSnapshot, RuntimeDriverRegistry, RuntimeSurface } from "./agents/runtime-driver";
 import { RuntimeRouter } from "./agents/runtime-router";
 import { createRuntimeDriverRegistry, RuntimeAgentExecutorFactory, type AgentExecutorFactory } from "./agent-executor";
 import { execCli, spawnCli } from "./cli-launcher";
@@ -1734,10 +1736,9 @@ export class AgentHub {
           configuredAgentId: next.configuredAgentId,
           runtimeId: this.resolveConfiguredAgent(next.configuredAgentId, next.modelId)?.runtimeAgentId ?? DEFAULT_AGENT,
           executionMode: "oneshot",
-          continuationPolicy: next.runtimeConversation ? "resume-preferred" : "fresh",
+          continuationPolicy: "fresh",
           runtimeConfig: { model: next.modelId },
           workDir: next.workDir || this.workDir,
-          ...(starting || !next.runtimeConversation ? {} : { runtimeConversation: next.runtimeConversation }),
         },
         (event) => this.handleWorkflowDraftAgentEvent(next.workflowId, event),
       );
@@ -2400,15 +2401,75 @@ export class AgentHub {
     this.emit();
   }
 
+  private supportsContinuationPolicy(
+    runtimeId: AgentId,
+    surface: RuntimeSurface,
+    executionMode: RuntimeExecutionMode,
+    continuationPolicy: RuntimeContinuationPolicy,
+  ): boolean {
+    const driver = this.runtimeDrivers.maybeDriverFor(runtimeId);
+    if (!driver) return false;
+    const support = driver?.surfaceSupport.find((item) => item.surface === surface);
+    if (!support) return false;
+    if (!support.executionModes.includes(executionMode)) return false;
+    if (!support.continuationPolicies.includes(continuationPolicy)) return false;
+    if (continuationPolicy !== "fresh" && !driver.runtimeStateCodec) return false;
+    return true;
+  }
+
+  private surfaceSupportFor(runtimeId: AgentId, surface: RuntimeSurface) {
+    return this.runtimeDrivers.maybeDriverFor(runtimeId)?.surfaceSupport.find((item) => item.surface === surface);
+  }
+
+  private selectExecutionMode(
+    runtimeId: AgentId,
+    surface: RuntimeSurface,
+    preferred: RuntimeExecutionMode,
+  ): RuntimeExecutionMode {
+    const support = this.surfaceSupportFor(runtimeId, surface);
+    if (!support) return "oneshot";
+    if (support.executionModes.length === 0) return "oneshot";
+    if (support.executionModes.includes(preferred)) return preferred;
+    if (preferred !== "oneshot" && support.executionModes.includes("oneshot")) return "oneshot";
+    if (preferred !== "interactive" && support.executionModes.includes("interactive")) return "interactive";
+    return "oneshot";
+  }
+
+  private defaultContinuationPolicy(
+    runtimeId: AgentId,
+    surface: RuntimeSurface,
+    executionMode: RuntimeExecutionMode,
+  ): RuntimeContinuationPolicy {
+    if (surface === "chat") {
+      for (const policy of ["resume-preferred", "fresh", "resume-required"] as const) {
+        if (this.supportsContinuationPolicy(runtimeId, surface, executionMode, policy)) {
+          return policy;
+        }
+      }
+    }
+    return "fresh";
+  }
+
+  private cloneConversationForPolicy(
+    continuationPolicy: RuntimeContinuationPolicy,
+    runtimeConversation: RuntimeConversation | undefined,
+  ): RuntimeConversation | undefined {
+    if (!runtimeConversation || continuationPolicy === "fresh") return undefined;
+    return this.runtimeRouter.cloneConversation(runtimeConversation);
+  }
+
   private buildInteractiveChatContext(chat: ChatState, resolved: ResolvedConfiguredAgent): InteractiveSessionContext {
+    const executionMode = this.selectExecutionMode(resolved.runtimeAgentId, "chat", "interactive");
+    const continuationPolicy = this.defaultContinuationPolicy(resolved.runtimeAgentId, "chat", executionMode);
+    const runtimeConversation = this.cloneConversationForPolicy(continuationPolicy, chat.runtimeConversation);
     return {
       chatId: chat.id,
       configuredAgentId: chat.configuredAgentId,
       runtimeId: resolved.runtimeAgentId,
-      executionMode: "interactive",
-      continuationPolicy: chat.runtimeConversation ? "resume-preferred" : "fresh",
+      executionMode,
+      continuationPolicy,
       runtimeConfig: { model: resolved.modelId },
-      ...(chat.runtimeConversation ? { runtimeConversation: this.runtimeRouter.cloneConversation(chat.runtimeConversation) } : {}),
+      ...(runtimeConversation ? { runtimeConversation } : {}),
       runtime: resolved.runtime as AgentRuntime,
       channelId: resolved.channel.id,
       workDir: this.runWorkDir(chat),
@@ -2446,10 +2507,11 @@ export class AgentHub {
       return;
     }
 
-    const capabilities = this.runtimeRouter.capabilitiesFor(resolved.runtime);
-    const supportsInteractiveChat = capabilities.chatStyle === "interactive";
+    const executionMode = this.selectExecutionMode(resolved.runtimeAgentId, "chat", "interactive");
+    const supportsInteractiveChat = executionMode === "interactive";
+    const capabilities = supportsInteractiveChat ? this.runtimeRouter.capabilitiesFor(resolved.runtime) : undefined;
 
-    if (supportsInteractiveChat && !chat.runtimeState) {
+    if (capabilities && !chat.runtimeState) {
       chat.runtimeState = this.runtimeStateFromCapabilities(capabilities);
     }
 
@@ -2781,20 +2843,23 @@ export class AgentHub {
     if (!prompt) throw new Error("Workflow agent prompt is required");
     const resolved = this.resolveConfiguredAgent(input.configuredAgentId, input.runtimeConfig.model);
     if (!resolved) throw new Error("No configured agent is selected.");
+    if (resolved.runtimeAgentId !== input.runtimeId) {
+      throw new Error(`Configured agent ${resolved.agent.id} does not match runtime ${input.runtimeId}.`);
+    }
     const runtime = resolved.runtime;
     if (!runtime?.available) throw new Error(`${resolved.agent.name || resolved.agent.id} is not available on this machine.`);
     const channelId = resolved.channel.id;
-    const modelId = resolved.modelId;
     const workDir = input.workDir?.trim() || this.workDir;
+    const runtimeConversation = this.cloneConversationForPolicy(input.continuationPolicy, input.runtimeConversation);
 
     const requestId = input.requestId ?? randomUUID();
     return this.runtimeRouter.askWorkflow({
       requestId,
-      runtimeId: resolved.runtimeAgentId,
-      executionMode: "oneshot",
-      continuationPolicy: input.runtimeConversation ? "resume-preferred" : "fresh",
-      runtimeConfig: { model: modelId },
-      ...(input.runtimeConversation ? { runtimeConversation: this.runtimeRouter.cloneConversation(input.runtimeConversation) } : {}),
+      runtimeId: input.runtimeId,
+      executionMode: input.executionMode,
+      continuationPolicy: input.continuationPolicy,
+      runtimeConfig: input.runtimeConfig,
+      ...(runtimeConversation ? { runtimeConversation } : {}),
       prompt,
       runtime,
       channelId,
@@ -3796,14 +3861,18 @@ export class AgentHub {
       return;
     }
     const developerInstructions = run.kind === "task" ? CODEX_TASK_DEVELOPER_INSTRUCTIONS : CODEX_CHAT_DEVELOPER_INSTRUCTIONS;
+    const executionMode = run.kind === "chat" ? this.selectExecutionMode(resolved.runtimeAgentId, "chat", "oneshot") : "oneshot";
+    const continuationPolicy =
+      run.kind === "chat" ? this.defaultContinuationPolicy(resolved.runtimeAgentId, "chat", executionMode) : "fresh";
+    const runtimeConversation = this.cloneConversationForPolicy(continuationPolicy, run.runtimeConversation);
     const executor = this.executorFactory.create({
       runId: run.id,
       runKind: run.kind,
       runtimeId: resolved.runtimeAgentId,
-      executionMode: "oneshot",
-      continuationPolicy: run.runtimeConversation ? "resume-preferred" : "fresh",
+      executionMode,
+      continuationPolicy,
       runtimeConfig: { model: resolved.modelId },
-      ...(run.runtimeConversation ? { runtimeConversation: this.runtimeRouter.cloneConversation(run.runtimeConversation) } : {}),
+      ...(runtimeConversation ? { runtimeConversation } : {}),
       runtime,
       channelId: resolved.channel.id,
       prompt,
@@ -4409,7 +4478,7 @@ export class AgentHub {
   }
 
   private runtimeSupportsInteractiveChat(runtimeAgentId: AgentId): boolean {
-    return this.runtimeRouter.capabilitiesFor(this.runtimeForDriver(runtimeAgentId)).chatStyle === "interactive";
+    return this.selectExecutionMode(runtimeAgentId, "chat", "interactive") === "interactive";
   }
 
   private restoreRuntimeState(raw: unknown): ChatRuntimeSessionState | undefined {

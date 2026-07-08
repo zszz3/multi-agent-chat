@@ -620,6 +620,7 @@ describe("AgentHub chat sessions", () => {
       runtimeId: "codex",
       prompt: "Hello",
       runKind: "chat",
+      continuationPolicy: "resume-preferred",
       developerInstructions: expect.stringContaining("desktop chat UI"),
     });
     const activeChat = hub.snapshot().chats.find((chat) => chat.id === chatId);
@@ -704,6 +705,83 @@ describe("AgentHub chat sessions", () => {
 
     expect(createInteractiveSession).not.toHaveBeenCalled();
     expect(hub.snapshot().chats.find((chat) => chat.id === "chat-1")?.runtimeState?.attachmentState).toBe("detached");
+  });
+
+  test("does not restore interactive runtime state when chat surface support is undeclared", async () => {
+    const dir = await mkdtemp(path.join(os.tmpdir(), "multi-agent-chat-restore-missing-chat-support-"));
+    const storagePath = path.join(dir, "app-chats.json");
+    await writeFile(
+      storagePath,
+      JSON.stringify({
+        version: 4,
+        activeChatId: "chat-1",
+        workDir: dir,
+        sessions: [
+          {
+            id: "chat-1",
+            title: "Restored chat without declared support",
+            configuredAgentId: "default-agent",
+            modelId: DEFAULT_MODEL_ID,
+            runtimeState: {
+              executionStyle: "interactive",
+              attachmentState: "detached",
+              attachmentGeneration: 0,
+              capabilities: {
+                supportsInProcessConversationResume: true,
+                supportsResumeAfterDetach: false,
+                supportsResumeAfterAppRestart: false,
+                supportsTurnResume: false,
+                supportsInterrupt: true,
+                supportsContinue: true,
+                supportsApprovalRequests: false,
+                supportsUserInputRequests: false,
+              },
+            },
+            runtimeConversation: {
+              runtimeId: "codex",
+              codecVersion: "v1",
+              payload: { native: { threadId: "thread-restore-undeclared-1" } },
+            },
+            createdAt: 1710000000000,
+            updatedAt: 1710000000000,
+          },
+        ],
+        messages: [],
+        events: [],
+        tasks: [],
+        taskMessages: [],
+        taskEvents: [],
+        teams: [],
+        teamRuns: [],
+      }),
+      "utf8",
+    );
+
+    const runtimeDrivers = new RuntimeDriverRegistry([
+      {
+        runtimeId: "codex",
+        surfaceSupport: [support("task", ["oneshot"], ["fresh"])],
+        runtimeStateCodec: codexRuntimeStateCodec,
+        getCapabilities: () => interactiveChatCapabilities("codex"),
+        createOneShotExecutor: () => ({
+          start: async () => undefined,
+          stop: async () => undefined,
+        }),
+      } as any,
+    ]);
+
+    const hub = new AgentHub(
+      { codex: "codex-for-test", claude: "missing-claude-for-test" },
+      undefined,
+      runtimeDrivers,
+    );
+    await hub.loadPersistedState(storagePath);
+
+    const restoredChat = hub.snapshot().chats.find((chat) => chat.id === "chat-1");
+    expect(restoredChat?.runtimeState).toBeUndefined();
+    expect(restoredChat?.runtimeConversation).toEqual(
+      runtimeConversation("codex", { native: { threadId: "thread-restore-undeclared-1" } }),
+    );
   });
 
   test("routes interactive chats through the shared session manager when a driver supports it", async () => {
@@ -795,6 +873,450 @@ describe("AgentHub chat sessions", () => {
     expect(activeChat?.messages).toEqual([
       expect.objectContaining({ role: "user", content: "Hello" }),
       expect.objectContaining({ role: "assistant", content: "interactive response" }),
+    ]);
+  });
+
+  test("uses chat surface support instead of capabilities.chatStyle when chat defaults select interactive", async () => {
+    const executorFactory: AgentExecutorFactory = {
+      create: () => ({
+        start: async () => {
+          throw new Error("one-shot executor path should not run");
+        },
+        stop: async () => undefined,
+      }),
+    };
+    let interactiveContext: any;
+    const session = {
+      reconfigure: vi.fn(),
+      ensureAttached: vi.fn(async () => undefined),
+      sendPrompt: vi.fn(async (prompt: string) => {
+        expect(prompt).toBe("Hello");
+        interactiveContext.emit({ type: "delta", content: "interactive via support matrix" });
+        interactiveContext.emit({ type: "completed" });
+      }),
+      interrupt: vi.fn(async () => undefined),
+      detach: vi.fn(async () => undefined),
+      detachIfStillExpired: vi.fn(async () => undefined),
+      snapshot: () => ({
+        runtimeState: {
+          executionStyle: "interactive" as const,
+          attachmentState: "idle" as const,
+          attachmentGeneration: 1,
+          capabilities: runtimeSessionCapabilities(),
+        },
+      }),
+    };
+    const runtimeDrivers = new RuntimeDriverRegistry([
+      {
+        runtimeId: "codex",
+        surfaceSupport: [support("chat", ["interactive"], ["fresh", "resume-preferred", "resume-required"])],
+        runtimeStateCodec: codexRuntimeStateCodec,
+        getCapabilities: () => oneshotChatCapabilities("codex"),
+        createOneShotExecutor: () => ({
+          start: async () => {
+            throw new Error("driver one-shot path should not run");
+          },
+          stop: async () => undefined,
+        }),
+        createInteractiveSession: (context: any) => {
+          interactiveContext = context;
+          return session;
+        },
+      } as any,
+    ]);
+    const hub = new AgentHub(
+      { codex: "codex-for-test", claude: "missing-claude-for-test" },
+      executorFactory,
+      runtimeDrivers,
+    );
+    (hub as any).runtimes.set("codex", {
+      id: "codex",
+      label: "Codex",
+      command: "codex",
+      version: "test",
+      available: true,
+    });
+
+    const chatId = hub.snapshot().activeChatId!;
+    await hub.sendPrompt("Hello", chatId);
+    const activeChat = await waitFor(
+      () => hub.snapshot().chats.find((chat) => chat.id === chatId),
+      (chat) => chat?.running === false,
+    );
+
+    expect(session.sendPrompt).toHaveBeenCalledWith("Hello");
+    expect(interactiveContext).toMatchObject({
+      executionMode: "interactive",
+      continuationPolicy: "resume-preferred",
+      runtimeConfig: { model: DEFAULT_MODEL_ID },
+    });
+    expect(activeChat?.runtimeState?.executionStyle).toBe("interactive");
+    expect(activeChat?.messages).toEqual([
+      expect.objectContaining({ role: "user", content: "Hello" }),
+      expect.objectContaining({ role: "assistant", content: "interactive via support matrix" }),
+    ]);
+  });
+
+  test("uses declared chat continuation support when interactive chats only allow resume-required", async () => {
+    const executorFactory: AgentExecutorFactory = {
+      create: () => ({
+        start: async () => {
+          throw new Error("one-shot executor path should not run");
+        },
+        stop: async () => undefined,
+      }),
+    };
+    const existingConversation = runtimeConversation("codex", { native: { threadId: "resume-required-thread-1" } });
+    let interactiveContext: any;
+    const session = {
+      reconfigure: vi.fn(),
+      ensureAttached: vi.fn(async () => undefined),
+      sendPrompt: vi.fn(async (prompt: string) => {
+        expect(prompt).toBe("Hello again");
+        interactiveContext.emit({ type: "delta", content: "interactive resume-required response" });
+        interactiveContext.emit({ type: "completed" });
+      }),
+      interrupt: vi.fn(async () => undefined),
+      detach: vi.fn(async () => undefined),
+      detachIfStillExpired: vi.fn(async () => undefined),
+      snapshot: () => ({
+        runtimeState: {
+          executionStyle: "interactive" as const,
+          attachmentState: "idle" as const,
+          attachmentGeneration: 1,
+          capabilities: runtimeSessionCapabilities(),
+        },
+        runtimeConversation: existingConversation,
+      }),
+    };
+    const runtimeDrivers = new RuntimeDriverRegistry([
+      {
+        runtimeId: "codex",
+        surfaceSupport: [support("chat", ["interactive"], ["resume-required"])],
+        runtimeStateCodec: codexRuntimeStateCodec,
+        getCapabilities: () => interactiveChatCapabilities("codex"),
+        createOneShotExecutor: () => ({
+          start: async () => {
+            throw new Error("driver one-shot path should not run");
+          },
+          stop: async () => undefined,
+        }),
+        createInteractiveSession: (context: any) => {
+          interactiveContext = context;
+          return session;
+        },
+      } as any,
+    ]);
+    const hub = new AgentHub(
+      { codex: "codex-for-test", claude: "missing-claude-for-test" },
+      executorFactory,
+      runtimeDrivers,
+    );
+    (hub as any).runtimes.set("codex", {
+      id: "codex",
+      label: "Codex",
+      command: "codex",
+      version: "test",
+      available: true,
+    });
+
+    const chatId = hub.snapshot().activeChatId!;
+    (hub as any).chats.get(chatId).runtimeConversation = existingConversation;
+
+    await hub.sendPrompt("Hello again", chatId);
+    const activeChat = await waitFor(
+      () => hub.snapshot().chats.find((chat) => chat.id === chatId),
+      (chat) => chat?.running === false,
+    );
+
+    expect(session.sendPrompt).toHaveBeenCalledWith("Hello again");
+    expect(interactiveContext).toMatchObject({
+      executionMode: "interactive",
+      continuationPolicy: "resume-required",
+      runtimeConversation: existingConversation,
+      runtimeConfig: { model: DEFAULT_MODEL_ID },
+    });
+    expect(activeChat?.runtimeConversation).toEqual(existingConversation);
+    expect(activeChat?.messages).toEqual([
+      expect.objectContaining({ role: "user", content: "Hello again" }),
+      expect.objectContaining({ role: "assistant", content: "interactive resume-required response" }),
+    ]);
+  });
+
+  test("degrades to fresh when declared chat continuation policies are unusable without a runtime state codec", async () => {
+    const executorCalls: any[] = [];
+    const executorFactory: AgentExecutorFactory = {
+      create: (context: any) => ({
+        start: async () => {
+          executorCalls.push(context);
+          context.emit({ type: "delta", content: "oneshot without resumable state" });
+          context.emit({ type: "completed" });
+        },
+        stop: async () => undefined,
+      }),
+    };
+    const runtimeDrivers = new RuntimeDriverRegistry([
+      {
+        runtimeId: "codex",
+        surfaceSupport: [support("chat", ["oneshot"], ["resume-preferred"])],
+        getCapabilities: () => oneshotChatCapabilities("codex"),
+        createOneShotExecutor: (context: AgentExecutionContext) => executorFactory.create(context),
+      } as any,
+    ]);
+    const hub = new AgentHub(
+      { codex: "codex-for-test", claude: "missing-claude-for-test" },
+      executorFactory,
+      runtimeDrivers,
+    );
+    (hub as any).runtimes.set("codex", {
+      id: "codex",
+      label: "Codex",
+      command: "codex",
+      version: "test",
+      available: true,
+    });
+
+    const chatId = hub.snapshot().activeChatId!;
+    await hub.sendPrompt("Hello", chatId);
+    const activeChat = await waitFor(
+      () => hub.snapshot().chats.find((chat) => chat.id === chatId),
+      (chat) => chat?.running === false,
+    );
+
+    expect(executorCalls).toHaveLength(1);
+    expect(executorCalls[0]).toMatchObject({
+      runKind: "chat",
+      executionMode: "oneshot",
+      continuationPolicy: "fresh",
+      runtimeConfig: { model: DEFAULT_MODEL_ID },
+      prompt: "Hello",
+    });
+    expect(executorCalls[0].runtimeConversation).toBeUndefined();
+    expect(activeChat?.messages).toEqual([
+      expect.objectContaining({ role: "user", content: "Hello" }),
+      expect.objectContaining({ role: "assistant", content: "oneshot without resumable state" }),
+    ]);
+  });
+
+  test("uses chat surface support instead of capabilities.chatStyle when chat defaults select oneshot", async () => {
+    const executorCalls: any[] = [];
+    const executorFactory: AgentExecutorFactory = {
+      create: (context: any) => ({
+        start: async () => {
+          executorCalls.push(context);
+          context.emit({ type: "delta", content: "oneshot via support matrix" });
+          context.emit({ type: "completed" });
+        },
+        stop: async () => undefined,
+      }),
+    };
+    const createInteractiveSession = vi.fn(() => ({
+      reconfigure: vi.fn(),
+      ensureAttached: vi.fn(async () => undefined),
+      sendPrompt: vi.fn(async () => undefined),
+      interrupt: vi.fn(async () => undefined),
+      detach: vi.fn(async () => undefined),
+      detachIfStillExpired: vi.fn(async () => undefined),
+      snapshot: () => ({
+        runtimeState: {
+          executionStyle: "interactive" as const,
+          attachmentState: "idle" as const,
+          attachmentGeneration: 1,
+          capabilities: runtimeSessionCapabilities(),
+        },
+      }),
+    }));
+    const runtimeDrivers = new RuntimeDriverRegistry([
+      {
+        runtimeId: "codex",
+        surfaceSupport: [support("chat", ["oneshot"], ["fresh"])],
+        runtimeStateCodec: codexRuntimeStateCodec,
+        getCapabilities: () => interactiveChatCapabilities("codex"),
+        createOneShotExecutor: (context: AgentExecutionContext) => executorFactory.create(context),
+        createInteractiveSession,
+      } as any,
+    ]);
+    const hub = new AgentHub(
+      { codex: "codex-for-test", claude: "missing-claude-for-test" },
+      executorFactory,
+      runtimeDrivers,
+    );
+    (hub as any).runtimes.set("codex", {
+      id: "codex",
+      label: "Codex",
+      command: "codex",
+      version: "test",
+      available: true,
+    });
+
+    const chatId = hub.snapshot().activeChatId!;
+    await hub.sendPrompt("Hello", chatId);
+    const activeChat = await waitFor(
+      () => hub.snapshot().chats.find((chat) => chat.id === chatId),
+      (chat) => chat?.running === false,
+    );
+
+    expect(createInteractiveSession).not.toHaveBeenCalled();
+    expect(executorCalls).toHaveLength(1);
+    expect(executorCalls[0]).toMatchObject({
+      executionMode: "oneshot",
+      continuationPolicy: "fresh",
+      runtimeConfig: { model: DEFAULT_MODEL_ID },
+      runKind: "chat",
+      prompt: "Hello",
+    });
+    expect(activeChat?.runtimeState).toBeUndefined();
+    expect(activeChat?.messages).toEqual([
+      expect.objectContaining({ role: "user", content: "Hello" }),
+      expect.objectContaining({ role: "assistant", content: "oneshot via support matrix" }),
+    ]);
+  });
+
+  test("requires declared chat surface support before treating chat defaults as interactive", async () => {
+    const executorCalls: any[] = [];
+    const executorFactory: AgentExecutorFactory = {
+      create: (context: any) => ({
+        start: async () => {
+          executorCalls.push(context);
+          context.emit({ type: "delta", content: "oneshot without declared chat support" });
+          context.emit({ type: "completed" });
+        },
+        stop: async () => undefined,
+      }),
+    };
+    const createInteractiveSession = vi.fn(() => ({
+      reconfigure: vi.fn(),
+      ensureAttached: vi.fn(async () => undefined),
+      sendPrompt: vi.fn(async () => undefined),
+      interrupt: vi.fn(async () => undefined),
+      detach: vi.fn(async () => undefined),
+      detachIfStillExpired: vi.fn(async () => undefined),
+      snapshot: () => ({
+        runtimeState: {
+          executionStyle: "interactive" as const,
+          attachmentState: "idle" as const,
+          attachmentGeneration: 1,
+          capabilities: runtimeSessionCapabilities(),
+        },
+      }),
+    }));
+    const runtimeDrivers = new RuntimeDriverRegistry([
+      {
+        runtimeId: "codex",
+        surfaceSupport: [support("task", ["oneshot"], ["fresh"])],
+        runtimeStateCodec: codexRuntimeStateCodec,
+        getCapabilities: () => interactiveChatCapabilities("codex"),
+        createOneShotExecutor: (context: AgentExecutionContext) => executorFactory.create(context),
+        createInteractiveSession,
+      } as any,
+    ]);
+    const hub = new AgentHub(
+      { codex: "codex-for-test", claude: "missing-claude-for-test" },
+      executorFactory,
+      runtimeDrivers,
+    );
+    (hub as any).runtimes.set("codex", {
+      id: "codex",
+      label: "Codex",
+      command: "codex",
+      version: "test",
+      available: true,
+    });
+
+    const chatId = hub.snapshot().activeChatId!;
+    await hub.sendPrompt("Hello", chatId);
+    const activeChat = await waitFor(
+      () => hub.snapshot().chats.find((chat) => chat.id === chatId),
+      (chat) => chat?.running === false,
+    );
+
+    expect(createInteractiveSession).not.toHaveBeenCalled();
+    expect(executorCalls).toHaveLength(1);
+    expect(executorCalls[0]).toMatchObject({
+      executionMode: "oneshot",
+      continuationPolicy: "fresh",
+      runtimeConfig: { model: DEFAULT_MODEL_ID },
+      runKind: "chat",
+      prompt: "Hello",
+    });
+    expect(activeChat?.runtimeState).toBeUndefined();
+    expect(activeChat?.messages).toEqual([
+      expect.objectContaining({ role: "user", content: "Hello" }),
+      expect.objectContaining({ role: "assistant", content: "oneshot without declared chat support" }),
+    ]);
+  });
+
+  test("falls back to oneshot when chat surface support is declared but has no usable execution mode", async () => {
+    const executorCalls: any[] = [];
+    const executorFactory: AgentExecutorFactory = {
+      create: (context: any) => ({
+        start: async () => {
+          executorCalls.push(context);
+          context.emit({ type: "delta", content: "oneshot with unusable chat support" });
+          context.emit({ type: "completed" });
+        },
+        stop: async () => undefined,
+      }),
+    };
+    const createInteractiveSession = vi.fn(() => ({
+      reconfigure: vi.fn(),
+      ensureAttached: vi.fn(async () => undefined),
+      sendPrompt: vi.fn(async () => undefined),
+      interrupt: vi.fn(async () => undefined),
+      detach: vi.fn(async () => undefined),
+      detachIfStillExpired: vi.fn(async () => undefined),
+      snapshot: () => ({
+        runtimeState: {
+          executionStyle: "interactive" as const,
+          attachmentState: "idle" as const,
+          attachmentGeneration: 1,
+          capabilities: runtimeSessionCapabilities(),
+        },
+      }),
+    }));
+    const runtimeDrivers = new RuntimeDriverRegistry([
+      {
+        runtimeId: "codex",
+        surfaceSupport: [support("chat", [], ["fresh"])],
+        runtimeStateCodec: codexRuntimeStateCodec,
+        getCapabilities: () => interactiveChatCapabilities("codex"),
+        createOneShotExecutor: (context: AgentExecutionContext) => executorFactory.create(context),
+        createInteractiveSession,
+      } as any,
+    ]);
+    const hub = new AgentHub(
+      { codex: "codex-for-test", claude: "missing-claude-for-test" },
+      executorFactory,
+      runtimeDrivers,
+    );
+    (hub as any).runtimes.set("codex", {
+      id: "codex",
+      label: "Codex",
+      command: "codex",
+      version: "test",
+      available: true,
+    });
+
+    const chatId = hub.snapshot().activeChatId!;
+    await hub.sendPrompt("Hello", chatId);
+    const activeChat = await waitFor(
+      () => hub.snapshot().chats.find((chat) => chat.id === chatId),
+      (chat) => chat?.running === false,
+    );
+
+    expect(createInteractiveSession).not.toHaveBeenCalled();
+    expect(executorCalls).toHaveLength(1);
+    expect(executorCalls[0]).toMatchObject({
+      executionMode: "oneshot",
+      continuationPolicy: "fresh",
+      runtimeConfig: { model: DEFAULT_MODEL_ID },
+      runKind: "chat",
+      prompt: "Hello",
+    });
+    expect(activeChat?.runtimeState).toBeUndefined();
+    expect(activeChat?.messages).toEqual([
+      expect.objectContaining({ role: "user", content: "Hello" }),
+      expect.objectContaining({ role: "assistant", content: "oneshot with unusable chat support" }),
     ]);
   });
 
@@ -2245,6 +2767,74 @@ fs.writeFileSync(${JSON.stringify(argsPath)}, process.argv.slice(2).join("\\n") 
     });
   });
 
+  test("starts a fresh workflow run when the request explicitly chooses fresh despite carrying runtimeConversation", async () => {
+    const dir = await mkdtemp(path.join(os.tmpdir(), "multi-agent-chat-workflow-agent-fresh-"));
+    const fake = await writeSequentialCodexFake(dir);
+    const hub = new AgentHub({ codex: fake.executable, claude: "missing-claude-for-test" });
+    (hub as any).runtimes.set("codex", {
+      id: "codex",
+      label: "Codex",
+      command: fake.executable,
+      version: "test",
+      available: true,
+    });
+
+    const response = await (hub as any).askWorkflowAgent({
+      requestId: "workflow-fresh-test",
+      prompt: "Start fresh from the updated spec.",
+      configuredAgentId: "default-agent",
+      workDir: dir,
+      runtimeId: "codex",
+      executionMode: "oneshot",
+      continuationPolicy: "fresh",
+      runtimeConfig: { model: DEFAULT_MODEL_ID },
+      runtimeConversation: runtimeConversation("codex", { native: { threadId: "thread-old" } }),
+    });
+
+    expect(response).toEqual({
+      content: "artifact-1",
+      runtimeConversation: runtimeConversation("codex", { native: { threadId: "thread-1" } }),
+    });
+
+    const calls = (await readFile(fake.callsPath, "utf8")).trim().split("\n").map((line) => JSON.parse(line) as any);
+    expect(calls.filter((call) => call.method === "thread/start")).toHaveLength(1);
+    expect(calls.filter((call) => call.method === "thread/resume")).toHaveLength(0);
+  });
+
+  test("resumes a workflow run only when the request explicitly chooses resume-preferred", async () => {
+    const dir = await mkdtemp(path.join(os.tmpdir(), "multi-agent-chat-workflow-agent-resume-"));
+    const fake = await writeSequentialCodexFake(dir);
+    const hub = new AgentHub({ codex: fake.executable, claude: "missing-claude-for-test" });
+    (hub as any).runtimes.set("codex", {
+      id: "codex",
+      label: "Codex",
+      command: fake.executable,
+      version: "test",
+      available: true,
+    });
+
+    const response = await (hub as any).askWorkflowAgent({
+      requestId: "workflow-resume-test",
+      prompt: "Continue from the prior workflow turn.",
+      configuredAgentId: "default-agent",
+      workDir: dir,
+      runtimeId: "codex",
+      executionMode: "oneshot",
+      continuationPolicy: "resume-preferred",
+      runtimeConfig: { model: DEFAULT_MODEL_ID },
+      runtimeConversation: runtimeConversation("codex", { native: { threadId: "thread-7" } }),
+    });
+
+    expect(response).toEqual({
+      content: "artifact-1",
+      runtimeConversation: runtimeConversation("codex", { native: { threadId: "thread-7" } }),
+    });
+
+    const calls = (await readFile(fake.callsPath, "utf8")).trim().split("\n").map((line) => JSON.parse(line) as any);
+    expect(calls.filter((call) => call.method === "thread/start")).toHaveLength(0);
+    expect(calls.filter((call) => call.method === "thread/resume" && call.params.threadId === "thread-7")).toHaveLength(1);
+  });
+
   test("keeps workflow draft replies in main-owned snapshot state", async () => {
     const dir = await mkdtemp(path.join(os.tmpdir(), "multi-agent-chat-workflow-draft-reply-"));
     const fake = await writeSequentialCodexFake(dir);
@@ -2302,8 +2892,8 @@ fs.writeFileSync(${JSON.stringify(argsPath)}, process.argv.slice(2).join("\\n") 
     expect(second.tasks).toHaveLength(before.tasks.length);
 
     const calls = (await readFile(fake.callsPath, "utf8")).trim().split("\n").map((line) => JSON.parse(line) as any);
-    expect(calls.some((call) => call.method === "thread/start")).toBe(true);
-    expect(calls.some((call) => call.method === "thread/resume" && call.params.threadId === "thread-1")).toBe(true);
+    expect(calls.filter((call) => call.method === "thread/start")).toHaveLength(2);
+    expect(calls.filter((call) => call.method === "thread/resume")).toHaveLength(0);
   });
 
   test("uses the workflow-selected model for workflow agent API requests", async () => {
@@ -4039,7 +4629,69 @@ describe("AgentHub task runs", () => {
         expect.objectContaining({ role: "user", content: "Inspect the repo and summarize risks" }),
         expect.objectContaining({ role: "error", content: "Default Agent is not available on this machine." }),
       ],
+      });
     });
+
+  test("keeps task execution explicitly oneshot even when driver task support advertises interactive only", async () => {
+      const executorCalls: any[] = [];
+      const executorFactory: AgentExecutorFactory = {
+        create: (context: any) => ({
+          start: async () => {
+            executorCalls.push(context);
+            context.emit({ type: "delta", content: "task response" });
+            context.emit({ type: "completed" });
+          },
+          stop: async () => undefined,
+        }),
+      };
+      const runtimeDrivers = new RuntimeDriverRegistry([
+        {
+          runtimeId: "codex",
+          surfaceSupport: [
+            support("chat", ["oneshot"], ["fresh"]),
+            support("task", ["interactive"], ["fresh", "resume-preferred"]),
+          ],
+          runtimeStateCodec: codexRuntimeStateCodec,
+          getCapabilities: () => interactiveChatCapabilities("codex"),
+          createOneShotExecutor: (context: AgentExecutionContext) => executorFactory.create(context),
+        } as any,
+      ]);
+      const hub = new AgentHub(
+        { codex: "codex-for-test", claude: "missing-claude-for-test" },
+        executorFactory,
+        runtimeDrivers,
+      );
+      (hub as any).runtimes.set("codex", {
+        id: "codex",
+        label: "Codex",
+        command: "codex",
+        version: "test",
+        available: true,
+      });
+
+      const snapshot = await hub.runTask({
+        prompt: "Inspect the repo and summarize risks",
+        configuredAgentId: "default-agent",
+        workDir: "/tmp/project",
+      });
+      const taskId = snapshot.activeTaskId!;
+      const task = await waitFor(
+        () => hub.snapshot().tasks.find((item) => item.id === taskId),
+        (item) => item?.running === false,
+      );
+
+      expect(executorCalls).toHaveLength(1);
+      expect(executorCalls[0]).toMatchObject({
+        runKind: "task",
+        executionMode: "oneshot",
+        continuationPolicy: "fresh",
+        runtimeConfig: { model: DEFAULT_MODEL_ID },
+        prompt: "Inspect the repo and summarize risks",
+      });
+      expect(task?.messages).toEqual([
+        expect.objectContaining({ role: "user", content: "Inspect the repo and summarize risks" }),
+        expect.objectContaining({ role: "assistant", content: "task response" }),
+      ]);
   });
 
   test("keeps user progress separate from agent execution status", () => {
