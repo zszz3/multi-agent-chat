@@ -31,27 +31,27 @@ export class RuntimeRouter {
 
   createOneShotExecutor(context: AgentExecutionContext): AgentExecutor {
     const surface: RuntimeSurface = context.runKind === "chat" ? "chat" : "task";
-    const driver = this.validateRequest(surface, context);
+    const { driver, input } = this.validateRequest(surface, context);
     if (!driver.createOneShotExecutor) {
       throw new Error(`${context.runtimeId} runtime does not provide one-shot execution for ${surface}.`);
     }
-    return driver.createOneShotExecutor(context);
+    return driver.createOneShotExecutor(input);
   }
 
   createInteractiveSession(context: InteractiveSessionContext): InteractiveSession {
-    const driver = this.validateRequest("chat", context);
+    const { driver, input } = this.validateRequest("chat", context);
     if (!driver.createInteractiveSession) {
       throw new Error(`${context.runtimeId} runtime does not provide interactive chat sessions.`);
     }
-    return driver.createInteractiveSession(context);
+    return driver.createInteractiveSession(input);
   }
 
   async askWorkflow(input: RuntimeWorkflowRequestContext) {
-    const driver = this.validateRequest("workflow", input);
+    const { driver, input: normalizedInput } = this.validateRequest("workflow", input);
     if (!driver.askWorkflow) {
       throw new Error(`${input.runtimeId} runtime does not provide workflow execution.`);
     }
-    return driver.askWorkflow(input);
+    return driver.askWorkflow(normalizedInput);
   }
 
   async testChannel(runtimeId: AgentId, input: RuntimeChannelTestContext): Promise<string> {
@@ -67,7 +67,9 @@ export class RuntimeRouter {
     if (!driver.deleteSessionArtifacts) {
       throw new Error(`${runtimeId} runtime cleanup is not configured.`);
     }
-    const runtimeConversation = input.runtimeConversation ? this.cloneConversation(input.runtimeConversation) : undefined;
+    const runtimeConversation = input.runtimeConversation
+      ? this.cloneOwnedConversation(runtimeId, input.runtimeConversation)
+      : undefined;
     await driver.deleteSessionArtifacts({
       workDir: input.workDir,
       ...(runtimeConversation ? { runtimeConversation } : {}),
@@ -95,7 +97,10 @@ export class RuntimeRouter {
     return cloned;
   }
 
-  private validateRequest<T extends RuntimeRequestLike>(surface: RuntimeSurface, input: T): RuntimeDriver {
+  private validateRequest<T extends RuntimeRequestLike>(
+    surface: RuntimeSurface,
+    input: T,
+  ): { driver: RuntimeDriver; input: T } {
     const driver = this.validateSurface(input.runtimeId, surface);
     const support = driver.surfaceSupport.find((item) => item.surface === surface);
     const executionMode = input.executionMode;
@@ -109,18 +114,24 @@ export class RuntimeRouter {
     if (continuationPolicy === "resume-required" && !input.runtimeConversation) {
       throw new Error(`${input.runtimeId} ${surface} ${executionMode} requires runtimeConversation for continuation policy resume-required.`);
     }
-    if (input.runtimeConversation && input.runtimeConversation.runtimeId !== input.runtimeId) {
-      throw new Error(
-        `${input.runtimeId} cannot use runtimeConversation owned by ${input.runtimeConversation.runtimeId}.`,
-      );
-    }
     if (continuationPolicy !== "fresh" && !driver.runtimeStateCodec) {
       throw new Error(`${input.runtimeId} does not support ${surface} ${executionMode} with continuation policy ${continuationPolicy}.`);
     }
-    if (input.runtimeConversation) {
-      this.cloneConversation(input.runtimeConversation);
+    if (!input.runtimeConversation) {
+      return { driver, input };
     }
-    return driver;
+    const runtimeConversation = this.cloneOwnedConversation(input.runtimeId, input.runtimeConversation);
+    if (continuationPolicy === "fresh") {
+      const { runtimeConversation: _ignored, ...rest } = input;
+      return { driver, input: rest as T };
+    }
+    return {
+      driver,
+      input: {
+        ...input,
+        runtimeConversation,
+      } as T,
+    };
   }
 
   private validateSurface(runtimeId: AgentId, surface: RuntimeSurface): RuntimeDriver {
@@ -149,5 +160,12 @@ export class RuntimeRouter {
       throw new Error(`${runtimeId} runtime does not support persisted runtime conversations.`);
     }
     return driver.runtimeStateCodec;
+  }
+
+  private cloneOwnedConversation(runtimeId: AgentId, conversation: RuntimeConversation): RuntimeConversation {
+    if (conversation.runtimeId !== runtimeId) {
+      throw new Error(`${runtimeId} cannot use runtimeConversation owned by ${conversation.runtimeId}.`);
+    }
+    return this.cloneConversation(conversation);
   }
 }

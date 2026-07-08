@@ -1,7 +1,13 @@
 import { describe, expect, test, vi } from "vitest";
 import type { AgentExecutionContext, AgentExecutor } from "../agent-executor";
 import type { AgentRuntime } from "../../shared/types";
-import { RuntimeDriverRegistry, type InteractiveSessionContext, type RuntimeDriver, type RuntimeWorkflowRequestContext } from "./runtime-driver";
+import {
+  RuntimeDriverRegistry,
+  type InteractiveSession,
+  type InteractiveSessionContext,
+  type RuntimeDriver,
+  type RuntimeWorkflowRequestContext,
+} from "./runtime-driver";
 import type { RuntimeCapabilities } from "./runtime-capabilities";
 import type { RuntimeStateCodec } from "./runtime-state-codec";
 import { RuntimeRouter } from "./runtime-router";
@@ -57,6 +63,32 @@ function createDriver(input: Partial<RuntimeDriver> & Pick<RuntimeDriver, "runti
     ...(input.testChannel ? { testChannel: input.testChannel } : {}),
     ...(input.deleteSessionArtifacts ? { deleteSessionArtifacts: input.deleteSessionArtifacts } : {}),
     ...(input.runtimeStateCodec ? { runtimeStateCodec: input.runtimeStateCodec } : {}),
+  };
+}
+
+function createInteractiveSessionStub(): InteractiveSession {
+  const capabilities = interactiveCapabilities("codex");
+  return {
+    reconfigure: () => undefined,
+    ensureAttached: async () => undefined,
+    sendPrompt: async () => undefined,
+    interrupt: async () => undefined,
+    detach: async () => undefined,
+    detachIfStillExpired: async () => undefined,
+    snapshot: () => ({
+      runtimeState: {
+        executionStyle: "interactive",
+        attachmentState: "idle",
+        attachmentGeneration: 0,
+        capabilities: {
+          ...capabilities.resume,
+          supportsInterrupt: capabilities.supportsInterrupt,
+          supportsContinue: capabilities.supportsContinue,
+          supportsApprovalRequests: capabilities.supportsApprovalRequests,
+          supportsUserInputRequests: capabilities.supportsUserInputRequests,
+        },
+      },
+    }),
   };
 }
 
@@ -244,8 +276,65 @@ describe("RuntimeRouter", () => {
     );
   });
 
+  test("rejects cleanup requests that use runtimeConversation owned by another runtime", async () => {
+    const deleteSessionArtifacts = vi.fn(async () => undefined);
+    const router = new RuntimeRouter(
+      new RuntimeDriverRegistry([
+        createDriver({
+          runtimeId: "codex",
+          surfaceSupport: [
+            {
+              surface: "cleanup",
+              executionModes: ["oneshot"],
+              continuationPolicies: ["fresh"],
+            },
+          ],
+          runtimeStateCodec: {
+            runtimeId: "codex",
+            restorePersistedConversation: () => undefined,
+            cloneConversation: (conversation) => conversation,
+            decodeConversation: () => ({ native: { threadId: "codex-thread-1" } }),
+            encodeConversation: (payload) => ({
+              runtimeId: "codex",
+              codecVersion: "v1",
+              payload,
+            }),
+          },
+          deleteSessionArtifacts,
+        }),
+        createDriver({
+          runtimeId: "claude",
+          surfaceSupport: [],
+          runtimeStateCodec: {
+            runtimeId: "claude",
+            restorePersistedConversation: () => undefined,
+            cloneConversation: (conversation) => conversation,
+            decodeConversation: () => ({ native: { sessionId: "claude-session-1" } }),
+            encodeConversation: (payload) => ({
+              runtimeId: "claude",
+              codecVersion: "v1",
+              payload,
+            }),
+          },
+        }),
+      ]),
+    );
+
+    await expect(
+      router.deleteSessionArtifacts("codex", {
+        workDir: "C:/repo",
+        runtimeConversation: {
+          runtimeId: "claude",
+          codecVersion: "v1",
+          payload: { native: { sessionId: "claude-session-1" } },
+        },
+      }),
+    ).rejects.toThrow(/codex cannot use runtimeConversation owned by claude/i);
+    expect(deleteSessionArtifacts).not.toHaveBeenCalled();
+  });
+
   test("routes workflow requests only through drivers that declare workflow support", async () => {
-    const askWorkflow = vi.fn(async () => ({ content: "workflow ok" }));
+    const askWorkflow = vi.fn(async (_input: RuntimeWorkflowRequestContext) => ({ content: "workflow ok" }));
     const router = new RuntimeRouter(
       new RuntimeDriverRegistry([
         createDriver({
@@ -331,7 +420,7 @@ describe("RuntimeRouter", () => {
       start: async () => undefined,
       stop: async () => undefined,
     } satisfies AgentExecutor;
-    const createOneShotExecutor = vi.fn(() => executor);
+    const createOneShotExecutor = vi.fn((_context: AgentExecutionContext) => executor);
     const router = new RuntimeRouter(
       new RuntimeDriverRegistry([
         createDriver({
@@ -373,5 +462,353 @@ describe("RuntimeRouter", () => {
 
     expect(router.createOneShotExecutor(context)).toBe(executor);
     expect(createOneShotExecutor).toHaveBeenCalledWith(context);
+  });
+
+  test("omits runtimeConversation before dispatching fresh one-shot requests to drivers", () => {
+    const runtimeConversation = {
+      runtimeId: "codex",
+      codecVersion: "v1",
+      payload: { native: { threadId: "thread-1" } },
+    } as const;
+    const executor = {
+      start: async () => undefined,
+      stop: async () => undefined,
+    } satisfies AgentExecutor;
+    const createOneShotExecutor = vi.fn((_context: AgentExecutionContext) => executor);
+    const cloneConversation = vi.fn((conversation: typeof runtimeConversation) => ({
+      runtimeId: conversation.runtimeId,
+      codecVersion: conversation.codecVersion,
+      payload: structuredClone(conversation.payload),
+    }));
+    const router = new RuntimeRouter(
+      new RuntimeDriverRegistry([
+        createDriver({
+          runtimeId: "codex",
+          surfaceSupport: [
+            {
+              surface: "task",
+              executionModes: ["oneshot"],
+              continuationPolicies: ["fresh", "resume-preferred"],
+            },
+          ],
+          getCapabilities: () => interactiveCapabilities("codex"),
+          runtimeStateCodec: {
+            runtimeId: "codex",
+            restorePersistedConversation: () => undefined,
+            cloneConversation,
+            decodeConversation: () => ({ native: { threadId: "thread-1" } }),
+            encodeConversation: (payload) => ({
+              runtimeId: "codex",
+              codecVersion: "v1",
+              payload,
+            }),
+          },
+          createOneShotExecutor,
+        }),
+      ]),
+    );
+
+    router.createOneShotExecutor({
+      runId: "task-1",
+      runKind: "task",
+      prompt: "Inspect the repo",
+      runtimeId: "codex",
+      executionMode: "oneshot",
+      continuationPolicy: "fresh",
+      runtimeConversation,
+      runtimeConfig: { model: "gpt-5.5" },
+      runtime: {
+        id: "codex",
+        label: "Codex",
+        version: "test",
+        available: true,
+        command: "codex",
+      },
+      channelId: "codex-openai",
+      workDir: "C:/repo",
+      developerInstructions: "",
+      emit: () => undefined,
+      onExit: () => undefined,
+    } satisfies AgentExecutionContext);
+
+    expect(createOneShotExecutor).toHaveBeenCalledTimes(1);
+    expect(createOneShotExecutor.mock.calls[0]![0].runtimeConversation).toBeUndefined();
+  });
+
+  test("omits runtimeConversation before dispatching fresh workflow requests to drivers", async () => {
+    const runtimeConversation = {
+      runtimeId: "codex",
+      codecVersion: "v1",
+      payload: { native: { threadId: "thread-1" } },
+    } as const;
+    const askWorkflow = vi.fn(async (_input: RuntimeWorkflowRequestContext) => ({ content: "workflow ok" }));
+    const cloneConversation = vi.fn((conversation: typeof runtimeConversation) => ({
+      runtimeId: conversation.runtimeId,
+      codecVersion: conversation.codecVersion,
+      payload: structuredClone(conversation.payload),
+    }));
+    const router = new RuntimeRouter(
+      new RuntimeDriverRegistry([
+        createDriver({
+          runtimeId: "codex",
+          surfaceSupport: [
+            {
+              surface: "workflow",
+              executionModes: ["oneshot"],
+              continuationPolicies: ["fresh", "resume-preferred"],
+            },
+          ],
+          getCapabilities: () => interactiveCapabilities("codex"),
+          runtimeStateCodec: {
+            runtimeId: "codex",
+            restorePersistedConversation: () => undefined,
+            cloneConversation,
+            decodeConversation: () => ({ native: { threadId: "thread-1" } }),
+            encodeConversation: (payload) => ({
+              runtimeId: "codex",
+              codecVersion: "v1",
+              payload,
+            }),
+          },
+          askWorkflow,
+        }),
+      ]),
+    );
+
+    await router.askWorkflow({
+      requestId: "wf-fresh-1",
+      prompt: "Plan it",
+      runtimeId: "codex",
+      executionMode: "oneshot",
+      continuationPolicy: "fresh",
+      runtimeConversation,
+      runtimeConfig: { model: "gpt-5.5" },
+      runtime: {
+        id: "codex",
+        label: "Codex",
+        version: "test",
+        available: true,
+        command: "codex",
+      },
+      channelId: "codex-openai",
+      workDir: "C:/repo",
+    } satisfies RuntimeWorkflowRequestContext);
+
+    expect(askWorkflow).toHaveBeenCalledTimes(1);
+    expect(askWorkflow.mock.calls[0]![0].runtimeConversation).toBeUndefined();
+  });
+
+  test("omits runtimeConversation before dispatching fresh interactive session requests to drivers", () => {
+    const runtimeConversation = {
+      runtimeId: "codex",
+      codecVersion: "v1",
+      payload: { native: { threadId: "thread-1" } },
+    } as const;
+    const session = createInteractiveSessionStub();
+    const createInteractiveSession = vi.fn((_context: InteractiveSessionContext) => session);
+    const cloneConversation = vi.fn((conversation: typeof runtimeConversation) => ({
+      runtimeId: conversation.runtimeId,
+      codecVersion: conversation.codecVersion,
+      payload: structuredClone(conversation.payload),
+    }));
+    const router = new RuntimeRouter(
+      new RuntimeDriverRegistry([
+        createDriver({
+          runtimeId: "codex",
+          surfaceSupport: [
+            {
+              surface: "chat",
+              executionModes: ["interactive"],
+              continuationPolicies: ["fresh", "resume-preferred"],
+            },
+          ],
+          getCapabilities: () => interactiveCapabilities("codex"),
+          runtimeStateCodec: {
+            runtimeId: "codex",
+            restorePersistedConversation: () => undefined,
+            cloneConversation,
+            decodeConversation: () => ({ native: { threadId: "thread-1" } }),
+            encodeConversation: (payload) => ({
+              runtimeId: "codex",
+              codecVersion: "v1",
+              payload,
+            }),
+          },
+          createInteractiveSession,
+        }),
+      ]),
+    );
+
+    expect(
+      router.createInteractiveSession({
+        chatId: "chat-fresh-1",
+        configuredAgentId: "agent-1",
+        runtimeId: "codex",
+        executionMode: "interactive",
+        continuationPolicy: "fresh",
+        runtimeConversation,
+        runtimeConfig: { model: "gpt-5.5" },
+        runtime: {
+          id: "codex",
+          label: "Codex",
+          version: "test",
+          available: true,
+          command: "codex",
+        },
+        channelId: "codex-openai",
+        workDir: "C:/repo",
+        developerInstructions: "",
+        emit: () => undefined,
+      } satisfies InteractiveSessionContext),
+    ).toBe(session);
+
+    expect(createInteractiveSession).toHaveBeenCalledTimes(1);
+    expect(createInteractiveSession.mock.calls[0]![0].runtimeConversation).toBeUndefined();
+  });
+
+  test("passes codec-cloned runtimeConversation through to non-fresh requests", async () => {
+    const taskConversation = {
+      runtimeId: "codex",
+      codecVersion: "v1",
+      payload: { native: { threadId: "thread-task-1" } },
+    } as const;
+    const workflowConversation = {
+      runtimeId: "codex",
+      codecVersion: "v1",
+      payload: { native: { threadId: "thread-workflow-1" } },
+    } as const;
+    const interactiveConversation = {
+      runtimeId: "codex",
+      codecVersion: "v1",
+      payload: { native: { threadId: "thread-chat-1" } },
+    } as const;
+    const executor = {
+      start: async () => undefined,
+      stop: async () => undefined,
+    } satisfies AgentExecutor;
+    const session = createInteractiveSessionStub();
+    const createOneShotExecutor = vi.fn((_context: AgentExecutionContext) => executor);
+    const askWorkflow = vi.fn(async (_input: RuntimeWorkflowRequestContext) => ({ content: "workflow ok" }));
+    const createInteractiveSession = vi.fn((_context: InteractiveSessionContext) => session);
+    const cloneConversation = vi.fn((conversation: {
+      runtimeId: "codex";
+      codecVersion: "v1";
+      payload: { native: { threadId: string } };
+    }) => ({
+      runtimeId: conversation.runtimeId,
+      codecVersion: conversation.codecVersion,
+      payload: structuredClone(conversation.payload),
+    }));
+    const router = new RuntimeRouter(
+      new RuntimeDriverRegistry([
+        createDriver({
+          runtimeId: "codex",
+          surfaceSupport: [
+            {
+              surface: "task",
+              executionModes: ["oneshot"],
+              continuationPolicies: ["fresh", "resume-preferred"],
+            },
+            {
+              surface: "workflow",
+              executionModes: ["oneshot"],
+              continuationPolicies: ["fresh", "resume-preferred"],
+            },
+            {
+              surface: "chat",
+              executionModes: ["interactive"],
+              continuationPolicies: ["fresh", "resume-preferred"],
+            },
+          ],
+          getCapabilities: () => interactiveCapabilities("codex"),
+          runtimeStateCodec: {
+            runtimeId: "codex",
+            restorePersistedConversation: () => undefined,
+            cloneConversation,
+            decodeConversation: () => ({ native: { threadId: "thread-1" } }),
+            encodeConversation: (payload) => ({
+              runtimeId: "codex",
+              codecVersion: "v1",
+              payload,
+            }),
+          },
+          createOneShotExecutor,
+          askWorkflow,
+          createInteractiveSession,
+        }),
+      ]),
+    );
+
+    router.createOneShotExecutor({
+      runId: "task-resume-1",
+      runKind: "task",
+      prompt: "Inspect the repo",
+      runtimeId: "codex",
+      executionMode: "oneshot",
+      continuationPolicy: "resume-preferred",
+      runtimeConversation: taskConversation,
+      runtimeConfig: { model: "gpt-5.5" },
+      runtime: {
+        id: "codex",
+        label: "Codex",
+        version: "test",
+        available: true,
+        command: "codex",
+      },
+      channelId: "codex-openai",
+      workDir: "C:/repo",
+      developerInstructions: "",
+      emit: () => undefined,
+      onExit: () => undefined,
+    } satisfies AgentExecutionContext);
+    await router.askWorkflow({
+      requestId: "wf-resume-1",
+      prompt: "Plan it",
+      runtimeId: "codex",
+      executionMode: "oneshot",
+      continuationPolicy: "resume-preferred",
+      runtimeConversation: workflowConversation,
+      runtimeConfig: { model: "gpt-5.5" },
+      runtime: {
+        id: "codex",
+        label: "Codex",
+        version: "test",
+        available: true,
+        command: "codex",
+      },
+      channelId: "codex-openai",
+      workDir: "C:/repo",
+    } satisfies RuntimeWorkflowRequestContext);
+    router.createInteractiveSession({
+      chatId: "chat-resume-1",
+      configuredAgentId: "agent-1",
+      runtimeId: "codex",
+      executionMode: "interactive",
+      continuationPolicy: "resume-preferred",
+      runtimeConversation: interactiveConversation,
+      runtimeConfig: { model: "gpt-5.5" },
+      runtime: {
+        id: "codex",
+        label: "Codex",
+        version: "test",
+        available: true,
+        command: "codex",
+      },
+      channelId: "codex-openai",
+      workDir: "C:/repo",
+      developerInstructions: "",
+      emit: () => undefined,
+    } satisfies InteractiveSessionContext);
+
+    const oneShotContext = createOneShotExecutor.mock.calls[0]![0];
+    const workflowContext = askWorkflow.mock.calls[0]![0];
+    const interactiveContext = createInteractiveSession.mock.calls[0]![0];
+
+    expect(oneShotContext.runtimeConversation).toEqual(taskConversation);
+    expect(oneShotContext.runtimeConversation).not.toBe(taskConversation);
+    expect(workflowContext.runtimeConversation).toEqual(workflowConversation);
+    expect(workflowContext.runtimeConversation).not.toBe(workflowConversation);
+    expect(interactiveContext.runtimeConversation).toEqual(interactiveConversation);
+    expect(interactiveContext.runtimeConversation).not.toBe(interactiveConversation);
   });
 });
