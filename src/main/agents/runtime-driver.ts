@@ -4,7 +4,8 @@ import type {
   AgentRuntime,
   AgentTestEvent,
   ChatRuntimeSessionState,
-  PersistedResumeState,
+  RuntimeConversation,
+  RuntimeRequest,
   WorkflowAgentEvent,
   WorkflowAgentResponse,
 } from "../../shared/types";
@@ -17,28 +18,28 @@ export interface RuntimeSessionEvent {
   event: AgentEvent;
 }
 
-export interface InteractiveSessionContext {
+export interface InteractiveSessionSnapshot {
+  runtimeState: ChatRuntimeSessionState;
+  runtimeConversation?: RuntimeConversation;
+}
+
+export interface InteractiveSessionContext extends RuntimeRequest {
   chatId: string;
   configuredAgentId: string;
-  runtimeId: AgentId;
   runtime: AgentRuntime;
   channelId: string;
   workDir: string;
-  modelId: string;
   developerInstructions: string;
-  resumeState?: PersistedResumeState;
   emit: (event: AgentEvent) => void;
-  syncState?: (state: ChatRuntimeSessionState) => void;
+  syncState?: (state: InteractiveSessionSnapshot) => void;
 }
 
-export interface RuntimeWorkflowRequestContext {
+export interface RuntimeWorkflowRequestContext extends RuntimeRequest {
   requestId: string;
   prompt: string;
   runtime: AgentRuntime;
   channelId: string;
-  modelId: string;
   workDir: string;
-  sessionId?: string | undefined;
   onEvent?: ((event: WorkflowAgentEvent) => void) | undefined;
 }
 
@@ -51,8 +52,8 @@ export interface RuntimeChannelTestContext {
 }
 
 export interface RuntimeSessionCleanupContext {
-  sessionId: string;
   workDir: string;
+  runtimeConversation?: RuntimeConversation;
 }
 
 export interface InteractiveSession {
@@ -66,7 +67,7 @@ export interface InteractiveSession {
     expectedLastMeaningfulActivityAt: number;
     reason: "idle_timeout" | "app_shutdown" | "error";
   }): Promise<void>;
-  snapshot(): ChatRuntimeSessionState;
+  snapshot(): InteractiveSessionSnapshot;
 }
 
 export interface RuntimeDriver {

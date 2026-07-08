@@ -34,23 +34,31 @@ function baseCodexContextWithResume(workDir: string) {
     chatId: "chat-1",
     configuredAgentId: "codex-agent",
     runtimeId: "codex" as const,
+    executionMode: "interactive" as const,
+    continuationPolicy: "resume-preferred" as const,
     runtime: codexRuntime("codex"),
     channelId: "codex-openai",
     workDir,
-    modelId: "gpt-5.5",
+    runtimeConfig: { model: "gpt-5.5" },
     developerInstructions: "test",
-    resumeState: { runtimeId: "codex" as const, native: { threadId: "thread-1" } },
+    runtimeConversation: {
+      runtimeId: "codex" as const,
+      codecVersion: "v1",
+      payload: { native: { threadId: "thread-1" } },
+    },
     emit: () => undefined,
     syncState: () => undefined,
   };
 }
 
-function codexSessionOptions(clientOverrides: Partial<{
-  start: () => Promise<void>;
-  request: (method: string) => Promise<unknown>;
-  shutdown: () => Promise<void>;
-  interruptTurn: (threadId: string, turnId: string | undefined) => Promise<void>;
-}> = {}) {
+function codexSessionOptions(
+  clientOverrides: Partial<{
+    start: () => Promise<void>;
+    request: (method: string) => Promise<unknown>;
+    shutdown: () => Promise<void>;
+    interruptTurn: (threadId: string, turnId: string | undefined) => Promise<void>;
+  }> = {},
+) {
   return {
     capabilities: runtimeSessionCapabilities(),
     now: () => 1000,
@@ -88,10 +96,12 @@ describe("CodexInteractiveSession", () => {
         chatId: "chat-1",
         configuredAgentId: "default-agent",
         runtimeId: "codex",
+        executionMode: "interactive",
+        continuationPolicy: "resume-preferred",
         runtime: codexRuntime("codex"),
         channelId: "codex-openai",
         workDir: dir,
-        modelId: "default",
+        runtimeConfig: { model: "default" },
         developerInstructions: "test",
         emit: () => undefined,
         syncState: () => undefined,
@@ -105,7 +115,7 @@ describe("CodexInteractiveSession", () => {
 
     await expect(session.sendPrompt("First")).rejects.toThrow("attach failed");
     expect(client.shutdown).toHaveBeenCalledTimes(1);
-    expect(session.snapshot().attachmentState).toBe("detached");
+    expect(session.snapshot().runtimeState.attachmentState).toBe("detached");
   });
 
   test("detaches an idle Codex attachment and resumes the same thread on the next prompt", async () => {
@@ -137,10 +147,12 @@ describe("CodexInteractiveSession", () => {
         chatId: "chat-1",
         configuredAgentId: "default-agent",
         runtimeId: "codex",
+        executionMode: "interactive",
+        continuationPolicy: "resume-preferred",
         runtime: codexRuntime("codex"),
         channelId: "codex-openai",
         workDir: dir,
-        modelId: "default",
+        runtimeConfig: { model: "default" },
         developerInstructions: "test",
         emit: (event) => seen.push(event),
         syncState: () => undefined,
@@ -156,23 +168,24 @@ describe("CodexInteractiveSession", () => {
     );
 
     await session.sendPrompt("First");
-    const first = session.snapshot().resumeState;
+    const first = session.snapshot().runtimeConversation;
     expect(first).toMatchObject({
       runtimeId: "codex",
-      native: { threadId: "thread-1" },
+      codecVersion: "v1",
+      payload: { native: { threadId: "thread-1" } },
     });
-    expect(session.snapshot().attachmentState).toBe("idle");
+    expect(session.snapshot().runtimeState.attachmentState).toBe("idle");
 
     await session.detachIfStillExpired({
-      expectedGeneration: session.snapshot().attachmentGeneration,
-      expectedLastMeaningfulActivityAt: session.snapshot().lastMeaningfulActivityAt!,
+      expectedGeneration: session.snapshot().runtimeState.attachmentGeneration,
+      expectedLastMeaningfulActivityAt: session.snapshot().runtimeState.lastMeaningfulActivityAt!,
       reason: "idle_timeout",
     });
 
     await session.sendPrompt("Second");
 
     expect(client.request).toHaveBeenCalledWith("thread/resume", expect.objectContaining({ threadId: "thread-1" }));
-    expect(session.snapshot().resumeState).toEqual(first);
+    expect(session.snapshot().runtimeConversation).toEqual(first);
   });
 
   test("interrupts the active Codex turn with its scoped turn id", async () => {
@@ -193,10 +206,12 @@ describe("CodexInteractiveSession", () => {
         chatId: "chat-1",
         configuredAgentId: "default-agent",
         runtimeId: "codex",
+        executionMode: "interactive",
+        continuationPolicy: "resume-preferred",
         runtime: codexRuntime("codex"),
         channelId: "codex-openai",
         workDir: dir,
-        modelId: "default",
+        runtimeConfig: { model: "default" },
         developerInstructions: "test",
         emit: () => undefined,
         syncState: () => undefined,
@@ -209,12 +224,12 @@ describe("CodexInteractiveSession", () => {
     );
 
     await session.sendPrompt("First");
-    expect(session.snapshot().attachmentState).toBe("running");
+    expect(session.snapshot().runtimeState.attachmentState).toBe("running");
 
     await session.interrupt();
 
     expect(client.interruptTurn).toHaveBeenCalledWith("thread-1", "turn-1");
-    expect(session.snapshot().attachmentState).toBe("interrupted");
+    expect(session.snapshot().runtimeState.attachmentState).toBe("interrupted");
   });
 
   test("clears the Codex native resume handle when workDir changes", async () => {
@@ -223,6 +238,6 @@ describe("CodexInteractiveSession", () => {
 
     session.reconfigure({ ...baseCodexContextWithResume(dir), workDir: "C:/other-repo" });
 
-    expect(session.snapshot().resumeState).toBeUndefined();
+    expect(session.snapshot().runtimeConversation).toBeUndefined();
   });
 });

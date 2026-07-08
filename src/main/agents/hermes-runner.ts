@@ -81,7 +81,14 @@ export class HermesRunner {
       };
       if (typeof raw.sessionId === "string" && raw.sessionId !== this.lastSessionId) {
         this.lastSessionId = raw.sessionId;
-        this.options.onEvent({ type: "session", sessionId: raw.sessionId });
+        this.options.onEvent({
+          type: "runtime_conversation",
+          runtimeConversation: {
+            runtimeId: "hermes",
+            codecVersion: "v1",
+            payload: { sessionId: raw.sessionId },
+          },
+        });
       }
       if (raw.type === "delta" && typeof raw.content === "string") {
         this.options.onEvent({ type: "delta", content: raw.content });

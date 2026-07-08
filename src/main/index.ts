@@ -48,7 +48,6 @@ import type {
 
 const __dirname = path.dirname(fileURLToPath(import.meta.url));
 const PRODUCT_NAME = "Multi Agent Chat";
-const CHAT_HISTORY_FILE = "app-chats.json";
 const APP_DATABASE_FILE = "app.db";
 const MODEL_CHANNELS_FILE = "model-channels.json";
 const MCP_BRIDGE_FILE = "mcp-bridge.json";
@@ -249,7 +248,7 @@ function disconnectScheduledWorkflowRunner(): AppSnapshot {
 async function bootstrap(): Promise<void> {
   await app.whenReady();
   await hub.loadModelChannels(path.join(app.getPath("userData"), MODEL_CHANNELS_FILE));
-  await hub.loadPersistedState(path.join(app.getPath("userData"), APP_DATABASE_FILE), path.join(app.getPath("userData"), CHAT_HISTORY_FILE));
+  await hub.loadPersistedState(path.join(app.getPath("userData"), APP_DATABASE_FILE));
   hub.ensureBundledWorkflows(await loadBundledWorkflows(path.join(__dirname, "../shared/bundled-workflows")));
   codexChatRouter = await startCodexChatRouter({ channels: () => hub.snapshot().channels });
   setCodexChatRouterBaseUrl(codexChatRouter.baseUrl);

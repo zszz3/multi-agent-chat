@@ -22,7 +22,14 @@ describe("normalizeClaudeStreamEvent", () => {
     });
 
     expect(events).toEqual([
-      { type: "session", sessionId: "session-123" },
+      {
+        type: "runtime_conversation",
+        runtimeConversation: {
+          runtimeId: "claude",
+          codecVersion: "v1",
+          payload: { native: { sessionId: "session-123" } },
+        },
+      },
       { type: "completed", content: "Final answer" },
     ]);
   });
@@ -78,7 +85,14 @@ describe("normalizeClaudeStreamEvent", () => {
         state,
       ),
     ).toEqual([
-      { type: "session", sessionId: "session-123" },
+      {
+        type: "runtime_conversation",
+        runtimeConversation: {
+          runtimeId: "claude",
+          codecVersion: "v1",
+          payload: { native: { sessionId: "session-123" } },
+        },
+      },
       { type: "completed" },
     ]);
   });

@@ -59,5 +59,5 @@ function hasAgentConversationMessages(messages: ChatSession["messages"]): boolea
 }
 
 export function chatConfigLocked(chat: ChatSession): boolean {
-  return chat.running || Boolean(chat.sessionId) || hasAgentConversationMessages(chat.messages);
+  return chat.running || Boolean(chat.runtimeConversation) || hasAgentConversationMessages(chat.messages);
 }

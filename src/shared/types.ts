@@ -184,6 +184,27 @@ export interface CodexDefaultConfig {
 }
 
 export type ExecutionStyle = "oneshot" | "interactive";
+export type RuntimeExecutionMode = ExecutionStyle;
+export type RuntimeContinuationPolicy = "fresh" | "resume-preferred" | "resume-required";
+
+export interface RuntimeConfig {
+  model: string;
+  [key: string]: unknown;
+}
+
+export interface RuntimeConversation {
+  runtimeId: AgentId;
+  codecVersion: string;
+  payload: unknown;
+}
+
+export interface RuntimeRequest {
+  runtimeId: AgentId;
+  executionMode: RuntimeExecutionMode;
+  continuationPolicy: RuntimeContinuationPolicy;
+  runtimeConfig: RuntimeConfig;
+  runtimeConversation?: RuntimeConversation;
+}
 
 export interface RuntimeResumeCapabilities {
   supportsInProcessConversationResume: boolean;
@@ -202,32 +223,17 @@ export interface RuntimeInteractionCapabilities {
 export type InteractionRequestState = "live" | "resolved" | "expired";
 export type ApprovalDecision = "approved" | "rejected";
 
-export type PersistedResumeState =
-  | {
-      runtimeId: "codex";
-      native: { threadId: string; sessionTreeRootId?: string };
-      appContext?: { cwd?: string; modelId?: string; approvalPolicy?: string; sandboxPolicy?: unknown };
-      extensions?: Record<string, unknown>;
-    }
-  | {
-      runtimeId: "claude";
-      native: { sessionId: string; projectKey?: string; subpaths?: string[] };
-      appContext?: { cwd: string; modelId?: string; claudeConfigDir?: string; sessionStoreRef?: string };
-      extensions?: Record<string, unknown>;
-    };
-
 export interface ChatRuntimeSessionState {
   executionStyle: ExecutionStyle;
   attachmentState: "detached" | "idle" | "running" | "interrupted";
   attachmentGeneration: number;
   activeTurnId?: string;
   lastMeaningfulActivityAt?: number;
-  resumeState?: PersistedResumeState;
   capabilities: RuntimeResumeCapabilities & RuntimeInteractionCapabilities;
 }
 
 export type AgentEvent =
-  | { type: "session"; sessionId: string }
+  | { type: "runtime_conversation"; runtimeConversation: RuntimeConversation }
   | { type: "delta"; content: string }
   | { type: "meta"; content: string }
   | { type: "system"; content: string; metadata?: Record<string, unknown> }
@@ -287,8 +293,8 @@ export interface ChatSession {
   configuredAgentId: string;
   modelId: string;
   channelId?: string;
-  sessionId: string | undefined;
-  runtimeSession?: ChatRuntimeSessionState;
+  runtimeState?: ChatRuntimeSessionState;
+  runtimeConversation?: RuntimeConversation;
   running: boolean;
   messages: ChatMessage[];
   pendingAssistantMessageId: string | undefined;
@@ -310,7 +316,7 @@ export interface TaskRun {
   status: TaskRunStatus;
   progress: TaskProgress;
   running: boolean;
-  sessionId: string | undefined;
+  runtimeConversation?: RuntimeConversation;
   messages: ChatMessage[];
   pendingAssistantMessageId: string | undefined;
   lastError: string | undefined;
@@ -325,23 +331,21 @@ export interface RunTaskRequest {
   workDir?: string;
 }
 
-export interface WorkflowAgentRequest {
+export interface WorkflowAgentRequest extends RuntimeRequest {
   requestId?: string;
   prompt: string;
   configuredAgentId: string;
-  modelId?: string;
   workDir?: string;
-  sessionId?: string;
 }
 
 export interface WorkflowAgentResponse {
   content: string;
-  sessionId: string | undefined;
+  runtimeConversation?: RuntimeConversation;
 }
 
 export type WorkflowAgentEvent =
   | { requestId: string; type: "delta"; content: string }
-  | { requestId: string; type: "completed"; content: string; sessionId: string | undefined }
+  | { requestId: string; type: "completed"; content: string; runtimeConversation?: RuntimeConversation }
   | { requestId: string; type: "error"; error: string };
 
 export type AgentTeamMode = "pipeline" | "parallel" | "supervisor";
@@ -628,7 +632,7 @@ export interface WorkflowDraftState {
   contextDocument: string;
   finalReport?: string;
   runIds: string[];
-  agentSessionId: string | undefined;
+  runtimeConversation?: RuntimeConversation;
   createdAt: number;
   updatedAt: number;
 }
@@ -778,7 +782,7 @@ export interface CreateWorkflowRequest {
   contextDocument?: string;
   finalReport?: string;
   runIds?: string[];
-  agentSessionId?: string;
+  runtimeConversation?: RuntimeConversation;
   createdAt?: number;
   updatedAt?: number;
 }
@@ -806,7 +810,7 @@ export interface PatchWorkflowDraftRequest {
   runContextDocument?: string;
   contextDocument?: string;
   finalReport?: string | null;
-  agentSessionId?: string | null;
+  runtimeConversation?: RuntimeConversation | null;
   resetRunState?: boolean;
 }
 
@@ -831,7 +835,7 @@ export interface UpdateWorkflowRequest {
   runContextDocument?: string;
   contextDocument?: string;
   finalReport?: string;
-  agentSessionId?: string;
+  runtimeConversation?: RuntimeConversation;
 }
 
 export interface AppendWorkflowContextRequest {

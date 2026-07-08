@@ -64,7 +64,7 @@ describe("preload skill API", () => {
 
   test("keeps runtime session typing stable across the preload snapshot surface", () => {
     expectTypeOf<Awaited<ReturnType<MultiAgentChatApi["getSnapshot"]>>>().toEqualTypeOf<AppSnapshot>();
-    expectTypeOf<ChatSession["runtimeSession"]>().toEqualTypeOf<ChatRuntimeSessionState | undefined>();
+    expectTypeOf<ChatSession["runtimeState"]>().toEqualTypeOf<ChatRuntimeSessionState | undefined>();
     expectTypeOf<ChatSession["channelId"]>().toEqualTypeOf<string | undefined>();
   });
 });
@@ -82,7 +82,7 @@ describe("AgentHub runtime recovery wiring", () => {
       await writeFile(
         storagePath,
         JSON.stringify({
-          version: 3,
+          version: 4,
           activeChatId: "chat-1",
           workDir: dir,
           sessions: [
@@ -91,16 +91,11 @@ describe("AgentHub runtime recovery wiring", () => {
               title: "Recovered interactive chat",
               configuredAgentId: "default-agent",
               modelId: "default",
-              sessionId: "thread-restore-1",
-              runtimeSession: {
+              runtimeState: {
                 executionStyle: "interactive",
                 attachmentState: "running",
                 attachmentGeneration: 8,
                 activeTurnId: "turn-8-1",
-                resumeState: {
-                  runtimeId: "codex",
-                  native: { threadId: "thread-restore-1" },
-                },
                 capabilities: {
                   supportsInProcessConversationResume: true,
                   supportsResumeAfterDetach: true,
@@ -111,6 +106,11 @@ describe("AgentHub runtime recovery wiring", () => {
                   supportsApprovalRequests: true,
                   supportsUserInputRequests: true,
                 },
+              },
+              runtimeConversation: {
+                runtimeId: "codex",
+                codecVersion: "v1",
+                payload: { native: { threadId: "thread-restore-1" } },
               },
               createdAt: 1710000000000,
               updatedAt: 1710000000000,
@@ -144,11 +144,11 @@ describe("AgentHub runtime recovery wiring", () => {
 
       expect(sweepExpiredSessions).toHaveBeenCalledTimes(1);
       expect(sweepExpiredSessions).toHaveBeenCalledWith(Date.now());
-      expect(hub.snapshot().chats.find((chat) => chat.id === "chat-1")?.runtimeSession).toMatchObject({
+      expect(hub.snapshot().chats.find((chat) => chat.id === "chat-1")?.runtimeState).toMatchObject({
         attachmentState: "detached",
         attachmentGeneration: 0,
       });
-      expect(hub.snapshot().chats.find((chat) => chat.id === "chat-1")?.runtimeSession?.activeTurnId).toBeUndefined();
+      expect(hub.snapshot().chats.find((chat) => chat.id === "chat-1")?.runtimeState?.activeTurnId).toBeUndefined();
     } finally {
       if (hub) {
         const idleSweepTimer = (hub as any).idleSweepTimer as ReturnType<typeof setInterval> | undefined;

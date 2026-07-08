@@ -5,20 +5,22 @@ const current = {
   chatId: "chat-1",
   configuredAgentId: "codex-agent",
   runtimeId: "codex",
+  executionMode: "interactive",
+  continuationPolicy: "resume-preferred",
   runtime: { id: "codex", label: "Codex", command: "codex", version: "test", available: true },
   channelId: "codex-openai",
   workDir: "C:/repo",
-  modelId: "gpt-5.5",
+  runtimeConfig: { model: "gpt-5.5" },
   developerInstructions: "test",
   emit: () => undefined,
 } as const;
 
 describe("planSessionReconfigure", () => {
   test("treats a model change as attach-boundary but not identity-breaking", () => {
-    const plan = planSessionReconfigure(current, { ...current, modelId: "default" });
+    const plan = planSessionReconfigure(current, { ...current, runtimeConfig: { model: "default" } });
     expect(plan.invalidateResume).toBe(false);
     expect(plan.requiresSessionRecreate).toBe(false);
-    expect(plan.applyOnNextAttach).toMatchObject({ modelId: "default" });
+    expect(plan.applyOnNextAttach).toMatchObject({ runtimeConfig: { model: "default" } });
   });
 
   test("treats a workDir change as identity-breaking for native resume", () => {

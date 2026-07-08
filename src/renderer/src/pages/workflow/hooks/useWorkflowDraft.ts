@@ -152,7 +152,7 @@ export function useWorkflowDraft({
       graphReady: true,
       error: null,
       resetRunState: true,
-      agentSessionId: null,
+      runtimeConversation: null,
       finalReport: null,
     });
     setSnapshot(next);

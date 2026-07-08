@@ -1,8 +1,20 @@
-import type { AgentChannel, AgentEvent, AgentId, AgentRuntime, WorkflowAgentResponse } from "../shared/types";
+import type { Dirent } from "node:fs";
+import { readdir, rm } from "node:fs/promises";
+import os from "node:os";
+import path from "node:path";
+import type {
+  AgentChannel,
+  AgentEvent,
+  AgentId,
+  AgentRuntime,
+  RuntimeConversation,
+  RuntimeRequest,
+  WorkflowAgentResponse,
+} from "../shared/types";
 import { DEFAULT_MODEL_ID, runtimeModelId } from "../shared/models";
 import { codexEnvironmentForChannel } from "./agents/codex-env";
 import { claudeCliModelForChannel } from "./agents/claude-env";
-import { ClaudeAgentSdkAdapter } from "./agents/claude-agent-sdk";
+import { ClaudeAgentSdkAdapter, type ClaudeAgentSdkRunInput } from "./agents/claude-agent-sdk";
 import { ClaudeAgentSdkInteractive } from "./agents/claude-agent-sdk-interactive";
 import { ClaudeInteractiveSession } from "./agents/claude-interactive-session";
 import { CodexInteractiveSession } from "./agents/codex-interactive-session";
@@ -14,19 +26,20 @@ import type {
   RuntimeSessionCleanupContext,
   RuntimeWorkflowRequestContext,
 } from "./agents/runtime-driver";
-import { codexAppServerConfigArgs } from "./model-config";
+import { execCli } from "./cli-launcher";
+import { codexAppServerConfigArgs, codexHome } from "./model-config";
 
 const HERMES_AGENT_TEST_PROMPT = "Reply with OK only.";
+const WORKFLOW_AGENT_IDLE_TIMEOUT_MS = 10 * 60_000;
+const WORKFLOW_DEVELOPER_INSTRUCTIONS =
+  "You are the workflow builder and main review agent for a lightweight desktop UI. During workflow planning, interview the user one question at a time, include a recommended answer with every question, and produce only workflowGraph.upsert code when the workflow graph is ready. During completed workflow review, do not produce workflowGraph.upsert; write a Markdown Final User Report for the same user conversation and stay ready for follow-up questions.";
 
-export interface AgentExecutionContext {
+export interface AgentExecutionContext extends RuntimeRequest {
   runId: string;
   runKind: "chat" | "task";
-  agentId: AgentId;
   runtime: AgentRuntime;
   channelId: string;
-  modelId: string;
   prompt: string;
-  sessionId: string | undefined;
   workDir: string;
   developerInstructions: string;
   emit: (event: AgentEvent) => void;
@@ -51,9 +64,73 @@ interface RuntimeAgentExecutorFactoryOptions {
     method: string,
     params: Record<string, unknown>,
   ) => void;
+  runClaudeOneShot?: (input: ClaudeAgentSdkRunInput) => Promise<void>;
   askWorkflowByRuntime?: Partial<Record<AgentId, (input: RuntimeWorkflowRequestContext) => Promise<WorkflowAgentResponse>>>;
   testChannelByRuntime?: Partial<Record<AgentId, (input: RuntimeChannelTestContext) => Promise<string>>>;
   deleteSessionArtifactsByRuntime?: Partial<Record<AgentId, (input: RuntimeSessionCleanupContext) => Promise<void>>>;
+}
+
+interface CodexRuntimeConversationPayload {
+  native: {
+    threadId: string;
+    sessionTreeRootId?: string;
+  };
+  appContext?: {
+    cwd?: string;
+    modelId?: string;
+    approvalPolicy?: string;
+    sandboxPolicy?: unknown;
+  };
+  extensions?: Record<string, unknown>;
+}
+
+interface ClaudeRuntimeConversationPayload {
+  native: {
+    sessionId: string;
+    projectKey?: string;
+    subpaths?: string[];
+  };
+  appContext?: {
+    cwd?: string;
+    modelId?: string;
+    claudeConfigDir?: string;
+    sessionStoreRef?: string;
+  };
+  extensions?: Record<string, unknown>;
+}
+
+function modelFromRuntimeConfig(runtimeConfig: RuntimeRequest["runtimeConfig"]): string {
+  return runtimeConfig.model;
+}
+
+function buildRuntimeConversation(runtimeId: AgentId, payload: unknown): RuntimeConversation {
+  return {
+    runtimeId,
+    codecVersion: "v1",
+    payload,
+  };
+}
+
+function decodeCodexConversation(conversation?: RuntimeConversation): CodexRuntimeConversationPayload | undefined {
+  if (conversation?.runtimeId !== "codex") return undefined;
+  return typeof conversation.payload === "object" && conversation.payload !== null
+    ? (conversation.payload as CodexRuntimeConversationPayload)
+    : undefined;
+}
+
+function decodeClaudeConversation(conversation?: RuntimeConversation): ClaudeRuntimeConversationPayload | undefined {
+  if (conversation?.runtimeId !== "claude") return undefined;
+  return typeof conversation.payload === "object" && conversation.payload !== null
+    ? (conversation.payload as ClaudeRuntimeConversationPayload)
+    : undefined;
+}
+
+function codexThreadIdFromConversation(conversation?: RuntimeConversation): string | undefined {
+  return decodeCodexConversation(conversation)?.native.threadId;
+}
+
+function claudeSessionIdFromConversation(conversation?: RuntimeConversation): string | undefined {
+  return decodeClaudeConversation(conversation)?.native.sessionId;
 }
 
 function defaultResumeCapabilities() {
@@ -100,12 +177,101 @@ function defaultOneShotCapabilities(runtimeId: AgentId) {
   };
 }
 
+function cloneRuntimeConversation(conversation: RuntimeConversation): RuntimeConversation {
+  return {
+    runtimeId: conversation.runtimeId,
+    codecVersion: conversation.codecVersion,
+    payload: structuredClone(conversation.payload),
+  };
+}
+
+function createWorkflowAgentTimeout(input: { timeoutMs: number; onTimeout: () => void }): { refresh: () => void; clear: () => void } {
+  let timer: ReturnType<typeof setTimeout> | undefined;
+  const clear = (): void => {
+    if (!timer) return;
+    clearTimeout(timer);
+    timer = undefined;
+  };
+  const refresh = (): void => {
+    clear();
+    timer = setTimeout(input.onTimeout, input.timeoutMs);
+  };
+  refresh();
+  return { refresh, clear };
+}
+
+function claudeProjectStoragePath(workDir: string, sessionId: string): string {
+  const slug = workDir.replace(/[:\\/]/g, "-");
+  const homeDir = process.env.HOME || process.env.USERPROFILE || os.homedir();
+  return path.join(homeDir, ".claude", "projects", slug, `${sessionId}.jsonl`);
+}
+
+async function deleteCodexSessionFiles(home: string, sessionId: string): Promise<number> {
+  const root = path.join(home, "sessions");
+  let deleted = 0;
+  const visit = async (dir: string): Promise<void> => {
+    let entries: Dirent[];
+    try {
+      entries = await readdir(dir, { withFileTypes: true });
+    } catch {
+      return;
+    }
+    await Promise.all(
+      entries.map(async (entry) => {
+        const entryPath = path.join(dir, entry.name);
+        if (entry.isDirectory()) {
+          await visit(entryPath);
+          return;
+        }
+        if (!entry.isFile() || !entry.name.includes(sessionId)) return;
+        await rm(entryPath, { force: true });
+        deleted += 1;
+      }),
+    );
+  };
+  await visit(root);
+  return deleted;
+}
+
+async function deleteCodexSessionArtifacts(executable: string, runtimeConversation?: RuntimeConversation): Promise<void> {
+  const sessionId = codexThreadIdFromConversation(runtimeConversation);
+  if (!sessionId) return;
+  try {
+    await execCli({
+      executable,
+      args: ["archive", sessionId],
+      cwd: process.cwd(),
+      env: process.env,
+      timeout: 10_000,
+      windowsHide: true,
+      maxBuffer: 1024 * 64,
+    });
+  } catch (error) {
+    console.warn(`Failed to archive Codex session ${sessionId}:`, error);
+  }
+  try {
+    await deleteCodexSessionFiles(codexHome(), sessionId);
+  } catch (error) {
+    console.warn(`Failed to delete local Codex session ${sessionId}:`, error);
+  }
+}
+
+async function deleteClaudeSessionArtifacts(workDir: string, runtimeConversation?: RuntimeConversation): Promise<void> {
+  const sessionId = claudeSessionIdFromConversation(runtimeConversation);
+  if (!sessionId) return;
+  try {
+    await rm(claudeProjectStoragePath(workDir, sessionId), { force: true });
+  } catch (error) {
+    console.warn(`Failed to delete Claude session ${sessionId}:`, error);
+  }
+}
+
 async function runHermesWorkflow(
   input: RuntimeWorkflowRequestContext,
   options: RuntimeAgentExecutorFactoryOptions,
 ): Promise<WorkflowAgentResponse> {
   let content = "";
-  let sessionId = input.sessionId;
+  let runtimeConversation = input.runtimeConversation;
   let exitCode: number | null = 0;
   let stderr = "";
   let runnerError: string | undefined;
@@ -114,10 +280,10 @@ async function runHermesWorkflow(
     executable: input.runtime.command || options.executables.hermes,
     cwd: input.workDir,
     prompt: input.prompt,
-    modelId: input.modelId,
+    modelId: modelFromRuntimeConfig(input.runtimeConfig),
     onEvent: (event) => {
-      if (event.type === "session") {
-        sessionId = event.sessionId;
+      if (event.type === "runtime_conversation") {
+        runtimeConversation = event.runtimeConversation;
         return;
       }
       if (event.type === "delta") {
@@ -128,7 +294,12 @@ async function runHermesWorkflow(
       if (event.type === "completed") {
         const completedContent = typeof event.content === "string" ? event.content : content;
         if (!content && typeof event.content === "string") content = event.content;
-        input.onEvent?.({ requestId: input.requestId, type: "completed", content: completedContent.trim(), sessionId });
+        input.onEvent?.({
+          requestId: input.requestId,
+          type: "completed",
+          content: completedContent.trim(),
+          ...(runtimeConversation ? { runtimeConversation } : {}),
+        });
         return;
       }
       if (event.type === "error") {
@@ -151,7 +322,171 @@ async function runHermesWorkflow(
   if (exitCode !== 0) {
     throw new Error(`Hermes exited with ${exitCode ?? "unknown"}: ${(stderr.trim() || output || "no output").slice(0, 800)}`);
   }
-  return { content: output, sessionId };
+  return { content: output, ...(runtimeConversation ? { runtimeConversation } : {}) };
+}
+
+async function runCodexWorkflow(
+  input: RuntimeWorkflowRequestContext,
+  options: RuntimeAgentExecutorFactoryOptions,
+): Promise<WorkflowAgentResponse> {
+  const executable = input.runtime.command || options.executables.codex;
+  const channel = options.channelById(input.channelId);
+  const model = runtimeModelId(modelFromRuntimeConfig(input.runtimeConfig));
+  let settled = false;
+  let content = "";
+  let runtimeConversation = input.runtimeConversation ? cloneRuntimeConversation(input.runtimeConversation) : undefined;
+  let timeout: ReturnType<typeof createWorkflowAgentTimeout> | undefined;
+  let client: CodexRpcClient | undefined;
+
+  return new Promise<WorkflowAgentResponse>((resolve, reject) => {
+    const settle = (callback: () => void): void => {
+      if (settled) return;
+      settled = true;
+      timeout?.clear();
+      void client?.shutdown();
+      callback();
+    };
+
+    timeout = createWorkflowAgentTimeout({
+      timeoutMs: WORKFLOW_AGENT_IDLE_TIMEOUT_MS,
+      onTimeout: () => settle(() => reject(new Error("Workflow agent timed out after 10 minutes without activity"))),
+    });
+
+    client = new CodexRpcClient({
+      executable,
+      cwd: input.workDir,
+      extraArgs: codexAppServerConfigArgs(channel, modelFromRuntimeConfig(input.runtimeConfig)),
+      env: codexEnvironmentForChannel(channel),
+      onEvent: (event) => {
+        timeout?.refresh();
+        if (event.type === "delta") {
+          content += event.content;
+          input.onEvent?.({ requestId: input.requestId, type: "delta", content: event.content });
+          return;
+        }
+        if (event.type === "completed") {
+          if (!content && event.content) content = event.content;
+          input.onEvent?.({ requestId: input.requestId, type: "completed", content: content.trim(), ...(runtimeConversation ? { runtimeConversation } : {}) });
+          settle(() => resolve({ content: content.trim(), ...(runtimeConversation ? { runtimeConversation } : {}) }));
+          return;
+        }
+        if (event.type === "error") {
+          input.onEvent?.({ requestId: input.requestId, type: "error", error: event.error });
+          settle(() => reject(new Error(event.error)));
+        }
+      },
+      onRequest: (id, method, params) => {
+        if (client) options.respondToCodexServerRequest(client, id, method, params);
+      },
+      onExit: (_code, _signal, stderr) => {
+        if (settled) return;
+        settle(() => reject(new Error(stderr.trim() || "Workflow Codex agent exited before completing")));
+      },
+    });
+
+    void (async () => {
+      try {
+        await client.start();
+        const existingThreadId = codexThreadIdFromConversation(runtimeConversation);
+        const threadResult = existingThreadId
+          ? await client.request("thread/resume", {
+              threadId: existingThreadId,
+              model,
+              modelProvider: null,
+              cwd: input.workDir,
+              approvalPolicy: "never",
+              config: null,
+              baseInstructions: null,
+              developerInstructions: WORKFLOW_DEVELOPER_INSTRUCTIONS,
+            })
+          : await client.request("thread/start", {
+              model,
+              modelProvider: null,
+              profile: null,
+              cwd: input.workDir,
+              approvalPolicy: "never",
+              config: null,
+              baseInstructions: null,
+              developerInstructions: WORKFLOW_DEVELOPER_INSTRUCTIONS,
+              compactPrompt: null,
+              includeApplyPatchTool: null,
+              experimentalRawEvents: true,
+              persistExtendedHistory: true,
+            });
+
+        const threadId = (threadResult as { thread?: { id?: string } }).thread?.id ?? existingThreadId;
+        if (threadId) {
+          runtimeConversation = buildRuntimeConversation("codex", {
+            native: { threadId },
+          } satisfies CodexRuntimeConversationPayload);
+        }
+        await client.request("turn/start", {
+          threadId,
+          input: [{ type: "text", text: input.prompt, text_elements: [] }],
+        });
+      } catch (error) {
+        settle(() => reject(error instanceof Error ? error : new Error(String(error))));
+      }
+    })();
+  });
+}
+
+async function runClaudeWorkflow(
+  input: RuntimeWorkflowRequestContext,
+  options: RuntimeAgentExecutorFactoryOptions,
+  runClaudeOneShot: (input: ClaudeAgentSdkRunInput) => Promise<void>,
+): Promise<WorkflowAgentResponse> {
+  const channel = options.channelById(input.channelId);
+  const sdkModel =
+    claudeCliModelForChannel(channel, modelFromRuntimeConfig(input.runtimeConfig)) ?? modelFromRuntimeConfig(input.runtimeConfig);
+  const resumeSessionId = claudeSessionIdFromConversation(input.runtimeConversation);
+  let content = "";
+  let completedContent: string | undefined;
+  let runtimeConversation = input.runtimeConversation ? cloneRuntimeConversation(input.runtimeConversation) : undefined;
+  let errorMessage: string | undefined;
+
+  try {
+    await runClaudeOneShot({
+      prompt: input.prompt,
+      cwd: input.workDir,
+      ...(sdkModel ? { modelId: sdkModel } : {}),
+      developerInstructions: WORKFLOW_DEVELOPER_INSTRUCTIONS,
+      ...(resumeSessionId ? { resumeSessionId } : {}),
+      onEvent: (event) => {
+        if (event.type === "delta") {
+          content += event.content;
+          input.onEvent?.({ requestId: input.requestId, type: "delta", content: event.content });
+          return;
+        }
+        if (event.type === "completed" && event.content) {
+          completedContent = event.content;
+          if (!content) content = event.content;
+          return;
+        }
+        if (event.type === "runtime_conversation") {
+          runtimeConversation = cloneRuntimeConversation(event.runtimeConversation);
+          return;
+        }
+        if (event.type === "error") {
+          errorMessage = event.error;
+          input.onEvent?.({ requestId: input.requestId, type: "error", error: event.error });
+        }
+      },
+    });
+  } catch (error) {
+    throw errorMessage
+      ? new Error(errorMessage)
+      : error instanceof Error
+        ? error
+        : new Error(String(error));
+  }
+
+  const finalContent = completedContent?.trim() || content.trim();
+  if (!finalContent) {
+    throw new Error(errorMessage ?? "Claude workflow completed without assistant text.");
+  }
+  input.onEvent?.({ requestId: input.requestId, type: "completed", content: finalContent, ...(runtimeConversation ? { runtimeConversation } : {}) });
+  return { content: finalContent, ...(runtimeConversation ? { runtimeConversation } : {}) };
 }
 
 async function runHermesChannelTest(
@@ -165,9 +500,12 @@ async function runHermesChannelTest(
     {
       requestId: "agent-test",
       prompt: HERMES_AGENT_TEST_PROMPT,
+      runtimeId: input.runtime.id,
+      executionMode: "oneshot",
+      continuationPolicy: "fresh",
+      runtimeConfig: { model: input.modelId },
       runtime: input.runtime,
       channelId: input.channelId,
-      modelId: input.modelId,
       workDir: input.workDir,
       onEvent: (event) => {
         if (event.type === "delta") input.emit({ type: "assistant_delta", content: event.content });
@@ -199,6 +537,7 @@ export function createRuntimeDriverRegistry(options: RuntimeAgentExecutorFactory
   const testChannelByRuntime = options.testChannelByRuntime ?? {};
   const deleteSessionArtifactsByRuntime = options.deleteSessionArtifactsByRuntime ?? {};
   const claudeSdkAdapter = new ClaudeAgentSdkAdapter();
+  const runClaudeOneShot = options.runClaudeOneShot ?? ((input: ClaudeAgentSdkRunInput) => claudeSdkAdapter.runOneShot(input));
   const codexDriver: RuntimeDriver = {
     runtimeId: "codex",
     getCapabilities: () => ({
@@ -229,7 +568,7 @@ export function createRuntimeDriverRegistry(options: RuntimeAgentExecutorFactory
           client = new CodexRpcClient({
             executable: context.runtime.command || options.executables.codex,
             cwd: context.workDir,
-            extraArgs: codexAppServerConfigArgs(channel, context.modelId),
+            extraArgs: codexAppServerConfigArgs(channel, modelFromRuntimeConfig(context.runtimeConfig)),
             env: codexEnvironmentForChannel(channel),
             onEvent,
             onRequest: (id, method, params) => {
@@ -240,9 +579,11 @@ export function createRuntimeDriverRegistry(options: RuntimeAgentExecutorFactory
           return client;
         },
       }),
-    askWorkflow: askWorkflowByRuntime.codex,
+    askWorkflow: askWorkflowByRuntime.codex ?? ((input) => runCodexWorkflow(input, options)),
     testChannel: testChannelByRuntime.codex,
-    deleteSessionArtifacts: deleteSessionArtifactsByRuntime.codex,
+    deleteSessionArtifacts:
+      deleteSessionArtifactsByRuntime.codex ??
+      ((input) => deleteCodexSessionArtifacts(options.executables.codex, input.runtimeConversation)),
   };
   const claudeDriver: RuntimeDriver = {
     runtimeId: "claude",
@@ -259,7 +600,7 @@ export function createRuntimeDriverRegistry(options: RuntimeAgentExecutorFactory
       new ClaudeAgentExecutor(
         context,
         claudeSdkAdapter,
-        claudeCliModelForChannel(options.channelById(context.channelId), context.modelId),
+        claudeCliModelForChannel(options.channelById(context.channelId), modelFromRuntimeConfig(context.runtimeConfig)),
       ),
     createInteractiveSession: (context) =>
       new ClaudeInteractiveSession(
@@ -276,14 +617,18 @@ export function createRuntimeDriverRegistry(options: RuntimeAgentExecutorFactory
             supportsUserInputRequests: true,
           },
           resolveModelId: (interactiveContext) =>
-            claudeCliModelForChannel(options.channelById(interactiveContext.channelId), interactiveContext.modelId) ??
-            interactiveContext.modelId,
+            claudeCliModelForChannel(
+              options.channelById(interactiveContext.channelId),
+              modelFromRuntimeConfig(interactiveContext.runtimeConfig),
+            ) ?? modelFromRuntimeConfig(interactiveContext.runtimeConfig),
           sdkInteractive: new ClaudeAgentSdkInteractive(),
         },
       ),
-    askWorkflow: askWorkflowByRuntime.claude,
+    askWorkflow: askWorkflowByRuntime.claude ?? ((input) => runClaudeWorkflow(input, options, runClaudeOneShot)),
     testChannel: testChannelByRuntime.claude,
-    deleteSessionArtifacts: deleteSessionArtifactsByRuntime.claude,
+    deleteSessionArtifacts:
+      deleteSessionArtifactsByRuntime.claude ??
+      ((input) => deleteClaudeSessionArtifacts(input.workDir, input.runtimeConversation)),
   };
   const apiDriver: RuntimeDriver = {
     runtimeId: "api",
@@ -308,7 +653,7 @@ export class RuntimeAgentExecutorFactory implements AgentExecutorFactory {
   constructor(private readonly registry: RuntimeDriverRegistry) {}
 
   create(context: AgentExecutionContext): AgentExecutor {
-    return this.registry.driverFor(context.agentId).createOneShotExecutor(context);
+    return this.registry.driverFor(context.runtimeId).createOneShotExecutor(context);
   }
 }
 
@@ -322,13 +667,14 @@ class CodexAgentExecutor implements AgentExecutor {
 
   async start(): Promise<void> {
     const executable = this.context.runtime.command || this.options.executables.codex;
-    const model = runtimeModelId(this.context.modelId);
+    const model = runtimeModelId(modelFromRuntimeConfig(this.context.runtimeConfig));
     const channel = this.options.channelById(this.context.channelId);
+    const threadIdFromConversation = codexThreadIdFromConversation(this.context.runtimeConversation);
     let client: CodexRpcClient;
     client = new CodexRpcClient({
       executable,
       cwd: this.context.workDir,
-      extraArgs: codexAppServerConfigArgs(channel, this.context.modelId),
+      extraArgs: codexAppServerConfigArgs(channel, modelFromRuntimeConfig(this.context.runtimeConfig)),
       env: codexEnvironmentForChannel(channel),
       onEvent: this.context.emit,
       onRequest: (id, method, params) => {
@@ -341,9 +687,9 @@ class CodexAgentExecutor implements AgentExecutor {
     this.client = client;
 
     await client.start();
-    const threadResult = this.context.sessionId
+    const threadResult = threadIdFromConversation
       ? await client.request("thread/resume", {
-          threadId: this.context.sessionId,
+          threadId: threadIdFromConversation,
           model,
           modelProvider: null,
           cwd: this.context.workDir,
@@ -368,10 +714,17 @@ class CodexAgentExecutor implements AgentExecutor {
         });
 
     const threadId = (threadResult as { thread?: { id?: string } }).thread?.id;
-    if (threadId) this.context.emit({ type: "session", sessionId: threadId });
+    if (threadId) {
+      this.context.emit({
+        type: "runtime_conversation",
+        runtimeConversation: buildRuntimeConversation("codex", {
+          native: { threadId },
+        } satisfies CodexRuntimeConversationPayload),
+      });
+    }
 
     await client.request("turn/start", {
-      threadId: threadId ?? this.context.sessionId,
+      threadId: threadId ?? threadIdFromConversation,
       input: [{ type: "text", text: this.context.prompt, text_elements: [] }],
     });
   }
@@ -394,6 +747,7 @@ class ClaudeAgentExecutor implements AgentExecutor {
   async start(): Promise<void> {
     const abortController = new AbortController();
     this.abortController = abortController;
+    const resumeSessionId = claudeSessionIdFromConversation(this.context.runtimeConversation);
 
     try {
       await this.adapter.runOneShot({
@@ -403,7 +757,7 @@ class ClaudeAgentExecutor implements AgentExecutor {
         onEvent: this.context.emit,
         abortController,
         ...(this.resolvedModelId ? { modelId: this.resolvedModelId } : {}),
-        ...(this.context.sessionId ? { resumeSessionId: this.context.sessionId } : {}),
+        ...(resumeSessionId ? { resumeSessionId } : {}),
       });
       this.context.onExit(0);
     } catch (error) {
@@ -449,7 +803,6 @@ class ApiAgentExecutor implements AgentExecutor {
 
     const controller = new AbortController();
     this.controller = controller;
-    this.context.emit({ type: "session", sessionId: this.context.sessionId ?? this.context.runId });
 
     try {
       const response = await fetch(this.requestUrl(channel), {
@@ -489,7 +842,7 @@ class ApiAgentExecutor implements AgentExecutor {
   }
 
   private resolveModel(channel: AgentChannel): string | undefined {
-    const model = runtimeModelId(this.context.modelId);
+    const model = runtimeModelId(modelFromRuntimeConfig(this.context.runtimeConfig));
     if (model) return model;
     return channel.models.find((item) => item.id !== DEFAULT_MODEL_ID)?.id;
   }
@@ -564,7 +917,7 @@ class HermesAgentExecutor implements AgentExecutor {
       executable: this.context.runtime.command || this.options.executables.hermes,
       cwd: this.context.workDir,
       prompt: this.context.prompt,
-      modelId: this.context.modelId,
+      modelId: modelFromRuntimeConfig(this.context.runtimeConfig),
       onEvent: this.context.emit,
       onExit: (code) => {
         this.context.onExit(code);

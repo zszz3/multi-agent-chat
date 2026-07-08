@@ -74,6 +74,7 @@ import { firstWorkflowQuestionForObjective } from "../../shared/workflow-agent";
 import { formatTime } from "./app/format";
 import { loadCodexDefaultConfigFromRuntimeApi } from "./pages/runtime/runtime-utils";
 import type {
+  AgentId,
   AgentChannel,
   AgentRuntime,
   AgentTeam,
@@ -91,6 +92,10 @@ import type {
   ScheduledWorkflowStoreState,
   ScheduledWorkflowDueEvent,
 } from "../../shared/types";
+
+function runtimeConversation(runtimeId: AgentId, payload: Record<string, unknown>) {
+  return { runtimeId, codecVersion: "v1", payload };
+}
 
 const runtimes: AgentRuntime[] = [
   {
@@ -189,7 +194,6 @@ const taskRuns: TaskRun[] = [
     status: "completed",
     progress: "in_review",
     running: false,
-    sessionId: undefined,
     messages: [],
     pendingAssistantMessageId: undefined,
     lastError: undefined,
@@ -216,7 +220,6 @@ const appSnapshot: AppSnapshot = {
       modelId: "gpt-5.5",
       messages: [],
       running: false,
-      sessionId: undefined,
       pendingAssistantMessageId: undefined,
       lastError: undefined,
       createdAt: 1710000000000,
@@ -560,7 +563,6 @@ describe("ChatControls", () => {
         title: "New Codex chat",
         configuredAgentId: "repo-reviewer",
         modelId: "gpt-5.5",
-        sessionId: undefined,
         running: false,
         messages: [
           { id: "message-1", role: "user", content: "/status", timestamp: 1710000000000, local: true } as any,
@@ -628,7 +630,7 @@ describe("ChatPage", () => {
       title: "Repo chat",
       configuredAgentId: "repo-reviewer",
       modelId: "gpt-5.5",
-      sessionId: "session-1",
+      runtimeConversation: runtimeConversation("codex", { native: { threadId: "session-1" } }),
       running: false,
       messages: [
         { id: "message-1", role: "user", content: "Review this", timestamp: 1710000000000 },
@@ -672,13 +674,13 @@ describe("ChatPage", () => {
     expect(html).toContain("Codex · 2024.03.10 00:01");
   });
 
-  test("renders the provider session id as a copyable control", () => {
+  test("renders the runtime conversation state in the chat header", () => {
     const chat: ChatSession = {
       id: "chat-1",
       title: "Repo chat",
       configuredAgentId: "repo-reviewer",
       modelId: "gpt-5.5",
-      sessionId: "session-1",
+      runtimeConversation: runtimeConversation("codex", { native: { threadId: "session-1" } }),
       running: false,
       messages: [],
       pendingAssistantMessageId: undefined,
@@ -716,8 +718,8 @@ describe("ChatPage", () => {
     );
 
     expect(html).toContain("chat-session-id");
-    expect(html).toContain("title=\"Copy session id\"");
-    expect(html).toContain("session session-1");
+    expect(html).toContain("title=\"Runtime conversation linked\"");
+    expect(html).toContain("Conversation linked");
   });
 
   test("shows compact running controls in the transcript instead of the header", () => {
@@ -726,7 +728,7 @@ describe("ChatPage", () => {
       title: "Repo chat",
       configuredAgentId: "repo-reviewer",
       modelId: "gpt-5.5",
-      sessionId: "session-1",
+      runtimeConversation: runtimeConversation("codex", { native: { threadId: "session-1" } }),
       running: true,
       messages: [{ id: "message-1", role: "user", content: "Review this", timestamp: 1710000000000 }],
       pendingAssistantMessageId: undefined,
@@ -803,7 +805,7 @@ describe("Sidebar history panels", () => {
       title: "Payment review",
       configuredAgentId: "repo-reviewer",
       modelId: "gpt-5.5",
-      sessionId: "019e9143-2451-7612-a62d-e65389574d7d",
+      runtimeConversation: runtimeConversation("codex", { native: { threadId: "019e9143-2451-7612-a62d-e65389574d7d" } }),
       running: false,
       messages: [],
       pendingAssistantMessageId: undefined,
@@ -839,7 +841,7 @@ describe("Sidebar history panels", () => {
       title: "Running review",
       configuredAgentId: "repo-reviewer",
       modelId: "gpt-5.5",
-      sessionId: "session-1",
+      runtimeConversation: runtimeConversation("codex", { native: { threadId: "session-1" } }),
       running: true,
       messages: [
         { id: "message-1", role: "user", content: "Review this", timestamp: 1710000000000 },
@@ -855,7 +857,7 @@ describe("Sidebar history panels", () => {
       title: "Idle review",
       configuredAgentId: "repo-reviewer",
       modelId: "gpt-5.5",
-      sessionId: "session-2",
+      runtimeConversation: runtimeConversation("codex", { native: { threadId: "session-2" } }),
       running: false,
       messages: [
         { id: "message-3", role: "user", content: "Review this too", timestamp: 1710000000002 },
@@ -893,7 +895,6 @@ describe("Sidebar history panels", () => {
       title: "Older chat",
       configuredAgentId: "repo-reviewer",
       modelId: "gpt-5.5",
-      sessionId: undefined,
       running: false,
       messages: [],
       pendingAssistantMessageId: undefined,
@@ -906,7 +907,6 @@ describe("Sidebar history panels", () => {
       title: "Newer chat",
       configuredAgentId: "repo-reviewer",
       modelId: "gpt-5.5",
-      sessionId: undefined,
       running: false,
       messages: [],
       pendingAssistantMessageId: undefined,
@@ -951,7 +951,6 @@ describe("Sidebar history panels", () => {
             runIds: [],
             configuredAgentId: "repo-reviewer",
             modelId: "gpt-5.5",
-            agentSessionId: undefined,
             createdAt: 1710000000000,
             updatedAt: 1710000000000,
           },
@@ -1811,7 +1810,6 @@ describe("ConfigPage", () => {
       runContextDocument: "",
       contextDocument: "",
       runIds: [],
-      agentSessionId: undefined,
       createdAt: 1710000000000,
       updatedAt: 1710000000000,
     };
@@ -1958,7 +1956,6 @@ describe("ConfigPage", () => {
       runIds: [],
       configuredAgentId: "repo-reviewer",
       modelId: "gpt-5.5",
-      agentSessionId: undefined,
       createdAt: 1710000000000,
       updatedAt: 1710000000000,
     };
@@ -3323,7 +3320,6 @@ describe("WorkflowPage", () => {
             runIds: [],
             configuredAgentId: "repo-reviewer",
             modelId: "gpt-5.5",
-            agentSessionId: undefined,
             createdAt: 1710000000000,
             updatedAt: 1710000000000,
           },
@@ -3344,7 +3340,6 @@ describe("WorkflowPage", () => {
             runIds: [],
             configuredAgentId: "repo-reviewer",
             modelId: "gpt-5.5",
-            agentSessionId: undefined,
             createdAt: 1710001000000,
             updatedAt: 1710001000000,
           },
@@ -3599,7 +3594,6 @@ workflowGraph.upsert({
       runContextDocument: "",
       contextDocument: "",
       finalReport: "",
-      agentSessionId: undefined,
     };
 
     expect(workflowDraftShouldPersist(emptyDraftInput)).toBe(true);

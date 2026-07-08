@@ -1,9 +1,23 @@
 import { runtimeModelId } from "../../shared/models";
-import type { AgentEvent, ChatRuntimeSessionState, PersistedResumeState } from "../../shared/types";
-import type { InteractiveSession, InteractiveSessionContext } from "./runtime-driver";
+import type { AgentEvent, ChatRuntimeSessionState, RuntimeConversation } from "../../shared/types";
+import type { InteractiveSession, InteractiveSessionContext, InteractiveSessionSnapshot } from "./runtime-driver";
 import { ProcessLease } from "./process-lease";
 import { CodexRpcClient } from "./codex-rpc";
 import { planSessionReconfigure } from "./session-reconfigure";
+
+interface CodexRuntimeConversationPayload {
+  native: {
+    threadId: string;
+    sessionTreeRootId?: string;
+  };
+  appContext?: {
+    cwd?: string;
+    modelId?: string;
+    approvalPolicy?: string;
+    sandboxPolicy?: unknown;
+  };
+  extensions?: Record<string, unknown>;
+}
 
 interface CodexInteractiveSessionOptions {
   createCodexClient: (input: {
@@ -14,11 +28,50 @@ interface CodexInteractiveSessionOptions {
   now?: () => number;
 }
 
+function modelFromContext(context: InteractiveSessionContext): string {
+  return context.runtimeConfig.model;
+}
+
+function decodeCodexConversation(conversation?: RuntimeConversation): CodexRuntimeConversationPayload | undefined {
+  if (conversation?.runtimeId !== "codex") return undefined;
+  return typeof conversation.payload === "object" && conversation.payload !== null
+    ? (conversation.payload as CodexRuntimeConversationPayload)
+    : undefined;
+}
+
+function cloneCodexConversationPayload(payload: CodexRuntimeConversationPayload): CodexRuntimeConversationPayload {
+  return {
+    native: {
+      threadId: payload.native.threadId,
+      ...(payload.native.sessionTreeRootId !== undefined ? { sessionTreeRootId: payload.native.sessionTreeRootId } : {}),
+    },
+    ...(payload.appContext
+      ? {
+          appContext: {
+            ...(payload.appContext.cwd !== undefined ? { cwd: payload.appContext.cwd } : {}),
+            ...(payload.appContext.modelId !== undefined ? { modelId: payload.appContext.modelId } : {}),
+            ...(payload.appContext.approvalPolicy !== undefined ? { approvalPolicy: payload.appContext.approvalPolicy } : {}),
+            ...(payload.appContext.sandboxPolicy !== undefined ? { sandboxPolicy: payload.appContext.sandboxPolicy } : {}),
+          },
+        }
+      : {}),
+    ...(payload.extensions ? { extensions: { ...payload.extensions } } : {}),
+  };
+}
+
+function buildCodexConversation(payload: CodexRuntimeConversationPayload): RuntimeConversation {
+  return {
+    runtimeId: "codex",
+    codecVersion: "v1",
+    payload: cloneCodexConversationPayload(payload),
+  };
+}
+
 export class CodexInteractiveSession implements InteractiveSession {
   private readonly lease = new ProcessLease();
   private readonly now: () => number;
   private client: CodexRpcClient | undefined;
-  private resumeState: PersistedResumeState | undefined;
+  private runtimeConversation: RuntimeConversation | undefined;
   private attachmentState: ChatRuntimeSessionState["attachmentState"] = "detached";
   private attachmentGeneration = 0;
   private activeTurnId: string | undefined;
@@ -30,16 +83,18 @@ export class CodexInteractiveSession implements InteractiveSession {
     private readonly options: CodexInteractiveSessionOptions,
   ) {
     this.now = options.now ?? (() => Date.now());
-    this.resumeState = context.resumeState?.runtimeId === "codex" ? { ...context.resumeState } : undefined;
+    const payload = decodeCodexConversation(context.runtimeConversation);
+    this.runtimeConversation = payload ? buildCodexConversation(payload) : undefined;
   }
 
   reconfigure(context: InteractiveSessionContext): void {
     const plan = planSessionReconfigure(this.context, context);
     this.context = { ...this.context, ...plan.applyNow };
     if (plan.invalidateResume) {
-      this.resumeState = undefined;
-    } else if (!this.client && context.resumeState?.runtimeId === "codex") {
-      this.resumeState = { ...context.resumeState };
+      this.runtimeConversation = undefined;
+    } else if (!this.client) {
+      const payload = decodeCodexConversation(context.runtimeConversation);
+      if (payload) this.runtimeConversation = buildCodexConversation(payload);
     }
 
     const nextContext = { ...this.context, ...plan.applyOnNextAttach };
@@ -77,10 +132,12 @@ export class CodexInteractiveSession implements InteractiveSession {
 
     try {
       await client.start();
-      const threadResult = this.resumeState?.runtimeId === "codex"
+      const existingThreadId = decodeCodexConversation(this.runtimeConversation)?.native.threadId;
+      const modelId = modelFromContext(this.context);
+      const threadResult = existingThreadId
         ? await client.request("thread/resume", {
-            threadId: this.resumeState.native.threadId,
-            model: runtimeModelId(this.context.modelId),
+            threadId: existingThreadId,
+            model: runtimeModelId(modelId),
             modelProvider: null,
             cwd: this.context.workDir,
             approvalPolicy: "never",
@@ -89,7 +146,7 @@ export class CodexInteractiveSession implements InteractiveSession {
             developerInstructions: this.context.developerInstructions,
           })
         : await client.request("thread/start", {
-            model: runtimeModelId(this.context.modelId),
+            model: runtimeModelId(modelId),
             modelProvider: null,
             profile: null,
             cwd: this.context.workDir,
@@ -105,16 +162,18 @@ export class CodexInteractiveSession implements InteractiveSession {
 
       const threadId = (threadResult as { thread?: { id?: string } }).thread?.id;
       if (threadId) {
-        this.resumeState = {
-          runtimeId: "codex",
+        this.runtimeConversation = buildCodexConversation({
           native: { threadId },
           appContext: {
             cwd: this.context.workDir,
-            modelId: this.context.modelId,
+            modelId,
             approvalPolicy: "never",
           },
-        };
-        this.context.emit({ type: "session", sessionId: threadId });
+        });
+        this.context.emit({
+          type: "runtime_conversation",
+          runtimeConversation: cloneRuntimeConversation(this.runtimeConversation),
+        });
       }
 
       this.attachmentState = "idle";
@@ -166,10 +225,12 @@ export class CodexInteractiveSession implements InteractiveSession {
 
   async interrupt(): Promise<void> {
     if (!this.client) return;
+    const activeTurnId = this.activeTurnId;
     this.attachmentState = "interrupted";
+    this.activeTurnId = undefined;
     this.touch();
     this.context.syncState?.(this.snapshot());
-    await this.client.interruptTurn(this.codexThreadId(), this.activeTurnId);
+    await this.client.interruptTurn(this.codexThreadId(), activeTurnId);
   }
 
   async detach(reason: "idle_timeout" | "app_shutdown" | "error"): Promise<void> {
@@ -198,15 +259,17 @@ export class CodexInteractiveSession implements InteractiveSession {
     await this.detach(input.reason);
   }
 
-  snapshot(): ChatRuntimeSessionState {
+  snapshot(): InteractiveSessionSnapshot {
     return {
-      executionStyle: "interactive",
-      attachmentState: this.attachmentState,
-      attachmentGeneration: this.attachmentGeneration,
-      ...(this.activeTurnId ? { activeTurnId: this.activeTurnId } : {}),
-      ...(this.lastMeaningfulActivityAt !== undefined ? { lastMeaningfulActivityAt: this.lastMeaningfulActivityAt } : {}),
-      ...(this.resumeState ? { resumeState: { ...this.resumeState } } : {}),
-      capabilities: this.options.capabilities,
+      runtimeState: {
+        executionStyle: "interactive",
+        attachmentState: this.attachmentState,
+        attachmentGeneration: this.attachmentGeneration,
+        ...(this.activeTurnId ? { activeTurnId: this.activeTurnId } : {}),
+        ...(this.lastMeaningfulActivityAt !== undefined ? { lastMeaningfulActivityAt: this.lastMeaningfulActivityAt } : {}),
+        capabilities: this.options.capabilities,
+      },
+      ...(this.runtimeConversation ? { runtimeConversation: cloneRuntimeConversation(this.runtimeConversation) } : {}),
     };
   }
 
@@ -230,10 +293,11 @@ export class CodexInteractiveSession implements InteractiveSession {
   }
 
   private codexThreadId(): string {
-    if (this.resumeState?.runtimeId !== "codex") {
+    const threadId = decodeCodexConversation(this.runtimeConversation)?.native.threadId;
+    if (!threadId) {
       throw new Error("Codex interactive session is missing a thread id.");
     }
-    return this.resumeState.native.threadId;
+    return threadId;
   }
 
   private touch(): void {
@@ -246,4 +310,14 @@ export class CodexInteractiveSession implements InteractiveSession {
     this.context = this.pendingContext;
     this.pendingContext = undefined;
   }
+}
+
+function cloneRuntimeConversation(conversation: RuntimeConversation): RuntimeConversation {
+  const payload = decodeCodexConversation(conversation);
+  if (payload) return buildCodexConversation(payload);
+  return {
+    runtimeId: conversation.runtimeId,
+    codecVersion: conversation.codecVersion,
+    payload: conversation.payload,
+  };
 }

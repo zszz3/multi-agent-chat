@@ -36,18 +36,20 @@ describe("InteractiveSessionManager", () => {
       detach: vi.fn(async () => undefined),
       detachIfStillExpired: vi.fn(async () => undefined),
       snapshot: () => ({
-        executionStyle: "interactive" as const,
-        attachmentState: "idle" as const,
-        attachmentGeneration: 1,
-        capabilities: {
-          supportsInProcessConversationResume: true,
-          supportsResumeAfterDetach: false,
-          supportsResumeAfterAppRestart: false,
-          supportsTurnResume: false,
-          supportsInterrupt: true,
-          supportsContinue: true,
-          supportsApprovalRequests: false,
-          supportsUserInputRequests: false,
+        runtimeState: {
+          executionStyle: "interactive" as const,
+          attachmentState: "idle" as const,
+          attachmentGeneration: 1,
+          capabilities: {
+            supportsInProcessConversationResume: true,
+            supportsResumeAfterDetach: false,
+            supportsResumeAfterAppRestart: false,
+            supportsTurnResume: false,
+            supportsInterrupt: true,
+            supportsContinue: true,
+            supportsApprovalRequests: false,
+            supportsUserInputRequests: false,
+          },
         },
       }),
     };
@@ -72,33 +74,35 @@ describe("InteractiveSessionManager", () => {
     const manager = new InteractiveSessionManager({
       createSession: () =>
         ({
-          reconfigure: (context: { modelId: string }) => seen.push(`reconfigure:${context.modelId}`),
+          reconfigure: (context: { runtimeConfig: { model: string } }) => seen.push(`reconfigure:${context.runtimeConfig.model}`),
           ensureAttached: async () => undefined,
           sendPrompt: async (prompt: string) => seen.push(`prompt:${prompt}`),
           interrupt: async () => undefined,
           detach: async () => undefined,
           detachIfStillExpired: async () => undefined,
           snapshot: () => ({
-            executionStyle: "interactive" as const,
-            attachmentState: "detached" as const,
-            attachmentGeneration: 0,
-            capabilities: {
-              supportsInProcessConversationResume: true,
-              supportsResumeAfterDetach: true,
-              supportsResumeAfterAppRestart: true,
-              supportsTurnResume: false,
-              supportsInterrupt: true,
-              supportsContinue: true,
-              supportsApprovalRequests: true,
-              supportsUserInputRequests: true,
+            runtimeState: {
+              executionStyle: "interactive" as const,
+              attachmentState: "detached" as const,
+              attachmentGeneration: 0,
+              capabilities: {
+                supportsInProcessConversationResume: true,
+                supportsResumeAfterDetach: true,
+                supportsResumeAfterAppRestart: true,
+                supportsTurnResume: false,
+                supportsInterrupt: true,
+                supportsContinue: true,
+                supportsApprovalRequests: true,
+                supportsUserInputRequests: true,
+              },
             },
           }),
         }) as any,
       now: () => 1000,
     });
 
-    manager.getOrCreate("chat-1", { modelId: "old-model" } as any);
-    await (manager as any).dispatch("chat-1", { modelId: "new-model" } as any, (session: any) => session.sendPrompt("hello"));
+    manager.getOrCreate("chat-1", { runtimeConfig: { model: "old-model" } } as any);
+    await (manager as any).dispatch("chat-1", { runtimeConfig: { model: "new-model" } } as any, (session: any) => session.sendPrompt("hello"));
 
     expect(seen).toEqual(["reconfigure:new-model", "prompt:hello"]);
   });
@@ -106,19 +110,21 @@ describe("InteractiveSessionManager", () => {
   test("idle sweep only detaches when generation and activity timestamp still match", async () => {
     const detachIfStillExpired = vi.fn(async () => undefined);
     let snapshot = {
-      executionStyle: "interactive" as const,
-      attachmentState: "idle" as const,
-      attachmentGeneration: 4,
-      lastMeaningfulActivityAt: 1,
-      capabilities: {
-        supportsInProcessConversationResume: true,
-        supportsResumeAfterDetach: false,
-        supportsResumeAfterAppRestart: false,
-        supportsTurnResume: false,
-        supportsInterrupt: true,
-        supportsContinue: true,
-        supportsApprovalRequests: false,
-        supportsUserInputRequests: false,
+      runtimeState: {
+        executionStyle: "interactive" as const,
+        attachmentState: "idle" as const,
+        attachmentGeneration: 4,
+        lastMeaningfulActivityAt: 1,
+        capabilities: {
+          supportsInProcessConversationResume: true,
+          supportsResumeAfterDetach: false,
+          supportsResumeAfterAppRestart: false,
+          supportsTurnResume: false,
+          supportsInterrupt: true,
+          supportsContinue: true,
+          supportsApprovalRequests: false,
+          supportsUserInputRequests: false,
+        },
       },
     };
     const manager = new InteractiveSessionManager({
@@ -134,8 +140,11 @@ describe("InteractiveSessionManager", () => {
             const captured = snapshot;
             snapshot = {
               ...snapshot,
-              attachmentGeneration: 5,
-              lastMeaningfulActivityAt: 2,
+              runtimeState: {
+                ...snapshot.runtimeState,
+                attachmentGeneration: 5,
+                lastMeaningfulActivityAt: 2,
+              },
             };
             return captured;
           },
@@ -146,8 +155,11 @@ describe("InteractiveSessionManager", () => {
     await manager.getOrCreate("chat-1", {} as never);
     snapshot = {
       ...snapshot,
-      attachmentGeneration: 4,
-      lastMeaningfulActivityAt: 1,
+      runtimeState: {
+        ...snapshot.runtimeState,
+        attachmentGeneration: 4,
+        lastMeaningfulActivityAt: 1,
+      },
     };
     await manager.sweepExpiredSessions();
 

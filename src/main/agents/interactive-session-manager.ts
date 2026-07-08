@@ -28,7 +28,7 @@ export class InteractiveSessionManager {
     const managed = {
       session,
       queue: Promise.resolve(),
-      lease: new ProcessLease(session.snapshot().attachmentGeneration),
+      lease: new ProcessLease(session.snapshot().runtimeState.attachmentGeneration),
     };
     this.sessions.set(chatId, managed);
     return managed;
@@ -87,7 +87,7 @@ export class InteractiveSessionManager {
 
   async sweepExpiredSessions(now = this.options.now()): Promise<void> {
     for (const [chatId, managed] of this.sessions) {
-      const snapshot = managed.session.snapshot();
+      const snapshot = managed.session.snapshot().runtimeState;
       const lastMeaningfulActivityAt = snapshot.lastMeaningfulActivityAt;
       if (
         (snapshot.attachmentState === "idle" || snapshot.attachmentState === "interrupted") &&

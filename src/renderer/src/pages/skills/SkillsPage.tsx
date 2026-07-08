@@ -1,7 +1,7 @@
 import { useEffect, useMemo, useState } from "react";
 import { Bot, FolderOpen, MessageSquareText, Save, Send, X } from "lucide-react";
 import { ONLINE_SKILL_SOURCES, fetchOnlineSkills, type OnlineSkillResult } from "../../../../shared/online-skills";
-import type { ConfiguredAgent, ImportedSkillResult, InstalledSkillResult, SkillInstallTarget, SkillTemplate, UninstalledSkillResult } from "../../../../shared/types";
+import type { ConfiguredAgent, ImportedSkillResult, InstalledSkillResult, RuntimeConversation, SkillInstallTarget, SkillTemplate, UninstalledSkillResult } from "../../../../shared/types";
 import { resolveFindSkillConfiguredAgentId } from "../../app/agents";
 import { shouldSendComposerKey } from "../../app/composer";
 import type { Language } from "../../app/language";
@@ -101,7 +101,7 @@ export function SkillsPage({
   const [findSkillConfiguredAgentId, setFindSkillConfiguredAgentId] = useState(() => resolveFindSkillConfiguredAgentId(undefined, configuredAgents));
   const [findSkillInput, setFindSkillInput] = useState("");
   const [findSkillRunning, setFindSkillRunning] = useState(false);
-  const [findSkillAgentSessionId, setFindSkillAgentSessionId] = useState<string | undefined>();
+  const [findSkillRuntimeConversation, setFindSkillRuntimeConversation] = useState<RuntimeConversation | undefined>();
   const [findSkillMessages, setFindSkillMessages] = useState<Array<{ id: string; role: "assistant" | "user" | "error"; content: string }>>(() => [
     { id: "find-skill-welcome", role: "assistant", content: findSkillWelcome },
   ]);
@@ -123,7 +123,7 @@ export function SkillsPage({
     const nextConfiguredAgentId = resolveFindSkillConfiguredAgentId(findSkillConfiguredAgentId, configuredAgents);
     if (nextConfiguredAgentId === findSkillConfiguredAgentId) return;
     setFindSkillConfiguredAgentId(nextConfiguredAgentId);
-    setFindSkillAgentSessionId(undefined);
+    setFindSkillRuntimeConversation(undefined);
   }, [configuredAgents, findSkillConfiguredAgentId]);
 
   async function searchOnlineSkills(query: string): Promise<OnlineSkillResult[]> {
@@ -136,14 +136,21 @@ export function SkillsPage({
   async function askFindSkillAgent(text: string, candidates: OnlineSkillResult[], toolResult?: string): Promise<string | undefined> {
     const configuredAgentId = resolveFindSkillConfiguredAgentId(findSkillConfiguredAgentId, configuredAgents);
     if (!configuredAgentId) return undefined;
+    const configuredAgent = configuredAgents.find((candidate) => candidate.id === configuredAgentId);
+    if (!configuredAgent) return undefined;
     try {
       const request = {
         requestId: `find-skill-${Date.now()}-${Math.random().toString(36).slice(2)}`,
         prompt: buildFindSkillAgentPrompt(text, candidates, language, toolResult),
         configuredAgentId,
+        runtimeId: configuredAgent.runtimeAgentId,
+        executionMode: "oneshot" as const,
+        continuationPolicy: findSkillRuntimeConversation ? ("resume-preferred" as const) : ("fresh" as const),
+        runtimeConfig: { model: configuredAgent.modelId },
+        ...(findSkillRuntimeConversation ? { runtimeConversation: findSkillRuntimeConversation } : {}),
       };
-      const response = await window.multiAgentChat.askWorkflowAgent(findSkillAgentSessionId ? { ...request, sessionId: findSkillAgentSessionId } : request);
-      setFindSkillAgentSessionId(response.sessionId);
+      const response = await window.multiAgentChat.askWorkflowAgent(request);
+      setFindSkillRuntimeConversation(response.runtimeConversation);
       return response.content.trim() || undefined;
     } catch {
       return undefined;
@@ -154,7 +161,7 @@ export function SkillsPage({
     const nextConfiguredAgentId = resolveFindSkillConfiguredAgentId(configuredAgentId, configuredAgents);
     if (nextConfiguredAgentId === findSkillConfiguredAgentId) return;
     setFindSkillConfiguredAgentId(nextConfiguredAgentId);
-    setFindSkillAgentSessionId(undefined);
+    setFindSkillRuntimeConversation(undefined);
   }
 
   function updateFindSkillCandidates(candidates: OnlineSkillResult[]): void {

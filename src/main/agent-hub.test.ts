@@ -5,7 +5,7 @@ import { describe, expect, test, vi } from "vitest";
 import { AgentHub, createWorkflowAgentTimeout } from "./agent-hub";
 import { DEFAULT_MODEL_ID } from "../shared/models";
 import { projectNodeStates } from "../shared/workflow-run";
-import type { AgentChannel, AgentId, ChatRuntimeSessionState, ConfiguredAgent } from "../shared/types";
+import type { AgentChannel, AgentId, ChatRuntimeSessionState, ConfiguredAgent, RuntimeConversation } from "../shared/types";
 import { createRuntimeDriverRegistry, RuntimeDriverRegistry } from "./agent-executor";
 import type { AgentExecutionContext, AgentExecutorFactory } from "./agent-executor";
 import { claudeCliModelForChannel } from "./agents/claude-env";
@@ -97,6 +97,14 @@ function runtimeSessionCapabilities(): ChatRuntimeSessionState["capabilities"] {
     supportsContinue: true,
     supportsApprovalRequests: true,
     supportsUserInputRequests: true,
+  };
+}
+
+function runtimeConversation(runtimeId: AgentId, payload: Record<string, unknown>): RuntimeConversation {
+  return {
+    runtimeId,
+    codecVersion: "v1",
+    payload,
   };
 }
 
@@ -197,7 +205,10 @@ test("api runtime advertises oneshot chat style", () => {
 });
 
 test("askWorkflowAgent delegates to the registered runtime driver hook", async () => {
-  const workflow = vi.fn(async () => ({ content: "hermes workflow", sessionId: "hermes-session-1" }));
+  const workflow = vi.fn(async () => ({
+    content: "hermes workflow",
+    runtimeConversation: runtimeConversation("hermes", { sessionId: "hermes-session-1" }),
+  }));
   const hub = new AgentHub(
     { codex: "missing-codex-for-test", claude: "missing-claude-for-test", hermes: "missing-hermes-for-test" } as any,
     undefined,
@@ -232,9 +243,16 @@ test("askWorkflowAgent delegates to the registered runtime driver hook", async (
   const response = await hub.askWorkflowAgent({
     prompt: "Plan the repo",
     configuredAgentId: "hermes-agent",
+    runtimeId: "hermes",
+    executionMode: "oneshot",
+    continuationPolicy: "fresh",
+    runtimeConfig: { model: DEFAULT_MODEL_ID },
   });
 
-  expect(response).toEqual({ content: "hermes workflow", sessionId: "hermes-session-1" });
+  expect(response).toEqual({
+    content: "hermes workflow",
+    runtimeConversation: runtimeConversation("hermes", { sessionId: "hermes-session-1" }),
+  });
   expect(workflow).toHaveBeenCalled();
 });
 
@@ -546,7 +564,10 @@ describe("AgentHub chat sessions", () => {
       create: (context: any) => ({
         start: async () => {
           events.push(context);
-          context.emit({ type: "session", sessionId: "executor-session" });
+          context.emit({
+            type: "runtime_conversation",
+            runtimeConversation: runtimeConversation("codex", { native: { threadId: "executor-session" } }),
+          });
           context.emit({ type: "delta", content: "executor response" });
           context.emit({ type: "completed" });
         },
@@ -579,13 +600,13 @@ describe("AgentHub chat sessions", () => {
 
     expect(events).toHaveLength(1);
     expect(events[0]).toMatchObject({
-      agentId: "codex",
+      runtimeId: "codex",
       prompt: "Hello",
       runKind: "chat",
       developerInstructions: expect.stringContaining("desktop chat UI"),
     });
     const activeChat = hub.snapshot().chats.find((chat) => chat.id === chatId);
-    expect(activeChat?.sessionId).toBe("executor-session");
+    expect(activeChat?.runtimeConversation).toEqual(runtimeConversation("codex", { native: { threadId: "executor-session" } }));
     expect(activeChat?.messages).toEqual([
       expect.objectContaining({ role: "user", content: "Hello" }),
       expect.objectContaining({ role: "assistant", content: "executor response" }),
@@ -598,7 +619,7 @@ describe("AgentHub chat sessions", () => {
     await writeFile(
       storagePath,
       JSON.stringify({
-        version: 3,
+        version: 4,
         activeChatId: "chat-1",
         workDir: dir,
         sessions: [
@@ -607,15 +628,10 @@ describe("AgentHub chat sessions", () => {
             title: "Restored interactive chat",
             configuredAgentId: "default-agent",
             modelId: DEFAULT_MODEL_ID,
-            sessionId: "thread-restore-1",
-            runtimeSession: {
+            runtimeState: {
               executionStyle: "interactive",
               attachmentState: "detached",
               attachmentGeneration: 0,
-              resumeState: {
-                runtimeId: "codex",
-                native: { threadId: "thread-restore-1" },
-              },
               capabilities: {
                 supportsInProcessConversationResume: true,
                 supportsResumeAfterDetach: false,
@@ -626,6 +642,11 @@ describe("AgentHub chat sessions", () => {
                 supportsApprovalRequests: false,
                 supportsUserInputRequests: false,
               },
+            },
+            runtimeConversation: {
+              runtimeId: "codex",
+              codecVersion: "v1",
+              payload: { native: { threadId: "thread-restore-1" } },
             },
             createdAt: 1710000000000,
             updatedAt: 1710000000000,
@@ -663,7 +684,7 @@ describe("AgentHub chat sessions", () => {
     await hub.loadPersistedState(storagePath);
 
     expect(createInteractiveSession).not.toHaveBeenCalled();
-    expect(hub.snapshot().chats.find((chat) => chat.id === "chat-1")?.runtimeSession?.attachmentState).toBe("detached");
+    expect(hub.snapshot().chats.find((chat) => chat.id === "chat-1")?.runtimeState?.attachmentState).toBe("detached");
   });
 
   test("routes interactive chats through the shared session manager when a driver supports it", async () => {
@@ -675,12 +696,17 @@ describe("AgentHub chat sessions", () => {
         stop: async () => undefined,
       }),
     };
+    let currentConversation: RuntimeConversation | undefined;
     const session = {
       reconfigure: vi.fn(),
       ensureAttached: vi.fn(async () => undefined),
       sendPrompt: vi.fn(async (prompt: string) => {
         expect(prompt).toBe("Hello");
-        interactiveContext.emit({ type: "session", sessionId: "interactive-session-1" });
+        currentConversation = runtimeConversation("codex", { native: { threadId: "interactive-session-1" } });
+        interactiveContext.emit({
+          type: "runtime_conversation",
+          runtimeConversation: currentConversation,
+        });
         interactiveContext.emit({ type: "delta", content: "interactive response" });
         interactiveContext.emit({ type: "completed" });
       }),
@@ -688,19 +714,22 @@ describe("AgentHub chat sessions", () => {
       detach: vi.fn(async () => undefined),
       detachIfStillExpired: vi.fn(async () => undefined),
       snapshot: () => ({
-        executionStyle: "interactive" as const,
-        attachmentState: "idle" as const,
-        attachmentGeneration: 1,
-        capabilities: {
-          supportsInProcessConversationResume: true,
-          supportsResumeAfterDetach: false,
-          supportsResumeAfterAppRestart: false,
-          supportsTurnResume: false,
-          supportsInterrupt: true,
-          supportsContinue: true,
-          supportsApprovalRequests: false,
-          supportsUserInputRequests: false,
+        runtimeState: {
+          executionStyle: "interactive" as const,
+          attachmentState: "idle" as const,
+          attachmentGeneration: 1,
+          capabilities: {
+            supportsInProcessConversationResume: true,
+            supportsResumeAfterDetach: false,
+            supportsResumeAfterAppRestart: false,
+            supportsTurnResume: false,
+            supportsInterrupt: true,
+            supportsContinue: true,
+            supportsApprovalRequests: false,
+            supportsUserInputRequests: false,
+          },
         },
+        ...(currentConversation ? { runtimeConversation: currentConversation } : {}),
       }),
     };
     let interactiveContext: any;
@@ -741,7 +770,7 @@ describe("AgentHub chat sessions", () => {
     );
 
     expect(session.sendPrompt).toHaveBeenCalledWith("Hello");
-    expect(activeChat?.sessionId).toBe("interactive-session-1");
+    expect(activeChat?.runtimeConversation).toEqual(runtimeConversation("codex", { native: { threadId: "interactive-session-1" } }));
     expect(activeChat?.messages).toEqual([
       expect.objectContaining({ role: "user", content: "Hello" }),
       expect.objectContaining({ role: "assistant", content: "interactive response" }),
@@ -812,7 +841,10 @@ describe("AgentHub chat sessions", () => {
               },
               sendUserMessage: async (content: string) => {
                 sent.push(content);
-                forwardEvent?.({ type: "session", sessionId: "claude-session-1" });
+                forwardEvent?.({
+                  type: "runtime_conversation",
+                  runtimeConversation: runtimeConversation("claude", { native: { sessionId: "claude-session-1" } }),
+                });
                 forwardEvent?.({ type: "completed", content: `reply:${content}` });
               },
               interrupt: async () => undefined,
@@ -840,11 +872,11 @@ describe("AgentHub chat sessions", () => {
       () => hub.snapshot().chats.find((chat) => chat.id === chatId),
       (chat) => chat?.running === false,
     );
-    expect(activeChat?.runtimeSession).toMatchObject({
+    expect(activeChat?.runtimeState).toMatchObject({
       executionStyle: "interactive",
       attachmentState: "idle",
-      resumeState: { runtimeId: "claude", native: { sessionId: "claude-session-1" } },
     });
+    expect(activeChat?.runtimeConversation).toMatchObject(runtimeConversation("claude", { native: { sessionId: "claude-session-1" } }));
 
     await hub.sendPrompt("second", chatId);
     activeChat = await waitFor(
@@ -903,7 +935,7 @@ describe("AgentHub chat sessions", () => {
           new ClaudeInteractiveSession(context, {
             capabilities: runtimeSessionCapabilities(),
             resolveModelId: (interactiveContext) =>
-              claudeCliModelForChannel(deepseekClaudeChannel, interactiveContext.modelId) ?? interactiveContext.modelId,
+              claudeCliModelForChannel(deepseekClaudeChannel, interactiveContext.runtimeConfig.model) ?? interactiveContext.runtimeConfig.model,
             sdkInteractive: {
               isAttached: () => attached,
               attach: async (input) => {
@@ -912,7 +944,10 @@ describe("AgentHub chat sessions", () => {
                 forwardEvent = input.onEvent as (event: { type: string; [key: string]: unknown }) => void;
               },
               sendUserMessage: async (content: string) => {
-                forwardEvent?.({ type: "session", sessionId: "claude-session-1" });
+                forwardEvent?.({
+                  type: "runtime_conversation",
+                  runtimeConversation: runtimeConversation("claude", { native: { sessionId: "claude-session-1" } }),
+                });
                 forwardEvent?.({ type: "completed", content: `reply:${content}` });
               },
               interrupt: async () => undefined,
@@ -1023,7 +1058,10 @@ describe("AgentHub chat sessions", () => {
       }),
       sendPrompt: vi.fn(async () => {
         promptStarted = true;
-        interactiveContext.emit({ type: "session", sessionId: "interactive-session-1" });
+        interactiveContext.emit({
+          type: "runtime_conversation",
+          runtimeConversation: runtimeConversation("codex", { native: { threadId: "interactive-session-1" } }),
+        });
         sessionState.attachmentState = "running";
         await new Promise<void>((resolve) => {
           releasePrompt = resolve;
@@ -1035,7 +1073,7 @@ describe("AgentHub chat sessions", () => {
       }),
       detach: vi.fn(async () => undefined),
       detachIfStillExpired: vi.fn(async () => undefined),
-      snapshot: () => sessionState,
+      snapshot: () => ({ runtimeState: sessionState }),
     };
     const runtimeDrivers = new RuntimeDriverRegistry([
       {
@@ -1108,8 +1146,8 @@ describe("AgentHub chat sessions", () => {
     );
 
     expect(activeChat?.lastError).toContain("turn/start: turn failed");
-    expect(activeChat?.runtimeSession?.attachmentState).toBe("idle");
-    expect(activeChat?.runtimeSession?.activeTurnId).toBeUndefined();
+    expect(activeChat?.runtimeState?.attachmentState).toBe("idle");
+    expect(activeChat?.runtimeState?.activeTurnId).toBeUndefined();
   });
 
   test("disposes interactive sessions when deleting a chat after completion", async () => {
@@ -1123,18 +1161,20 @@ describe("AgentHub chat sessions", () => {
       detach: vi.fn(async () => undefined),
       detachIfStillExpired: vi.fn(async () => undefined),
       snapshot: () => ({
-        executionStyle: "interactive" as const,
-        attachmentState: "idle" as const,
-        attachmentGeneration: 1,
-        capabilities: {
-          supportsInProcessConversationResume: true,
-          supportsResumeAfterDetach: false,
-          supportsResumeAfterAppRestart: false,
-          supportsTurnResume: false,
-          supportsInterrupt: true,
-          supportsContinue: true,
-          supportsApprovalRequests: false,
-          supportsUserInputRequests: false,
+        runtimeState: {
+          executionStyle: "interactive" as const,
+          attachmentState: "idle" as const,
+          attachmentGeneration: 1,
+          capabilities: {
+            supportsInProcessConversationResume: true,
+            supportsResumeAfterDetach: false,
+            supportsResumeAfterAppRestart: false,
+            supportsTurnResume: false,
+            supportsInterrupt: true,
+            supportsContinue: true,
+            supportsApprovalRequests: false,
+            supportsUserInputRequests: false,
+          },
         },
       }),
     };
@@ -1237,6 +1277,44 @@ describe("AgentHub chat sessions", () => {
     }
   });
 
+  test("passes runtimeConversation into driver cleanup when deleting a chat", async () => {
+    const deleteSessionArtifacts = vi.fn(async () => undefined);
+    const runtimeDrivers = new RuntimeDriverRegistry([
+      {
+        runtimeId: "codex",
+        getCapabilities: () => oneshotChatCapabilities("codex"),
+        createOneShotExecutor: () => ({
+          start: async () => undefined,
+          stop: async () => undefined,
+        }),
+        deleteSessionArtifacts,
+      } as any,
+    ]);
+    const hub = new AgentHub(
+      { codex: "missing-codex-for-test", claude: "missing-claude-for-test" },
+      undefined,
+      runtimeDrivers,
+    );
+    (hub as any).runtimes.set("codex", {
+      id: "codex",
+      label: "Codex",
+      command: "codex",
+      version: "test",
+      available: true,
+    });
+
+    const chatId = hub.snapshot().activeChatId!;
+    const chat = (hub as any).chats.get(chatId);
+    chat.runtimeConversation = runtimeConversation("codex", { native: { threadId: "cleanup-thread-1" } });
+
+    await hub.deleteChat(chatId);
+
+    expect(deleteSessionArtifacts).toHaveBeenCalledWith({
+      runtimeConversation: runtimeConversation("codex", { native: { threadId: "cleanup-thread-1" } }),
+      workDir: expect.any(String),
+    });
+  });
+
   test("tests Claude configured agents through the official SDK one-shot path without deleting local session files", async () => {
     const homeDir = await mkdtemp(path.join(os.tmpdir(), "multi-agent-chat-claude-sdk-test-home-"));
     const workDir = path.join(homeDir, "workspace");
@@ -1281,7 +1359,10 @@ describe("AgentHub chat sessions", () => {
     });
 
     const runOneShot = vi.fn(async (input: any) => {
-      input.onEvent({ type: "session", sessionId });
+      input.onEvent({
+        type: "runtime_conversation",
+        runtimeConversation: runtimeConversation("claude", { native: { sessionId } }),
+      });
       input.onEvent({ type: "delta", content: "SDK ok" });
       input.onEvent({ type: "completed", content: "SDK ok" });
     });
@@ -1394,7 +1475,9 @@ fs.writeFileSync(${JSON.stringify(argsPath)}, process.argv.slice(2).join("\\n") 
     const hub = new AgentHub({ codex: executable, claude: "missing-claude-for-test" });
     const chatId = hub.snapshot().activeChatId!;
     const chat = (hub as any).chats.get(chatId);
-    chat.sessionId = "019e9143-2451-7612-a62d-e65389574d7d";
+    chat.runtimeConversation = runtimeConversation("codex", {
+      native: { threadId: "019e9143-2451-7612-a62d-e65389574d7d" },
+    });
 
     const snapshot = await (hub as any).deleteChat(chatId);
 
@@ -1417,7 +1500,7 @@ fs.writeFileSync(${JSON.stringify(argsPath)}, process.argv.slice(2).join("\\n") 
       const hub = new AgentHub({ codex: executable, claude: "missing-claude-for-test" });
       const chatId = hub.snapshot().activeChatId!;
       const chat = (hub as any).chats.get(chatId);
-      chat.sessionId = sessionId;
+      chat.runtimeConversation = runtimeConversation("codex", { native: { threadId: sessionId } });
 
       await (hub as any).deleteChat(chatId);
 
@@ -1462,7 +1545,7 @@ fs.writeFileSync(${JSON.stringify(argsPath)}, process.argv.slice(2).join("\\n") 
       hub.setWorkDir(workDir);
       const chat = hub.createChat("claude-agent");
       const state = (hub as any).chats.get(chat.id);
-      state.sessionId = sessionId;
+      state.runtimeConversation = runtimeConversation("claude", { native: { sessionId } });
 
       await (hub as any).deleteChat(chat.id);
 
@@ -1546,7 +1629,7 @@ fs.writeFileSync(${JSON.stringify(argsPath)}, process.argv.slice(2).join("\\n") 
     await hub.sendPrompt("Use the selected model", chatId);
 
     await waitFor(() => contexts, (items) => items.length === 1);
-    expect(contexts[0]?.modelId).toBe("gpt-5.5");
+    expect(contexts[0]?.runtimeConfig?.model).toBe("gpt-5.5");
   });
 
   test("changes the selected channel before a conversation starts", async () => {
@@ -1642,35 +1725,120 @@ fs.writeFileSync(${JSON.stringify(argsPath)}, process.argv.slice(2).join("\\n") 
     const hub = createHubWithCodexAndClaudeAgents();
     const chat = hub.createChat("codex-agent");
     const raw = (hub as any).chats.get(chat.id);
-    raw.sessionId = "thread-1";
-    raw.runtimeSession = {
+    raw.runtimeState = {
       executionStyle: "interactive",
       attachmentState: "idle",
       attachmentGeneration: 1,
-      resumeState: { runtimeId: "codex", native: { threadId: "thread-1" } },
       capabilities: runtimeSessionCapabilities(),
     };
+    raw.runtimeConversation = runtimeConversation("codex", { native: { threadId: "thread-1" } });
     raw.messages.push({ id: "m-1", role: "assistant", content: "hello", timestamp: 1 });
 
     hub.setChatAgent(chat.id, "claude-agent");
 
     expect(hub.snapshot().chats.find((item) => item.id === chat.id)).toMatchObject({
       configuredAgentId: "claude-agent",
-      sessionId: undefined,
     });
-    expect(hub.snapshot().chats.find((item) => item.id === chat.id)?.runtimeSession?.resumeState).toBeUndefined();
+    expect(hub.snapshot().chats.find((item) => item.id === chat.id)?.runtimeConversation).toBeUndefined();
   });
 
-  test("stores agent session ids without adding transcript messages", () => {
+  test("stores runtime conversations without adding transcript messages", () => {
     const hub = new AgentHub();
     const chatId = hub.snapshot().activeChatId!;
     const chat = (hub as any).chats.get(chatId);
 
-    (hub as any).handleAgentEvent(chat, { type: "session", sessionId: "session-123" });
+    (hub as any).handleAgentEvent(chat, {
+      type: "runtime_conversation",
+      runtimeConversation: runtimeConversation("codex", { native: { threadId: "session-123" } }),
+    });
 
     const activeChat = hub.snapshot().chats.find((item) => item.id === chatId);
-    expect(activeChat?.sessionId).toBe("session-123");
+    expect(activeChat?.runtimeConversation).toEqual(runtimeConversation("codex", { native: { threadId: "session-123" } }));
     expect(activeChat?.messages).toEqual([]);
+  });
+
+  test("clears stale runtimeConversation after identity-breaking interactive reconfigure fails before a new conversation is emitted", async () => {
+    let interactiveContext: any;
+    let currentConversation: RuntimeConversation | undefined;
+    let currentWorkDir = "C:/repo";
+    let sendCount = 0;
+    const sessionState: ChatRuntimeSessionState = {
+      executionStyle: "interactive",
+      attachmentState: "idle",
+      attachmentGeneration: 1,
+      capabilities: runtimeSessionCapabilities(),
+    };
+    const session = {
+      reconfigure: vi.fn((context: any) => {
+        if (context.workDir !== currentWorkDir) {
+          currentWorkDir = context.workDir;
+          currentConversation = undefined;
+        }
+      }),
+      ensureAttached: vi.fn(async () => {
+        sessionState.attachmentState = "idle";
+      }),
+      sendPrompt: vi.fn(async () => {
+        sendCount += 1;
+        if (sendCount === 1) {
+          currentConversation = runtimeConversation("codex", { native: { threadId: "interactive-session-1" } });
+          interactiveContext.emit({
+            type: "runtime_conversation",
+            runtimeConversation: currentConversation,
+          });
+          interactiveContext.emit({ type: "completed", content: "First reply" });
+          return;
+        }
+        throw new Error("turn/start: turn failed");
+      }),
+      interrupt: vi.fn(async () => undefined),
+      detach: vi.fn(async () => undefined),
+      detachIfStillExpired: vi.fn(async () => undefined),
+      snapshot: () => ({
+        runtimeState: sessionState,
+        ...(currentConversation ? { runtimeConversation: currentConversation } : {}),
+      }),
+    };
+    const runtimeDrivers = new RuntimeDriverRegistry([
+      {
+        runtimeId: "codex",
+        getCapabilities: () => interactiveChatCapabilities("codex"),
+        createOneShotExecutor: () => ({
+          start: async () => {
+            throw new Error("driver one-shot path should not run");
+          },
+          stop: async () => undefined,
+        }),
+        createInteractiveSession: (context: any) => {
+          interactiveContext = context;
+          currentWorkDir = context.workDir;
+          return session;
+        },
+      } as any,
+    ]);
+    const hub = new AgentHub(
+      { codex: "codex-for-test", claude: "missing-claude-for-test" },
+      undefined,
+      runtimeDrivers,
+    );
+    (hub as any).runtimes.set("codex", {
+      id: "codex",
+      label: "Codex",
+      command: "codex",
+      version: "test",
+      available: true,
+    });
+    const chatId = hub.snapshot().activeChatId!;
+
+    await hub.sendPrompt("Hello", chatId);
+    expect(hub.snapshot().chats.find((item) => item.id === chatId)?.runtimeConversation).toEqual(
+      runtimeConversation("codex", { native: { threadId: "interactive-session-1" } }),
+    );
+
+    hub.setWorkDir("C:/other-repo");
+    await hub.sendPrompt("Retry", chatId);
+
+    expect(hub.snapshot().chats.find((item) => item.id === chatId)?.runtimeConversation).toBeUndefined();
   });
 
   test("restoreChatState keeps a stored channel override only when it still matches the configured runtime", () => {
@@ -1757,6 +1925,8 @@ fs.writeFileSync(${JSON.stringify(argsPath)}, process.argv.slice(2).join("\\n") 
     const hub = new AgentHub({ codex: fake.executable, claude: "missing-claude-for-test" });
     addConfiguredAgents(hub, [configuredAgent("claude-agent", { runtimeAgentId: "claude", name: "Claude Agent" })]);
     const chatId = hub.snapshot().activeChatId!;
+    ((hub as any).chats.get(chatId) as { runtimeConversation?: ReturnType<typeof runtimeConversation> }).runtimeConversation =
+      runtimeConversation("codex", { native: { threadId: "status-thread-1" } });
 
     await hub.sendPrompt("/status", chatId);
     hub.setChatAgent(chatId, "claude-agent");
@@ -1780,11 +1950,12 @@ fs.writeFileSync(${JSON.stringify(argsPath)}, process.argv.slice(2).join("\\n") 
     expect(activeChat?.messages.at(-1)?.content).toContain("Plugins: 3 total, 1 enabled, 2 installed");
     expect(activeChat?.messages.at(-1)?.content).toContain("MCP servers: 1");
 
-    const calls = (await readFile(fake.callsPath, "utf8")).trim().split("\n").map((line) => JSON.parse(line) as { method: string });
+    const calls = (await readFile(fake.callsPath, "utf8")).trim().split("\n").map((line) => JSON.parse(line) as { method: string; params?: any });
     expect(calls.map((call) => call.method)).toEqual(
       expect.arrayContaining(["initialize", "config/read", "model/list", "plugin/list", "mcpServerStatus/list"]),
     );
     expect(calls.map((call) => call.method)).not.toContain("turn/start");
+    expect(calls.find((call) => call.method === "mcpServerStatus/list")?.params?.threadId ?? null).toBeNull();
   });
 
   test("lists the full Codex plugin catalog through app-server RPC", async () => {
@@ -1898,12 +2069,24 @@ fs.writeFileSync(${JSON.stringify(argsPath)}, process.argv.slice(2).join("\\n") 
       prompt: "You are a Loop Engineering Agent. Ask one question.",
       configuredAgentId: "default-agent",
       workDir: dir,
+      runtimeId: "codex",
+      executionMode: "oneshot",
+      continuationPolicy: "fresh",
+      runtimeConfig: { model: DEFAULT_MODEL_ID },
     }, (event: any) => events.push(event));
 
-    expect(response).toEqual({ content: "artifact-1", sessionId: "thread-1" });
+    expect(response).toEqual({
+      content: "artifact-1",
+      runtimeConversation: runtimeConversation("codex", { native: { threadId: "thread-1" } }),
+    });
     expect(events).toEqual([
       { requestId: "workflow-test", type: "delta", content: "artifact-1" },
-      { requestId: "workflow-test", type: "completed", content: "artifact-1", sessionId: "thread-1" },
+      {
+        requestId: "workflow-test",
+        type: "completed",
+        content: "artifact-1",
+        runtimeConversation: runtimeConversation("codex", { native: { threadId: "thread-1" } }),
+      },
     ]);
     const after = hub.snapshot();
     expect(after.chats).toHaveLength(before.chats.length);
@@ -1927,7 +2110,10 @@ fs.writeFileSync(${JSON.stringify(argsPath)}, process.argv.slice(2).join("\\n") 
     });
 
     const runOneShot = vi.fn(async (input: any) => {
-      input.onEvent({ type: "session", sessionId: "claude-session-7" });
+      input.onEvent({
+        type: "runtime_conversation",
+        runtimeConversation: runtimeConversation("claude", { native: { sessionId: "claude-session-7" } }),
+      });
       input.onEvent({ type: "delta", content: "workflow-sdk" });
       input.onEvent({ type: "completed", content: "workflow-sdk" });
     });
@@ -1940,14 +2126,26 @@ fs.writeFileSync(${JSON.stringify(argsPath)}, process.argv.slice(2).join("\\n") 
         prompt: "Plan the repo",
         configuredAgentId: "claude-agent",
         workDir: dir,
+        runtimeId: "claude",
+        executionMode: "oneshot",
+        continuationPolicy: "fresh",
+        runtimeConfig: { model: DEFAULT_MODEL_ID },
       },
       (event: any) => events.push(event),
     );
 
-    expect(response).toEqual({ content: "workflow-sdk", sessionId: "claude-session-7" });
+    expect(response).toEqual({
+      content: "workflow-sdk",
+      runtimeConversation: runtimeConversation("claude", { native: { sessionId: "claude-session-7" } }),
+    });
     expect(events).toEqual([
       { requestId: "claude-workflow-test", type: "delta", content: "workflow-sdk" },
-      { requestId: "claude-workflow-test", type: "completed", content: "workflow-sdk", sessionId: "claude-session-7" },
+      {
+        requestId: "claude-workflow-test",
+        type: "completed",
+        content: "workflow-sdk",
+        runtimeConversation: runtimeConversation("claude", { native: { sessionId: "claude-session-7" } }),
+      },
     ]);
     expect(runOneShot).toHaveBeenCalledWith(
       expect.objectContaining({
@@ -1981,7 +2179,11 @@ fs.writeFileSync(${JSON.stringify(argsPath)}, process.argv.slice(2).join("\\n") 
     expect(first.workflowDraft).toMatchObject({
       workflowId,
       objective: "Ask one question about the repo layout.",
-      agentSessionId: "thread-1",
+      runtimeConversation: {
+        runtimeId: "codex",
+        codecVersion: "v1",
+        payload: { native: { threadId: "thread-1" } },
+      },
       messages: [
         { role: "user", content: "Ask one question about the repo layout." },
         { role: "assistant", content: "artifact-1" },
@@ -1995,7 +2197,11 @@ fs.writeFileSync(${JSON.stringify(argsPath)}, process.argv.slice(2).join("\\n") 
     expect(second.workflowDraft).toMatchObject({
       workflowId,
       objective: "Ask one question about the repo layout.",
-      agentSessionId: "thread-1",
+      runtimeConversation: {
+        runtimeId: "codex",
+        codecVersion: "v1",
+        payload: { native: { threadId: "thread-1" } },
+      },
       messages: [
         { role: "user", content: "Ask one question about the repo layout." },
         { role: "assistant", content: "artifact-1" },
@@ -2054,6 +2260,10 @@ fs.writeFileSync(${JSON.stringify(argsPath)}, process.argv.slice(2).join("\\n") 
       prompt: "Use workflow selected model.",
       configuredAgentId: "api-agent",
       modelId: "deepseek-v4-pro",
+      runtimeId: "api",
+      executionMode: "oneshot",
+      continuationPolicy: "fresh",
+      runtimeConfig: { model: "deepseek-v4-pro" },
     });
 
     expect(JSON.parse(fetchImpl.mock.calls[0]?.[1]?.body as string)).toMatchObject({
@@ -2078,7 +2288,7 @@ fs.writeFileSync(${JSON.stringify(argsPath)}, process.argv.slice(2).join("\\n") 
     await hub.flushPersistence();
 
     const persisted = JSON.parse(await readFile(storagePath, "utf8")) as any;
-    expect(persisted.version).toBe(3);
+    expect(persisted.version).toBe(4);
     expect(persisted.sessions).toEqual([expect.objectContaining({ id: expect.any(String) }), expect.objectContaining({ id: chat.id })]);
     expect(persisted.messages).toEqual(expect.arrayContaining([expect.objectContaining({ chatId: chat.id, role: "assistant" })]));
     expect(persisted.events).toEqual(expect.arrayContaining([expect.objectContaining({ chatId: chat.id, type: "meta", content: "→ shell_command\npwd" })]));
@@ -2101,8 +2311,8 @@ fs.writeFileSync(${JSON.stringify(argsPath)}, process.argv.slice(2).join("\\n") 
     ]);
   });
 
-  test("migrates a legacy chat sessionId into detached runtime resume state", async () => {
-    const dir = await mkdtemp(path.join(os.tmpdir(), "multi-agent-chat-runtime-session-migration-"));
+  test("discards persisted state when the file uses a legacy schema version", async () => {
+    const dir = await mkdtemp(path.join(os.tmpdir(), "multi-agent-chat-runtime-session-discard-"));
     const storagePath = path.join(dir, "app-chats.json");
     await writeFile(
       storagePath,
@@ -2135,16 +2345,47 @@ fs.writeFileSync(${JSON.stringify(argsPath)}, process.argv.slice(2).join("\\n") 
     const hub = new AgentHub();
     await hub.loadPersistedState(storagePath);
 
-    const chat = hub.snapshot().chats.find((item) => item.id === "chat-1");
-    expect(chat?.runtimeSession).toMatchObject({
-      executionStyle: "interactive",
-      attachmentState: "detached",
-      attachmentGeneration: 0,
-      resumeState: {
-        runtimeId: "codex",
-        native: { threadId: "thread-1" },
-      },
+    const snapshot = hub.snapshot();
+    expect(snapshot.chats.some((item) => item.id === "chat-1")).toBe(false);
+    expect(snapshot.chats).toHaveLength(1);
+    expect(snapshot.activeChatId).not.toBe("chat-1");
+    expect(snapshot.workDir).not.toBe(dir);
+  });
+
+  test("persists task runtimeConversation in the new schema", async () => {
+    const dir = await mkdtemp(path.join(os.tmpdir(), "multi-agent-chat-task-runtime-conversation-"));
+    const storagePath = path.join(dir, "app-chats.json");
+    const hub = new AgentHub();
+
+    await hub.loadPersistedState(storagePath);
+    const task = (hub as any).createTaskState({
+      prompt: "Inspect the repo",
+      configuredAgentId: "default-agent",
+      workDir: dir,
     });
+    task.runtimeConversation = runtimeConversation("codex", { native: { threadId: "task-thread-1" } });
+    (hub as any).tasks.set(task.id, task);
+    hub.selectTask(task.id);
+
+    await hub.flushPersistence();
+
+    const persisted = JSON.parse(await readFile(storagePath, "utf8")) as any;
+    expect(persisted.version).toBe(4);
+    expect(persisted.tasks).toEqual(
+      expect.arrayContaining([
+        expect.objectContaining({
+          id: task.id,
+          runtimeConversation: runtimeConversation("codex", { native: { threadId: "task-thread-1" } }),
+        }),
+      ]),
+    );
+    expect(persisted.tasks[0]).not.toHaveProperty("sessionId");
+
+    const restored = new AgentHub();
+    await restored.loadPersistedState(storagePath);
+    expect(restored.snapshot().tasks.find((item) => item.id === task.id)?.runtimeConversation).toEqual(
+      runtimeConversation("codex", { native: { threadId: "task-thread-1" } }),
+    );
   });
 
   test("restores interactive chats as detached and clears ephemeral turn state", () => {
@@ -2156,14 +2397,18 @@ fs.writeFileSync(${JSON.stringify(argsPath)}, process.argv.slice(2).join("\\n") 
       title: "Claude restore",
       configuredAgentId: "claude-agent",
       modelId: DEFAULT_MODEL_ID,
-      sessionId: "session-1",
-      runtimeSession: {
+      runtimeState: {
         executionStyle: "interactive",
         attachmentState: "running",
         attachmentGeneration: 12,
         activeTurnId: "turn-9",
-        resumeState: {
-          runtimeId: "claude",
+        lastMeaningfulActivityAt: 1710000000200,
+        capabilities: runtimeSessionCapabilities(),
+      },
+      runtimeConversation: {
+        runtimeId: "claude",
+        codecVersion: "v1",
+        payload: {
           native: { sessionId: "session-1" },
         },
       },
@@ -2172,25 +2417,24 @@ fs.writeFileSync(${JSON.stringify(argsPath)}, process.argv.slice(2).join("\\n") 
       updatedAt: 1710000000000,
     });
 
-    expect(restored.runtimeSession).toMatchObject({
+    expect(restored.runtimeState).toMatchObject({
       executionStyle: "interactive",
       attachmentState: "detached",
       attachmentGeneration: 0,
-      resumeState: {
-        runtimeId: "claude",
-        native: { sessionId: "session-1" },
-      },
+      lastMeaningfulActivityAt: 1710000000200,
+      capabilities: runtimeSessionCapabilities(),
     });
-    expect(restored.runtimeSession?.activeTurnId).toBeUndefined();
+    expect(restored.runtimeState?.activeTurnId).toBeUndefined();
+    expect(restored.runtimeConversation).toEqual(runtimeConversation("claude", { native: { sessionId: "session-1" } }));
   });
 
-  test("falls back to legacy session migration when persisted runtimeSession is malformed", async () => {
+  test("discards persisted state when a version-4 record still uses legacy runtime fields", async () => {
     const dir = await mkdtemp(path.join(os.tmpdir(), "multi-agent-chat-runtime-session-fallback-"));
     const storagePath = path.join(dir, "app-chats.json");
     await writeFile(
       storagePath,
       JSON.stringify({
-        version: 3,
+        version: 4,
         activeChatId: "chat-1",
         workDir: dir,
         sessions: [
@@ -2199,7 +2443,6 @@ fs.writeFileSync(${JSON.stringify(argsPath)}, process.argv.slice(2).join("\\n") 
             title: "Broken runtime session",
             configuredAgentId: "default-agent",
             modelId: DEFAULT_MODEL_ID,
-            sessionId: "thread-legacy-1",
             runtimeSession: {
               executionStyle: "interactive",
             },
@@ -2221,64 +2464,24 @@ fs.writeFileSync(${JSON.stringify(argsPath)}, process.argv.slice(2).join("\\n") 
     const hub = new AgentHub();
     await hub.loadPersistedState(storagePath);
 
-    const chat = hub.snapshot().chats.find((item) => item.id === "chat-1");
-    expect(chat?.runtimeSession).toMatchObject({
-      executionStyle: "interactive",
-      attachmentState: "detached",
-      attachmentGeneration: 0,
-      resumeState: {
-        runtimeId: "codex",
-        native: { threadId: "thread-legacy-1" },
-      },
-    });
+    const snapshot = hub.snapshot();
+    expect(snapshot.chats.some((item) => item.id === "chat-1")).toBe(false);
+    expect(snapshot.chats).toHaveLength(1);
   });
 
-  test("does not restore or migrate runtimeSession state for oneshot API chats", () => {
-    const hub = new AgentHub({ codex: "missing-codex-for-test", claude: "missing-claude-for-test", api: "api" } as any);
-    addConfiguredAgents(hub, [configuredAgent("api-agent", { runtimeAgentId: "api", name: "API Agent" })]);
-
-    const restored = (hub as any).restoreChatState({
-      id: "chat-api-1",
-      title: "API restore",
-      configuredAgentId: "api-agent",
-      modelId: DEFAULT_MODEL_ID,
-      sessionId: "legacy-api-session",
-      runtimeSession: {
-        executionStyle: "interactive",
-      },
-      messages: [],
-      createdAt: 1710000000000,
-      updatedAt: 1710000000000,
-    });
-
-    expect(restored.sessionId).toBe("legacy-api-session");
-    expect(restored.runtimeSession).toBeUndefined();
-  });
-
-  test("persists runtimeSession as V3 and restores durable fields while clearing ephemeral state", async () => {
+  test("persists runtimeState as V4 and restores durable fields while clearing ephemeral state", async () => {
     const dir = await mkdtemp(path.join(os.tmpdir(), "multi-agent-chat-runtime-session-roundtrip-"));
     const storagePath = path.join(dir, "app-chats.json");
     const hub = new AgentHub();
     await hub.loadPersistedState(storagePath);
     const chat = hub.createChat("default-agent");
     const state = (hub as any).chats.get(chat.id);
-    state.runtimeSession = {
+    state.runtimeState = {
       executionStyle: "interactive",
       attachmentState: "running",
       attachmentGeneration: 7,
       activeTurnId: "turn-7",
       lastMeaningfulActivityAt: 1710000000500,
-      resumeState: {
-        runtimeId: "codex",
-        native: { threadId: "thread-roundtrip-1", sessionTreeRootId: "tree-root-1" },
-        appContext: {
-          cwd: dir,
-          modelId: DEFAULT_MODEL_ID,
-          approvalPolicy: "never",
-          sandboxPolicy: { mode: "workspace-write" },
-        },
-        extensions: { source: "test" },
-      },
       capabilities: {
         supportsInProcessConversationResume: true,
         supportsResumeAfterDetach: true,
@@ -2290,22 +2493,35 @@ fs.writeFileSync(${JSON.stringify(argsPath)}, process.argv.slice(2).join("\\n") 
         supportsUserInputRequests: true,
       },
     };
+    state.runtimeConversation = runtimeConversation("codex", {
+      native: { threadId: "thread-roundtrip-1", sessionTreeRootId: "tree-root-1" },
+      appContext: {
+        cwd: dir,
+        modelId: DEFAULT_MODEL_ID,
+        approvalPolicy: "never",
+        sandboxPolicy: { mode: "workspace-write" },
+      },
+      extensions: { source: "test" },
+    });
 
     await hub.flushPersistence();
 
     const persisted = JSON.parse(await readFile(storagePath, "utf8")) as any;
-    expect(persisted.version).toBe(3);
+    expect(persisted.version).toBe(4);
     expect(persisted.sessions).toEqual(
       expect.arrayContaining([
         expect.objectContaining({
           id: chat.id,
-          runtimeSession: expect.objectContaining({
+          runtimeState: expect.objectContaining({
             executionStyle: "interactive",
             attachmentState: "running",
             attachmentGeneration: 7,
             activeTurnId: "turn-7",
-            resumeState: expect.objectContaining({
-              runtimeId: "codex",
+          }),
+          runtimeConversation: expect.objectContaining({
+            runtimeId: "codex",
+            codecVersion: "v1",
+            payload: expect.objectContaining({
               native: expect.objectContaining({ threadId: "thread-roundtrip-1" }),
             }),
           }),
@@ -2316,22 +2532,11 @@ fs.writeFileSync(${JSON.stringify(argsPath)}, process.argv.slice(2).join("\\n") 
     const restored = new AgentHub();
     await restored.loadPersistedState(storagePath);
     const restoredChat = restored.snapshot().chats.find((item) => item.id === chat.id);
-    expect(restoredChat?.runtimeSession).toMatchObject({
+    expect(restoredChat?.runtimeState).toMatchObject({
       executionStyle: "interactive",
       attachmentState: "detached",
       attachmentGeneration: 0,
       lastMeaningfulActivityAt: 1710000000500,
-      resumeState: {
-        runtimeId: "codex",
-        native: { threadId: "thread-roundtrip-1", sessionTreeRootId: "tree-root-1" },
-        appContext: {
-          cwd: dir,
-          modelId: DEFAULT_MODEL_ID,
-          approvalPolicy: "never",
-          sandboxPolicy: { mode: "workspace-write" },
-        },
-        extensions: { source: "test" },
-      },
       capabilities: {
         supportsInProcessConversationResume: true,
         supportsResumeAfterDetach: true,
@@ -2343,16 +2548,28 @@ fs.writeFileSync(${JSON.stringify(argsPath)}, process.argv.slice(2).join("\\n") 
         supportsUserInputRequests: true,
       },
     });
-    expect(restoredChat?.runtimeSession?.activeTurnId).toBeUndefined();
+    expect(restoredChat?.runtimeState?.activeTurnId).toBeUndefined();
+    expect(restoredChat?.runtimeConversation).toEqual(
+      runtimeConversation("codex", {
+        native: { threadId: "thread-roundtrip-1", sessionTreeRootId: "tree-root-1" },
+        appContext: {
+          cwd: dir,
+          modelId: DEFAULT_MODEL_ID,
+          approvalPolicy: "never",
+          sandboxPolicy: { mode: "workspace-write" },
+        },
+        extensions: { source: "test" },
+      }),
+    );
   });
 
-  test("falls back to legacy sessionId when persisted resumeState is partially malformed", async () => {
+  test("discards persisted state when runtimeConversation is malformed", async () => {
     const dir = await mkdtemp(path.join(os.tmpdir(), "multi-agent-chat-runtime-session-resume-fallback-"));
     const storagePath = path.join(dir, "app-chats.json");
     await writeFile(
       storagePath,
       JSON.stringify({
-        version: 3,
+        version: 4,
         activeChatId: "chat-1",
         workDir: dir,
         sessions: [
@@ -2361,15 +2578,10 @@ fs.writeFileSync(${JSON.stringify(argsPath)}, process.argv.slice(2).join("\\n") 
             title: "Broken resume state",
             configuredAgentId: "default-agent",
             modelId: DEFAULT_MODEL_ID,
-            sessionId: "thread-legacy-2",
-            runtimeSession: {
+            runtimeState: {
               executionStyle: "interactive",
               attachmentState: "idle",
               attachmentGeneration: 3,
-              resumeState: {
-                runtimeId: "codex",
-                native: {},
-              },
               capabilities: {
                 supportsInProcessConversationResume: true,
                 supportsResumeAfterDetach: true,
@@ -2380,6 +2592,10 @@ fs.writeFileSync(${JSON.stringify(argsPath)}, process.argv.slice(2).join("\\n") 
                 supportsApprovalRequests: false,
                 supportsUserInputRequests: false,
               },
+            },
+            runtimeConversation: {
+              runtimeId: "codex",
+              payload: {},
             },
             createdAt: 1710000000000,
             updatedAt: 1710000000000,
@@ -2399,26 +2615,9 @@ fs.writeFileSync(${JSON.stringify(argsPath)}, process.argv.slice(2).join("\\n") 
     const hub = new AgentHub();
     await hub.loadPersistedState(storagePath);
 
-    const chat = hub.snapshot().chats.find((item) => item.id === "chat-1");
-    expect(chat?.runtimeSession).toMatchObject({
-      executionStyle: "interactive",
-      attachmentState: "detached",
-      attachmentGeneration: 0,
-      resumeState: {
-        runtimeId: "codex",
-        native: { threadId: "thread-legacy-2" },
-      },
-      capabilities: {
-        supportsInProcessConversationResume: true,
-        supportsResumeAfterDetach: true,
-        supportsResumeAfterAppRestart: true,
-        supportsTurnResume: false,
-        supportsInterrupt: true,
-        supportsContinue: true,
-        supportsApprovalRequests: false,
-        supportsUserInputRequests: false,
-      },
-    });
+    const snapshot = hub.snapshot();
+    expect(snapshot.chats.some((item) => item.id === "chat-1")).toBe(false);
+    expect(snapshot.chats).toHaveLength(1);
   });
 
   test("downgrades pending approval and input requests to expired on restore", () => {
@@ -2428,7 +2627,7 @@ fs.writeFileSync(${JSON.stringify(argsPath)}, process.argv.slice(2).join("\\n") 
       title: "Chat",
       configuredAgentId: "default-agent",
       modelId: "default",
-      runtimeSession: {
+      runtimeState: {
         executionStyle: "interactive",
         attachmentState: "running",
         attachmentGeneration: 9,
@@ -2623,7 +2822,9 @@ fs.writeFileSync(${JSON.stringify(argsPath)}, process.argv.slice(2).join("\\n") 
     await writeFile(
       storagePath,
       JSON.stringify({
-        version: 2,
+        version: 4,
+        activeChatId: null,
+        workDir: "C:/tmp/project",
         channels: [
           realChannel,
           {
@@ -2655,20 +2856,42 @@ fs.writeFileSync(${JSON.stringify(argsPath)}, process.argv.slice(2).join("\\n") 
     expect(restored.snapshot().channels.map((channel) => channel.id)).toEqual(["codex-deepseek"]);
   });
 
-  test("migrates legacy JSON history into SQLite storage", async () => {
+  test("does not salvage legacy JSON history into SQLite storage", async () => {
     const dir = await mkdtemp(path.join(os.tmpdir(), "multi-agent-chat-sqlite-"));
     const legacyPath = path.join(dir, "app-chats.json");
     const dbPath = path.join(dir, "app.db");
-    const legacyHub = new AgentHub();
-
-    await legacyHub.loadPersistedState(legacyPath);
-    legacyHub.setWorkDir("/tmp/legacy-project");
-    const chat = legacyHub.createChat("default-agent");
-    await legacyHub.flushPersistence();
+    await writeFile(
+      legacyPath,
+      JSON.stringify({
+        version: 4,
+        activeChatId: "chat-legacy",
+        workDir: "/tmp/legacy-project",
+        sessions: [
+          {
+            id: "chat-legacy",
+            title: "Legacy JSON",
+            configuredAgentId: "default-agent",
+            modelId: DEFAULT_MODEL_ID,
+            running: false,
+            messages: [],
+            createdAt: 1710000000000,
+            updatedAt: 1710000000000,
+          },
+        ],
+        messages: [],
+        events: [],
+        tasks: [],
+        taskMessages: [],
+        taskEvents: [],
+        teams: [],
+        teamRuns: [],
+      }),
+      "utf8",
+    );
 
     const migrated = new AgentHub();
-    await migrated.loadPersistedState(dbPath, legacyPath);
-    expect(migrated.snapshot().chats.some((item) => item.id === chat.id)).toBe(true);
+    await migrated.loadPersistedState(dbPath);
+    expect(migrated.snapshot().chats.some((item) => item.id === "chat-legacy")).toBe(false);
     migrated.setWorkDir("/tmp/sqlite-project");
     await migrated.flushPersistence();
     expect((await readFile(dbPath)).byteLength).toBeGreaterThan(0);
@@ -2677,7 +2900,7 @@ fs.writeFileSync(${JSON.stringify(argsPath)}, process.argv.slice(2).join("\\n") 
     await restored.loadPersistedState(dbPath);
     const snapshot = restored.snapshot();
     expect(snapshot.workDir).toBe("/tmp/sqlite-project");
-    expect(snapshot.chats.some((item) => item.id === chat.id)).toBe(true);
+    expect(snapshot.chats.some((item) => item.id === "chat-legacy")).toBe(false);
   });
 
   test("registers an artifact for a validated file and rejects a missing one", async () => {
@@ -2736,7 +2959,7 @@ fs.writeFileSync(${JSON.stringify(argsPath)}, process.argv.slice(2).join("\\n") 
       runProgress: [{ nodeId: "inventory", title: "Inventory", status: "completed", detail: "Output captured", taskId: "task-1" }],
       runContextDocument: "# Workflow Context\n\n## Inventory (inventory)\nMapped repo.",
       contextDocument: "# Workflow Context\n\nLong lived context.",
-      agentSessionId: "thread-1",
+      runtimeConversation: runtimeConversation("codex", { native: { threadId: "thread-1" } }),
       createdAt: 1710000000000,
       updatedAt: 1710002000000,
     });
@@ -2931,7 +3154,7 @@ fs.writeFileSync(${JSON.stringify(argsPath)}, process.argv.slice(2).join("\\n") 
         { id: "m-1", role: "user", content: "Initial objective" },
         { id: "m-2", role: "assistant", content: "Initial reply" },
       ],
-      agentSessionId: "thread-1",
+      runtimeConversation: runtimeConversation("codex", { native: { threadId: "thread-1" } }),
       contextDocument: "# Durable context",
       runContextDocument: "# Run context",
     }).workflowDraft!;
@@ -2966,14 +3189,35 @@ fs.writeFileSync(${JSON.stringify(argsPath)}, process.argv.slice(2).join("\\n") 
       runContextDocument: "",
       contextDocument: "",
       runIds: [],
-      agentSessionId: undefined,
     });
     expect(resetFirst?.finalReport).toBeUndefined();
+    expect(resetFirst?.runtimeConversation).toBeUndefined();
     expect(preservedSecond).toMatchObject({
       workflowId: second.workflowId,
       title: "Second draft",
       status: "draft",
     });
+  });
+
+  test("patchWorkflowDraft clears finalReport and runtimeConversation when null is provided", () => {
+    const hub = new AgentHub();
+    const workflow = hub.createWorkflowDraft({ title: "Runtime workflow" }).workflowDraft!;
+    hub.patchWorkflowDraft({
+      workflowId: workflow.workflowId,
+      finalReport: "## Final User Report\nDone.",
+      runtimeConversation: runtimeConversation("codex", { native: { threadId: "thread-1" } }),
+      contextDocument: "# Context",
+    });
+
+    const patched = hub.patchWorkflowDraft({
+      workflowId: workflow.workflowId,
+      finalReport: null,
+      runtimeConversation: null,
+    }).workflowDraft!;
+
+    expect(patched.finalReport).toBeUndefined();
+    expect(patched.runtimeConversation).toBeUndefined();
+    expect(patched.contextDocument).toBe("# Context");
   });
 
   test("rejects invalid workflow creation with validation reasons", () => {
@@ -3786,7 +4030,7 @@ describe("AgentHub task runs", () => {
     expect(snapshot.activeTaskId).toBe(second.id);
   });
 
-  test("archives the Codex session when deleting a task with a session id", async () => {
+  test("archives the Codex session when deleting a task with a runtime conversation", async () => {
     const dir = await mkdtemp(path.join(os.tmpdir(), "multi-agent-chat-codex-archive-"));
     const argsPath = path.join(dir, "args.txt");
     const executable = await writeNodeCliLauncher(
@@ -3803,7 +4047,9 @@ fs.writeFileSync(${JSON.stringify(argsPath)}, process.argv.slice(2).join("\\n") 
       configuredAgentId: "default-agent",
       workDir: "/tmp/project",
     });
-    task.sessionId = "019e9143-2451-7612-a62d-e65389574d7d";
+    task.runtimeConversation = runtimeConversation("codex", {
+      native: { threadId: "019e9143-2451-7612-a62d-e65389574d7d" },
+    });
     (hub as any).tasks.set(task.id, task);
 
     await hub.deleteTask(task.id);
@@ -4135,7 +4381,7 @@ describe("AgentHub agent teams", () => {
     expect(firstTask?.prompt).toContain("Review cd ../example-service");
     expect(firstTask?.prompt).toContain("Shared repo context");
     expect(firstTask?.prompt).toContain("Create a short review plan before touching code.");
-    expect(firstTask?.sessionId).toBeUndefined();
+    expect(firstTask?.runtimeConversation).toBeUndefined();
     expect(firstTask?.prompt).not.toContain("artifact-1");
 
     const afterFirst = await waitFor(
@@ -4164,7 +4410,7 @@ describe("AgentHub agent teams", () => {
     expect(secondTask?.prompt).toContain("Planner");
     expect(secondTask?.prompt).toContain("artifact-1");
     expect(secondTask?.prompt).toContain("Use prior artifacts, then verify risks and missing tests.");
-    expect(secondTask?.sessionId).toBeUndefined();
+    expect(secondTask?.runtimeConversation).toBeUndefined();
     expect(secondTask?.id).not.toBe(firstTaskId);
 
     const completed = await waitFor(

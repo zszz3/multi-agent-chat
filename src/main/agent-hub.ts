@@ -46,10 +46,10 @@ import type {
   PatchWorkflowDraftRequest,
   PauseWorkflowNodeRequest,
   ProviderBalanceResult,
-  PersistedResumeState,
   RunWorkflowGraphRequest,
   RunAgentTeamRequest,
   RuntimeInteractionCapabilities,
+  RuntimeConversation,
   RuntimeResumeCapabilities,
   RunTaskRequest,
   SendWorkflowDraftReplyRequest,
@@ -101,7 +101,7 @@ import { CodexRpcClient } from "./agents/codex-rpc";
 import { codexEnvironmentForChannel } from "./agents/codex-env";
 import { claudeCliModelForChannel } from "./agents/claude-env";
 import type { RuntimeCapabilities } from "./agents/runtime-capabilities";
-import type { InteractiveSessionContext } from "./agents/runtime-driver";
+import type { InteractiveSessionContext, InteractiveSessionSnapshot } from "./agents/runtime-driver";
 import { createRuntimeDriverRegistry, RuntimeAgentExecutorFactory, RuntimeDriverRegistry, type AgentExecutorFactory } from "./agent-executor";
 import { execCli, spawnCli } from "./cli-launcher";
 import { queryProviderBalance, type ProviderBalanceQueryOptions } from "./provider-balance";
@@ -168,14 +168,11 @@ interface PersistedChatSessionRecord {
   configuredAgentId: string;
   modelId?: string;
   channelId?: string;
-  sessionId: string | undefined;
+  runtimeState?: ChatRuntimeSessionState;
+  runtimeConversation?: RuntimeConversation;
   lastError: string | undefined;
   createdAt: number;
   updatedAt: number;
-}
-
-interface PersistedChatSessionRecordV3 extends PersistedChatSessionRecord {
-  runtimeSession?: ChatRuntimeSessionState;
 }
 
 interface PersistedChatMessageRecord {
@@ -201,7 +198,7 @@ interface PersistedTaskRunRecord {
   workDir: string;
   status: TaskRunStatus;
   progress?: TaskProgress;
-  sessionId: string | undefined;
+  runtimeConversation?: RuntimeConversation;
   lastError: string | undefined;
   createdAt: number;
   updatedAt: number;
@@ -252,8 +249,8 @@ interface PersistedTeamRunRecord {
   updatedAt: number;
 }
 
-interface PersistedAppStateV2 {
-  version: 2;
+interface PersistedAppStateV4 {
+  version: 4;
   activeChatId: string | null;
   activeTaskId?: string | null;
   activeTeamId?: string | null;
@@ -272,11 +269,6 @@ interface PersistedAppStateV2 {
   scheduledWorkflowStore?: ScheduledWorkflowStoreState;
   channels?: AgentChannel[];
   configuredAgents?: ConfiguredAgent[];
-}
-
-interface PersistedAppStateV3 extends Omit<PersistedAppStateV2, "version" | "sessions"> {
-  version: 3;
-  sessions: PersistedChatSessionRecordV3[];
 }
 
 function createAssistantMessage(content = "", local = false): ChatMessage {
@@ -474,49 +466,7 @@ function defaultRuntimeSessionCapabilities(): RuntimeResumeCapabilities & Runtim
   };
 }
 
-function clonePersistedResumeState(resumeState: PersistedResumeState): PersistedResumeState {
-  if (resumeState.runtimeId === "codex") {
-    return {
-      runtimeId: "codex",
-      native: {
-        threadId: resumeState.native.threadId,
-        ...(resumeState.native.sessionTreeRootId !== undefined ? { sessionTreeRootId: resumeState.native.sessionTreeRootId } : {}),
-      },
-      ...(resumeState.appContext
-        ? {
-            appContext: {
-              ...(resumeState.appContext.cwd !== undefined ? { cwd: resumeState.appContext.cwd } : {}),
-              ...(resumeState.appContext.modelId !== undefined ? { modelId: resumeState.appContext.modelId } : {}),
-              ...(resumeState.appContext.approvalPolicy !== undefined ? { approvalPolicy: resumeState.appContext.approvalPolicy } : {}),
-              ...(resumeState.appContext.sandboxPolicy !== undefined ? { sandboxPolicy: resumeState.appContext.sandboxPolicy } : {}),
-            },
-          }
-        : {}),
-      ...(resumeState.extensions ? { extensions: { ...resumeState.extensions } } : {}),
-    };
-  }
-  return {
-    runtimeId: "claude",
-    native: {
-      sessionId: resumeState.native.sessionId,
-      ...(resumeState.native.projectKey !== undefined ? { projectKey: resumeState.native.projectKey } : {}),
-      ...(resumeState.native.subpaths !== undefined ? { subpaths: [...resumeState.native.subpaths] } : {}),
-    },
-    ...(resumeState.appContext
-      ? {
-          appContext: {
-            cwd: resumeState.appContext.cwd,
-            ...(resumeState.appContext.modelId !== undefined ? { modelId: resumeState.appContext.modelId } : {}),
-            ...(resumeState.appContext.claudeConfigDir !== undefined ? { claudeConfigDir: resumeState.appContext.claudeConfigDir } : {}),
-            ...(resumeState.appContext.sessionStoreRef !== undefined ? { sessionStoreRef: resumeState.appContext.sessionStoreRef } : {}),
-          },
-        }
-      : {}),
-    ...(resumeState.extensions ? { extensions: { ...resumeState.extensions } } : {}),
-  };
-}
-
-function cloneRuntimeSessionState(runtimeSession: ChatRuntimeSessionState): ChatRuntimeSessionState {
+function cloneRuntimeState(runtimeSession: ChatRuntimeSessionState): ChatRuntimeSessionState {
   return {
     executionStyle: runtimeSession.executionStyle,
     attachmentState: runtimeSession.attachmentState,
@@ -525,8 +475,15 @@ function cloneRuntimeSessionState(runtimeSession: ChatRuntimeSessionState): Chat
     ...(runtimeSession.lastMeaningfulActivityAt !== undefined
       ? { lastMeaningfulActivityAt: runtimeSession.lastMeaningfulActivityAt }
       : {}),
-    ...(runtimeSession.resumeState ? { resumeState: clonePersistedResumeState(runtimeSession.resumeState) } : {}),
     capabilities: { ...runtimeSession.capabilities },
+  };
+}
+
+function cloneRuntimeConversation(conversation: RuntimeConversation): RuntimeConversation {
+  return {
+    runtimeId: conversation.runtimeId,
+    codecVersion: conversation.codecVersion,
+    payload: structuredClone(conversation.payload),
   };
 }
 
@@ -955,8 +912,8 @@ class ChatState {
   id: string = randomUUID();
   title: string;
   channelId: string | undefined = undefined;
-  sessionId: string | undefined = undefined;
-  runtimeSession: ChatRuntimeSessionState | undefined = undefined;
+  runtimeState: ChatRuntimeSessionState | undefined = undefined;
+  runtimeConversation: RuntimeConversation | undefined = undefined;
   running = false;
   messages: ChatMessage[] = [];
   pendingAssistantMessageId: string | undefined = undefined;
@@ -977,7 +934,7 @@ class TaskState {
   readonly kind = "task";
   id: string = randomUUID();
   title: string;
-  sessionId: string | undefined = undefined;
+  runtimeConversation: RuntimeConversation | undefined = undefined;
   running = false;
   status: TaskRunStatus = "queued";
   progress: TaskProgress = "todo";
@@ -1151,36 +1108,15 @@ export class AgentHub {
         respondToCodexServerRequest: (client, id, method, params) => {
           this.respondToCodexServerRequest(client, id, method, params);
         },
+        runClaudeOneShot: (input) => this.claudeSdkAdapter.runOneShot(input),
         askWorkflowByRuntime: {
-          codex: (input) =>
-            this.askCodexWorkflowAgent({
-              requestId: input.requestId,
-              prompt: input.prompt,
-              runtime: input.runtime,
-              channelId: input.channelId,
-              modelId: input.modelId,
-              workDir: input.workDir,
-              sessionId: input.sessionId,
-              onEvent: input.onEvent,
-            }),
-          claude: (input) =>
-            this.askClaudeWorkflowAgent({
-              requestId: input.requestId,
-              prompt: input.prompt,
-              runtime: input.runtime,
-              channelId: input.channelId,
-              modelId: input.modelId,
-              workDir: input.workDir,
-              sessionId: input.sessionId,
-              onEvent: input.onEvent,
-            }),
           api: (input) =>
             this.askApiWorkflowAgent({
               requestId: input.requestId,
               prompt: input.prompt,
               channelId: input.channelId,
-              modelId: input.modelId,
-              sessionId: input.sessionId,
+              modelId: input.runtimeConfig.model,
+              runtimeConversation: input.runtimeConversation,
               onEvent: input.onEvent,
             }),
         },
@@ -1188,10 +1124,6 @@ export class AgentHub {
           codex: (input) => this.testCodexAgent(this.channelOrThrow(input.channelId), input.modelId, input.workDir, input.emit),
           claude: (input) => this.testClaudeAgent(this.channelOrThrow(input.channelId), input.modelId, input.workDir, input.emit),
           api: (input) => this.testApiAgent(this.channelOrThrow(input.channelId), input.modelId, input.emit),
-        },
-        deleteSessionArtifactsByRuntime: {
-          codex: async (input) => this.deleteCodexSessionArtifacts(input.sessionId),
-          claude: async (input) => this.deleteClaudeSessionArtifacts(input.workDir, input.sessionId),
         },
       });
     this.executorFactory =
@@ -1236,45 +1168,34 @@ export class AgentHub {
     this.emit();
   }
 
-  async loadPersistedState(storagePath: string, legacyJsonPath?: string): Promise<void> {
+  async loadPersistedState(storagePath: string): Promise<void> {
     this.storagePath = storagePath;
     if (path.extname(storagePath) === ".db") {
       this.sqliteStore = new SqliteAppStore(storagePath);
       try {
         const persisted = await this.sqliteStore.load();
         if (persisted !== undefined) {
-          const hadChannels = Array.isArray(asRecord(persisted)?.channels);
-          this.restorePersistedState(persisted);
-          if (!hadChannels) await this.persistState();
+          if (!this.restorePersistedState(persisted)) {
+            this.reinitializePersistedState();
+          }
+          if (!Array.isArray(asRecord(persisted)?.channels) || !this.isPersistedAppStateV4(persisted)) await this.persistState();
           return;
         }
       } catch (error) {
         console.warn(`Failed to load app state from SQLite ${storagePath}:`, error);
       }
-      let migratedLegacyState = false;
-      if (legacyJsonPath) {
-        try {
-          const raw = await readFile(legacyJsonPath, "utf8");
-          const parsed = JSON.parse(raw) as unknown;
-          this.restorePersistedState(parsed);
-          await this.persistState();
-          migratedLegacyState = true;
-        } catch (error) {
-          const code = error && typeof error === "object" ? (error as { code?: unknown }).code : undefined;
-          if (code !== "ENOENT") {
-            console.warn(`Failed to migrate chat history from ${legacyJsonPath}:`, error);
-          }
-        }
-      }
-      if (!migratedLegacyState) await this.persistState();
+      await this.persistState();
       return;
     }
     try {
       const raw = await readFile(storagePath, "utf8");
       const parsed = JSON.parse(raw) as unknown;
-      const hadChannels = Array.isArray(asRecord(parsed)?.channels);
-      this.restorePersistedState(parsed);
-      if (!hadChannels) await this.persistState();
+      if (!this.restorePersistedState(parsed)) {
+        this.reinitializePersistedState();
+        await this.persistState();
+        return;
+      }
+      if (!Array.isArray(asRecord(parsed)?.channels)) await this.persistState();
     } catch (error) {
       const code = error && typeof error === "object" ? (error as { code?: unknown }).code : undefined;
       if (code !== "ENOENT") {
@@ -1615,13 +1536,12 @@ export class AgentHub {
     if (!hasAgentConversationMessages(chat.messages)) chat.title = configuredAgent.name || configuredAgent.id;
 
     const after = this.resolveConfiguredAgent(chat.configuredAgentId, chat.modelId, chat.channelId);
-    if (before?.runtimeAgentId !== after?.runtimeAgentId && (chat.sessionId || chat.runtimeSession || hasAgentConversationMessages(chat.messages))) {
-      chat.sessionId = undefined;
-      if (chat.runtimeSession) {
-        delete chat.runtimeSession.resumeState;
-        chat.runtimeSession.attachmentState = "detached";
-        chat.runtimeSession.attachmentGeneration = 0;
-        delete chat.runtimeSession.activeTurnId;
+    if (before?.runtimeAgentId !== after?.runtimeAgentId && (chat.runtimeConversation || chat.runtimeState || hasAgentConversationMessages(chat.messages))) {
+      chat.runtimeConversation = undefined;
+      if (chat.runtimeState) {
+        chat.runtimeState.attachmentState = "detached";
+        chat.runtimeState.attachmentGeneration = 0;
+        delete chat.runtimeState.activeTurnId;
       }
       this.appendEventToAssistant(chat, {
         id: randomUUID(),
@@ -1723,7 +1643,6 @@ export class AgentHub {
       runContextDocument: "",
       contextDocument: "",
       runIds: [],
-      agentSessionId: undefined,
       createdAt: now,
       updatedAt: now,
     });
@@ -1748,9 +1667,13 @@ export class AgentHub {
     if (!current) return this.snapshot();
     this.activeWorkflowDraftRequests.delete(workflowId);
     const graph = createWorkflowGraphFromObjective("");
-    const { finalReport: _currentFinalReport, ...currentWithoutFinalReport } = current;
+    const {
+      finalReport: _currentFinalReport,
+      runtimeConversation: _currentRuntimeConversation,
+      ...currentWithoutFinalReportOrConversation
+    } = current;
     const next = this.cloneWorkflowDraft({
-      ...currentWithoutFinalReport,
+      ...currentWithoutFinalReportOrConversation,
       title: graph.title,
       status: "draft",
       revision: current.revision + 1,
@@ -1764,7 +1687,6 @@ export class AgentHub {
       runContextDocument: "",
       contextDocument: "",
       runIds: [],
-      agentSessionId: undefined,
       updatedAt: Date.now(),
     });
     this.workflows.set(next.workflowId, next);
@@ -1806,7 +1728,6 @@ export class AgentHub {
             runProgress: [],
             runContextDocument: "",
             runIds: [],
-            agentSessionId: undefined,
           }
         : {}),
       updatedAt: now,
@@ -1826,13 +1747,16 @@ export class AgentHub {
           requestId,
           prompt: starting ? buildWorkflowAgentPrompt({ objective: text }) : text,
           configuredAgentId: next.configuredAgentId,
-          modelId: next.modelId,
+          runtimeId: this.resolveConfiguredAgent(next.configuredAgentId, next.modelId)?.runtimeAgentId ?? DEFAULT_AGENT,
+          executionMode: "oneshot",
+          continuationPolicy: next.runtimeConversation ? "resume-preferred" : "fresh",
+          runtimeConfig: { model: next.modelId },
           workDir: next.workDir || this.workDir,
-          ...(starting || !next.agentSessionId ? {} : { sessionId: next.agentSessionId }),
+          ...(starting || !next.runtimeConversation ? {} : { runtimeConversation: next.runtimeConversation }),
         },
         (event) => this.handleWorkflowDraftAgentEvent(next.workflowId, event),
       );
-      this.completeWorkflowDraftRequest(next.workflowId, requestId, response.content, response.sessionId);
+      this.completeWorkflowDraftRequest(next.workflowId, requestId, response.content, response.runtimeConversation);
     } catch (error) {
       this.failWorkflowDraftRequest(next.workflowId, requestId, error instanceof Error ? error.message : String(error));
     }
@@ -1886,7 +1810,7 @@ export class AgentHub {
       contextDocument: input.contextDocument ?? "",
       ...(input.finalReport !== undefined ? { finalReport: input.finalReport } : {}),
       runIds: input.runIds ?? [],
-      agentSessionId: input.agentSessionId,
+      ...(input.runtimeConversation ? { runtimeConversation: input.runtimeConversation } : {}),
       createdAt: input.createdAt ?? now,
       updatedAt: input.updatedAt ?? now,
     });
@@ -1922,7 +1846,6 @@ export class AgentHub {
         runContextDocument: "",
         contextDocument: "",
         runIds: [],
-        agentSessionId: undefined,
         createdAt: now,
         updatedAt: now,
       });
@@ -1999,7 +1922,11 @@ export class AgentHub {
       runContextDocument: input.runContextDocument ?? current.runContextDocument,
       contextDocument: input.contextDocument ?? current.contextDocument,
       ...((input.finalReport ?? current.finalReport) !== undefined ? { finalReport: input.finalReport ?? current.finalReport } : {}),
-      agentSessionId: input.agentSessionId ?? current.agentSessionId,
+      ...(input.runtimeConversation !== undefined
+        ? { runtimeConversation: input.runtimeConversation }
+        : current.runtimeConversation
+          ? { runtimeConversation: current.runtimeConversation }
+          : {}),
       revision: current.revision + 1,
       updatedAt: Date.now(),
     });
@@ -2464,7 +2391,7 @@ export class AgentHub {
     return () => this.listeners.delete(listener);
   }
 
-  private runtimeSessionFromCapabilities(capabilities: RuntimeCapabilities): ChatRuntimeSessionState {
+  private runtimeStateFromCapabilities(capabilities: RuntimeCapabilities): ChatRuntimeSessionState {
     return {
       executionStyle: capabilities.chatStyle,
       attachmentState: "detached",
@@ -2479,41 +2406,28 @@ export class AgentHub {
     };
   }
 
-  private interactiveResumeState(chat: ChatState, runtimeId: AgentId): PersistedResumeState | undefined {
-    if (chat.runtimeSession?.resumeState) {
-      return clonePersistedResumeState(chat.runtimeSession.resumeState);
-    }
-    if (!chat.sessionId) return undefined;
-    return runtimeId === "claude"
-      ? { runtimeId: "claude", native: { sessionId: chat.sessionId } }
-      : { runtimeId: "codex", native: { threadId: chat.sessionId } };
-  }
-
-  private syncInteractiveChatState(chat: ChatState, state: ChatRuntimeSessionState): void {
-    const nextState = cloneRuntimeSessionState(state);
-    const resolved = this.resolveConfiguredAgent(chat.configuredAgentId, chat.modelId, chat.channelId);
-    const runtimeId = resolved?.runtimeAgentId ?? "codex";
-    if (!nextState.resumeState) {
-      const resumeState = this.interactiveResumeState(chat, runtimeId);
-      if (resumeState) nextState.resumeState = resumeState;
-    }
-    chat.runtimeSession = nextState;
+  private syncInteractiveChatState(chat: ChatState, state: InteractiveSessionSnapshot): void {
+    chat.runtimeState = cloneRuntimeState(state.runtimeState);
+    chat.runtimeConversation = state.runtimeConversation
+      ? cloneRuntimeConversation(state.runtimeConversation)
+      : undefined;
     chat.updatedAt = Date.now();
     this.emit();
   }
 
   private buildInteractiveChatContext(chat: ChatState, resolved: ResolvedConfiguredAgent): InteractiveSessionContext {
-    const resumeState = this.interactiveResumeState(chat, resolved.runtimeAgentId);
     return {
       chatId: chat.id,
       configuredAgentId: chat.configuredAgentId,
       runtimeId: resolved.runtimeAgentId,
+      executionMode: "interactive",
+      continuationPolicy: chat.runtimeConversation ? "resume-preferred" : "fresh",
+      runtimeConfig: { model: resolved.modelId },
+      ...(chat.runtimeConversation ? { runtimeConversation: cloneRuntimeConversation(chat.runtimeConversation) } : {}),
       runtime: resolved.runtime as AgentRuntime,
       channelId: resolved.channel.id,
       workDir: this.runWorkDir(chat),
-      modelId: resolved.modelId,
       developerInstructions: CODEX_CHAT_DEVELOPER_INSTRUCTIONS,
-      ...(resumeState ? { resumeState } : {}),
       emit: (event) => this.handleAgentEvent(chat, event),
       syncState: (state) => this.syncInteractiveChatState(chat, state),
     };
@@ -2552,8 +2466,8 @@ export class AgentHub {
     const supportsInteractiveChat =
       capabilities.chatStyle === "interactive" && typeof driver.createInteractiveSession === "function";
 
-    if (supportsInteractiveChat && !chat.runtimeSession) {
-      chat.runtimeSession = this.runtimeSessionFromCapabilities(capabilities);
+    if (supportsInteractiveChat && !chat.runtimeState) {
+      chat.runtimeState = this.runtimeStateFromCapabilities(capabilities);
     }
 
     if (!hasAgentConversationMessages(chat.messages)) chat.title = titleFromPrompt(trimmedPrompt);
@@ -2580,13 +2494,13 @@ export class AgentHub {
         await this.interactiveSessions.dispatch(chat.id, context, async (managed, lease) => {
           await managed.ensureAttached();
           const attachedState = managed.snapshot();
-          lease.syncAttachmentGeneration(attachedState.attachmentGeneration);
+          lease.syncAttachmentGeneration(attachedState.runtimeState.attachmentGeneration);
           this.syncInteractiveChatState(chat, attachedState);
-          if (chat.runtimeSession) {
-            chat.runtimeSession.attachmentGeneration = lease.currentAttachmentGeneration();
-            chat.runtimeSession.attachmentState = "running";
-            chat.runtimeSession.activeTurnId = lease.nextTurnId();
-            chat.runtimeSession.lastMeaningfulActivityAt = Date.now();
+          if (chat.runtimeState) {
+            chat.runtimeState.attachmentGeneration = lease.currentAttachmentGeneration();
+            chat.runtimeState.attachmentState = "running";
+            chat.runtimeState.activeTurnId = lease.nextTurnId();
+            chat.runtimeState.lastMeaningfulActivityAt = Date.now();
             chat.updatedAt = Date.now();
             this.emit();
           }
@@ -2660,7 +2574,7 @@ export class AgentHub {
         const models = await this.readCodexModels(client);
         const pluginResult = await client.request("plugin/list", { cwds: [this.workDir] });
         const plugins = this.codexPluginSummaries(pluginResult);
-        const mcpServers = await this.readCodexMcpServers(client, chat.sessionId);
+        const mcpServers = await this.readCodexMcpServers(client, undefined);
 
         const model = asOptionalString(config.model) ?? "default";
         const provider = asOptionalString(config.model_provider) ?? "default";
@@ -2890,7 +2804,7 @@ export class AgentHub {
   async askWorkflowAgent(input: WorkflowAgentRequest, onEvent?: (event: WorkflowAgentEvent) => void): Promise<WorkflowAgentResponse> {
     const prompt = input.prompt.trim();
     if (!prompt) throw new Error("Workflow agent prompt is required");
-    const resolved = this.resolveConfiguredAgent(input.configuredAgentId, input.modelId);
+    const resolved = this.resolveConfiguredAgent(input.configuredAgentId, input.runtimeConfig.model);
     if (!resolved) throw new Error("No configured agent is selected.");
     const runtime = resolved.runtime;
     if (!runtime?.available) throw new Error(`${resolved.agent.name || resolved.agent.id} is not available on this machine.`);
@@ -2903,12 +2817,15 @@ export class AgentHub {
     if (!driver.askWorkflow) throw new Error(`${resolved.runtimeAgentId} workflow execution is not configured.`);
     return driver.askWorkflow({
       requestId,
+      runtimeId: resolved.runtimeAgentId,
+      executionMode: "oneshot",
+      continuationPolicy: input.runtimeConversation ? "resume-preferred" : "fresh",
+      runtimeConfig: { model: modelId },
+      ...(input.runtimeConversation ? { runtimeConversation: cloneRuntimeConversation(input.runtimeConversation) } : {}),
       prompt,
       runtime,
       channelId,
-      modelId,
       workDir,
-      sessionId: input.sessionId,
       onEvent,
     });
   }
@@ -2920,10 +2837,10 @@ export class AgentHub {
     this.activeStops.delete(chatId);
     if (stop) await stop();
     chat.running = false;
-    if (chat.runtimeSession) {
-      chat.runtimeSession.attachmentState = "interrupted";
-      chat.runtimeSession.lastMeaningfulActivityAt = Date.now();
-      delete chat.runtimeSession.activeTurnId;
+    if (chat.runtimeState) {
+      chat.runtimeState.attachmentState = "interrupted";
+      chat.runtimeState.lastMeaningfulActivityAt = Date.now();
+      delete chat.runtimeState.activeTurnId;
     }
     chat.messages = this.expirePendingInteractionEvents(chat.messages);
     chat.messages.push(createErrorMessage("Stopped"));
@@ -3083,11 +3000,14 @@ export class AgentHub {
 
   private async deleteAgentSession(run: RunState): Promise<void> {
     const resolved = this.resolveConfiguredAgent(run.configuredAgentId, run.modelId, run.kind === "chat" ? run.channelId : undefined);
-    if (!run.sessionId || !resolved) return;
+    if (!resolved) return;
     const driver = this.runtimeDrivers.driverFor(resolved.runtimeAgentId);
     if (!driver.deleteSessionArtifacts) return;
     const workDir = "workDir" in run ? run.workDir : this.workDir;
-    await driver.deleteSessionArtifacts({ sessionId: run.sessionId, workDir });
+    await driver.deleteSessionArtifacts({
+      workDir,
+      ...(run.runtimeConversation ? { runtimeConversation: cloneRuntimeConversation(run.runtimeConversation) } : {}),
+    });
   }
 
   private createChatState(configuredAgentId: string): ChatState {
@@ -3198,6 +3118,11 @@ export class AgentHub {
 
   private applyWorkflowDraftPatch(current: WorkflowDraftState, patch: PatchWorkflowDraftRequest): WorkflowDraftState {
     const now = Date.now();
+    const {
+      finalReport: _currentFinalReport,
+      runtimeConversation: _currentRuntimeConversation,
+      ...currentWithoutOptionalRuntimeFields
+    } = current;
     const nextConfiguredAgentId =
       patch.configuredAgentId !== undefined ? this.normalizeWorkflowConfiguredAgentId(patch.configuredAgentId) : current.configuredAgentId;
     const nextModelId =
@@ -3206,7 +3131,7 @@ export class AgentHub {
         : current.modelId;
     const nextGraph = patch.graph ? this.cloneWorkflowGraph(patch.graph) : current.graph;
     const next: WorkflowDraftState = this.cloneWorkflowDraft({
-      ...current,
+      ...currentWithoutOptionalRuntimeFields,
       title: patch.title ?? current.title,
       status: patch.status ?? current.status,
       revision: current.revision + 1,
@@ -3232,12 +3157,12 @@ export class AgentHub {
               ? { finalReport: current.finalReport }
               : {}),
       runIds: patch.resetRunState ? [] : [...current.runIds],
-      ...(patch.agentSessionId === null
+      ...(patch.runtimeConversation === null
         ? {}
-        : patch.agentSessionId !== undefined
-          ? { agentSessionId: patch.agentSessionId }
-          : current.agentSessionId !== undefined
-            ? { agentSessionId: current.agentSessionId }
+        : patch.runtimeConversation !== undefined
+          ? { runtimeConversation: cloneRuntimeConversation(patch.runtimeConversation) }
+          : current.runtimeConversation !== undefined
+            ? { runtimeConversation: cloneRuntimeConversation(current.runtimeConversation) }
             : {}),
       createdAt: current.createdAt,
       updatedAt: now,
@@ -3269,7 +3194,7 @@ export class AgentHub {
     }
 
     if (event.type === "completed") {
-      this.completeWorkflowDraftRequest(workflowId, event.requestId, event.content, event.sessionId);
+      this.completeWorkflowDraftRequest(workflowId, event.requestId, event.content, event.runtimeConversation);
       return;
     }
 
@@ -3278,7 +3203,7 @@ export class AgentHub {
     }
   }
 
-  private completeWorkflowDraftRequest(workflowId: string, requestId: string, content: string, sessionId: string | undefined): void {
+  private completeWorkflowDraftRequest(workflowId: string, requestId: string, content: string, runtimeConversation: RuntimeConversation | undefined): void {
     const activeRequest = this.activeWorkflowDraftRequests.get(workflowId);
     if (!activeRequest || activeRequest.requestId !== requestId) return;
     this.activeWorkflowDraftRequests.delete(workflowId);
@@ -3304,7 +3229,11 @@ export class AgentHub {
       contextDocument: workflow.contextDocument,
       runIds: parsedGraph ? [] : workflow.runIds,
       ...(parsedGraph ? {} : workflow.finalReport !== undefined ? { finalReport: workflow.finalReport } : {}),
-      ...(sessionId !== undefined ? { agentSessionId: sessionId } : workflow.agentSessionId !== undefined ? { agentSessionId: workflow.agentSessionId } : {}),
+      ...(runtimeConversation !== undefined
+        ? { runtimeConversation: cloneRuntimeConversation(runtimeConversation) }
+        : workflow.runtimeConversation !== undefined
+          ? { runtimeConversation: cloneRuntimeConversation(workflow.runtimeConversation) }
+          : {}),
       createdAt: workflow.createdAt,
       updatedAt: Date.now(),
     });
@@ -3489,7 +3418,7 @@ export class AgentHub {
       contextDocument: draft.contextDocument,
       ...(draft.finalReport !== undefined ? { finalReport: draft.finalReport } : {}),
       runIds: draft.runIds.map((runId) => runId),
-      agentSessionId: draft.agentSessionId,
+      ...(draft.runtimeConversation ? { runtimeConversation: cloneRuntimeConversation(draft.runtimeConversation) } : {}),
       createdAt: draft.createdAt || draft.updatedAt || now,
       updatedAt: draft.updatedAt,
     };
@@ -3573,8 +3502,8 @@ export class AgentHub {
       configuredAgentId: chat.configuredAgentId,
       modelId: chat.modelId,
       ...(chat.channelId ? { channelId: chat.channelId } : {}),
-      sessionId: chat.sessionId,
-      ...(chat.runtimeSession ? { runtimeSession: cloneRuntimeSessionState(chat.runtimeSession) } : {}),
+      ...(chat.runtimeState ? { runtimeState: cloneRuntimeState(chat.runtimeState) } : {}),
+      ...(chat.runtimeConversation ? { runtimeConversation: cloneRuntimeConversation(chat.runtimeConversation) } : {}),
       running: chat.running,
       messages: chat.messages.map((message) => this.serializeMessage(message)),
       pendingAssistantMessageId: chat.pendingAssistantMessageId,
@@ -3595,7 +3524,7 @@ export class AgentHub {
       status: task.status,
       progress: task.progress,
       running: task.running,
-      sessionId: task.sessionId,
+      ...(task.runtimeConversation ? { runtimeConversation: cloneRuntimeConversation(task.runtimeConversation) } : {}),
       messages: task.messages.map((message) => this.serializeMessage(message)),
       pendingAssistantMessageId: task.pendingAssistantMessageId,
       lastError: task.lastError,
@@ -3899,12 +3828,14 @@ export class AgentHub {
     const executor = this.executorFactory.create({
       runId: run.id,
       runKind: run.kind,
-      agentId: resolved.runtimeAgentId,
+      runtimeId: resolved.runtimeAgentId,
+      executionMode: "oneshot",
+      continuationPolicy: run.runtimeConversation ? "resume-preferred" : "fresh",
+      runtimeConfig: { model: resolved.modelId },
+      ...(run.runtimeConversation ? { runtimeConversation: cloneRuntimeConversation(run.runtimeConversation) } : {}),
       runtime,
       channelId: resolved.channel.id,
-      modelId: resolved.modelId,
       prompt,
-      sessionId: run.sessionId,
       workDir: this.runWorkDir(run),
       developerInstructions,
       emit: (event) => this.handleAgentEvent(run, event),
@@ -3923,113 +3854,6 @@ export class AgentHub {
     } catch (error) {
       this.markRunFailed(run, error instanceof Error ? error.message : String(error));
     }
-  }
-
-  private async askCodexWorkflowAgent(input: {
-    requestId: string;
-    prompt: string;
-    runtime: AgentRuntime;
-    channelId: string;
-    modelId: string;
-    workDir: string;
-    sessionId: string | undefined;
-    onEvent: ((event: WorkflowAgentEvent) => void) | undefined;
-  }): Promise<WorkflowAgentResponse> {
-    const executable = input.runtime.command || this.executables.codex;
-    const model = runtimeModelId(input.modelId);
-    const channel = this.channelById(input.channelId);
-
-    let settled = false;
-    let content = "";
-    let sessionId = input.sessionId;
-    let timeout: ReturnType<typeof createWorkflowAgentTimeout> | undefined;
-    let client: CodexRpcClient | undefined;
-
-    return new Promise<WorkflowAgentResponse>((resolve, reject) => {
-      const settle = (callback: () => void): void => {
-        if (settled) return;
-        settled = true;
-        timeout?.clear();
-        void client?.shutdown();
-        callback();
-      };
-
-      timeout = createWorkflowAgentTimeout({
-        timeoutMs: WORKFLOW_AGENT_IDLE_TIMEOUT_MS,
-        onTimeout: () => settle(() => reject(new Error("Workflow agent timed out after 10 minutes without activity"))),
-      });
-
-      client = new CodexRpcClient({
-        executable,
-        cwd: input.workDir,
-        extraArgs: codexAppServerConfigArgs(channel, input.modelId),
-        env: codexEnvironmentForChannel(channel),
-        onEvent: (event) => {
-          timeout?.refresh();
-          if (event.type === "delta") {
-            content += event.content;
-            input.onEvent?.({ requestId: input.requestId, type: "delta", content: event.content });
-            return;
-          }
-          if (event.type === "completed") {
-            if (!content && event.content) content = event.content;
-            input.onEvent?.({ requestId: input.requestId, type: "completed", content: content.trim(), sessionId });
-            settle(() => resolve({ content: content.trim(), sessionId }));
-            return;
-          }
-          if (event.type === "error") {
-            input.onEvent?.({ requestId: input.requestId, type: "error", error: event.error });
-            settle(() => reject(new Error(event.error)));
-          }
-        },
-        onRequest: (id, method, params) => {
-          if (client) this.respondToCodexServerRequest(client, id, method, params);
-        },
-        onExit: (_code, _signal, stderr) => {
-          if (settled) return;
-          settle(() => reject(new Error(stderr.trim() || "Workflow Codex agent exited before completing")));
-        },
-      });
-
-      void (async () => {
-        try {
-          await client.start();
-          const threadResult = sessionId
-            ? await client.request("thread/resume", {
-                threadId: sessionId,
-                model,
-                modelProvider: null,
-                cwd: input.workDir,
-                approvalPolicy: "never",
-                config: null,
-                baseInstructions: null,
-                developerInstructions: CODEX_WORKFLOW_DEVELOPER_INSTRUCTIONS,
-              })
-            : await client.request("thread/start", {
-                model,
-                modelProvider: null,
-                profile: null,
-                cwd: input.workDir,
-                approvalPolicy: "never",
-                config: null,
-                baseInstructions: null,
-                developerInstructions: CODEX_WORKFLOW_DEVELOPER_INSTRUCTIONS,
-                compactPrompt: null,
-                includeApplyPatchTool: null,
-                experimentalRawEvents: true,
-                persistExtendedHistory: true,
-              });
-
-          sessionId = (threadResult as { thread?: { id?: string } }).thread?.id ?? sessionId;
-          await client.request("turn/start", {
-            threadId: sessionId,
-            input: [{ type: "text", text: input.prompt, text_elements: [] }],
-          });
-        } catch (error) {
-          settle(() => reject(error instanceof Error ? error : new Error(String(error))));
-        }
-      })();
-    });
   }
 
   private async testCodexAgent(channel: AgentChannel, modelId: string, workDir: string, emit: AgentTestEmit): Promise<string> {
@@ -4144,41 +3968,12 @@ export class AgentHub {
     return output;
   }
 
-  private async deleteCodexSessionArtifacts(sessionId: string): Promise<void> {
-    try {
-      await execCli({
-        executable: this.executables.codex,
-        args: ["archive", sessionId],
-        cwd: process.cwd(),
-        env: process.env,
-        timeout: 10_000,
-        windowsHide: true,
-        maxBuffer: 1024 * 64,
-      });
-    } catch (error) {
-      console.warn(`Failed to archive Codex session ${sessionId}:`, error);
-    }
-    try {
-      await deleteCodexSessionFiles(codexHome(), sessionId);
-    } catch (error) {
-      console.warn(`Failed to delete local Codex session ${sessionId}:`, error);
-    }
-  }
-
-  private async deleteClaudeSessionArtifacts(workDir: string, sessionId: string): Promise<void> {
-    try {
-      await rm(claudeProjectStoragePath(workDir, sessionId), { force: true });
-    } catch (error) {
-      console.warn(`Failed to delete Claude session ${sessionId}:`, error);
-    }
-  }
-
   private async askApiWorkflowAgent(input: {
     requestId: string;
     prompt: string;
     channelId: string;
     modelId: string;
-    sessionId: string | undefined;
+    runtimeConversation: RuntimeConversation | undefined;
     onEvent: ((event: WorkflowAgentEvent) => void) | undefined;
   }): Promise<WorkflowAgentResponse> {
     const channel = this.channelById(input.channelId);
@@ -4198,69 +3993,8 @@ export class AgentHub {
     if (!response.ok) throw new Error(`API workflow request failed (${response.status}): ${text.slice(0, 800)}`);
     const content = this.extractApiContent(channel, text).trim();
     input.onEvent?.({ requestId: input.requestId, type: "delta", content });
-    input.onEvent?.({ requestId: input.requestId, type: "completed", content, sessionId: input.sessionId });
-    return { content, sessionId: input.sessionId };
-  }
-
-  private async askClaudeWorkflowAgent(input: {
-    requestId: string;
-    prompt: string;
-    runtime: AgentRuntime;
-    channelId: string;
-    modelId: string;
-    workDir: string;
-    sessionId: string | undefined;
-    onEvent: ((event: WorkflowAgentEvent) => void) | undefined;
-  }): Promise<WorkflowAgentResponse> {
-    const channel = this.channelById(input.channelId);
-    const sdkModel = claudeCliModelForChannel(channel, input.modelId);
-    let content = "";
-    let completedContent: string | undefined;
-    let sessionId = input.sessionId;
-    let errorMessage: string | undefined;
-
-    try {
-      await this.claudeSdkAdapter.runOneShot({
-        prompt: input.prompt,
-        cwd: input.workDir,
-        ...(sdkModel ? { modelId: sdkModel } : {}),
-        developerInstructions: CODEX_WORKFLOW_DEVELOPER_INSTRUCTIONS,
-        ...(sessionId ? { resumeSessionId: sessionId } : {}),
-        onEvent: (event) => {
-          if (event.type === "delta") {
-            content += event.content;
-            input.onEvent?.({ requestId: input.requestId, type: "delta", content: event.content });
-            return;
-          }
-          if (event.type === "completed" && event.content) {
-            completedContent = event.content;
-            if (!content) content = event.content;
-            return;
-          }
-          if (event.type === "session") {
-            sessionId = event.sessionId;
-            return;
-          }
-          if (event.type === "error") {
-            errorMessage = event.error;
-            input.onEvent?.({ requestId: input.requestId, type: "error", error: event.error });
-          }
-        },
-      });
-    } catch (error) {
-      throw errorMessage
-        ? new Error(errorMessage)
-        : error instanceof Error
-          ? error
-          : new Error(String(error));
-    }
-
-    const finalContent = completedContent?.trim() || content.trim();
-    if (!finalContent) {
-      throw new Error(errorMessage ?? "Claude workflow completed without assistant text.");
-    }
-    input.onEvent?.({ requestId: input.requestId, type: "completed", content: finalContent, sessionId });
-    return { content: finalContent, sessionId };
+    input.onEvent?.({ requestId: input.requestId, type: "completed", content, ...(input.runtimeConversation ? { runtimeConversation: input.runtimeConversation } : {}) });
+    return { content, ...(input.runtimeConversation ? { runtimeConversation: input.runtimeConversation } : {}) };
   }
 
   private resolveApiModel(channel: AgentChannel, modelId: string): string | undefined {
@@ -4323,24 +4057,18 @@ export class AgentHub {
   }
 
   private handleAgentEvent(run: RunState, event: AgentEvent): void {
-    const runtimeSession = run.kind === "chat" ? run.runtimeSession : undefined;
-    const touchRuntimeSession = (attachmentState: ChatRuntimeSessionState["attachmentState"], clearTurn = false): void => {
-      if (!runtimeSession) return;
-      runtimeSession.attachmentState = attachmentState;
-      runtimeSession.lastMeaningfulActivityAt = Date.now();
-      if (clearTurn) delete runtimeSession.activeTurnId;
+    const runtimeState = run.kind === "chat" ? run.runtimeState : undefined;
+    const touchRuntimeState = (attachmentState: ChatRuntimeSessionState["attachmentState"], clearTurn = false): void => {
+      if (!runtimeState) return;
+      runtimeState.attachmentState = attachmentState;
+      runtimeState.lastMeaningfulActivityAt = Date.now();
+      if (clearTurn) delete runtimeState.activeTurnId;
     };
 
-    if (event.type === "session") {
-      run.sessionId = event.sessionId;
-      if (runtimeSession) {
-        const resolved = this.resolveConfiguredAgent(run.configuredAgentId, run.modelId, run.kind === "chat" ? run.channelId : undefined);
-        const runtimeId = resolved?.runtimeAgentId ?? "codex";
-        runtimeSession.resumeState =
-          runtimeId === "claude"
-            ? { runtimeId: "claude", native: { sessionId: event.sessionId } }
-            : { runtimeId: "codex", native: { threadId: event.sessionId } };
-        runtimeSession.lastMeaningfulActivityAt = Date.now();
+    if (event.type === "runtime_conversation") {
+      run.runtimeConversation = cloneRuntimeConversation(event.runtimeConversation);
+      if (runtimeState) {
+        runtimeState.lastMeaningfulActivityAt = Date.now();
       }
       run.updatedAt = Date.now();
       this.emit();
@@ -4348,7 +4076,7 @@ export class AgentHub {
     }
 
     if (event.type === "delta") {
-      touchRuntimeSession("running");
+      touchRuntimeState("running");
       if (!run.pendingAssistantMessageId) {
         const message = createAssistantMessage(event.content);
         run.pendingAssistantMessageId = message.id;
@@ -4363,7 +4091,7 @@ export class AgentHub {
     }
 
     if (event.type === "meta" || event.type === "system" || event.type === "tool_call" || event.type === "tool_result" || event.type === "handoff") {
-      touchRuntimeSession("running");
+      touchRuntimeState("running");
       this.appendEventToAssistant(run, {
         id: randomUUID(),
         type: event.type,
@@ -4380,7 +4108,7 @@ export class AgentHub {
     }
 
     if (event.type === "approval_request" || event.type === "user_input_request") {
-      touchRuntimeSession("running");
+      touchRuntimeState("running");
       this.appendEventToAssistant(run, {
         id: randomUUID(),
         type: event.type,
@@ -4396,7 +4124,7 @@ export class AgentHub {
     }
 
     if (event.type === "approval_response" || event.type === "user_input_response") {
-      touchRuntimeSession("running");
+      touchRuntimeState("running");
       this.resolvePendingRequest(run, event.requestId, event.type === "approval_response" ? "approval_request" : "user_input_request");
       this.appendEventToAssistant(run, {
         id: randomUUID(),
@@ -4413,7 +4141,7 @@ export class AgentHub {
     }
 
     if (event.type === "completed") {
-      touchRuntimeSession("idle", true);
+      touchRuntimeState("idle", true);
       if (event.content) {
         if (!run.pendingAssistantMessageId) {
           run.messages.push(createAssistantMessage(event.content));
@@ -4435,7 +4163,7 @@ export class AgentHub {
     }
 
     if (event.type === "error") {
-      touchRuntimeSession("interrupted", true);
+      touchRuntimeState("interrupted", true);
       run.lastError = event.error;
       run.messages.push(createErrorMessage(event.error));
       run.pendingAssistantMessageId = undefined;
@@ -4503,58 +4231,34 @@ export class AgentHub {
     this.schedulePersist();
   }
 
-  private restorePersistedState(raw: unknown): void {
-    if (!raw || typeof raw !== "object") return;
-    const record = raw as Record<string, unknown>;
+  private restorePersistedState(raw: unknown): boolean {
+    if (!this.isPersistedAppStateV4(raw)) return false;
+    const record = raw as PersistedAppStateV4 & Record<string, unknown>;
     if (Array.isArray(record.channels)) {
       this.channels = normalizeConfigChannelsForStorage(normalizeChannels(record.channels));
     }
-    if (record.version === 2 || record.version === 3) {
-      this.restorePersistedStateV2(record);
-      return;
-    }
-    this.restorePersistedStateV1(record);
-  }
 
-  private restorePersistedStateV1(record: Record<string, unknown>): void {
-    const chats = Array.isArray(record.chats)
-      ? record.chats.map((item) => this.restoreChatState(item)).filter((item): item is ChatState => Boolean(item))
-      : [];
-    this.installRestoredChats(chats, asOptionalString(record.activeChatId), asOptionalString(record.workDir));
-    this.installRestoredTasks([], undefined);
-    this.installRestoredTeams([], [], undefined, undefined);
-    this.restoreScheduledWorkflowStore(undefined);
-  }
-
-  private restorePersistedStateV2(record: Record<string, unknown>): void {
     const messagesByChat = new Map<string, ChatMessage[]>();
-    if (Array.isArray(record.messages)) {
-      for (const item of record.messages) {
-        if (!item || typeof item !== "object") continue;
-        const messageRecord = item as Record<string, unknown>;
-        const chatId = asOptionalString(messageRecord.chatId);
-        const message = this.restoreMessage(messageRecord);
-        if (!chatId || !message) continue;
-        const messages = messagesByChat.get(chatId) ?? [];
-        messages.push(message);
-        messagesByChat.set(chatId, messages);
-      }
+    for (const item of record.messages) {
+      const messageRecord = asRecord(item);
+      const chatId = asOptionalString(messageRecord?.chatId);
+      const message = messageRecord ? this.restoreMessage(messageRecord) : undefined;
+      if (!chatId || !message) return false;
+      const messages = messagesByChat.get(chatId) ?? [];
+      messages.push(message);
+      messagesByChat.set(chatId, messages);
     }
 
     const eventsByMessage = new Map<string, ChatEvent[]>();
-    if (Array.isArray(record.events)) {
-      for (const item of record.events) {
-        if (!item || typeof item !== "object") continue;
-        const eventRecord = item as Record<string, unknown>;
-        const messageId = asOptionalString(eventRecord.messageId);
-        const event = this.restoreEvent(eventRecord);
-        if (!messageId || !event) continue;
-        const events = eventsByMessage.get(messageId) ?? [];
-        events.push(event);
-        eventsByMessage.set(messageId, events);
-      }
+    for (const item of record.events) {
+      const eventRecord = asRecord(item);
+      const messageId = asOptionalString(eventRecord?.messageId);
+      const event = eventRecord ? this.restoreEvent(eventRecord) : undefined;
+      if (!messageId || !event) return false;
+      const events = eventsByMessage.get(messageId) ?? [];
+      events.push(event);
+      eventsByMessage.set(messageId, events);
     }
-
     for (const messages of messagesByChat.values()) {
       for (const message of messages) {
         const events = eventsByMessage.get(message.id);
@@ -4563,33 +4267,26 @@ export class AgentHub {
     }
 
     const messagesByTask = new Map<string, ChatMessage[]>();
-    if (Array.isArray(record.taskMessages)) {
-      for (const item of record.taskMessages) {
-        if (!item || typeof item !== "object") continue;
-        const messageRecord = item as Record<string, unknown>;
-        const taskId = asOptionalString(messageRecord.taskId);
-        const message = this.restoreMessage(messageRecord);
-        if (!taskId || !message) continue;
-        const messages = messagesByTask.get(taskId) ?? [];
-        messages.push(message);
-        messagesByTask.set(taskId, messages);
-      }
+    for (const item of record.taskMessages ?? []) {
+      const messageRecord = asRecord(item);
+      const taskId = asOptionalString(messageRecord?.taskId);
+      const message = messageRecord ? this.restoreMessage(messageRecord) : undefined;
+      if (!taskId || !message) return false;
+      const messages = messagesByTask.get(taskId) ?? [];
+      messages.push(message);
+      messagesByTask.set(taskId, messages);
     }
 
     const taskEventsByMessage = new Map<string, ChatEvent[]>();
-    if (Array.isArray(record.taskEvents)) {
-      for (const item of record.taskEvents) {
-        if (!item || typeof item !== "object") continue;
-        const eventRecord = item as Record<string, unknown>;
-        const messageId = asOptionalString(eventRecord.messageId);
-        const event = this.restoreEvent(eventRecord);
-        if (!messageId || !event) continue;
-        const events = taskEventsByMessage.get(messageId) ?? [];
-        events.push(event);
-        taskEventsByMessage.set(messageId, events);
-      }
+    for (const item of record.taskEvents ?? []) {
+      const eventRecord = asRecord(item);
+      const messageId = asOptionalString(eventRecord?.messageId);
+      const event = eventRecord ? this.restoreEvent(eventRecord) : undefined;
+      if (!messageId || !event) return false;
+      const events = taskEventsByMessage.get(messageId) ?? [];
+      events.push(event);
+      taskEventsByMessage.set(messageId, events);
     }
-
     for (const messages of messagesByTask.values()) {
       for (const message of messages) {
         const events = taskEventsByMessage.get(message.id);
@@ -4599,45 +4296,73 @@ export class AgentHub {
 
     this.installRestoredConfiguredAgents(Array.isArray(record.configuredAgents) ? record.configuredAgents : []);
 
-    const chats = Array.isArray(record.sessions)
-      ? record.sessions
-          .map((item) => {
-            if (!item || typeof item !== "object") return null;
-            const sessionRecord = item as Record<string, unknown>;
-            const chatId = asOptionalString(sessionRecord.id);
-            return this.restoreChatState({
-              ...sessionRecord,
-              messages: chatId ? messagesByChat.get(chatId) ?? [] : [],
-            });
-          })
-          .filter((item): item is ChatState => Boolean(item))
-      : [];
+    const chats: ChatState[] = [];
+    for (const item of record.sessions) {
+      const sessionRecord = asRecord(item);
+      const chatId = asOptionalString(sessionRecord?.id);
+      if (!sessionRecord || !chatId) return false;
+      const chat = this.restoreChatState({
+        ...sessionRecord,
+        messages: messagesByChat.get(chatId) ?? [],
+      });
+      if (!chat) return false;
+      chats.push(chat);
+    }
     this.installRestoredChats(chats, asOptionalString(record.activeChatId), asOptionalString(record.workDir));
 
-    const tasks = Array.isArray(record.tasks)
-      ? record.tasks
-          .map((item) => {
-            if (!item || typeof item !== "object") return null;
-            const taskRecord = item as Record<string, unknown>;
-            const taskId = asOptionalString(taskRecord.id);
-            return this.restoreTaskState({
-              ...taskRecord,
-              messages: taskId ? messagesByTask.get(taskId) ?? [] : [],
-            });
-          })
-          .filter((item): item is TaskState => Boolean(item))
-      : [];
+    const tasks: TaskState[] = [];
+    for (const item of record.tasks ?? []) {
+      const taskRecord = asRecord(item);
+      const taskId = asOptionalString(taskRecord?.id);
+      if (!taskRecord || !taskId) return false;
+      const task = this.restoreTaskState({
+        ...taskRecord,
+        messages: messagesByTask.get(taskId) ?? [],
+      });
+      if (!task) return false;
+      tasks.push(task);
+    }
     this.installRestoredTasks(tasks, asOptionalString(record.activeTaskId));
 
-    const teams = Array.isArray(record.teams)
-      ? record.teams.map((item) => this.restoreTeamState(item)).filter((item): item is AgentTeamState => Boolean(item))
-      : [];
-    const teamRuns = Array.isArray(record.teamRuns)
-      ? record.teamRuns.map((item) => this.restoreTeamRunState(item)).filter((item): item is TeamRunState => Boolean(item))
-      : [];
-    this.installRestoredTeams(teams, teamRuns, asOptionalString(record.activeTeamId), asOptionalString(record.activeTeamRunId));
-    this.restoreWorkflowStore(record.workflowStore, record.workflowDraft);
+    const teams = (record.teams ?? []).map((item) => this.restoreTeamState(item));
+    if (teams.some((item) => !item)) return false;
+    const teamRuns = (record.teamRuns ?? []).map((item) => this.restoreTeamRunState(item));
+    if (teamRuns.some((item) => !item)) return false;
+    this.installRestoredTeams(
+      teams.filter((item): item is AgentTeamState => Boolean(item)),
+      teamRuns.filter((item): item is TeamRunState => Boolean(item)),
+      asOptionalString(record.activeTeamId),
+      asOptionalString(record.activeTeamRunId),
+    );
+    if (!this.restoreWorkflowStore(record.workflowStore)) return false;
     this.restoreScheduledWorkflowStore(record.scheduledWorkflowStore);
+    return true;
+  }
+
+  private isPersistedAppStateV4(raw: unknown): raw is PersistedAppStateV4 {
+    const record = asRecord(raw);
+    return Boolean(
+      record
+      && record.version === 4
+      && typeof record.workDir === "string"
+      && Array.isArray(record.sessions)
+      && Array.isArray(record.messages)
+      && Array.isArray(record.events)
+      && Array.isArray(record.tasks)
+      && Array.isArray(record.taskMessages)
+      && Array.isArray(record.taskEvents)
+      && Array.isArray(record.teams)
+      && Array.isArray(record.teamRuns),
+    );
+  }
+
+  private reinitializePersistedState(): void {
+    this.installRestoredConfiguredAgents([]);
+    this.installRestoredChats([], undefined, undefined);
+    this.installRestoredTasks([], undefined);
+    this.installRestoredTeams([], [], undefined, undefined);
+    void this.restoreWorkflowStore(undefined);
+    this.restoreScheduledWorkflowStore(undefined);
   }
 
   private installRestoredConfiguredAgents(rawAgents: unknown[]): void {
@@ -4712,30 +4437,12 @@ export class AgentHub {
     this.activeTeamRunId = activeTeamRunId && this.teamRuns.has(activeTeamRunId) ? activeTeamRunId : [...this.teamRuns.keys()][0];
   }
 
-  private migrateLegacyRuntimeSession(record: PersistedChatSessionRecord): ChatRuntimeSessionState | undefined {
-    if (!record.sessionId) return undefined;
-    const resolved = this.resolveConfiguredAgent(record.configuredAgentId, record.modelId);
-    if (!resolved || !this.runtimeSupportsInteractiveChat(resolved.runtimeAgentId)) return undefined;
-    const runtimeId = resolved?.runtimeAgentId === "claude" ? "claude" : "codex";
-    const resumeState: PersistedResumeState =
-      runtimeId === "claude"
-        ? { runtimeId: "claude", native: { sessionId: record.sessionId } }
-        : { runtimeId: "codex", native: { threadId: record.sessionId } };
-    return {
-      executionStyle: "interactive",
-      attachmentState: "detached",
-      attachmentGeneration: 0,
-      resumeState,
-      capabilities: defaultRuntimeSessionCapabilities(),
-    };
-  }
-
   private runtimeSupportsInteractiveChat(runtimeAgentId: AgentId): boolean {
     const driver = this.runtimeDrivers.driverFor(runtimeAgentId);
     return driver.getCapabilities(this.runtimeForDriver(runtimeAgentId)).chatStyle === "interactive";
   }
 
-  private restoreRuntimeSession(raw: unknown): ChatRuntimeSessionState | undefined {
+  private restoreRuntimeState(raw: unknown): ChatRuntimeSessionState | undefined {
     const record = asRecord(raw);
     if (!record || !isExecutionStyle(record.executionStyle) || !isRuntimeAttachmentState(record.attachmentState)) return undefined;
     const capabilitiesRecord = asRecord(record.capabilities);
@@ -4761,77 +4468,24 @@ export class AgentHub {
     if (typeof record.lastMeaningfulActivityAt === "number") {
       restored.lastMeaningfulActivityAt = record.lastMeaningfulActivityAt;
     }
-    const resumeStateRecord = asRecord(record.resumeState);
-    if (resumeStateRecord?.runtimeId === "codex") {
-      const native = asRecord(resumeStateRecord.native);
-      const threadId = asOptionalString(native?.threadId);
-      if (threadId) {
-        const sessionTreeRootId = asOptionalString(native?.sessionTreeRootId);
-        const appContext = asRecord(resumeStateRecord.appContext);
-        const codexCwd = asOptionalString(appContext?.cwd);
-        const codexModelId = asOptionalString(appContext?.modelId);
-        const approvalPolicy = asOptionalString(appContext?.approvalPolicy);
-        const sandboxPolicy = appContext?.sandboxPolicy;
-        restored.resumeState = {
-          runtimeId: "codex",
-          native: {
-            threadId,
-            ...(sessionTreeRootId !== undefined ? { sessionTreeRootId } : {}),
-          },
-          ...(appContext
-            ? {
-                appContext: {
-                  ...(codexCwd !== undefined ? { cwd: codexCwd } : {}),
-                  ...(codexModelId !== undefined ? { modelId: codexModelId } : {}),
-                  ...(approvalPolicy !== undefined ? { approvalPolicy } : {}),
-                  ...(sandboxPolicy !== undefined ? { sandboxPolicy } : {}),
-                },
-              }
-            : {}),
-          ...(asRecord(resumeStateRecord.extensions) ? { extensions: { ...asRecord(resumeStateRecord.extensions)! } } : {}),
-        };
-      }
-    }
-    if (resumeStateRecord?.runtimeId === "claude") {
-      const native = asRecord(resumeStateRecord.native);
-      const sessionId = asOptionalString(native?.sessionId);
-      if (sessionId) {
-        const appContext = asRecord(resumeStateRecord.appContext);
-        const cwd = asOptionalString(appContext?.cwd);
-        const projectKey = asOptionalString(native?.projectKey);
-        const subpaths = Array.isArray(native?.subpaths)
-          ? native.subpaths.map((item) => asOptionalString(item)).filter((item): item is string => Boolean(item))
-          : undefined;
-        const claudeModelId = asOptionalString(appContext?.modelId);
-        const claudeConfigDir = asOptionalString(appContext?.claudeConfigDir);
-        const sessionStoreRef = asOptionalString(appContext?.sessionStoreRef);
-        restored.resumeState = {
-          runtimeId: "claude",
-          native: {
-            sessionId,
-            ...(projectKey !== undefined ? { projectKey } : {}),
-            ...(subpaths !== undefined ? { subpaths } : {}),
-          },
-          ...(cwd
-            ? {
-                appContext: {
-                  cwd,
-                  ...(claudeModelId !== undefined ? { modelId: claudeModelId } : {}),
-                  ...(claudeConfigDir !== undefined ? { claudeConfigDir } : {}),
-                  ...(sessionStoreRef !== undefined ? { sessionStoreRef } : {}),
-                },
-              }
-            : {}),
-          ...(asRecord(resumeStateRecord.extensions) ? { extensions: { ...asRecord(resumeStateRecord.extensions)! } } : {}),
-        };
-      }
-    }
     return restored;
+  }
+
+  private restoreRuntimeConversation(raw: unknown): RuntimeConversation | undefined {
+    const record = asRecord(raw);
+    if (!record || !isAgentId(record.runtimeId) || typeof record.codecVersion !== "string") return undefined;
+    if (!Object.prototype.hasOwnProperty.call(record, "payload")) return undefined;
+    return {
+      runtimeId: record.runtimeId,
+      codecVersion: record.codecVersion,
+      payload: structuredClone(record.payload),
+    };
   }
 
   private restoreChatState(raw: unknown): ChatState | null {
     if (!raw || typeof raw !== "object") return null;
     const record = raw as Record<string, unknown>;
+    if ("sessionId" in record || "runtimeSession" in record) return null;
 
     const now = Date.now();
     const configuredAgent = this.configuredAgentOrDefault(asOptionalString(record.configuredAgentId));
@@ -4853,7 +4507,6 @@ export class AgentHub {
     );
     chat.id = asOptionalString(record.id) ?? chat.id;
     chat.title = asOptionalString(record.title) ?? (configuredAgent.name || "New Chat");
-    chat.sessionId = asOptionalString(record.sessionId);
     chat.running = false;
     chat.pendingAssistantMessageId = undefined;
     chat.lastError = asOptionalString(record.lastError);
@@ -4863,40 +4516,26 @@ export class AgentHub {
       ? record.messages.map((message) => this.restoreMessage(message)).filter((message): message is ChatMessage => Boolean(message))
       : [];
     chat.messages = this.expirePendingInteractionEvents(this.normalizeRestoredMessages(messages));
-    const migratedLegacyRuntimeSession = this.migrateLegacyRuntimeSession({
-      id: chat.id,
-      title: chat.title,
-      configuredAgentId: chat.configuredAgentId,
-      modelId: chat.modelId,
-      sessionId: chat.sessionId,
-      lastError: chat.lastError,
-      createdAt: chat.createdAt,
-      updatedAt: chat.updatedAt,
-    });
-    const restoredRuntimeSession = asRecord(record.runtimeSession) ? this.restoreRuntimeSession(record.runtimeSession) : undefined;
-    const hydratedRuntimeSession =
-      restoredRuntimeSession && !restoredRuntimeSession.resumeState && migratedLegacyRuntimeSession?.resumeState
-        ? {
-            ...cloneRuntimeSessionState(restoredRuntimeSession),
-            resumeState: clonePersistedResumeState(migratedLegacyRuntimeSession.resumeState),
-          }
-        : restoredRuntimeSession;
-    const supportsInteractiveRuntimeSession = this.runtimeSupportsInteractiveChat(configuredAgent.runtimeAgentId);
-    const resolvedRuntimeSession = supportsInteractiveRuntimeSession ? hydratedRuntimeSession ?? migratedLegacyRuntimeSession : undefined;
-    chat.runtimeSession = resolvedRuntimeSession
-      ? {
-          ...cloneRuntimeSessionState(resolvedRuntimeSession),
-          attachmentState: "detached",
-          attachmentGeneration: 0,
-        }
-      : undefined;
-    if (chat.runtimeSession) delete chat.runtimeSession.activeTurnId;
+    const restoredRuntimeState = record.runtimeState === undefined ? undefined : this.restoreRuntimeState(record.runtimeState);
+    if (record.runtimeState !== undefined && !restoredRuntimeState) return null;
+    const restoredRuntimeConversation = record.runtimeConversation === undefined ? undefined : this.restoreRuntimeConversation(record.runtimeConversation);
+    if (record.runtimeConversation !== undefined && !restoredRuntimeConversation) return null;
+    if (restoredRuntimeState && this.runtimeSupportsInteractiveChat(configuredAgent.runtimeAgentId)) {
+      chat.runtimeState = {
+        ...cloneRuntimeState(restoredRuntimeState),
+        attachmentState: "detached",
+        attachmentGeneration: 0,
+      };
+      delete chat.runtimeState.activeTurnId;
+    }
+    chat.runtimeConversation = restoredRuntimeConversation ? cloneRuntimeConversation(restoredRuntimeConversation) : undefined;
     return chat;
   }
 
   private restoreTaskState(raw: unknown): TaskState | null {
     if (!raw || typeof raw !== "object") return null;
     const record = raw as Record<string, unknown>;
+    if ("sessionId" in record) return null;
     if (typeof record.prompt !== "string") return null;
 
     const configuredAgent = this.configuredAgentOrDefault(asOptionalString(record.configuredAgentId));
@@ -4910,7 +4549,6 @@ export class AgentHub {
     );
     task.id = asOptionalString(record.id) ?? task.id;
     task.title = asOptionalString(record.title) ?? titleFromPrompt(record.prompt);
-    task.sessionId = asOptionalString(record.sessionId);
     task.progress = isTaskProgress(record.progress) ? record.progress : "todo";
     const status = isTaskRunStatus(record.status) ? record.status : "completed";
     task.status = status === "running" ? "failed" : status;
@@ -4923,6 +4561,9 @@ export class AgentHub {
       ? record.messages.map((message) => this.restoreMessage(message)).filter((message): message is ChatMessage => Boolean(message))
       : [];
     task.messages = this.normalizeRestoredMessages(messages);
+    const restoredRuntimeConversation = record.runtimeConversation === undefined ? undefined : this.restoreRuntimeConversation(record.runtimeConversation);
+    if (record.runtimeConversation !== undefined && !restoredRuntimeConversation) return null;
+    task.runtimeConversation = restoredRuntimeConversation ? cloneRuntimeConversation(restoredRuntimeConversation) : undefined;
     return task;
   }
 
@@ -5005,33 +4646,30 @@ export class AgentHub {
     };
   }
 
-  private restoreWorkflowStore(rawStore: unknown, legacyDraft: unknown): void {
+  private restoreWorkflowStore(rawStore: unknown): boolean {
     this.workflows.clear();
     this.workflowRuns.clear();
     this.activeWorkflowId = undefined;
 
     const storeRecord = asRecord(rawStore);
-    if (storeRecord) {
-      for (const item of asArray(storeRecord.workflows)) {
-        const workflow = this.restoreWorkflowDraft(item);
-        if (workflow) this.workflows.set(workflow.workflowId, workflow);
-      }
-      for (const item of asArray(storeRecord.runs)) {
-        const run = this.restoreWorkflowRun(item);
-        if (run) this.workflowRuns.set(run.runId, run);
-      }
-      const activeWorkflowId = asOptionalString(storeRecord.activeWorkflowId);
-      this.activeWorkflowId =
-        activeWorkflowId && this.workflows.has(activeWorkflowId)
-          ? activeWorkflowId
-          : [...this.workflows.values()].sort((left, right) => right.updatedAt - left.updatedAt)[0]?.workflowId;
-      return;
+    if (rawStore === undefined) return true;
+    if (!storeRecord) return false;
+    for (const item of asArray(storeRecord.workflows)) {
+      const workflow = this.restoreWorkflowDraft(item);
+      if (!workflow) return false;
+      this.workflows.set(workflow.workflowId, workflow);
     }
-
-    const workflow = this.restoreWorkflowDraft(legacyDraft);
-    if (!workflow) return;
-    this.workflows.set(workflow.workflowId, workflow);
-    this.activeWorkflowId = workflow.workflowId;
+    for (const item of asArray(storeRecord.runs)) {
+      const run = this.restoreWorkflowRun(item);
+      if (!run) return false;
+      this.workflowRuns.set(run.runId, run);
+    }
+    const activeWorkflowId = asOptionalString(storeRecord.activeWorkflowId);
+    this.activeWorkflowId =
+      activeWorkflowId && this.workflows.has(activeWorkflowId)
+        ? activeWorkflowId
+        : [...this.workflows.values()].sort((left, right) => right.updatedAt - left.updatedAt)[0]?.workflowId;
+    return true;
   }
 
   private restoreScheduledWorkflowStore(rawStore: unknown): void {
@@ -5122,9 +4760,12 @@ export class AgentHub {
   private restoreWorkflowDraft(raw: unknown): WorkflowDraftState | undefined {
     const record = asRecord(raw);
     if (!record) return undefined;
+    if ("agentSessionId" in record) return undefined;
     const graph = this.restoreWorkflowGraph(record.graph);
     if (!graph) return undefined;
     const finalReport = asOptionalString(record.finalReport);
+    const restoredRuntimeConversation = record.runtimeConversation === undefined ? undefined : this.restoreRuntimeConversation(record.runtimeConversation);
+    if (record.runtimeConversation !== undefined && !restoredRuntimeConversation) return undefined;
     return this.cloneWorkflowDraft({
       workflowId: asOptionalString(record.workflowId) ?? `wf_${randomUUID()}`,
       title: asOptionalString(record.title) ?? graph.title,
@@ -5156,7 +4797,7 @@ export class AgentHub {
       contextDocument: asOptionalString(record.contextDocument) ?? "",
       ...(finalReport !== undefined ? { finalReport } : {}),
       runIds: asArray(record.runIds).map((item) => asOptionalString(item)).filter((item): item is string => Boolean(item)),
-      agentSessionId: asOptionalString(record.agentSessionId),
+      ...(restoredRuntimeConversation ? { runtimeConversation: restoredRuntimeConversation } : {}),
       createdAt: asNumber(record.createdAt, asNumber(record.updatedAt, Date.now())),
       updatedAt: asNumber(record.updatedAt, Date.now()),
     });
@@ -5395,8 +5036,8 @@ export class AgentHub {
     }, PERSIST_DEBOUNCE_MS);
   }
 
-  private buildPersistedPayload(): PersistedAppStateV3 {
-    const sessions: PersistedChatSessionRecordV3[] = [];
+  private buildPersistedPayload(): PersistedAppStateV4 {
+    const sessions: PersistedChatSessionRecord[] = [];
     const messages: PersistedChatMessageRecord[] = [];
     const events: PersistedChatEventRecord[] = [];
     const tasks: PersistedTaskRunRecord[] = [];
@@ -5412,8 +5053,8 @@ export class AgentHub {
         configuredAgentId: chat.configuredAgentId,
         modelId: chat.modelId,
         ...(chat.channelId ? { channelId: chat.channelId } : {}),
-        sessionId: chat.sessionId,
-        ...(chat.runtimeSession ? { runtimeSession: cloneRuntimeSessionState(chat.runtimeSession) } : {}),
+        ...(chat.runtimeState ? { runtimeState: cloneRuntimeState(chat.runtimeState) } : {}),
+        ...(chat.runtimeConversation ? { runtimeConversation: cloneRuntimeConversation(chat.runtimeConversation) } : {}),
         lastError: chat.lastError,
         createdAt: chat.createdAt,
         updatedAt: chat.updatedAt,
@@ -5447,7 +5088,7 @@ export class AgentHub {
         workDir: task.workDir,
         status: task.status,
         progress: task.progress,
-        sessionId: task.sessionId,
+        ...(task.runtimeConversation ? { runtimeConversation: cloneRuntimeConversation(task.runtimeConversation) } : {}),
         lastError: task.lastError,
         createdAt: task.createdAt,
         updatedAt: task.updatedAt,
@@ -5512,7 +5153,7 @@ export class AgentHub {
     }
 
     return {
-      version: 3,
+      version: 4,
       activeChatId: this.activeChatId ?? null,
       activeTaskId: this.activeTaskId ?? null,
       activeTeamId: this.activeTeamId ?? null,

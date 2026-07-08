@@ -2,7 +2,7 @@ import { mkdtemp } from "node:fs/promises";
 import os from "node:os";
 import path from "node:path";
 import { describe, expect, test } from "vitest";
-import type { AgentEvent, AgentRuntime, ChatRuntimeSessionState, PersistedResumeState } from "../../shared/types";
+import type { AgentEvent, AgentRuntime, ChatRuntimeSessionState } from "../../shared/types";
 import { ClaudeInteractiveSession } from "./claude-interactive-session";
 
 function claudeRuntime(command: string): AgentRuntime {
@@ -28,15 +28,47 @@ function runtimeSessionCapabilities(): ChatRuntimeSessionState["capabilities"] {
   };
 }
 
-function baseClaudeContext(dir: string) {
+function claudeConversation(
+  dir: string,
+  sessionId: string,
+  options: {
+    modelId?: string;
+    projectKey?: string;
+    subpaths?: string[];
+    claudeConfigDir?: string;
+    sessionStoreRef?: string;
+  } = {},
+) {
+  return {
+    runtimeId: "claude" as const,
+    codecVersion: "v1",
+    payload: {
+      native: {
+        sessionId,
+        ...(options.projectKey !== undefined ? { projectKey: options.projectKey } : {}),
+        ...(options.subpaths !== undefined ? { subpaths: options.subpaths } : {}),
+      },
+      appContext: {
+        cwd: dir,
+        modelId: options.modelId ?? "claude-sonnet-4-6",
+        ...(options.claudeConfigDir !== undefined ? { claudeConfigDir: options.claudeConfigDir } : {}),
+        ...(options.sessionStoreRef !== undefined ? { sessionStoreRef: options.sessionStoreRef } : {}),
+      },
+    },
+  };
+}
+
+function baseClaudeContext(dir: string, modelId = "claude-sonnet-4-6") {
   return {
     chatId: "chat-1",
     configuredAgentId: "claude-agent",
     runtimeId: "claude" as const,
+    executionMode: "interactive" as const,
+    continuationPolicy: "resume-preferred" as const,
     runtime: claudeRuntime("claude"),
     channelId: "claude-code",
     workDir: dir,
-    modelId: "claude-sonnet-4-6",
+    runtimeConfig: { model: modelId },
     developerInstructions: "test",
     emit: () => undefined,
   };
@@ -120,12 +152,7 @@ describe("ClaudeInteractiveSession", () => {
     const session = new ClaudeInteractiveSession(
       {
         ...baseClaudeContext(dir),
-        resumeState: {
-          runtimeId: "claude",
-          native: {
-            sessionId: "claude-session-1",
-          },
-        },
+        runtimeConversation: claudeConversation(dir, "claude-session-1"),
         emit: () => undefined,
         syncState: () => undefined,
       },
@@ -154,15 +181,14 @@ describe("ClaudeInteractiveSession", () => {
 
     const session = new ClaudeInteractiveSession(
       {
-        ...baseClaudeContext(dir),
-        modelId: "default",
+        ...baseClaudeContext(dir, "default"),
         emit: () => undefined,
         syncState: () => undefined,
       },
       {
         now: () => 1000,
         capabilities: runtimeSessionCapabilities(),
-        resolveModelId: (context) => `resolved:${context.modelId}`,
+        resolveModelId: (context) => `resolved:${context.runtimeConfig.model}`,
         sdkInteractive: createSdkInteractiveStub({
           attach: async (input) => {
             attaches.push(input);
@@ -173,15 +199,21 @@ describe("ClaudeInteractiveSession", () => {
     );
 
     await session.sendPrompt("hello");
-    forwardEvent?.({ type: "session", sessionId: "claude-session-1" });
+    forwardEvent?.({
+      type: "runtime_conversation",
+      runtimeConversation: claudeConversation(dir, "claude-session-1"),
+    });
 
     expect(attaches[0]).toMatchObject({
       modelId: "resolved:default",
     });
-    expect(session.snapshot().resumeState).toMatchObject({
+    expect(session.snapshot().runtimeConversation).toMatchObject({
       runtimeId: "claude",
-      native: { sessionId: "claude-session-1" },
-      appContext: { modelId: "default" },
+      codecVersion: "v1",
+      payload: {
+        native: { sessionId: "claude-session-1" },
+        appContext: { modelId: "default" },
+      },
     });
   });
 
@@ -191,28 +223,13 @@ describe("ClaudeInteractiveSession", () => {
 
     const session = new ClaudeInteractiveSession(
       {
-        chatId: "chat-1",
-        configuredAgentId: "claude-agent",
-        runtimeId: "claude",
-        runtime: claudeRuntime("claude"),
-        channelId: "claude-code",
-        workDir: dir,
-        modelId: "claude-sonnet-4-6",
-        developerInstructions: "test",
-        resumeState: {
-          runtimeId: "claude",
-          native: {
-            sessionId: "claude-session-1",
-            projectKey: "project-1",
-            subpaths: ["subagent-a"],
-          },
-          appContext: {
-            cwd: dir,
-            modelId: "claude-sonnet-4-6",
-            claudeConfigDir: "C:/claude-config",
-            sessionStoreRef: "session-store-a",
-          },
-        },
+        ...baseClaudeContext(dir),
+        runtimeConversation: claudeConversation(dir, "claude-session-1", {
+          projectKey: "project-1",
+          subpaths: ["subagent-a"],
+          claudeConfigDir: "C:/claude-config",
+          sessionStoreRef: "session-store-a",
+        }),
         emit: () => undefined,
         syncState: () => undefined,
       },
@@ -244,14 +261,7 @@ describe("ClaudeInteractiveSession", () => {
     let forwardEvent: ((event: { type: string; [key: string]: unknown }) => void) | undefined;
     const session = new ClaudeInteractiveSession(
       {
-        chatId: "chat-1",
-        configuredAgentId: "claude-agent",
-        runtimeId: "claude",
-        runtime: claudeRuntime("claude"),
-        channelId: "claude-code",
-        workDir: dir,
-        modelId: "default",
-        developerInstructions: "test",
+        ...baseClaudeContext(dir, "default"),
         emit: () => undefined,
         syncState: () => undefined,
       },
@@ -265,7 +275,10 @@ describe("ClaudeInteractiveSession", () => {
           },
           sendUserMessage: async (content: string) => {
             sent.push(content);
-            forwardEvent?.({ type: "session", sessionId: "claude-session-1" });
+            forwardEvent?.({
+              type: "runtime_conversation",
+              runtimeConversation: claudeConversation(dir, "claude-session-1"),
+            });
             forwardEvent?.({ type: "completed", content: `reply:${content}` });
           },
         }),
@@ -278,9 +291,10 @@ describe("ClaudeInteractiveSession", () => {
 
     expect(attaches).toHaveLength(1);
     expect(sent).toEqual(["first", "second"]);
-    expect(session.snapshot().resumeState).toMatchObject({
+    expect(session.snapshot().runtimeConversation).toMatchObject({
       runtimeId: "claude",
-      native: { sessionId: "claude-session-1" },
+      codecVersion: "v1",
+      payload: { native: { sessionId: "claude-session-1" } },
     });
   });
 
@@ -290,20 +304,12 @@ describe("ClaudeInteractiveSession", () => {
     const session = new ClaudeInteractiveSession(
       {
         ...baseClaudeContext(dir),
-        resumeState: {
-          runtimeId: "claude",
-          native: {
-            sessionId: "claude-session-1",
-            projectKey: "project-1",
-            subpaths: ["worker-1"],
-          },
-          appContext: {
-            cwd: dir,
-            modelId: "claude-sonnet-4-6",
-            claudeConfigDir: "C:/claude-config",
-            sessionStoreRef: "session-store-a",
-          },
-        },
+        runtimeConversation: claudeConversation(dir, "claude-session-1", {
+          projectKey: "project-1",
+          subpaths: ["worker-1"],
+          claudeConfigDir: "C:/claude-config",
+          sessionStoreRef: "session-store-a",
+        }),
         syncState: () => undefined,
       },
       {
@@ -318,34 +324,34 @@ describe("ClaudeInteractiveSession", () => {
     );
 
     await session.sendPrompt("first");
-    forwardEvent?.({ type: "session", sessionId: "claude-session-2" });
+    forwardEvent?.({
+      type: "runtime_conversation",
+      runtimeConversation: claudeConversation(dir, "claude-session-2"),
+    });
 
-    expect(session.snapshot().resumeState).toEqual({
-      runtimeId: "claude",
-      native: {
-        sessionId: "claude-session-2",
+    expect(session.snapshot().runtimeConversation).toEqual(
+      claudeConversation(dir, "claude-session-2", {
         projectKey: "project-1",
         subpaths: ["worker-1"],
-      },
-      appContext: {
-        cwd: dir,
-        modelId: "claude-sonnet-4-6",
         claudeConfigDir: "C:/claude-config",
         sessionStoreRef: "session-store-a",
-      },
-    });
+      }),
+    );
   });
 
-  test("refreshes a native-only Claude resume state without throwing and repopulates app context", async () => {
+  test("refreshes a native-only Claude runtime conversation without throwing and repopulates app context", async () => {
     const dir = await mkdtemp(path.join(os.tmpdir(), "multi-agent-chat-claude-native-only-refresh-"));
     let forwardEvent: ((event: { type: string; [key: string]: unknown }) => void) | undefined;
     const session = new ClaudeInteractiveSession(
       {
         ...baseClaudeContext(dir),
-        resumeState: {
+        runtimeConversation: {
           runtimeId: "claude",
-          native: {
-            sessionId: "claude-session-1",
+          codecVersion: "v1",
+          payload: {
+            native: {
+              sessionId: "claude-session-1",
+            },
           },
         },
         syncState: () => undefined,
@@ -363,17 +369,13 @@ describe("ClaudeInteractiveSession", () => {
 
     await session.sendPrompt("first");
 
-    expect(() => forwardEvent?.({ type: "session", sessionId: "claude-session-2" })).not.toThrow();
-    expect(session.snapshot().resumeState).toEqual({
-      runtimeId: "claude",
-      native: {
-        sessionId: "claude-session-2",
-      },
-      appContext: {
-        cwd: dir,
-        modelId: "claude-sonnet-4-6",
-      },
-    });
+    expect(() =>
+      forwardEvent?.({
+        type: "runtime_conversation",
+        runtimeConversation: claudeConversation(dir, "claude-session-2"),
+      })
+    ).not.toThrow();
+    expect(session.snapshot().runtimeConversation).toEqual(claudeConversation(dir, "claude-session-2"));
   });
 
   test("preserves defined empty-string Claude resume metadata on session refresh", async () => {
@@ -382,20 +384,12 @@ describe("ClaudeInteractiveSession", () => {
     const session = new ClaudeInteractiveSession(
       {
         ...baseClaudeContext(dir),
-        resumeState: {
-          runtimeId: "claude",
-          native: {
-            sessionId: "claude-session-1",
-            projectKey: "",
-            subpaths: ["worker-1"],
-          },
-          appContext: {
-            cwd: dir,
-            modelId: "claude-sonnet-4-6",
-            claudeConfigDir: "",
-            sessionStoreRef: "",
-          },
-        },
+        runtimeConversation: claudeConversation(dir, "claude-session-1", {
+          projectKey: "",
+          subpaths: ["worker-1"],
+          claudeConfigDir: "",
+          sessionStoreRef: "",
+        }),
         syncState: () => undefined,
       },
       {
@@ -410,22 +404,19 @@ describe("ClaudeInteractiveSession", () => {
     );
 
     await session.sendPrompt("first");
-    forwardEvent?.({ type: "session", sessionId: "claude-session-2" });
+    forwardEvent?.({
+      type: "runtime_conversation",
+      runtimeConversation: claudeConversation(dir, "claude-session-2"),
+    });
 
-    expect(session.snapshot().resumeState).toEqual({
-      runtimeId: "claude",
-      native: {
-        sessionId: "claude-session-2",
+    expect(session.snapshot().runtimeConversation).toEqual(
+      claudeConversation(dir, "claude-session-2", {
         projectKey: "",
         subpaths: ["worker-1"],
-      },
-      appContext: {
-        cwd: dir,
-        modelId: "claude-sonnet-4-6",
         claudeConfigDir: "",
         sessionStoreRef: "",
-      },
-    });
+      }),
+    );
   });
 
   test("drops late Claude turn events after interrupt clears the active turn", async () => {
@@ -434,14 +425,7 @@ describe("ClaudeInteractiveSession", () => {
     let forwardEvent: ((event: { type: string; [key: string]: unknown }) => void) | undefined;
     const session = new ClaudeInteractiveSession(
       {
-        chatId: "chat-1",
-        configuredAgentId: "claude-agent",
-        runtimeId: "claude",
-        runtime: claudeRuntime("claude"),
-        channelId: "claude-code",
-        workDir: dir,
-        modelId: "default",
-        developerInstructions: "test",
+        ...baseClaudeContext(dir, "default"),
         emit: (event) => emitted.push(event as { type: string; [key: string]: unknown }),
         syncState: () => undefined,
       },
@@ -451,27 +435,30 @@ describe("ClaudeInteractiveSession", () => {
         sdkInteractive: createSdkInteractiveStub({
           attach: async (input) => {
             forwardEvent = input.onEvent as (event: { type: string; [key: string]: unknown }) => void;
-            input.onEvent({ type: "session", sessionId: "claude-session-1" });
+            input.onEvent({
+              type: "runtime_conversation",
+              runtimeConversation: claudeConversation(dir, "claude-session-1"),
+            });
           },
         }),
       },
     );
 
     await session.sendPrompt("first");
-    expect(session.snapshot().activeTurnId).toBeDefined();
+    expect(session.snapshot().runtimeState.activeTurnId).toBeDefined();
 
     await session.interrupt();
-    expect(session.snapshot()).toMatchObject({
+    expect(session.snapshot().runtimeState).toMatchObject({
       attachmentState: "interrupted",
     });
-    expect(session.snapshot().activeTurnId).toBeUndefined();
+    expect(session.snapshot().runtimeState.activeTurnId).toBeUndefined();
 
     const eventCountBeforeLateOutput = emitted.length;
     forwardEvent?.({ type: "delta", content: "late" });
     forwardEvent?.({ type: "completed", content: "reply:first" });
 
     expect(emitted).toHaveLength(eventCountBeforeLateOutput);
-    expect(session.snapshot()).toMatchObject({
+    expect(session.snapshot().runtimeState).toMatchObject({
       attachmentState: "interrupted",
     });
   });
@@ -479,7 +466,7 @@ describe("ClaudeInteractiveSession", () => {
   test("stages a Claude model change until the running turn finishes", async () => {
     const dir = await mkdtemp(path.join(os.tmpdir(), "multi-agent-chat-claude-reconfigure-"));
     const startedModels: string[] = [];
-    const syncStates: ChatRuntimeSessionState[] = [];
+    const syncStates: Array<{ runtimeState: ChatRuntimeSessionState }> = [];
     let forwardEvent: ((event: { type: string; [key: string]: unknown }) => void) | undefined;
     const session = new ClaudeInteractiveSession(
       {
@@ -493,7 +480,10 @@ describe("ClaudeInteractiveSession", () => {
           attach: async (input) => {
             startedModels.push((input.modelId as string | undefined) ?? "default");
             forwardEvent = input.onEvent as (event: { type: string; [key: string]: unknown }) => void;
-            input.onEvent({ type: "session", sessionId: "claude-session-1" });
+            input.onEvent({
+              type: "runtime_conversation",
+              runtimeConversation: claudeConversation(dir, "claude-session-1"),
+            });
           },
         }),
       },
@@ -503,15 +493,20 @@ describe("ClaudeInteractiveSession", () => {
     const syncCountBeforeReconfigure = syncStates.length;
 
     session.reconfigure({
-      ...baseClaudeContext(dir),
-      modelId: "claude-opus-4-6",
+      ...baseClaudeContext(dir, "claude-opus-4-6"),
       syncState: (state) => syncStates.push(state),
     });
 
     expect(syncStates).toHaveLength(syncCountBeforeReconfigure + 1);
     expect(session.snapshot()).toMatchObject({
-      attachmentState: "running",
-      resumeState: { runtimeId: "claude", native: { sessionId: "claude-session-1" } },
+      runtimeState: {
+        attachmentState: "running",
+      },
+      runtimeConversation: {
+        runtimeId: "claude",
+        codecVersion: "v1",
+        payload: { native: { sessionId: "claude-session-1" } },
+      },
     });
 
     forwardEvent?.({ type: "completed", content: "reply:first" });

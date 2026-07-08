@@ -31,7 +31,14 @@ process.stdout.write(JSON.stringify({ type: "completed", content: "Hello", sessi
 
     expect(emitted).toEqual([
       { type: "delta", content: "Hello" },
-      { type: "session", sessionId: "hermes-session-1" },
+      {
+        type: "runtime_conversation",
+        runtimeConversation: {
+          runtimeId: "hermes",
+          codecVersion: "v1",
+          payload: { sessionId: "hermes-session-1" },
+        },
+      },
       { type: "completed", content: "Hello" },
     ]);
   });

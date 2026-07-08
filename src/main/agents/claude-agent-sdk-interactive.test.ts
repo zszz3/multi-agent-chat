@@ -235,7 +235,14 @@ describe("ClaudeAgentSdkInteractive", () => {
     expect(events).toEqual([
       { type: "delta", content: "Hel" },
       { type: "delta", content: "lo" },
-      { type: "session", sessionId: "claude-session-1" },
+      {
+        type: "runtime_conversation",
+        runtimeConversation: {
+          runtimeId: "claude",
+          codecVersion: "v1",
+          payload: { native: { sessionId: "claude-session-1" } },
+        },
+      },
       { type: "completed" },
     ]);
   });

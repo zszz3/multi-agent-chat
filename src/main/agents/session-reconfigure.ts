@@ -18,7 +18,9 @@ export function planSessionReconfigure(
   };
 
   const applyOnNextAttach: Partial<InteractiveSessionContext> = {};
-  if (current.modelId !== next.modelId) applyOnNextAttach.modelId = next.modelId;
+  if (current.runtimeConfig.model !== next.runtimeConfig.model) {
+    applyOnNextAttach.runtimeConfig = next.runtimeConfig;
+  }
   if (current.channelId !== next.channelId) applyOnNextAttach.channelId = next.channelId;
   if (current.developerInstructions !== next.developerInstructions) {
     applyOnNextAttach.developerInstructions = next.developerInstructions;

@@ -24,7 +24,14 @@ describe("ClaudeAgentSdkAdapter", () => {
     expect(events).toEqual(
       expect.arrayContaining([
         expect.objectContaining({ type: "delta", content: "hello" }),
-        expect.objectContaining({ type: "session", sessionId: "claude-session-1" }),
+        expect.objectContaining({
+          type: "runtime_conversation",
+          runtimeConversation: expect.objectContaining({
+            runtimeId: "claude",
+            codecVersion: "v1",
+            payload: { native: { sessionId: "claude-session-1" } },
+          }),
+        }),
         expect.objectContaining({ type: "completed" }),
       ]),
     );

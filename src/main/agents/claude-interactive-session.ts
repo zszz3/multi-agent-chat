@@ -1,5 +1,5 @@
-import type { ChatRuntimeSessionState, PersistedResumeState } from "../../shared/types";
-import type { InteractiveSession, InteractiveSessionContext } from "./runtime-driver";
+import type { ChatRuntimeSessionState, RuntimeConversation } from "../../shared/types";
+import type { InteractiveSession, InteractiveSessionContext, InteractiveSessionSnapshot } from "./runtime-driver";
 import { ClaudeAgentSdkInteractive } from "./claude-agent-sdk-interactive";
 import { ProcessLease } from "./process-lease";
 import { planSessionReconfigure } from "./session-reconfigure";
@@ -9,6 +9,21 @@ type ClaudeInteractiveSdkBinding = Pick<
   "isAttached" | "attach" | "sendUserMessage" | "interrupt" | "detach"
 >;
 
+interface ClaudeRuntimeConversationPayload {
+  native: {
+    sessionId: string;
+    projectKey?: string;
+    subpaths?: string[];
+  };
+  appContext?: {
+    cwd?: string;
+    modelId?: string;
+    claudeConfigDir?: string;
+    sessionStoreRef?: string;
+  };
+  extensions?: Record<string, unknown>;
+}
+
 interface ClaudeInteractiveSessionOptions {
   sdkInteractive: ClaudeInteractiveSdkBinding;
   capabilities: ChatRuntimeSessionState["capabilities"];
@@ -16,11 +31,55 @@ interface ClaudeInteractiveSessionOptions {
   now?: () => number;
 }
 
+function modelFromContext(context: InteractiveSessionContext): string {
+  return context.runtimeConfig.model;
+}
+
+function decodeClaudeConversation(conversation?: RuntimeConversation): ClaudeRuntimeConversationPayload | undefined {
+  if (conversation?.runtimeId !== "claude") return undefined;
+  return typeof conversation.payload === "object" && conversation.payload !== null
+    ? (conversation.payload as ClaudeRuntimeConversationPayload)
+    : undefined;
+}
+
+function cloneClaudeConversationPayload(payload: ClaudeRuntimeConversationPayload): ClaudeRuntimeConversationPayload {
+  return {
+    native: {
+      sessionId: payload.native.sessionId,
+      ...(payload.native.projectKey !== undefined ? { projectKey: payload.native.projectKey } : {}),
+      ...(payload.native.subpaths !== undefined ? { subpaths: [...payload.native.subpaths] } : {}),
+    },
+    ...(payload.appContext
+      ? {
+          appContext: {
+            ...(payload.appContext.cwd !== undefined ? { cwd: payload.appContext.cwd } : {}),
+            ...(payload.appContext.modelId !== undefined ? { modelId: payload.appContext.modelId } : {}),
+            ...(payload.appContext.claudeConfigDir !== undefined ? { claudeConfigDir: payload.appContext.claudeConfigDir } : {}),
+            ...(payload.appContext.sessionStoreRef !== undefined ? { sessionStoreRef: payload.appContext.sessionStoreRef } : {}),
+          },
+        }
+      : {}),
+    ...(payload.extensions ? { extensions: { ...payload.extensions } } : {}),
+  };
+}
+
+function buildClaudeConversation(payload: ClaudeRuntimeConversationPayload): RuntimeConversation {
+  return {
+    runtimeId: "claude",
+    codecVersion: "v1",
+    payload: cloneClaudeConversationPayload(payload),
+  };
+}
+
+function claudeSessionIdFromRuntimeConversation(conversation: RuntimeConversation | undefined): string | undefined {
+  return decodeClaudeConversation(conversation)?.native.sessionId;
+}
+
 export class ClaudeInteractiveSession implements InteractiveSession {
   private readonly lease = new ProcessLease();
   private readonly now: () => number;
   private readonly sdkInteractive: ClaudeInteractiveSdkBinding;
-  private resumeState: PersistedResumeState | undefined;
+  private runtimeConversation: RuntimeConversation | undefined;
   private attachmentState: ChatRuntimeSessionState["attachmentState"] = "detached";
   private attachmentGeneration = 0;
   private activeTurnId: string | undefined;
@@ -33,16 +92,18 @@ export class ClaudeInteractiveSession implements InteractiveSession {
   ) {
     this.sdkInteractive = options.sdkInteractive;
     this.now = options.now ?? (() => Date.now());
-    this.resumeState = context.resumeState?.runtimeId === "claude" ? { ...context.resumeState } : undefined;
+    const payload = decodeClaudeConversation(context.runtimeConversation);
+    this.runtimeConversation = payload ? buildClaudeConversation(payload) : undefined;
   }
 
   reconfigure(context: InteractiveSessionContext): void {
     const plan = planSessionReconfigure(this.context, context);
     this.context = { ...this.context, ...plan.applyNow };
     if (plan.invalidateResume) {
-      this.resumeState = undefined;
-    } else if (context.resumeState?.runtimeId === "claude") {
-      this.resumeState = { ...context.resumeState };
+      this.runtimeConversation = undefined;
+    } else {
+      const payload = decodeClaudeConversation(context.runtimeConversation);
+      if (payload) this.runtimeConversation = buildClaudeConversation(payload);
     }
 
     const nextContext = { ...this.context, ...plan.applyOnNextAttach };
@@ -78,14 +139,17 @@ export class ClaudeInteractiveSession implements InteractiveSession {
     this.touch();
     this.context.syncState?.(this.snapshot());
 
+    const modelId = this.options.resolveModelId?.(this.context) ?? modelFromContext(this.context);
+    const resumeSessionId = decodeClaudeConversation(this.runtimeConversation)?.native.sessionId;
+
     await this.sdkInteractive.attach({
       cwd: this.context.workDir,
-      modelId: this.options.resolveModelId?.(this.context) ?? this.context.modelId,
+      modelId,
       developerInstructions: this.context.developerInstructions,
-      ...(this.resumeState?.runtimeId === "claude" ? { resumeSessionId: this.resumeState.native.sessionId } : {}),
+      ...(resumeSessionId ? { resumeSessionId } : {}),
       onEvent: (event) => {
         if (!this.lease.matchesAttachment(generation)) return;
-        if (event.type !== "session" && this.activeTurnId === undefined) return;
+        if (event.type !== "runtime_conversation" && this.activeTurnId === undefined) return;
         this.handleEvent(event);
       },
     });
@@ -138,22 +202,32 @@ export class ClaudeInteractiveSession implements InteractiveSession {
     await this.detach(input.reason);
   }
 
-  snapshot(): ChatRuntimeSessionState {
+  snapshot(): InteractiveSessionSnapshot {
     return {
-      executionStyle: "interactive",
-      attachmentState: this.attachmentState,
-      attachmentGeneration: this.attachmentGeneration,
-      ...(this.activeTurnId ? { activeTurnId: this.activeTurnId } : {}),
-      ...(this.lastMeaningfulActivityAt !== undefined ? { lastMeaningfulActivityAt: this.lastMeaningfulActivityAt } : {}),
-      ...(this.resumeState ? { resumeState: { ...this.resumeState } } : {}),
-      capabilities: this.options.capabilities,
+      runtimeState: {
+        executionStyle: "interactive",
+        attachmentState: this.attachmentState,
+        attachmentGeneration: this.attachmentGeneration,
+        ...(this.activeTurnId ? { activeTurnId: this.activeTurnId } : {}),
+        ...(this.lastMeaningfulActivityAt !== undefined ? { lastMeaningfulActivityAt: this.lastMeaningfulActivityAt } : {}),
+        capabilities: this.options.capabilities,
+      },
+      ...(this.runtimeConversation ? { runtimeConversation: cloneRuntimeConversation(this.runtimeConversation) } : {}),
     };
   }
 
   private handleEvent(event: { type: string } & Record<string, unknown>): void {
-    if (event.type === "session" && typeof event.sessionId === "string") {
-      this.refreshClaudeResumeState(event.sessionId);
+    if (event.type === "runtime_conversation") {
+      const sessionId = claudeSessionIdFromRuntimeConversation(event.runtimeConversation as RuntimeConversation | undefined);
+      if (!sessionId) return;
+      this.refreshClaudeRuntimeConversation(sessionId);
       this.touch();
+      this.context.emit({
+        type: "runtime_conversation",
+        runtimeConversation: cloneRuntimeConversation(this.runtimeConversation!),
+      });
+      this.context.syncState?.(this.snapshot());
+      return;
     } else if (event.type === "completed") {
       this.attachmentState = "idle";
       this.activeTurnId = undefined;
@@ -174,16 +248,13 @@ export class ClaudeInteractiveSession implements InteractiveSession {
     this.lastMeaningfulActivityAt = this.now();
   }
 
-  private refreshClaudeResumeState(sessionId: string): void {
-    const previousResume =
-      this.resumeState?.runtimeId === "claude"
-        ? this.resumeState
-        : undefined;
-    const previousNative = previousResume?.native;
-    const previousAppContext = previousResume?.appContext;
+  private refreshClaudeRuntimeConversation(sessionId: string): void {
+    const previousPayload = decodeClaudeConversation(this.runtimeConversation);
+    const previousNative = previousPayload?.native;
+    const previousAppContext = previousPayload?.appContext;
+    const modelId = modelFromContext(this.context);
 
-    this.resumeState = {
-      runtimeId: "claude",
+    this.runtimeConversation = buildClaudeConversation({
       native: {
         sessionId,
         ...(previousNative?.projectKey !== undefined ? { projectKey: previousNative.projectKey } : {}),
@@ -191,15 +262,12 @@ export class ClaudeInteractiveSession implements InteractiveSession {
       },
       appContext: {
         cwd: this.context.workDir,
-        modelId: this.context.modelId,
-        ...(previousAppContext?.claudeConfigDir !== undefined
-          ? { claudeConfigDir: previousAppContext.claudeConfigDir }
-          : {}),
-        ...(previousAppContext?.sessionStoreRef !== undefined
-          ? { sessionStoreRef: previousAppContext.sessionStoreRef }
-          : {}),
+        modelId,
+        ...(previousAppContext?.claudeConfigDir !== undefined ? { claudeConfigDir: previousAppContext.claudeConfigDir } : {}),
+        ...(previousAppContext?.sessionStoreRef !== undefined ? { sessionStoreRef: previousAppContext.sessionStoreRef } : {}),
       },
-    };
+      ...(previousPayload?.extensions ? { extensions: { ...previousPayload.extensions } } : {}),
+    });
   }
 
   private applyPendingContextAfterDetach(): void {
@@ -207,4 +275,14 @@ export class ClaudeInteractiveSession implements InteractiveSession {
     this.context = this.pendingContext;
     this.pendingContext = undefined;
   }
+}
+
+function cloneRuntimeConversation(conversation: RuntimeConversation): RuntimeConversation {
+  const payload = decodeClaudeConversation(conversation);
+  if (payload) return buildClaudeConversation(payload);
+  return {
+    runtimeId: conversation.runtimeId,
+    codecVersion: conversation.codecVersion,
+    payload: conversation.payload,
+  };
 }
