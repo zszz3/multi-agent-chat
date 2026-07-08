@@ -10,6 +10,7 @@ import { createRuntimeDriverRegistry, RuntimeDriverRegistry } from "./agent-exec
 import type { AgentExecutionContext, AgentExecutorFactory } from "./agent-executor";
 import { claudeCliModelForChannel } from "./agents/claude-env";
 import { ClaudeInteractiveSession } from "./agents/claude-interactive-session";
+import { claudeRuntimeStateCodec, codexRuntimeStateCodec, hermesRuntimeStateCodec } from "./agents/runtime-state-codec";
 import { writeNodeCliLauncher } from "./test-cli-fixtures";
 
 function configuredAgent(
@@ -105,6 +106,18 @@ function runtimeConversation(runtimeId: AgentId, payload: Record<string, unknown
     runtimeId,
     codecVersion: "v1",
     payload,
+  };
+}
+
+function support(
+  surface: "chat" | "task" | "workflow" | "channel-test" | "cleanup",
+  executionModes: Array<"interactive" | "oneshot">,
+  continuationPolicies: Array<"fresh" | "resume-preferred" | "resume-required">,
+) {
+  return {
+    surface,
+    executionModes,
+    continuationPolicies,
   };
 }
 
@@ -215,6 +228,8 @@ test("askWorkflowAgent delegates to the registered runtime driver hook", async (
     new RuntimeDriverRegistry([
       {
         runtimeId: "hermes",
+        surfaceSupport: [support("workflow", ["oneshot"], ["fresh"])],
+        runtimeStateCodec: hermesRuntimeStateCodec,
         getCapabilities: () => oneshotChatCapabilities("hermes"),
         createOneShotExecutor: () => ({ start: async () => undefined, stop: async () => undefined }),
         askWorkflow: workflow,
@@ -577,6 +592,8 @@ describe("AgentHub chat sessions", () => {
     const runtimeDrivers = new RuntimeDriverRegistry([
       {
         runtimeId: "codex",
+        surfaceSupport: [support("chat", ["oneshot"], ["fresh", "resume-preferred"])],
+        runtimeStateCodec: codexRuntimeStateCodec,
         getCapabilities: () => oneshotChatCapabilities("codex"),
         createOneShotExecutor: (context: AgentExecutionContext) => executorFactory.create(context),
       } as any,
@@ -667,6 +684,8 @@ describe("AgentHub chat sessions", () => {
     const runtimeDrivers = new RuntimeDriverRegistry([
       {
         runtimeId: "codex",
+        surfaceSupport: [support("chat", ["interactive"], ["fresh", "resume-preferred", "resume-required"])],
+        runtimeStateCodec: codexRuntimeStateCodec,
         getCapabilities: () => interactiveChatCapabilities("codex"),
         createOneShotExecutor: () => ({
           start: async () => undefined,
@@ -736,6 +755,8 @@ describe("AgentHub chat sessions", () => {
     const runtimeDrivers = new RuntimeDriverRegistry([
       {
         runtimeId: "codex",
+        surfaceSupport: [support("chat", ["interactive"], ["fresh", "resume-preferred", "resume-required"])],
+        runtimeStateCodec: codexRuntimeStateCodec,
         getCapabilities: () => interactiveChatCapabilities("codex"),
         createOneShotExecutor: () => ({
           start: async () => {
@@ -814,6 +835,8 @@ describe("AgentHub chat sessions", () => {
     const runtimeDrivers = new RuntimeDriverRegistry([
       {
         runtimeId: "claude",
+        surfaceSupport: [support("chat", ["interactive"], ["fresh", "resume-preferred", "resume-required"])],
+        runtimeStateCodec: claudeRuntimeStateCodec,
         getCapabilities: () => ({
           ...interactiveChatCapabilities("claude"),
           resume: {
@@ -916,6 +939,8 @@ describe("AgentHub chat sessions", () => {
     const runtimeDrivers = new RuntimeDriverRegistry([
       {
         runtimeId: "claude",
+        surfaceSupport: [support("chat", ["interactive"], ["fresh", "resume-preferred", "resume-required"])],
+        runtimeStateCodec: claudeRuntimeStateCodec,
         getCapabilities: () => ({
           ...interactiveChatCapabilities("claude"),
           resume: {
@@ -993,6 +1018,7 @@ describe("AgentHub chat sessions", () => {
     const runtimeDrivers = new RuntimeDriverRegistry([
       {
         runtimeId: "codex",
+        surfaceSupport: [support("chat", ["interactive"], ["fresh", "resume-preferred", "resume-required"])],
         getCapabilities: () => interactiveChatCapabilities("codex"),
         createOneShotExecutor: () => ({
           start: async () => {
@@ -1078,6 +1104,8 @@ describe("AgentHub chat sessions", () => {
     const runtimeDrivers = new RuntimeDriverRegistry([
       {
         runtimeId: "codex",
+        surfaceSupport: [support("chat", ["interactive"], ["fresh", "resume-preferred", "resume-required"])],
+        runtimeStateCodec: codexRuntimeStateCodec,
         getCapabilities: () => interactiveChatCapabilities("codex"),
         createOneShotExecutor: () => ({
           start: async () => {
@@ -1182,6 +1210,10 @@ describe("AgentHub chat sessions", () => {
     const runtimeDrivers = new RuntimeDriverRegistry([
       {
         runtimeId: "codex",
+        surfaceSupport: [
+          support("chat", ["interactive"], ["fresh", "resume-preferred", "resume-required"]),
+          support("cleanup", ["oneshot"], ["fresh", "resume-preferred"]),
+        ],
         getCapabilities: () => interactiveChatCapabilities("codex"),
         createOneShotExecutor: () => ({
           start: async () => {
@@ -1189,6 +1221,7 @@ describe("AgentHub chat sessions", () => {
           },
           stop: async () => undefined,
         }),
+        deleteSessionArtifacts: async () => undefined,
         createInteractiveSession: (context: any) => {
           interactiveContext = context;
           return session;
@@ -1282,6 +1315,14 @@ describe("AgentHub chat sessions", () => {
     const runtimeDrivers = new RuntimeDriverRegistry([
       {
         runtimeId: "codex",
+        surfaceSupport: [
+          {
+            surface: "cleanup",
+            executionModes: ["oneshot"],
+            continuationPolicies: ["fresh", "resume-preferred"],
+          },
+        ],
+        runtimeStateCodec: codexRuntimeStateCodec,
         getCapabilities: () => oneshotChatCapabilities("codex"),
         createOneShotExecutor: () => ({
           start: async () => undefined,
@@ -1607,6 +1648,7 @@ fs.writeFileSync(${JSON.stringify(argsPath)}, process.argv.slice(2).join("\\n") 
     const runtimeDrivers = new RuntimeDriverRegistry([
       {
         runtimeId: "codex",
+        surfaceSupport: [support("chat", ["oneshot"], ["fresh", "resume-preferred"])],
         getCapabilities: () => oneshotChatCapabilities("codex"),
         createOneShotExecutor: (context: AgentExecutionContext) => executorFactory.create(context),
       } as any,
@@ -1802,6 +1844,8 @@ fs.writeFileSync(${JSON.stringify(argsPath)}, process.argv.slice(2).join("\\n") 
     const runtimeDrivers = new RuntimeDriverRegistry([
       {
         runtimeId: "codex",
+        surfaceSupport: [support("chat", ["interactive"], ["fresh", "resume-preferred", "resume-required"])],
+        runtimeStateCodec: codexRuntimeStateCodec,
         getCapabilities: () => interactiveChatCapabilities("codex"),
         createOneShotExecutor: () => ({
           start: async () => {
@@ -2563,7 +2607,7 @@ fs.writeFileSync(${JSON.stringify(argsPath)}, process.argv.slice(2).join("\\n") 
     );
   });
 
-  test("discards persisted state when runtimeConversation is malformed", async () => {
+  test("discards persisted state when runtimeConversation payload is rejected by the runtime codec", async () => {
     const dir = await mkdtemp(path.join(os.tmpdir(), "multi-agent-chat-runtime-session-resume-fallback-"));
     const storagePath = path.join(dir, "app-chats.json");
     await writeFile(
@@ -2595,6 +2639,7 @@ fs.writeFileSync(${JSON.stringify(argsPath)}, process.argv.slice(2).join("\\n") 
             },
             runtimeConversation: {
               runtimeId: "codex",
+              codecVersion: "v1",
               payload: {},
             },
             createdAt: 1710000000000,

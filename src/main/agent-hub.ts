@@ -101,8 +101,9 @@ import { CodexRpcClient } from "./agents/codex-rpc";
 import { codexEnvironmentForChannel } from "./agents/codex-env";
 import { claudeCliModelForChannel } from "./agents/claude-env";
 import type { RuntimeCapabilities } from "./agents/runtime-capabilities";
-import type { InteractiveSessionContext, InteractiveSessionSnapshot } from "./agents/runtime-driver";
-import { createRuntimeDriverRegistry, RuntimeAgentExecutorFactory, RuntimeDriverRegistry, type AgentExecutorFactory } from "./agent-executor";
+import type { InteractiveSessionContext, InteractiveSessionSnapshot, RuntimeDriverRegistry } from "./agents/runtime-driver";
+import { RuntimeRouter } from "./agents/runtime-router";
+import { createRuntimeDriverRegistry, RuntimeAgentExecutorFactory, type AgentExecutorFactory } from "./agent-executor";
 import { execCli, spawnCli } from "./cli-launcher";
 import { queryProviderBalance, type ProviderBalanceQueryOptions } from "./provider-balance";
 import {
@@ -476,14 +477,6 @@ function cloneRuntimeState(runtimeSession: ChatRuntimeSessionState): ChatRuntime
       ? { lastMeaningfulActivityAt: runtimeSession.lastMeaningfulActivityAt }
       : {}),
     capabilities: { ...runtimeSession.capabilities },
-  };
-}
-
-function cloneRuntimeConversation(conversation: RuntimeConversation): RuntimeConversation {
-  return {
-    runtimeId: conversation.runtimeId,
-    codecVersion: conversation.codecVersion,
-    payload: structuredClone(conversation.payload),
   };
 }
 
@@ -1083,6 +1076,7 @@ export class AgentHub {
   private persistInFlight: Promise<void> | undefined = undefined;
   private readonly executorFactory: AgentExecutorFactory;
   private readonly runtimeDrivers: RuntimeDriverRegistry;
+  private readonly runtimeRouter: RuntimeRouter;
   private readonly interactiveSessions: InteractiveSessionManager;
   private readonly executables: Record<AgentId, string>;
   private readonly workflowRuntime: WorkflowRuntime;
@@ -1126,17 +1120,12 @@ export class AgentHub {
           api: (input) => this.testApiAgent(this.channelOrThrow(input.channelId), input.modelId, input.emit),
         },
       });
+    this.runtimeRouter = new RuntimeRouter(this.runtimeDrivers);
     this.executorFactory =
       executorFactory ??
-      new RuntimeAgentExecutorFactory(this.runtimeDrivers);
+      new RuntimeAgentExecutorFactory(this.runtimeRouter);
     this.interactiveSessions = new InteractiveSessionManager({
-      createSession: (context) => {
-        const driver = this.runtimeDrivers.driverFor(context.runtimeId);
-        if (!driver.createInteractiveSession) {
-          throw new Error(`${context.runtimeId} does not support shared interactive sessions yet.`);
-        }
-        return driver.createInteractiveSession(context);
-      },
+      createSession: (context) => this.runtimeRouter.createInteractiveSession(context),
       now: () => Date.now(),
     });
     this.workflowRuntime = new WorkflowRuntime({
@@ -1370,9 +1359,7 @@ export class AgentHub {
     try {
       emit({ type: "phase", content: `Testing ${agent.name || agent.id} with ${agentLabel(agent.runtimeAgentId)} / ${channel.providerName ?? channel.label}.` });
       emit({ type: "user", content: AGENT_TEST_PROMPT });
-      const driver = this.runtimeDrivers.driverFor(agent.runtimeAgentId);
-      if (!driver.testChannel) throw new Error(`${agent.runtimeAgentId} runtime testing is not configured.`);
-      const output = await driver.testChannel({
+      const output = await this.runtimeRouter.testChannel(agent.runtimeAgentId, {
         runtime: this.runtimeForDriver(agent.runtimeAgentId),
         channelId: channel.id,
         modelId: agent.modelId,
@@ -1422,9 +1409,7 @@ export class AgentHub {
     try {
       emit({ type: "phase", content: `Testing ${agentLabel(channel.agentId)} / ${channel.providerName ?? channel.label}.` });
       emit({ type: "user", content: AGENT_TEST_PROMPT });
-      const driver = this.runtimeDrivers.driverFor(channel.agentId);
-      if (!driver.testChannel) throw new Error(`${channel.agentId} runtime testing is not configured.`);
-      const output = await driver.testChannel({
+      const output = await this.runtimeRouter.testChannel(channel.agentId, {
         runtime: this.runtimeForDriver(channel.agentId),
         channelId: channel.id,
         modelId,
@@ -2409,7 +2394,7 @@ export class AgentHub {
   private syncInteractiveChatState(chat: ChatState, state: InteractiveSessionSnapshot): void {
     chat.runtimeState = cloneRuntimeState(state.runtimeState);
     chat.runtimeConversation = state.runtimeConversation
-      ? cloneRuntimeConversation(state.runtimeConversation)
+      ? this.runtimeRouter.cloneConversation(state.runtimeConversation)
       : undefined;
     chat.updatedAt = Date.now();
     this.emit();
@@ -2423,7 +2408,7 @@ export class AgentHub {
       executionMode: "interactive",
       continuationPolicy: chat.runtimeConversation ? "resume-preferred" : "fresh",
       runtimeConfig: { model: resolved.modelId },
-      ...(chat.runtimeConversation ? { runtimeConversation: cloneRuntimeConversation(chat.runtimeConversation) } : {}),
+      ...(chat.runtimeConversation ? { runtimeConversation: this.runtimeRouter.cloneConversation(chat.runtimeConversation) } : {}),
       runtime: resolved.runtime as AgentRuntime,
       channelId: resolved.channel.id,
       workDir: this.runWorkDir(chat),
@@ -2461,10 +2446,8 @@ export class AgentHub {
       return;
     }
 
-    const driver = this.runtimeDrivers.driverFor(resolved.runtimeAgentId);
-    const capabilities = driver.getCapabilities(resolved.runtime);
-    const supportsInteractiveChat =
-      capabilities.chatStyle === "interactive" && typeof driver.createInteractiveSession === "function";
+    const capabilities = this.runtimeRouter.capabilitiesFor(resolved.runtime);
+    const supportsInteractiveChat = capabilities.chatStyle === "interactive";
 
     if (supportsInteractiveChat && !chat.runtimeState) {
       chat.runtimeState = this.runtimeStateFromCapabilities(capabilities);
@@ -2496,14 +2479,6 @@ export class AgentHub {
           const attachedState = managed.snapshot();
           lease.syncAttachmentGeneration(attachedState.runtimeState.attachmentGeneration);
           this.syncInteractiveChatState(chat, attachedState);
-          if (chat.runtimeState) {
-            chat.runtimeState.attachmentGeneration = lease.currentAttachmentGeneration();
-            chat.runtimeState.attachmentState = "running";
-            chat.runtimeState.activeTurnId = lease.nextTurnId();
-            chat.runtimeState.lastMeaningfulActivityAt = Date.now();
-            chat.updatedAt = Date.now();
-            this.emit();
-          }
           await managed.sendPrompt(trimmedPrompt);
           this.syncInteractiveChatState(chat, managed.snapshot());
         });
@@ -2813,15 +2788,13 @@ export class AgentHub {
     const workDir = input.workDir?.trim() || this.workDir;
 
     const requestId = input.requestId ?? randomUUID();
-    const driver = this.runtimeDrivers.driverFor(resolved.runtimeAgentId);
-    if (!driver.askWorkflow) throw new Error(`${resolved.runtimeAgentId} workflow execution is not configured.`);
-    return driver.askWorkflow({
+    return this.runtimeRouter.askWorkflow({
       requestId,
       runtimeId: resolved.runtimeAgentId,
       executionMode: "oneshot",
       continuationPolicy: input.runtimeConversation ? "resume-preferred" : "fresh",
       runtimeConfig: { model: modelId },
-      ...(input.runtimeConversation ? { runtimeConversation: cloneRuntimeConversation(input.runtimeConversation) } : {}),
+      ...(input.runtimeConversation ? { runtimeConversation: this.runtimeRouter.cloneConversation(input.runtimeConversation) } : {}),
       prompt,
       runtime,
       channelId,
@@ -3001,12 +2974,10 @@ export class AgentHub {
   private async deleteAgentSession(run: RunState): Promise<void> {
     const resolved = this.resolveConfiguredAgent(run.configuredAgentId, run.modelId, run.kind === "chat" ? run.channelId : undefined);
     if (!resolved) return;
-    const driver = this.runtimeDrivers.driverFor(resolved.runtimeAgentId);
-    if (!driver.deleteSessionArtifacts) return;
     const workDir = "workDir" in run ? run.workDir : this.workDir;
-    await driver.deleteSessionArtifacts({
+    await this.runtimeRouter.deleteSessionArtifacts(resolved.runtimeAgentId, {
       workDir,
-      ...(run.runtimeConversation ? { runtimeConversation: cloneRuntimeConversation(run.runtimeConversation) } : {}),
+      ...(run.runtimeConversation ? { runtimeConversation: this.runtimeRouter.cloneConversation(run.runtimeConversation) } : {}),
     });
   }
 
@@ -3160,9 +3131,9 @@ export class AgentHub {
       ...(patch.runtimeConversation === null
         ? {}
         : patch.runtimeConversation !== undefined
-          ? { runtimeConversation: cloneRuntimeConversation(patch.runtimeConversation) }
+          ? { runtimeConversation: this.runtimeRouter.cloneConversation(patch.runtimeConversation) }
           : current.runtimeConversation !== undefined
-            ? { runtimeConversation: cloneRuntimeConversation(current.runtimeConversation) }
+            ? { runtimeConversation: this.runtimeRouter.cloneConversation(current.runtimeConversation) }
             : {}),
       createdAt: current.createdAt,
       updatedAt: now,
@@ -3230,9 +3201,9 @@ export class AgentHub {
       runIds: parsedGraph ? [] : workflow.runIds,
       ...(parsedGraph ? {} : workflow.finalReport !== undefined ? { finalReport: workflow.finalReport } : {}),
       ...(runtimeConversation !== undefined
-        ? { runtimeConversation: cloneRuntimeConversation(runtimeConversation) }
+        ? { runtimeConversation: this.runtimeRouter.cloneConversation(runtimeConversation) }
         : workflow.runtimeConversation !== undefined
-          ? { runtimeConversation: cloneRuntimeConversation(workflow.runtimeConversation) }
+          ? { runtimeConversation: this.runtimeRouter.cloneConversation(workflow.runtimeConversation) }
           : {}),
       createdAt: workflow.createdAt,
       updatedAt: Date.now(),
@@ -3418,7 +3389,7 @@ export class AgentHub {
       contextDocument: draft.contextDocument,
       ...(draft.finalReport !== undefined ? { finalReport: draft.finalReport } : {}),
       runIds: draft.runIds.map((runId) => runId),
-      ...(draft.runtimeConversation ? { runtimeConversation: cloneRuntimeConversation(draft.runtimeConversation) } : {}),
+      ...(draft.runtimeConversation ? { runtimeConversation: this.runtimeRouter.cloneConversation(draft.runtimeConversation) } : {}),
       createdAt: draft.createdAt || draft.updatedAt || now,
       updatedAt: draft.updatedAt,
     };
@@ -3503,7 +3474,7 @@ export class AgentHub {
       modelId: chat.modelId,
       ...(chat.channelId ? { channelId: chat.channelId } : {}),
       ...(chat.runtimeState ? { runtimeState: cloneRuntimeState(chat.runtimeState) } : {}),
-      ...(chat.runtimeConversation ? { runtimeConversation: cloneRuntimeConversation(chat.runtimeConversation) } : {}),
+      ...(chat.runtimeConversation ? { runtimeConversation: this.runtimeRouter.cloneConversation(chat.runtimeConversation) } : {}),
       running: chat.running,
       messages: chat.messages.map((message) => this.serializeMessage(message)),
       pendingAssistantMessageId: chat.pendingAssistantMessageId,
@@ -3524,7 +3495,7 @@ export class AgentHub {
       status: task.status,
       progress: task.progress,
       running: task.running,
-      ...(task.runtimeConversation ? { runtimeConversation: cloneRuntimeConversation(task.runtimeConversation) } : {}),
+      ...(task.runtimeConversation ? { runtimeConversation: this.runtimeRouter.cloneConversation(task.runtimeConversation) } : {}),
       messages: task.messages.map((message) => this.serializeMessage(message)),
       pendingAssistantMessageId: task.pendingAssistantMessageId,
       lastError: task.lastError,
@@ -3832,7 +3803,7 @@ export class AgentHub {
       executionMode: "oneshot",
       continuationPolicy: run.runtimeConversation ? "resume-preferred" : "fresh",
       runtimeConfig: { model: resolved.modelId },
-      ...(run.runtimeConversation ? { runtimeConversation: cloneRuntimeConversation(run.runtimeConversation) } : {}),
+      ...(run.runtimeConversation ? { runtimeConversation: this.runtimeRouter.cloneConversation(run.runtimeConversation) } : {}),
       runtime,
       channelId: resolved.channel.id,
       prompt,
@@ -4066,7 +4037,7 @@ export class AgentHub {
     };
 
     if (event.type === "runtime_conversation") {
-      run.runtimeConversation = cloneRuntimeConversation(event.runtimeConversation);
+      run.runtimeConversation = this.runtimeRouter.cloneConversation(event.runtimeConversation);
       if (runtimeState) {
         runtimeState.lastMeaningfulActivityAt = Date.now();
       }
@@ -4438,8 +4409,7 @@ export class AgentHub {
   }
 
   private runtimeSupportsInteractiveChat(runtimeAgentId: AgentId): boolean {
-    const driver = this.runtimeDrivers.driverFor(runtimeAgentId);
-    return driver.getCapabilities(this.runtimeForDriver(runtimeAgentId)).chatStyle === "interactive";
+    return this.runtimeRouter.capabilitiesFor(this.runtimeForDriver(runtimeAgentId)).chatStyle === "interactive";
   }
 
   private restoreRuntimeState(raw: unknown): ChatRuntimeSessionState | undefined {
@@ -4469,17 +4439,6 @@ export class AgentHub {
       restored.lastMeaningfulActivityAt = record.lastMeaningfulActivityAt;
     }
     return restored;
-  }
-
-  private restoreRuntimeConversation(raw: unknown): RuntimeConversation | undefined {
-    const record = asRecord(raw);
-    if (!record || !isAgentId(record.runtimeId) || typeof record.codecVersion !== "string") return undefined;
-    if (!Object.prototype.hasOwnProperty.call(record, "payload")) return undefined;
-    return {
-      runtimeId: record.runtimeId,
-      codecVersion: record.codecVersion,
-      payload: structuredClone(record.payload),
-    };
   }
 
   private restoreChatState(raw: unknown): ChatState | null {
@@ -4518,7 +4477,8 @@ export class AgentHub {
     chat.messages = this.expirePendingInteractionEvents(this.normalizeRestoredMessages(messages));
     const restoredRuntimeState = record.runtimeState === undefined ? undefined : this.restoreRuntimeState(record.runtimeState);
     if (record.runtimeState !== undefined && !restoredRuntimeState) return null;
-    const restoredRuntimeConversation = record.runtimeConversation === undefined ? undefined : this.restoreRuntimeConversation(record.runtimeConversation);
+    const restoredRuntimeConversation =
+      record.runtimeConversation === undefined ? undefined : this.runtimeRouter.restorePersistedConversation(record.runtimeConversation);
     if (record.runtimeConversation !== undefined && !restoredRuntimeConversation) return null;
     if (restoredRuntimeState && this.runtimeSupportsInteractiveChat(configuredAgent.runtimeAgentId)) {
       chat.runtimeState = {
@@ -4528,7 +4488,7 @@ export class AgentHub {
       };
       delete chat.runtimeState.activeTurnId;
     }
-    chat.runtimeConversation = restoredRuntimeConversation ? cloneRuntimeConversation(restoredRuntimeConversation) : undefined;
+    chat.runtimeConversation = restoredRuntimeConversation ? this.runtimeRouter.cloneConversation(restoredRuntimeConversation) : undefined;
     return chat;
   }
 
@@ -4561,9 +4521,10 @@ export class AgentHub {
       ? record.messages.map((message) => this.restoreMessage(message)).filter((message): message is ChatMessage => Boolean(message))
       : [];
     task.messages = this.normalizeRestoredMessages(messages);
-    const restoredRuntimeConversation = record.runtimeConversation === undefined ? undefined : this.restoreRuntimeConversation(record.runtimeConversation);
+    const restoredRuntimeConversation =
+      record.runtimeConversation === undefined ? undefined : this.runtimeRouter.restorePersistedConversation(record.runtimeConversation);
     if (record.runtimeConversation !== undefined && !restoredRuntimeConversation) return null;
-    task.runtimeConversation = restoredRuntimeConversation ? cloneRuntimeConversation(restoredRuntimeConversation) : undefined;
+    task.runtimeConversation = restoredRuntimeConversation ? this.runtimeRouter.cloneConversation(restoredRuntimeConversation) : undefined;
     return task;
   }
 
@@ -4764,7 +4725,8 @@ export class AgentHub {
     const graph = this.restoreWorkflowGraph(record.graph);
     if (!graph) return undefined;
     const finalReport = asOptionalString(record.finalReport);
-    const restoredRuntimeConversation = record.runtimeConversation === undefined ? undefined : this.restoreRuntimeConversation(record.runtimeConversation);
+    const restoredRuntimeConversation =
+      record.runtimeConversation === undefined ? undefined : this.runtimeRouter.restorePersistedConversation(record.runtimeConversation);
     if (record.runtimeConversation !== undefined && !restoredRuntimeConversation) return undefined;
     return this.cloneWorkflowDraft({
       workflowId: asOptionalString(record.workflowId) ?? `wf_${randomUUID()}`,
@@ -5054,7 +5016,7 @@ export class AgentHub {
         modelId: chat.modelId,
         ...(chat.channelId ? { channelId: chat.channelId } : {}),
         ...(chat.runtimeState ? { runtimeState: cloneRuntimeState(chat.runtimeState) } : {}),
-        ...(chat.runtimeConversation ? { runtimeConversation: cloneRuntimeConversation(chat.runtimeConversation) } : {}),
+        ...(chat.runtimeConversation ? { runtimeConversation: this.runtimeRouter.cloneConversation(chat.runtimeConversation) } : {}),
         lastError: chat.lastError,
         createdAt: chat.createdAt,
         updatedAt: chat.updatedAt,
@@ -5088,7 +5050,7 @@ export class AgentHub {
         workDir: task.workDir,
         status: task.status,
         progress: task.progress,
-        ...(task.runtimeConversation ? { runtimeConversation: cloneRuntimeConversation(task.runtimeConversation) } : {}),
+        ...(task.runtimeConversation ? { runtimeConversation: this.runtimeRouter.cloneConversation(task.runtimeConversation) } : {}),
         lastError: task.lastError,
         createdAt: task.createdAt,
         updatedAt: task.updatedAt,

@@ -4,7 +4,9 @@
 
 ### Status
 
-Approved design for the second execution phase.
+Implemented on 2026-07-08.
+
+Post-review strictness fixes on 2026-07-08 closed the remaining silent-downgrade gaps before commit.
 
 ### This File Is Self-Contained
 
@@ -27,6 +29,24 @@ Install the strict runtime boundary:
 
 This phase removes runtime-native parsing and restore behavior from `AgentHub`.
 
+### Implementation Result
+
+Current branch evidence for this phase now includes:
+
+- `src/main/agents/runtime-router.ts` as the explicit surface and mode dispatch boundary
+- `src/main/agents/runtime-state-codec.ts` owning runtime conversation envelope restore, clone, decode, and encode for resumable runtimes
+- `src/main/agents/runtime-driver.ts` declaring per-driver surface support explicitly, with registry-time rejection for drivers that omit the support matrix
+- `src/main/agent-hub.ts` routing chat, workflow, test, cleanup, and persisted conversation restore through the router instead of parsing runtime-native payloads directly
+- `src/main/agents/codex-interactive-session.ts` and `src/main/agents/claude-interactive-session.ts` consuming codec boundaries instead of local runtime-conversation builders
+- router-owned restore and clone now reject codec-invalid or unregistered runtime-conversation envelopes instead of falling back to generic envelope cloning
+- cleanup routing now fails explicitly for missing runtimes, undeclared cleanup support, and unconfigured cleanup handlers
+- `src/main/agent-executor.ts` no longer uses a cross-runtime codec chain to clone persisted runtime conversation state
+
+Verification run for the implemented branch:
+
+- `npm test -- src/main/agents/runtime-router.test.ts src/main/agents/runtime-state-codec.test.ts src/main/agent-hub.test.ts`
+- `npm run typecheck`
+
 ### Required Preconditions
 
 Before changing code, verify that the repository already satisfies all of the following:
@@ -39,14 +59,15 @@ Before changing code, verify that the repository already satisfies all of the fo
 
 If any precondition is false, stop and report a phase-ordering violation.
 
-### Why This Phase Exists
+### Corrected Branch Truth
 
-Current branch evidence shows `AgentHub` still owns runtime-native logic:
+The post-review branch now satisfies the phase-02 boundary requirements:
 
-- [src/main/agent-hub.ts](C:/Users/29768/Desktop/multi-agent-chat/src/main/agent-hub.ts:477) clones runtime-native resume payloads directly
-- [src/main/agent-hub.ts](C:/Users/29768/Desktop/multi-agent-chat/src/main/agent-hub.ts:4738) decodes runtime-native resume payloads directly
-- [src/main/agents/runtime-driver.ts](C:/Users/29768/Desktop/multi-agent-chat/src/main/agents/runtime-driver.ts:1) is still too thin to own restore/persistence boundaries
-- [src/main/agent-executor.ts](C:/Users/29768/Desktop/multi-agent-chat/src/main/agent-executor.ts:1) still acts as a runtime-specific execution hub instead of consuming a stricter routed contract
+- `AgentHub` rejects persisted chats or tasks whose opaque `runtimeConversation` envelope fails codec restore
+- `RuntimeRouter.restorePersistedConversation()` no longer falls back to generic envelope cloning after codec rejection
+- `RuntimeRouter.cloneConversation()` requires a matching registered codec and throws on invalid envelopes instead of silently preserving malformed payloads
+- runtime support is declared explicitly at driver registration time rather than synthesized from available hooks
+- cleanup dispatch follows the same explicit-failure rules as other routed surfaces
 
 ### Non-Negotiable Invariants
 
@@ -159,6 +180,7 @@ They do not own app persistence schema rules.
 - Do not create one generic cross-runtime parser for runtime-native conversation payloads.
 - Do not let driver support validation happen implicitly by returning `undefined`.
 - Do not let unsupported requests fall through to older execution code paths.
+- Do not reintroduce generic envelope cloning after codec rejection.
 
 ### Acceptance Criteria
 
@@ -170,6 +192,8 @@ This phase is complete only if all of the following are true:
 - `AgentHub` no longer parses runtime-native payload structure
 - interactive lifecycle logic is owned by runtime session objects rather than router code
 - unsupported surface/mode/policy combinations fail explicitly
+- malformed runtime-conversation envelopes fail restore or clone instead of surviving as generic envelopes
+- unsupported cleanup requests fail explicitly instead of returning early
 
 ### Search Proof
 

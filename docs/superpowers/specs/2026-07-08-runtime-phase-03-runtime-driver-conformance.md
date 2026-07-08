@@ -6,6 +6,8 @@
 
 Approved design for the third execution phase.
 
+Branch-truth notes were corrected on 2026-07-08 after the phase-02 strictness fixes landed in the working tree.
+
 ### This File Is Self-Contained
 
 A fresh agent may execute this phase using only:
@@ -18,6 +20,29 @@ The agent must not assume prior chat history or prior spec context.
 ### Objective
 
 Make every registered runtime conform to the new routed runtime contract, with strict runtime-owned continuation behavior and strict Claude SDK usage.
+
+### Current Repository Note
+
+At execution time, the repository may already have the Claude SDK cutover in place.
+
+Current branch evidence may include:
+
+- `src/main/agents/runtime-router.ts`
+- `src/main/agents/runtime-state-codec.ts`
+- `src/main/agents/runtime-driver.ts` declaring explicit surface and continuation support plus per-runtime codecs, with registry-time rejection for undeclared support matrices
+- `src/main/agent-hub.ts` routing chat/workflow/test/cleanup/restore through the router boundary
+- `src/main/agents/codex-interactive-session.ts` and `src/main/agents/claude-interactive-session.ts` using codec-owned runtime conversation handling
+- router restore/clone rejecting codec-invalid or unregistered runtime conversation envelopes instead of silently cloning them
+- cleanup routing failing explicitly when runtime registration or cleanup declaration drifts
+- `src/main/agents/claude-agent-sdk.ts`
+- `src/main/agents/claude-agent-sdk-interactive.ts`
+- `src/main/agent-executor.ts` routing Claude one-shot through the SDK adapter
+- `src/main/agents/claude-interactive-session.ts` routing Claude interactive attach/send through the SDK helper
+- deletion of transport-era Claude selector and stream-json wrapper files under `src/main/agents/`
+
+If those conditions are already true, this phase must preserve and verify that branch truth instead of recreating transitional transport abstractions.
+
+On the current branch, the router and driver boundary already enforce the support-matrix invariant: runtimes must declare support explicitly, malformed runtime-conversation envelopes stay rejected, and unsupported cleanup requests fail explicitly. Any remaining phase-03 work must preserve that behavior rather than reintroducing inference or fallback paths.
 
 ### Required Preconditions
 
@@ -108,6 +133,8 @@ This phase must delete or reject any remaining transitional abstraction that pre
 - compatibility wording that treats legacy wrapper paths as valid targets
 - fake SDK framing around older transport wrappers
 
+If the repository already satisfies this requirement when the phase starts, keep that implementation and move the work onto support-matrix declaration, codec/session ownership, and explicit failure semantics.
+
 #### 4. API Must Conform To The Explicit Contract
 
 API may remain one-shot only in current product policy.
@@ -137,6 +164,7 @@ If a runtime should no longer exist, remove it deliberately rather than letting 
 - Do not preserve runtime-specific resume inputs outside the opaque envelope boundary.
 - Do not allow Claude to keep a compatibility selector or fallback path that contradicts the official SDK requirement.
 - Do not let one-shot resume happen through hidden runtime heuristics.
+- Do not recreate deleted Claude transport-era files just to preserve a staged migration story.
 
 ### Acceptance Criteria
 

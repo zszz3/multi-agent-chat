@@ -20,14 +20,24 @@ import { ClaudeInteractiveSession } from "./agents/claude-interactive-session";
 import { CodexInteractiveSession } from "./agents/codex-interactive-session";
 import { CodexRpcClient } from "./agents/codex-rpc";
 import { HermesRunner } from "./agents/hermes-runner";
+import { RuntimeRouter } from "./agents/runtime-router";
+import {
+  claudeRuntimeStateCodec,
+  codexRuntimeStateCodec,
+  hermesRuntimeStateCodec,
+} from "./agents/runtime-state-codec";
 import type {
   RuntimeChannelTestContext,
   RuntimeDriver,
   RuntimeSessionCleanupContext,
+  RuntimeSurfaceSupport,
   RuntimeWorkflowRequestContext,
 } from "./agents/runtime-driver";
+import { RuntimeDriverRegistry } from "./agents/runtime-driver";
 import { execCli } from "./cli-launcher";
 import { codexAppServerConfigArgs, codexHome } from "./model-config";
+
+export { RuntimeDriverRegistry } from "./agents/runtime-driver";
 
 const HERMES_AGENT_TEST_PROMPT = "Reply with OK only.";
 const WORKFLOW_AGENT_IDLE_TIMEOUT_MS = 10 * 60_000;
@@ -70,67 +80,16 @@ interface RuntimeAgentExecutorFactoryOptions {
   deleteSessionArtifactsByRuntime?: Partial<Record<AgentId, (input: RuntimeSessionCleanupContext) => Promise<void>>>;
 }
 
-interface CodexRuntimeConversationPayload {
-  native: {
-    threadId: string;
-    sessionTreeRootId?: string;
-  };
-  appContext?: {
-    cwd?: string;
-    modelId?: string;
-    approvalPolicy?: string;
-    sandboxPolicy?: unknown;
-  };
-  extensions?: Record<string, unknown>;
-}
-
-interface ClaudeRuntimeConversationPayload {
-  native: {
-    sessionId: string;
-    projectKey?: string;
-    subpaths?: string[];
-  };
-  appContext?: {
-    cwd?: string;
-    modelId?: string;
-    claudeConfigDir?: string;
-    sessionStoreRef?: string;
-  };
-  extensions?: Record<string, unknown>;
-}
-
 function modelFromRuntimeConfig(runtimeConfig: RuntimeRequest["runtimeConfig"]): string {
   return runtimeConfig.model;
 }
 
-function buildRuntimeConversation(runtimeId: AgentId, payload: unknown): RuntimeConversation {
-  return {
-    runtimeId,
-    codecVersion: "v1",
-    payload,
-  };
-}
-
-function decodeCodexConversation(conversation?: RuntimeConversation): CodexRuntimeConversationPayload | undefined {
-  if (conversation?.runtimeId !== "codex") return undefined;
-  return typeof conversation.payload === "object" && conversation.payload !== null
-    ? (conversation.payload as CodexRuntimeConversationPayload)
-    : undefined;
-}
-
-function decodeClaudeConversation(conversation?: RuntimeConversation): ClaudeRuntimeConversationPayload | undefined {
-  if (conversation?.runtimeId !== "claude") return undefined;
-  return typeof conversation.payload === "object" && conversation.payload !== null
-    ? (conversation.payload as ClaudeRuntimeConversationPayload)
-    : undefined;
-}
-
 function codexThreadIdFromConversation(conversation?: RuntimeConversation): string | undefined {
-  return decodeCodexConversation(conversation)?.native.threadId;
+  return codexRuntimeStateCodec.decodeConversation(conversation)?.native.threadId;
 }
 
 function claudeSessionIdFromConversation(conversation?: RuntimeConversation): string | undefined {
-  return decodeClaudeConversation(conversation)?.native.sessionId;
+  return claudeRuntimeStateCodec.decodeConversation(conversation)?.native.sessionId;
 }
 
 function defaultResumeCapabilities() {
@@ -177,12 +136,24 @@ function defaultOneShotCapabilities(runtimeId: AgentId) {
   };
 }
 
-function cloneRuntimeConversation(conversation: RuntimeConversation): RuntimeConversation {
-  return {
-    runtimeId: conversation.runtimeId,
-    codecVersion: conversation.codecVersion,
-    payload: structuredClone(conversation.payload),
-  };
+function cloneCodexRuntimeConversation(conversation: RuntimeConversation): RuntimeConversation {
+  const cloned = codexRuntimeStateCodec.cloneConversation(conversation);
+  if (!cloned) {
+    throw new Error(`Invalid ${conversation.runtimeId} runtime conversation envelope.`);
+  }
+  return cloned;
+}
+
+function cloneClaudeRuntimeConversation(conversation: RuntimeConversation): RuntimeConversation {
+  const cloned = claudeRuntimeStateCodec.cloneConversation(conversation);
+  if (!cloned) {
+    throw new Error(`Invalid ${conversation.runtimeId} runtime conversation envelope.`);
+  }
+  return cloned;
+}
+
+function support(surface: RuntimeSurfaceSupport["surface"], executionModes: RuntimeSurfaceSupport["executionModes"], continuationPolicies: RuntimeSurfaceSupport["continuationPolicies"]): RuntimeSurfaceSupport {
+  return { surface, executionModes, continuationPolicies };
 }
 
 function createWorkflowAgentTimeout(input: { timeoutMs: number; onTimeout: () => void }): { refresh: () => void; clear: () => void } {
@@ -334,7 +305,7 @@ async function runCodexWorkflow(
   const model = runtimeModelId(modelFromRuntimeConfig(input.runtimeConfig));
   let settled = false;
   let content = "";
-  let runtimeConversation = input.runtimeConversation ? cloneRuntimeConversation(input.runtimeConversation) : undefined;
+  let runtimeConversation = input.runtimeConversation ? cloneCodexRuntimeConversation(input.runtimeConversation) : undefined;
   let timeout: ReturnType<typeof createWorkflowAgentTimeout> | undefined;
   let client: CodexRpcClient | undefined;
 
@@ -416,9 +387,9 @@ async function runCodexWorkflow(
 
         const threadId = (threadResult as { thread?: { id?: string } }).thread?.id ?? existingThreadId;
         if (threadId) {
-          runtimeConversation = buildRuntimeConversation("codex", {
+          runtimeConversation = codexRuntimeStateCodec.encodeConversation({
             native: { threadId },
-          } satisfies CodexRuntimeConversationPayload);
+          });
         }
         await client.request("turn/start", {
           threadId,
@@ -442,7 +413,7 @@ async function runClaudeWorkflow(
   const resumeSessionId = claudeSessionIdFromConversation(input.runtimeConversation);
   let content = "";
   let completedContent: string | undefined;
-  let runtimeConversation = input.runtimeConversation ? cloneRuntimeConversation(input.runtimeConversation) : undefined;
+  let runtimeConversation = input.runtimeConversation ? cloneClaudeRuntimeConversation(input.runtimeConversation) : undefined;
   let errorMessage: string | undefined;
 
   try {
@@ -464,7 +435,7 @@ async function runClaudeWorkflow(
           return;
         }
         if (event.type === "runtime_conversation") {
-          runtimeConversation = cloneRuntimeConversation(event.runtimeConversation);
+          runtimeConversation = cloneClaudeRuntimeConversation(event.runtimeConversation);
           return;
         }
         if (event.type === "error") {
@@ -522,16 +493,6 @@ async function runHermesChannelTest(
   return response.content;
 }
 
-export class RuntimeDriverRegistry {
-  constructor(private readonly drivers: RuntimeDriver[]) {}
-
-  driverFor(agentId: AgentId): RuntimeDriver {
-    const driver = this.drivers.find((item) => item.runtimeId === agentId);
-    if (!driver) throw new Error(`No runtime driver registered for ${agentId}`);
-    return driver;
-  }
-}
-
 export function createRuntimeDriverRegistry(options: RuntimeAgentExecutorFactoryOptions): RuntimeDriverRegistry {
   const askWorkflowByRuntime = options.askWorkflowByRuntime ?? {};
   const testChannelByRuntime = options.testChannelByRuntime ?? {};
@@ -540,6 +501,14 @@ export function createRuntimeDriverRegistry(options: RuntimeAgentExecutorFactory
   const runClaudeOneShot = options.runClaudeOneShot ?? ((input: ClaudeAgentSdkRunInput) => claudeSdkAdapter.runOneShot(input));
   const codexDriver: RuntimeDriver = {
     runtimeId: "codex",
+    surfaceSupport: [
+      support("chat", ["interactive"], ["fresh", "resume-preferred"]),
+      support("task", ["oneshot"], ["fresh", "resume-preferred"]),
+      support("workflow", ["oneshot"], ["fresh", "resume-preferred"]),
+      support("channel-test", ["oneshot"], ["fresh"]),
+      support("cleanup", ["oneshot"], ["fresh", "resume-preferred"]),
+    ],
+    runtimeStateCodec: codexRuntimeStateCodec,
     getCapabilities: () => ({
       ...defaultInteractiveCapabilities("codex"),
       resume: {
@@ -587,6 +556,14 @@ export function createRuntimeDriverRegistry(options: RuntimeAgentExecutorFactory
   };
   const claudeDriver: RuntimeDriver = {
     runtimeId: "claude",
+    surfaceSupport: [
+      support("chat", ["interactive"], ["fresh", "resume-preferred"]),
+      support("task", ["oneshot"], ["fresh", "resume-preferred"]),
+      support("workflow", ["oneshot"], ["fresh", "resume-preferred"]),
+      support("channel-test", ["oneshot"], ["fresh"]),
+      support("cleanup", ["oneshot"], ["fresh", "resume-preferred"]),
+    ],
+    runtimeStateCodec: claudeRuntimeStateCodec,
     getCapabilities: () => ({
       ...defaultInteractiveCapabilities("claude"),
       resume: {
@@ -632,14 +609,29 @@ export function createRuntimeDriverRegistry(options: RuntimeAgentExecutorFactory
   };
   const apiDriver: RuntimeDriver = {
     runtimeId: "api",
+    surfaceSupport: [
+      support("chat", ["oneshot"], ["fresh"]),
+      support("task", ["oneshot"], ["fresh"]),
+      support("workflow", ["oneshot"], ["fresh"]),
+      support("channel-test", ["oneshot"], ["fresh"]),
+      support("cleanup", ["oneshot"], ["fresh"]),
+    ],
     getCapabilities: () => defaultOneShotCapabilities("api"),
     createOneShotExecutor: (context) => new ApiAgentExecutor(context, options),
     askWorkflow: askWorkflowByRuntime.api,
     testChannel: testChannelByRuntime.api,
-    deleteSessionArtifacts: deleteSessionArtifactsByRuntime.api,
+    deleteSessionArtifacts: deleteSessionArtifactsByRuntime.api ?? (async () => undefined),
   };
   const hermesDriver: RuntimeDriver = {
     runtimeId: "hermes",
+    surfaceSupport: [
+      support("chat", ["oneshot"], ["fresh"]),
+      support("task", ["oneshot"], ["fresh"]),
+      support("workflow", ["oneshot"], ["fresh"]),
+      support("channel-test", ["oneshot"], ["fresh"]),
+      support("cleanup", ["oneshot"], ["fresh"]),
+    ],
+    runtimeStateCodec: hermesRuntimeStateCodec,
     getCapabilities: () => defaultOneShotCapabilities("hermes"),
     createOneShotExecutor: (context) => new HermesAgentExecutor(context, options),
     askWorkflow: (input) => runHermesWorkflow(input, options),
@@ -650,10 +642,10 @@ export function createRuntimeDriverRegistry(options: RuntimeAgentExecutorFactory
 }
 
 export class RuntimeAgentExecutorFactory implements AgentExecutorFactory {
-  constructor(private readonly registry: RuntimeDriverRegistry) {}
+  constructor(private readonly router: RuntimeRouter) {}
 
   create(context: AgentExecutionContext): AgentExecutor {
-    return this.registry.driverFor(context.runtimeId).createOneShotExecutor(context);
+    return this.router.createOneShotExecutor(context);
   }
 }
 
@@ -717,9 +709,9 @@ class CodexAgentExecutor implements AgentExecutor {
     if (threadId) {
       this.context.emit({
         type: "runtime_conversation",
-        runtimeConversation: buildRuntimeConversation("codex", {
+        runtimeConversation: codexRuntimeStateCodec.encodeConversation({
           native: { threadId },
-        } satisfies CodexRuntimeConversationPayload),
+        }),
       });
     }
 

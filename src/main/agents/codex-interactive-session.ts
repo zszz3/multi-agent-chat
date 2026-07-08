@@ -3,21 +3,8 @@ import type { AgentEvent, ChatRuntimeSessionState, RuntimeConversation } from ".
 import type { InteractiveSession, InteractiveSessionContext, InteractiveSessionSnapshot } from "./runtime-driver";
 import { ProcessLease } from "./process-lease";
 import { CodexRpcClient } from "./codex-rpc";
+import { codexRuntimeStateCodec } from "./runtime-state-codec";
 import { planSessionReconfigure } from "./session-reconfigure";
-
-interface CodexRuntimeConversationPayload {
-  native: {
-    threadId: string;
-    sessionTreeRootId?: string;
-  };
-  appContext?: {
-    cwd?: string;
-    modelId?: string;
-    approvalPolicy?: string;
-    sandboxPolicy?: unknown;
-  };
-  extensions?: Record<string, unknown>;
-}
 
 interface CodexInteractiveSessionOptions {
   createCodexClient: (input: {
@@ -30,41 +17,6 @@ interface CodexInteractiveSessionOptions {
 
 function modelFromContext(context: InteractiveSessionContext): string {
   return context.runtimeConfig.model;
-}
-
-function decodeCodexConversation(conversation?: RuntimeConversation): CodexRuntimeConversationPayload | undefined {
-  if (conversation?.runtimeId !== "codex") return undefined;
-  return typeof conversation.payload === "object" && conversation.payload !== null
-    ? (conversation.payload as CodexRuntimeConversationPayload)
-    : undefined;
-}
-
-function cloneCodexConversationPayload(payload: CodexRuntimeConversationPayload): CodexRuntimeConversationPayload {
-  return {
-    native: {
-      threadId: payload.native.threadId,
-      ...(payload.native.sessionTreeRootId !== undefined ? { sessionTreeRootId: payload.native.sessionTreeRootId } : {}),
-    },
-    ...(payload.appContext
-      ? {
-          appContext: {
-            ...(payload.appContext.cwd !== undefined ? { cwd: payload.appContext.cwd } : {}),
-            ...(payload.appContext.modelId !== undefined ? { modelId: payload.appContext.modelId } : {}),
-            ...(payload.appContext.approvalPolicy !== undefined ? { approvalPolicy: payload.appContext.approvalPolicy } : {}),
-            ...(payload.appContext.sandboxPolicy !== undefined ? { sandboxPolicy: payload.appContext.sandboxPolicy } : {}),
-          },
-        }
-      : {}),
-    ...(payload.extensions ? { extensions: { ...payload.extensions } } : {}),
-  };
-}
-
-function buildCodexConversation(payload: CodexRuntimeConversationPayload): RuntimeConversation {
-  return {
-    runtimeId: "codex",
-    codecVersion: "v1",
-    payload: cloneCodexConversationPayload(payload),
-  };
 }
 
 export class CodexInteractiveSession implements InteractiveSession {
@@ -83,8 +35,9 @@ export class CodexInteractiveSession implements InteractiveSession {
     private readonly options: CodexInteractiveSessionOptions,
   ) {
     this.now = options.now ?? (() => Date.now());
-    const payload = decodeCodexConversation(context.runtimeConversation);
-    this.runtimeConversation = payload ? buildCodexConversation(payload) : undefined;
+    this.runtimeConversation = context.runtimeConversation
+      ? codexRuntimeStateCodec.cloneConversation(context.runtimeConversation)
+      : undefined;
   }
 
   reconfigure(context: InteractiveSessionContext): void {
@@ -92,9 +45,8 @@ export class CodexInteractiveSession implements InteractiveSession {
     this.context = { ...this.context, ...plan.applyNow };
     if (plan.invalidateResume) {
       this.runtimeConversation = undefined;
-    } else if (!this.client) {
-      const payload = decodeCodexConversation(context.runtimeConversation);
-      if (payload) this.runtimeConversation = buildCodexConversation(payload);
+    } else if (!this.client && context.runtimeConversation !== undefined) {
+      this.runtimeConversation = codexRuntimeStateCodec.cloneConversation(context.runtimeConversation);
     }
 
     const nextContext = { ...this.context, ...plan.applyOnNextAttach };
@@ -132,7 +84,7 @@ export class CodexInteractiveSession implements InteractiveSession {
 
     try {
       await client.start();
-      const existingThreadId = decodeCodexConversation(this.runtimeConversation)?.native.threadId;
+      const existingThreadId = codexRuntimeStateCodec.decodeConversation(this.runtimeConversation)?.native.threadId;
       const modelId = modelFromContext(this.context);
       const threadResult = existingThreadId
         ? await client.request("thread/resume", {
@@ -162,7 +114,7 @@ export class CodexInteractiveSession implements InteractiveSession {
 
       const threadId = (threadResult as { thread?: { id?: string } }).thread?.id;
       if (threadId) {
-        this.runtimeConversation = buildCodexConversation({
+        this.runtimeConversation = codexRuntimeStateCodec.encodeConversation({
           native: { threadId },
           appContext: {
             cwd: this.context.workDir,
@@ -172,7 +124,7 @@ export class CodexInteractiveSession implements InteractiveSession {
         });
         this.context.emit({
           type: "runtime_conversation",
-          runtimeConversation: cloneRuntimeConversation(this.runtimeConversation),
+          runtimeConversation: this.runtimeConversation,
         });
       }
 
@@ -269,7 +221,7 @@ export class CodexInteractiveSession implements InteractiveSession {
         ...(this.lastMeaningfulActivityAt !== undefined ? { lastMeaningfulActivityAt: this.lastMeaningfulActivityAt } : {}),
         capabilities: this.options.capabilities,
       },
-      ...(this.runtimeConversation ? { runtimeConversation: cloneRuntimeConversation(this.runtimeConversation) } : {}),
+      ...(this.runtimeConversation ? { runtimeConversation: this.runtimeConversation } : {}),
     };
   }
 
@@ -293,7 +245,7 @@ export class CodexInteractiveSession implements InteractiveSession {
   }
 
   private codexThreadId(): string {
-    const threadId = decodeCodexConversation(this.runtimeConversation)?.native.threadId;
+    const threadId = codexRuntimeStateCodec.decodeConversation(this.runtimeConversation)?.native.threadId;
     if (!threadId) {
       throw new Error("Codex interactive session is missing a thread id.");
     }
@@ -310,14 +262,4 @@ export class CodexInteractiveSession implements InteractiveSession {
     this.context = this.pendingContext;
     this.pendingContext = undefined;
   }
-}
-
-function cloneRuntimeConversation(conversation: RuntimeConversation): RuntimeConversation {
-  const payload = decodeCodexConversation(conversation);
-  if (payload) return buildCodexConversation(payload);
-  return {
-    runtimeId: conversation.runtimeId,
-    codecVersion: conversation.codecVersion,
-    payload: conversation.payload,
-  };
 }
