@@ -464,6 +464,55 @@ describe("RuntimeRouter", () => {
     expect(createOneShotExecutor).toHaveBeenCalledWith(context);
   });
 
+  test("fresh one-shot requests still dispatch for same-runtime envelopes when the runtime has no codec", () => {
+    const executor = {
+      start: async () => undefined,
+      stop: async () => undefined,
+    } satisfies AgentExecutor;
+    const createOneShotExecutor = vi.fn((_context: AgentExecutionContext) => executor);
+    const router = new RuntimeRouter(
+      new RuntimeDriverRegistry([
+        createDriver({
+          runtimeId: "api",
+          surfaceSupport: [
+            {
+              surface: "task",
+              executionModes: ["oneshot"],
+              continuationPolicies: ["fresh"],
+            },
+          ],
+          getCapabilities: () => oneshotCapabilities("api"),
+          createOneShotExecutor,
+        }),
+      ]),
+    );
+
+    expect(
+      router.createOneShotExecutor({
+        runId: "task-api-fresh-1",
+        runKind: "task",
+        prompt: "Inspect the repo",
+        runtimeId: "api",
+        executionMode: "oneshot",
+        continuationPolicy: "fresh",
+        runtimeConversation: {
+          runtimeId: "api",
+          codecVersion: "v1",
+          payload: { native: { requestId: "api-request-1" } },
+        },
+        runtimeConfig: { model: "default" },
+        runtime,
+        channelId: "api-default",
+        workDir: "C:/repo",
+        developerInstructions: "",
+        emit: () => undefined,
+        onExit: () => undefined,
+      } satisfies AgentExecutionContext),
+    ).toBe(executor);
+    expect(createOneShotExecutor).toHaveBeenCalledTimes(1);
+    expect(createOneShotExecutor.mock.calls[0]![0].runtimeConversation).toBeUndefined();
+  });
+
   test("omits runtimeConversation before dispatching fresh one-shot requests to drivers", () => {
     const runtimeConversation = {
       runtimeId: "codex",
@@ -533,6 +582,7 @@ describe("RuntimeRouter", () => {
 
     expect(createOneShotExecutor).toHaveBeenCalledTimes(1);
     expect(createOneShotExecutor.mock.calls[0]![0].runtimeConversation).toBeUndefined();
+    expect(cloneConversation).not.toHaveBeenCalled();
   });
 
   test("omits runtimeConversation before dispatching fresh workflow requests to drivers", async () => {

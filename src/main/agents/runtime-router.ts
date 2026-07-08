@@ -120,11 +120,12 @@ export class RuntimeRouter {
     if (!input.runtimeConversation) {
       return { driver, input };
     }
-    const runtimeConversation = this.cloneOwnedConversation(input.runtimeId, input.runtimeConversation);
+    this.assertConversationOwnership(input.runtimeId, input.runtimeConversation);
     if (continuationPolicy === "fresh") {
       const { runtimeConversation: _ignored, ...rest } = input;
       return { driver, input: rest as T };
     }
+    const runtimeConversation = this.cloneConversation(input.runtimeConversation);
     return {
       driver,
       input: {
@@ -163,9 +164,13 @@ export class RuntimeRouter {
   }
 
   private cloneOwnedConversation(runtimeId: AgentId, conversation: RuntimeConversation): RuntimeConversation {
+    this.assertConversationOwnership(runtimeId, conversation);
+    return this.cloneConversation(conversation);
+  }
+
+  private assertConversationOwnership(runtimeId: AgentId, conversation: RuntimeConversation): void {
     if (conversation.runtimeId !== runtimeId) {
       throw new Error(`${runtimeId} cannot use runtimeConversation owned by ${conversation.runtimeId}.`);
     }
-    return this.cloneConversation(conversation);
   }
 }
