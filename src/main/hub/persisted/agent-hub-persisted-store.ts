@@ -1,4 +1,4 @@
-import { mkdir, rename, writeFile } from "node:fs/promises";
+import { mkdir, readFile, rename, writeFile } from "node:fs/promises";
 import path from "node:path";
 import type {
   ScheduledWorkflowRun,
@@ -11,6 +11,54 @@ import type {
 import type { SqliteAppStore } from "./sqlite-store";
 import { restoreScheduledWorkflowStoreCollections, restoreWorkflowStoreCollections } from "../workflow/agent-hub-workflow-restore";
 import { asRecord, type PersistedAppStateV4 } from "./agent-hub-persistence";
+
+export async function loadPersistedPayload(input: {
+  storagePath: string;
+  sqliteStoreFactory: (storagePath: string) => SqliteAppStore;
+  warn: (message: string, error: unknown) => void;
+}): Promise<{
+  payload: unknown | undefined;
+  sqliteStore: SqliteAppStore | undefined;
+  shouldBootstrapPersist: boolean;
+}> {
+  if (path.extname(input.storagePath) === ".db") {
+    const sqliteStore = input.sqliteStoreFactory(input.storagePath);
+    try {
+      const payload = await sqliteStore.load();
+      return {
+        payload,
+        sqliteStore,
+        shouldBootstrapPersist: payload === undefined,
+      };
+    } catch (error) {
+      input.warn(`Failed to load app state from SQLite ${input.storagePath}:`, error);
+      return {
+        payload: undefined,
+        sqliteStore,
+        shouldBootstrapPersist: true,
+      };
+    }
+  }
+
+  try {
+    const raw = await readFile(input.storagePath, "utf8");
+    return {
+      payload: JSON.parse(raw) as unknown,
+      sqliteStore: undefined,
+      shouldBootstrapPersist: false,
+    };
+  } catch (error) {
+    const code = error && typeof error === "object" ? (error as { code?: unknown }).code : undefined;
+    if (code !== "ENOENT") {
+      input.warn(`Failed to load chat history from ${input.storagePath}:`, error);
+    }
+    return {
+      payload: undefined,
+      sqliteStore: undefined,
+      shouldBootstrapPersist: false,
+    };
+  }
+}
 
 export function isPersistedAppStateV4(raw: unknown): raw is PersistedAppStateV4 {
   const record = asRecord(raw);

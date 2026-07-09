@@ -1,6 +1,6 @@
-import type { Dirent } from "node:fs";
-import { readdir, rm } from "node:fs/promises";
+import { rm } from "node:fs/promises";
 import { execCli, spawnCli } from "../../platform/cli-launcher";
+import { deleteCodexSessionFiles } from "./agent-executor-session-cleanup";
 
 export type AgentTestStreamEmit = (event: {
   type: "assistant" | "tool" | "warning" | "error" | "assistant_delta";
@@ -13,33 +13,6 @@ function asRecord(value: unknown): Record<string, unknown> | undefined {
 
 function isCodexWarningMessage(message: string): boolean {
   return /skill descriptions were shortened/i.test(message) || /context budget/i.test(message);
-}
-
-async function deleteCodexSessionFiles(home: string, sessionId: string): Promise<number> {
-  const root = `${home}/sessions`;
-  let deleted = 0;
-  const visit = async (dir: string): Promise<void> => {
-    let entries: Dirent[];
-    try {
-      entries = await readdir(dir, { withFileTypes: true });
-    } catch {
-      return;
-    }
-    await Promise.all(
-      entries.map(async (entry) => {
-        const entryPath = `${dir}/${entry.name}`;
-        if (entry.isDirectory()) {
-          await visit(entryPath);
-          return;
-        }
-        if (!entry.isFile() || !entry.name.includes(sessionId)) return;
-        await rm(entryPath, { force: true });
-        deleted += 1;
-      }),
-    );
-  };
-  await visit(root);
-  return deleted;
 }
 
 export function handleCodexTestLine(line: string, emit: AgentTestStreamEmit): string {

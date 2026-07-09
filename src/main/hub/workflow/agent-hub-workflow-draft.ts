@@ -1,12 +1,15 @@
 import type {
+  AgentId,
   CreateWorkflowRequest,
   PatchWorkflowDraftRequest,
   RuntimeConversation,
   UpdateWorkflowRequest,
+  WorkflowAgentRequest,
   WorkflowDraftState,
   WorkflowGraph,
 } from "../../../shared/types";
 import { createWorkflowGraphFromObjective, parseWorkflowGraphUpsert } from "../../../shared/workflow-graph";
+import { buildWorkflowAgentPrompt } from "../../../shared/workflow-agent";
 
 export function applyWorkflowDraftPatch(input: {
   current: WorkflowDraftState;
@@ -312,4 +315,28 @@ export function abandonWorkflowDraftReplyState(input: {
     error: undefined,
     updatedAt: input.now ?? Date.now(),
   });
+}
+
+export function createWorkflowDraftAgentRequest(input: {
+  started: {
+    next: WorkflowDraftState;
+    request: { requestId: string; assistantMessageId: string; content: string };
+    starting: boolean;
+  };
+  reply: string;
+  defaultRuntimeId: AgentId;
+  resolveRuntimeId: (configuredAgentId: string, modelId: string) => AgentId | undefined;
+  defaultWorkDir: string;
+}): WorkflowAgentRequest {
+  return {
+    requestId: input.started.request.requestId,
+    prompt: input.started.starting ? buildWorkflowAgentPrompt({ objective: input.reply }) : input.reply,
+    configuredAgentId: input.started.next.configuredAgentId,
+    runtimeId:
+      input.resolveRuntimeId(input.started.next.configuredAgentId, input.started.next.modelId) ?? input.defaultRuntimeId,
+    executionMode: "oneshot",
+    continuationPolicy: "fresh",
+    runtimeConfig: { model: input.started.next.modelId },
+    workDir: input.started.next.workDir || input.defaultWorkDir,
+  };
 }

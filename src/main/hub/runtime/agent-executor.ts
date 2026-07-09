@@ -1,7 +1,3 @@
-import type { Dirent } from "node:fs";
-import { readdir, rm } from "node:fs/promises";
-import os from "node:os";
-import path from "node:path";
 import type {
   AgentChannel,
   AgentEvent,
@@ -11,7 +7,7 @@ import type {
   RuntimeRequest,
   WorkflowAgentResponse,
 } from "../../../shared/types";
-import { DEFAULT_MODEL_ID, runtimeModelId } from "../../../shared/models";
+import { runtimeModelId } from "../../../shared/models";
 import { codexEnvironmentForChannel } from "../../agents/codex/codex-env";
 import { claudeCliModelForChannel } from "../../agents/claude/claude-env";
 import { ClaudeAgentSdkAdapter, type ClaudeAgentSdkRunInput } from "../../agents/claude/claude-agent-sdk";
@@ -30,12 +26,13 @@ import type {
   RuntimeChannelTestContext,
   RuntimeDriver,
   RuntimeSessionCleanupContext,
-  RuntimeSurfaceSupport,
   RuntimeWorkflowRequestContext,
 } from "../../agents/runtime/runtime-driver";
 import { RuntimeDriverRegistry } from "../../agents/runtime/runtime-driver";
-import { execCli } from "../../platform/cli-launcher";
-import { codexAppServerConfigArgs, codexHome } from "../../channels/model-config";
+import { codexAppServerConfigArgs } from "../../channels/model-config";
+import { apiRequestBody, apiRequestUrl, extractApiContent, resolveApiModel } from "../api/agent-hub-api";
+import { defaultInteractiveCapabilities, defaultOneShotCapabilities, support } from "./agent-executor-capabilities";
+import { deleteClaudeSessionArtifacts, deleteCodexSessionArtifacts } from "./agent-executor-session-cleanup";
 
 export { RuntimeDriverRegistry } from "../../agents/runtime/runtime-driver";
 
@@ -92,50 +89,6 @@ function claudeSessionIdFromConversation(conversation?: RuntimeConversation): st
   return claudeRuntimeStateCodec.decodeConversation(conversation)?.native.sessionId;
 }
 
-function defaultResumeCapabilities() {
-  return {
-    supportsInProcessConversationResume: true,
-    supportsResumeAfterDetach: false,
-    supportsResumeAfterAppRestart: false,
-    supportsTurnResume: false,
-  };
-}
-
-function defaultInteractiveCapabilities(runtimeId: AgentId) {
-  return {
-    runtimeId,
-    chatStyle: "interactive" as const,
-    taskStyle: "oneshot" as const,
-    workflowStyle: "oneshot" as const,
-    testStyle: "oneshot" as const,
-    supportsInterrupt: true,
-    supportsContinue: true,
-    supportsApprovalRequests: runtimeId !== "api",
-    supportsUserInputRequests: runtimeId !== "api",
-    resume: defaultResumeCapabilities(),
-  };
-}
-
-function defaultOneShotCapabilities(runtimeId: AgentId) {
-  return {
-    runtimeId,
-    chatStyle: "oneshot" as const,
-    taskStyle: "oneshot" as const,
-    workflowStyle: "oneshot" as const,
-    testStyle: "oneshot" as const,
-    supportsInterrupt: false,
-    supportsContinue: false,
-    supportsApprovalRequests: false,
-    supportsUserInputRequests: false,
-    resume: {
-      supportsInProcessConversationResume: false,
-      supportsResumeAfterDetach: false,
-      supportsResumeAfterAppRestart: false,
-      supportsTurnResume: false,
-    },
-  };
-}
-
 function cloneCodexRuntimeConversation(conversation: RuntimeConversation): RuntimeConversation {
   const cloned = codexRuntimeStateCodec.cloneConversation(conversation);
   if (!cloned) {
@@ -152,10 +105,6 @@ function cloneClaudeRuntimeConversation(conversation: RuntimeConversation): Runt
   return cloned;
 }
 
-function support(surface: RuntimeSurfaceSupport["surface"], executionModes: RuntimeSurfaceSupport["executionModes"], continuationPolicies: RuntimeSurfaceSupport["continuationPolicies"]): RuntimeSurfaceSupport {
-  return { surface, executionModes, continuationPolicies };
-}
-
 function createWorkflowAgentTimeout(input: { timeoutMs: number; onTimeout: () => void }): { refresh: () => void; clear: () => void } {
   let timer: ReturnType<typeof setTimeout> | undefined;
   const clear = (): void => {
@@ -169,72 +118,6 @@ function createWorkflowAgentTimeout(input: { timeoutMs: number; onTimeout: () =>
   };
   refresh();
   return { refresh, clear };
-}
-
-function claudeProjectStoragePath(workDir: string, sessionId: string): string {
-  const slug = workDir.replace(/[:\\/]/g, "-");
-  const homeDir = process.env.HOME || process.env.USERPROFILE || os.homedir();
-  return path.join(homeDir, ".claude", "projects", slug, `${sessionId}.jsonl`);
-}
-
-async function deleteCodexSessionFiles(home: string, sessionId: string): Promise<number> {
-  const root = path.join(home, "sessions");
-  let deleted = 0;
-  const visit = async (dir: string): Promise<void> => {
-    let entries: Dirent[];
-    try {
-      entries = await readdir(dir, { withFileTypes: true });
-    } catch {
-      return;
-    }
-    await Promise.all(
-      entries.map(async (entry) => {
-        const entryPath = path.join(dir, entry.name);
-        if (entry.isDirectory()) {
-          await visit(entryPath);
-          return;
-        }
-        if (!entry.isFile() || !entry.name.includes(sessionId)) return;
-        await rm(entryPath, { force: true });
-        deleted += 1;
-      }),
-    );
-  };
-  await visit(root);
-  return deleted;
-}
-
-async function deleteCodexSessionArtifacts(executable: string, runtimeConversation?: RuntimeConversation): Promise<void> {
-  const sessionId = codexThreadIdFromConversation(runtimeConversation);
-  if (!sessionId) return;
-  try {
-    await execCli({
-      executable,
-      args: ["archive", sessionId],
-      cwd: process.cwd(),
-      env: process.env,
-      timeout: 10_000,
-      windowsHide: true,
-      maxBuffer: 1024 * 64,
-    });
-  } catch (error) {
-    console.warn(`Failed to archive Codex session ${sessionId}:`, error);
-  }
-  try {
-    await deleteCodexSessionFiles(codexHome(), sessionId);
-  } catch (error) {
-    console.warn(`Failed to delete local Codex session ${sessionId}:`, error);
-  }
-}
-
-async function deleteClaudeSessionArtifacts(workDir: string, runtimeConversation?: RuntimeConversation): Promise<void> {
-  const sessionId = claudeSessionIdFromConversation(runtimeConversation);
-  if (!sessionId) return;
-  try {
-    await rm(claudeProjectStoragePath(workDir, sessionId), { force: true });
-  } catch (error) {
-    console.warn(`Failed to delete Claude session ${sessionId}:`, error);
-  }
 }
 
 async function runHermesWorkflow(
@@ -786,7 +669,7 @@ class ApiAgentExecutor implements AgentExecutor {
       return;
     }
 
-    const model = this.resolveModel(channel);
+    const model = resolveApiModel(channel, modelFromRuntimeConfig(this.context.runtimeConfig));
     if (!model) {
       this.context.emit({ type: "error", error: "API agent requires a model." });
       this.context.onExit(1);
@@ -797,14 +680,16 @@ class ApiAgentExecutor implements AgentExecutor {
     this.controller = controller;
 
     try {
-      const response = await fetch(this.requestUrl(channel), {
+      const response = await fetch(apiRequestUrl(channel), {
         method: "POST",
         signal: controller.signal,
         headers: {
           "content-type": "application/json",
           ...(channel.httpHeaders ?? {}),
         },
-        body: JSON.stringify(this.requestBody(channel, model)),
+        body: JSON.stringify(
+          apiRequestBody(channel, model, this.context.prompt, this.context.developerInstructions),
+        ),
       });
 
       const text = await response.text();
@@ -814,7 +699,7 @@ class ApiAgentExecutor implements AgentExecutor {
         return;
       }
 
-      const content = this.extractContent(channel, text);
+      const content = extractApiContent(channel, text);
       this.context.emit({ type: "delta", content });
       this.context.emit({ type: "completed", content });
       this.context.onExit(0);
@@ -831,68 +716,6 @@ class ApiAgentExecutor implements AgentExecutor {
   async stop(): Promise<void> {
     this.controller?.abort();
     this.controller = undefined;
-  }
-
-  private resolveModel(channel: AgentChannel): string | undefined {
-    const model = runtimeModelId(modelFromRuntimeConfig(this.context.runtimeConfig));
-    if (model) return model;
-    return channel.models.find((item) => item.id !== DEFAULT_MODEL_ID)?.id;
-  }
-
-  private requestUrl(channel: AgentChannel): string {
-    if (channel.modelProvider === "anthropic-api") {
-      const normalized = channel.baseUrl?.replace(/\/+$/, "") ?? "";
-      if (normalized.endsWith("/messages")) return normalized;
-      return `${normalized}/messages`;
-    }
-    return this.chatCompletionsUrl(channel.baseUrl ?? "");
-  }
-
-  private requestBody(channel: AgentChannel, model: string): Record<string, unknown> {
-    if (channel.modelProvider === "anthropic-api") {
-      return {
-        model,
-        max_tokens: 4096,
-        system: this.context.developerInstructions || undefined,
-        messages: [{ role: "user", content: this.context.prompt }],
-      };
-    }
-    return {
-      model,
-      messages: [
-        ...(this.context.developerInstructions
-          ? [{ role: "system", content: this.context.developerInstructions }]
-          : []),
-        { role: "user", content: this.context.prompt },
-      ],
-      stream: false,
-    };
-  }
-
-  private chatCompletionsUrl(baseUrl: string): string {
-    const normalized = baseUrl.replace(/\/+$/, "");
-    if (normalized.endsWith("/chat/completions")) return normalized;
-    return `${normalized}/chat/completions`;
-  }
-
-  private extractContent(channel: AgentChannel, text: string): string {
-    if (channel.modelProvider === "anthropic-api") {
-      const parsed = JSON.parse(text) as { content?: Array<{ type?: string; text?: unknown }> };
-      const content = parsed.content
-        ?.map((item) => (typeof item.text === "string" ? item.text : ""))
-        .filter(Boolean)
-        .join("");
-      if (content) return content;
-      return JSON.stringify(parsed, null, 2);
-    }
-    const parsed = JSON.parse(text) as {
-      choices?: Array<{ message?: { content?: unknown }; text?: unknown }>;
-      output_text?: unknown;
-    };
-    const first = parsed.choices?.[0];
-    const content = first?.message?.content ?? first?.text ?? parsed.output_text;
-    if (typeof content === "string") return content;
-    return JSON.stringify(parsed, null, 2);
   }
 }
 

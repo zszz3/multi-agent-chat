@@ -25,20 +25,20 @@ export function apiRequestBody(
   channel: AgentChannel,
   model: string,
   prompt: string,
-  system: string,
+  system?: string,
 ): Record<string, unknown> {
   if (channel.modelProvider === "anthropic-api") {
     return {
       model,
       max_tokens: 4096,
-      system,
+      system: system || undefined,
       messages: [{ role: "user", content: prompt }],
     };
   }
   return {
     model,
     messages: [
-      { role: "system", content: system },
+      ...(system ? [{ role: "system", content: system }] : []),
       { role: "user", content: prompt },
     ],
     stream: false,

@@ -1,6 +1,6 @@
 import { randomUUID } from "node:crypto";
 import type { Dirent } from "node:fs";
-import { readFile, readdir } from "node:fs/promises";
+import { readdir } from "node:fs/promises";
 import os from "node:os";
 import path from "node:path";
 import {
@@ -80,7 +80,6 @@ import type {
 } from "../../shared/types";
 import { normalizeConfigChannelsForStorage } from "../../shared/config-channels";
 import { DEFAULT_MODEL_ID, defaultChannelForAgent, defaultModelForAgent, isModelForChannel } from "../../shared/models";
-import { buildWorkflowAgentPrompt } from "../../shared/workflow-agent";
 import { createWorkflowGraphFromObjective, validateWorkflowGraph } from "../../shared/workflow-graph";
 import { defaultWorkflowWorkDirSuffix } from "../../shared/workflow-run";
 import { detectAgentRuntimes } from "../agents/runtime/detect";
@@ -109,6 +108,9 @@ import { SqliteAppStore } from "./persisted/sqlite-store";
 import { resolveWorkDirFile } from "../platform/local-file-preview";
 import { WorkflowRuntime, type WorkflowRunStateUpdate } from "../workflows/workflow-runtime";
 import { ChatState, TaskState, AgentTeamState, TeamRunState } from "./state/agent-hub-state";
+import {
+  switchChatConfiguredAgent as switchChatConfiguredAgentValue,
+} from "./chat/agent-hub-chat-config";
 import {
   prepareChatPromptExecution as prepareChatPromptExecutionValue,
 } from "./chat/agent-hub-chat-prompt";
@@ -190,6 +192,7 @@ import {
 import { buildPersistedPayload } from "./persisted/agent-hub-persisted-payload";
 import {
   isPersistedAppStateV4 as isPersistedAppStateV4Value,
+  loadPersistedPayload as loadPersistedPayloadValue,
   restoreScheduledWorkflowStoreState as restoreScheduledWorkflowStoreStateValue,
   restoreWorkflowStoreState as restoreWorkflowStoreStateValue,
   writePersistedPayload,
@@ -239,6 +242,7 @@ import {
   abandonWorkflowDraftReplyState as abandonWorkflowDraftReplyStateValue,
   beginWorkflowDraftReply as beginWorkflowDraftReplyValue,
   completeWorkflowDraftRequest as completeWorkflowDraftRequestValue,
+  createWorkflowDraftAgentRequest as createWorkflowDraftAgentRequestValue,
   createWorkflowDraftState as createWorkflowDraftStateValue,
   failWorkflowDraftRequest as failWorkflowDraftRequestValue,
   resetWorkflowDraftSessionState as resetWorkflowDraftSessionStateValue,
@@ -432,37 +436,25 @@ export class AgentHub {
 
   async loadPersistedState(storagePath: string): Promise<void> {
     this.storagePath = storagePath;
-    if (path.extname(storagePath) === ".db") {
-      this.sqliteStore = new SqliteAppStore(storagePath);
-      try {
-        const persisted = await this.sqliteStore.load();
-        if (persisted !== undefined) {
-          if (!this.restorePersistedState(persisted)) {
-            this.reinitializePersistedState();
-          }
-          if (!Array.isArray(asRecord(persisted)?.channels) || !this.isPersistedAppStateV4(persisted)) await this.persistState();
-          return;
-        }
-      } catch (error) {
-        console.warn(`Failed to load app state from SQLite ${storagePath}:`, error);
+    const loaded = await loadPersistedPayloadValue({
+      storagePath,
+      sqliteStoreFactory: (dbPath) => new SqliteAppStore(dbPath),
+      warn: (message, error) => console.warn(message, error),
+    });
+    this.sqliteStore = loaded.sqliteStore;
+
+    if (loaded.payload !== undefined) {
+      if (!this.restorePersistedState(loaded.payload)) {
+        this.reinitializePersistedState();
       }
-      await this.persistState();
+      if (!Array.isArray(asRecord(loaded.payload)?.channels) || !this.isPersistedAppStateV4(loaded.payload)) {
+        await this.persistState();
+      }
       return;
     }
-    try {
-      const raw = await readFile(storagePath, "utf8");
-      const parsed = JSON.parse(raw) as unknown;
-      if (!this.restorePersistedState(parsed)) {
-        this.reinitializePersistedState();
-        await this.persistState();
-        return;
-      }
-      if (!Array.isArray(asRecord(parsed)?.channels)) await this.persistState();
-    } catch (error) {
-      const code = error && typeof error === "object" ? (error as { code?: unknown }).code : undefined;
-      if (code !== "ENOENT") {
-        console.warn(`Failed to load chat history from ${storagePath}:`, error);
-      }
+
+    if (loaded.shouldBootstrapPersist) {
+      await this.persistState();
     }
   }
 
@@ -735,29 +727,27 @@ export class AgentHub {
     if (!chat) return;
 
     const before = this.resolveConfiguredAgent(chat.configuredAgentId, chat.modelId, chat.channelId);
-    chat.configuredAgentId = configuredAgent.id;
-    chat.channelId = undefined;
-    chat.modelId = this.normalizeModelIdForConfiguredAgent(configuredAgent.id, configuredAgent.modelId, chat.channelId);
-    if (!hasAgentConversationMessages(chat.messages)) chat.title = configuredAgent.name || configuredAgent.id;
-
-    const after = this.resolveConfiguredAgent(chat.configuredAgentId, chat.modelId, chat.channelId);
-    if (before?.runtimeAgentId !== after?.runtimeAgentId && (chat.runtimeConversation || chat.runtimeState || hasAgentConversationMessages(chat.messages))) {
-      chat.runtimeConversation = undefined;
-      if (chat.runtimeState) {
-        chat.runtimeState.attachmentState = "detached";
-        chat.runtimeState.attachmentGeneration = 0;
-        delete chat.runtimeState.activeTurnId;
-      }
-      this.appendEventToAssistant(chat, {
-        id: randomUUID(),
-        type: "system",
-        content: "Runtime session reset after agent change.",
-        timestamp: Date.now(),
-      });
-      void this.interactiveSessions.dispose(chat.id, "error");
-    }
-
-    chat.updatedAt = Date.now();
+    const after = this.resolveConfiguredAgent(configuredAgent.id, configuredAgent.modelId, undefined);
+    switchChatConfiguredAgentValue({
+      chat,
+      configuredAgentId: configuredAgent.id,
+      configuredAgentLabel: configuredAgent.name || configuredAgent.id,
+      configuredAgentModelId: configuredAgent.modelId,
+      normalizeModelId: (nextConfiguredAgentId, modelId, channelIdOverride) =>
+        this.normalizeModelIdForConfiguredAgent(nextConfiguredAgentId, modelId, channelIdOverride),
+      hasAgentConversationMessages: (messages) => hasAgentConversationMessages(messages),
+      currentRuntimeAgentId: before?.runtimeAgentId,
+      nextRuntimeAgentId: after?.runtimeAgentId,
+      onResetRuntimeSession: () => {
+        this.appendEventToAssistant(chat, {
+          id: randomUUID(),
+          type: "system",
+          content: "Runtime session reset after agent change.",
+          timestamp: Date.now(),
+        });
+        void this.interactiveSessions.dispose(chat.id, "error");
+      },
+    });
     this.activeChatId = chatId;
     this.emit();
   }
@@ -902,16 +892,14 @@ export class AgentHub {
 
     try {
       const response = await this.askWorkflowAgent(
-        {
-          requestId: started.request.requestId,
-          prompt: started.starting ? buildWorkflowAgentPrompt({ objective: text }) : text,
-          configuredAgentId: started.next.configuredAgentId,
-          runtimeId: this.resolveConfiguredAgent(started.next.configuredAgentId, started.next.modelId)?.runtimeAgentId ?? DEFAULT_AGENT,
-          executionMode: "oneshot",
-          continuationPolicy: "fresh",
-          runtimeConfig: { model: started.next.modelId },
-          workDir: started.next.workDir || this.workDir,
-        },
+        createWorkflowDraftAgentRequestValue({
+          started,
+          reply: text,
+          defaultRuntimeId: DEFAULT_AGENT,
+          resolveRuntimeId: (configuredAgentId, modelId) =>
+            this.resolveConfiguredAgent(configuredAgentId, modelId)?.runtimeAgentId,
+          defaultWorkDir: this.workDir,
+        }),
         (event) => this.handleWorkflowDraftAgentEvent(started.next.workflowId, event),
       );
       this.completeWorkflowDraftRequest(started.next.workflowId, started.request.requestId, response.content, response.runtimeConversation);
