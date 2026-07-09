@@ -10,6 +10,7 @@
 - `../superpowers/README.md`：设计规格与实施计划文档归档入口
 - `../progress/README.md`：阶段性进展与重构记录归档入口
 - `topics/README.md`：中文专题说明文档入口
+- `topics/runtime-control-gateway-proposal.md`：控制面网关拆分草案，面向多底座接入的运行时管理能力收敛方案
 - `modules/main.md`：Electron 主进程、应用状态中心、官方 Claude SDK runtime 接线和 interactive session 编排文档
 - `modules/preload.md`：preload 桥接层开发文档
 - `modules/renderer.md`：React 渲染层和页面模块开发文档

@@ -11,3 +11,4 @@
 当前文档：
 
 - `runtime-agent-architecture.md`：Runtime 与底层 Agent 调用分层专题说明
+- `runtime-control-gateway-proposal.md`：Runtime 控制面网关拆分草案，说明为何将管理/查询能力与执行面路由分层
