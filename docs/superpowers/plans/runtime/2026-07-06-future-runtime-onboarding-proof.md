@@ -8,7 +8,7 @@
 
 **Tech Stack:** Electron main process, TypeScript, Vitest, local CLI launcher adapter, React renderer runtime labels.
 
-**Prerequisite:** Execute [2026-07-05-runtime-execution-architecture.md](/C:/Users/29768/Desktop/multi-agent-chat/docs/superpowers/plans/2026-07-05-runtime-execution-architecture.md) first. This plan assumes the shared driver registry already exists.
+**Prerequisite:** Execute the canonical runtime boundary reset spec set first, starting with `docs/superpowers/specs/runtime/2026-07-08-runtime-boundary-reset-design.md`. This plan assumes the shared driver registry already exists.
 
 ---
 
@@ -521,7 +521,7 @@ git commit -m "feat: add hermes runtime onboarding proof"
 ### Task 4: Sync Docs And Re-Verify The Onboarding Path
 
 **Files:**
-- Modify: `docs/superpowers/specs/2026-07-04-runtime-execution-architecture-design.md`
+- Modify: `docs/superpowers/specs/runtime/2026-07-08-runtime-boundary-reset-design.md`
 - Modify: `docs/zh-CN/runtime-execution-architecture-spec.md`
 - Modify: `docs/architecture-overview.md`
 - Modify: `docs/modules/main.md`
@@ -556,7 +556,7 @@ Expected: PASS for typecheck and the runtime-onboarding proof coverage.
 - [ ] **Step 4: Commit the docs sync**
 
 ```bash
-git add docs/superpowers/specs/2026-07-04-runtime-execution-architecture-design.md docs/zh-CN/runtime-execution-architecture-spec.md docs/architecture-overview.md docs/modules/main.md
+git add docs/superpowers/specs/runtime/2026-07-08-runtime-boundary-reset-design.md docs/zh-CN/runtime-execution-architecture-spec.md docs/architecture-overview.md docs/modules/main.md
 git commit -m "docs: sync future runtime onboarding proof"
 ```
 

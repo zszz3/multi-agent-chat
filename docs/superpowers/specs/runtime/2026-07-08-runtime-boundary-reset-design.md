@@ -224,7 +224,7 @@ API and any additional registered runtimes:
 
 File:
 
-- `docs/superpowers/specs/2026-07-08-runtime-phase-01-request-and-state-reset.md`
+- `docs/superpowers/specs/runtime/2026-07-08-runtime-phase-01-request-and-state-reset.md`
 
 Goal:
 
@@ -237,7 +237,7 @@ Goal:
 
 File:
 
-- `docs/superpowers/specs/2026-07-08-runtime-phase-02-router-driver-codec-cutover.md`
+- `docs/superpowers/specs/runtime/2026-07-08-runtime-phase-02-router-driver-codec-cutover.md`
 
 Goal:
 
@@ -248,7 +248,7 @@ Goal:
 
 File:
 
-- `docs/superpowers/specs/2026-07-08-runtime-phase-03-runtime-driver-conformance.md`
+- `docs/superpowers/specs/runtime/2026-07-08-runtime-phase-03-runtime-driver-conformance.md`
 
 Goal:
 
@@ -260,7 +260,7 @@ Goal:
 
 File:
 
-- `docs/superpowers/specs/2026-07-08-runtime-phase-04-surface-wiring-and-proof.md`
+- `docs/superpowers/specs/runtime/2026-07-08-runtime-phase-04-surface-wiring-and-proof.md`
 
 Goal:
 

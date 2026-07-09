@@ -27,10 +27,10 @@ This phase establishes the data model that every later phase depends on.
 
 Current branch evidence for this phase now includes:
 
-- [src/shared/types.ts](C:/Users/29768/Desktop/multi-agent-chat/src/shared/types.ts:195) defines the opaque `RuntimeConversation` envelope, and [src/shared/types.ts](C:/Users/29768/Desktop/multi-agent-chat/src/shared/types.ts:201) defines the explicit `RuntimeRequest` contract with `runtimeId`, `executionMode`, `continuationPolicy`, and `runtimeConfig`
-- [src/shared/types.ts](C:/Users/29768/Desktop/multi-agent-chat/src/shared/types.ts:290), [src/shared/types.ts](C:/Users/29768/Desktop/multi-agent-chat/src/shared/types.ts:309), and [src/shared/types.ts](C:/Users/29768/Desktop/multi-agent-chat/src/shared/types.ts:334) expose app-owned `runtimeState` / `runtimeConversation` boundaries without top-level app `sessionId` or app-visible `resumeState`
-- [src/main/agent-hub.ts](C:/Users/29768/Desktop/multi-agent-chat/src/main/agent-hub.ts:4251) restores only the V4 persisted app schema, and [src/main/agent-hub.ts](C:/Users/29768/Desktop/multi-agent-chat/src/main/agent-hub.ts:4359) rejects non-V4 payloads so persisted state is reinitialized instead of migrated
-- [src/main/agent-hub.ts](C:/Users/29768/Desktop/multi-agent-chat/src/main/agent-hub.ts:3130), [src/main/agent-hub.ts](C:/Users/29768/Desktop/multi-agent-chat/src/main/agent-hub.ts:1652), and [src/main/agent-hub.ts](C:/Users/29768/Desktop/multi-agent-chat/src/main/agent-hub.ts:2395) keep `runtimeConversation` app-owned and opaque by clearing stale state through workflow patch/reset and interactive chat sync paths instead of preserving legacy compatibility fallbacks
+- `src/shared/types.ts:195` defines the opaque `RuntimeConversation` envelope, and `src/shared/types.ts:201` defines the explicit `RuntimeRequest` contract with `runtimeId`, `executionMode`, `continuationPolicy`, and `runtimeConfig`
+- `src/shared/types.ts:290`, `src/shared/types.ts:309`, and `src/shared/types.ts:334` expose app-owned `runtimeState` / `runtimeConversation` boundaries without top-level app `sessionId` or app-visible `resumeState`
+- `src/main/agent-hub.ts:4251` restores only the V4 persisted app schema, and `src/main/agent-hub.ts:4359` rejects non-V4 payloads so persisted state is reinitialized instead of migrated
+- `src/main/agent-hub.ts:3130`, `src/main/agent-hub.ts:1652`, and `src/main/agent-hub.ts:2395` keep `runtimeConversation` app-owned and opaque by clearing stale state through workflow patch/reset and interactive chat sync paths instead of preserving legacy compatibility fallbacks
 
 ### Corrected Branch Truth
 
