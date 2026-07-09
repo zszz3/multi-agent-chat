@@ -1,6 +1,8 @@
 import type {
+  CreateWorkflowRequest,
   PatchWorkflowDraftRequest,
   RuntimeConversation,
+  UpdateWorkflowRequest,
   WorkflowDraftState,
   WorkflowGraph,
 } from "../../../shared/types";
@@ -77,6 +79,76 @@ export function applyWorkflowDraftPatch(input: {
   });
   if (patch.resetRunState) next.status = "draft";
   return next;
+}
+
+export function createWorkflowDraftState(input: {
+  workflowId: string;
+  request: CreateWorkflowRequest;
+  configuredAgentId: string;
+  modelId: string;
+  cloneDraft: (draft: WorkflowDraftState) => WorkflowDraftState;
+  now?: number;
+}): WorkflowDraftState {
+  const now = input.now ?? Date.now();
+  return input.cloneDraft({
+    workflowId: input.workflowId,
+    title: input.request.title.trim() || input.request.graph.title,
+    status: "draft",
+    revision: 1,
+    configuredAgentId: input.configuredAgentId,
+    modelId: input.modelId,
+    objective: input.request.objective.trim() || input.request.graph.objective,
+    ...(input.request.workDir?.trim() ? { workDir: input.request.workDir.trim() } : {}),
+    graph: input.request.graph,
+    graphReady: input.request.graphReady ?? true,
+    messages: input.request.messages ?? [],
+    reply: input.request.reply ?? "",
+    error: input.request.error,
+    runProgress: input.request.runProgress ?? [],
+    runContextDocument: input.request.runContextDocument ?? "",
+    contextDocument: input.request.contextDocument ?? "",
+    ...(input.request.finalReport !== undefined ? { finalReport: input.request.finalReport } : {}),
+    runIds: input.request.runIds ?? [],
+    ...(input.request.runtimeConversation ? { runtimeConversation: input.request.runtimeConversation } : {}),
+    createdAt: input.request.createdAt ?? now,
+    updatedAt: input.request.updatedAt ?? now,
+  });
+}
+
+export function updateWorkflowDraftState(input: {
+  current: WorkflowDraftState;
+  request: UpdateWorkflowRequest;
+  graph: WorkflowGraph;
+  configuredAgentId: string;
+  modelId: string;
+  cloneDraft: (draft: WorkflowDraftState) => WorkflowDraftState;
+  now?: number;
+}): WorkflowDraftState {
+  return input.cloneDraft({
+    ...input.current,
+    title: input.request.title ?? input.current.title,
+    objective: input.request.objective ?? input.current.objective,
+    graph: input.graph,
+    configuredAgentId: input.configuredAgentId,
+    modelId: input.modelId,
+    graphReady: input.request.graphReady ?? input.current.graphReady,
+    messages: input.request.messages ?? input.current.messages,
+    reply: input.request.reply ?? input.current.reply,
+    error: input.request.error ?? input.current.error,
+    runProgress: input.request.runProgress ?? input.current.runProgress,
+    runContextDocument: input.request.runContextDocument ?? input.current.runContextDocument,
+    contextDocument: input.request.contextDocument ?? input.current.contextDocument,
+    ...((input.request.finalReport ?? input.current.finalReport) !== undefined
+      ? { finalReport: input.request.finalReport ?? input.current.finalReport }
+      : {}),
+    ...(input.request.runtimeConversation !== undefined
+      ? { runtimeConversation: input.request.runtimeConversation }
+      : input.current.runtimeConversation
+        ? { runtimeConversation: input.current.runtimeConversation }
+        : {}),
+    revision: input.current.revision + 1,
+    updatedAt: input.now ?? Date.now(),
+  });
 }
 
 export function replaceWorkflowDraftMessage(

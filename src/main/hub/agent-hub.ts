@@ -110,6 +110,9 @@ import { resolveWorkDirFile } from "../platform/local-file-preview";
 import { WorkflowRuntime, type WorkflowRunStateUpdate } from "../workflows/workflow-runtime";
 import { ChatState, TaskState, AgentTeamState, TeamRunState } from "./state/agent-hub-state";
 import {
+  prepareChatPromptExecution as prepareChatPromptExecutionValue,
+} from "./chat/agent-hub-chat-prompt";
+import {
   buildInteractiveChatContext as buildInteractiveChatContextValue,
   dispatchInteractiveChatPrompt as dispatchInteractiveChatPromptValue,
   runtimeStateFromCapabilities as runtimeStateFromCapabilitiesValue,
@@ -142,6 +145,9 @@ import {
 } from "./runtime/agent-hub-agent-test";
 import { runAgentExecution as runAgentExecutionValue } from "./runtime/agent-hub-runner";
 import { runRuntimeChannelTest as runRuntimeChannelTestValue } from "./runtime/agent-hub-runtime-test";
+import {
+  prepareTaskRunExecution as prepareTaskRunExecutionValue,
+} from "./runtime/agent-hub-task-run";
 import {
   codexPluginSummaries,
   respondToCodexServerRequest,
@@ -233,9 +239,11 @@ import {
   abandonWorkflowDraftReplyState as abandonWorkflowDraftReplyStateValue,
   beginWorkflowDraftReply as beginWorkflowDraftReplyValue,
   completeWorkflowDraftRequest as completeWorkflowDraftRequestValue,
+  createWorkflowDraftState as createWorkflowDraftStateValue,
   failWorkflowDraftRequest as failWorkflowDraftRequestValue,
   resetWorkflowDraftSessionState as resetWorkflowDraftSessionStateValue,
   replaceWorkflowDraftMessage as replaceWorkflowDraftMessageValue,
+  updateWorkflowDraftState as updateWorkflowDraftStateValue,
 } from "./workflow/agent-hub-workflow-draft";
 const DEFAULT_AGENT: AgentId = "codex";
 const CODEX_CHAT_DEVELOPER_INSTRUCTIONS =
@@ -940,30 +948,13 @@ export class AgentHub {
     if (limitError) return { ok: false, error: limitError };
     const validation = validateWorkflowGraph(input.graph);
     if (!validation.valid) return { ok: false, error: validation.errors[0] ?? "Workflow graph is invalid.", validation };
-    const now = Date.now();
     const workflowId = `wf_${randomUUID()}`;
-    const workflow = this.cloneWorkflowDraft({
+    const workflow = createWorkflowDraftStateValue({
       workflowId,
-      title: input.title.trim() || input.graph.title,
-      status: "draft",
-      revision: 1,
+      request: input,
       configuredAgentId: this.normalizeWorkflowConfiguredAgentId(input.configuredAgentId),
       modelId: this.normalizeModelIdForConfiguredAgent(input.configuredAgentId, input.modelId),
-      objective: input.objective.trim() || input.graph.objective,
-      ...(input.workDir?.trim() ? { workDir: input.workDir.trim() } : {}),
-      graph: input.graph,
-      graphReady: input.graphReady ?? true,
-      messages: input.messages ?? [],
-      reply: input.reply ?? "",
-      error: input.error,
-      runProgress: input.runProgress ?? [],
-      runContextDocument: input.runContextDocument ?? "",
-      contextDocument: input.contextDocument ?? "",
-      ...(input.finalReport !== undefined ? { finalReport: input.finalReport } : {}),
-      runIds: input.runIds ?? [],
-      ...(input.runtimeConversation ? { runtimeConversation: input.runtimeConversation } : {}),
-      createdAt: input.createdAt ?? now,
-      updatedAt: input.updatedAt ?? now,
+      cloneDraft: (draft) => this.cloneWorkflowDraft(draft),
     });
     this.workflows.set(workflow.workflowId, workflow);
     this.activeWorkflowId = workflow.workflowId;
@@ -1055,31 +1046,17 @@ export class AgentHub {
     if (limitError) return { ok: false, workflowId: current.workflowId, revision: current.revision, error: limitError };
     const validation = validateWorkflowGraph(graph);
     if (!validation.valid) return { ok: false, workflowId: current.workflowId, revision: current.revision, error: validation.errors[0] ?? "Workflow graph is invalid.", validation };
-    const next = this.cloneWorkflowDraft({
-      ...current,
-      title: input.title ?? current.title,
-      objective: input.objective ?? current.objective,
+    const next = updateWorkflowDraftStateValue({
+      current,
+      request: input,
       graph,
-      configuredAgentId: input.configuredAgentId !== undefined ? this.normalizeWorkflowConfiguredAgentId(input.configuredAgentId) : current.configuredAgentId,
+      configuredAgentId:
+        input.configuredAgentId !== undefined ? this.normalizeWorkflowConfiguredAgentId(input.configuredAgentId) : current.configuredAgentId,
       modelId:
         input.configuredAgentId !== undefined || input.modelId !== undefined
           ? this.normalizeModelIdForConfiguredAgent(input.configuredAgentId ?? current.configuredAgentId, input.modelId ?? current.modelId)
           : current.modelId,
-      graphReady: input.graphReady ?? current.graphReady,
-      messages: input.messages ?? current.messages,
-      reply: input.reply ?? current.reply,
-      error: input.error ?? current.error,
-      runProgress: input.runProgress ?? current.runProgress,
-      runContextDocument: input.runContextDocument ?? current.runContextDocument,
-      contextDocument: input.contextDocument ?? current.contextDocument,
-      ...((input.finalReport ?? current.finalReport) !== undefined ? { finalReport: input.finalReport ?? current.finalReport } : {}),
-      ...(input.runtimeConversation !== undefined
-        ? { runtimeConversation: input.runtimeConversation }
-        : current.runtimeConversation
-          ? { runtimeConversation: current.runtimeConversation }
-          : {}),
-      revision: current.revision + 1,
-      updatedAt: Date.now(),
+      cloneDraft: (draft) => this.cloneWorkflowDraft(draft),
     });
     this.workflows.set(next.workflowId, next);
     this.emit();
@@ -1628,35 +1605,25 @@ export class AgentHub {
     }
 
     const resolved = this.resolveConfiguredAgent(chat.configuredAgentId, chat.modelId, chat.channelId);
-    if (!resolved) {
-      chat.messages.push(createErrorMessage("No configured agent is selected."));
-      chat.lastError = "No configured agent selected";
-      chat.updatedAt = Date.now();
+    const supportsInteractiveChat =
+      resolved ? this.selectExecutionMode(resolved.runtimeAgentId, "chat", "interactive") === "interactive" : false;
+    const capabilities =
+      resolved?.runtime && supportsInteractiveChat ? this.runtimeRouter.capabilitiesFor(resolved.runtime) : undefined;
+    const preparedResolved = prepareChatPromptExecutionValue({
+      chat,
+      prompt: trimmedPrompt,
+      resolved,
+      capabilities,
+      hasAgentConversationMessages: (messages) => hasAgentConversationMessages(messages),
+      titleFromPrompt: (currentPrompt) => titleFromPrompt(currentPrompt),
+      createUserMessage: (content) => createUserMessage(content),
+      createErrorMessage: (content) => createErrorMessage(content),
+      createRuntimeState: (runtimeCapabilities) => this.runtimeStateFromCapabilities(runtimeCapabilities),
+    });
+    if (!preparedResolved) {
       this.emit();
       return;
     }
-    if (!resolved.runtime?.available) {
-      chat.messages.push(createErrorMessage(`${resolved.agent.name || resolved.agent.id} is not available on this machine.`));
-      chat.lastError = `${resolved.runtimeAgentId} unavailable`;
-      chat.updatedAt = Date.now();
-      this.emit();
-      return;
-    }
-
-    const executionMode = this.selectExecutionMode(resolved.runtimeAgentId, "chat", "interactive");
-    const supportsInteractiveChat = executionMode === "interactive";
-    const capabilities = supportsInteractiveChat ? this.runtimeRouter.capabilitiesFor(resolved.runtime) : undefined;
-
-    if (capabilities && !chat.runtimeState) {
-      chat.runtimeState = this.runtimeStateFromCapabilities(capabilities);
-    }
-
-    if (!hasAgentConversationMessages(chat.messages)) chat.title = titleFromPrompt(trimmedPrompt);
-    chat.messages.push(createUserMessage(trimmedPrompt));
-    chat.running = true;
-    chat.lastError = undefined;
-    chat.pendingAssistantMessageId = undefined;
-    chat.updatedAt = Date.now();
     this.activeChatId = chat.id;
     this.emit();
 
@@ -1665,7 +1632,7 @@ export class AgentHub {
         chat,
         prompt: trimmedPrompt,
         interactiveSessions: this.interactiveSessions,
-        buildContext: () => this.buildInteractiveChatContext(chat, resolved),
+        buildContext: () => this.buildInteractiveChatContext(chat, preparedResolved),
         syncInteractiveChatState: (currentChat, state) => this.syncInteractiveChatState(currentChat, state),
         registerStop: (stop) => {
           this.activeStops.set(chat.id, stop);
@@ -1675,7 +1642,7 @@ export class AgentHub {
       return;
     }
 
-    void this.runChat(chat, trimmedPrompt, resolved);
+    void this.runChat(chat, trimmedPrompt, preparedResolved);
   }
 
   private async handleSlashCommand(chat: ChatState, prompt: string): Promise<void> {
@@ -1730,24 +1697,18 @@ export class AgentHub {
     const resolved = this.resolveConfiguredAgent(task.configuredAgentId, task.modelId);
     task.messages.push(createUserMessage(task.prompt));
 
-    if (!resolved?.runtime?.available) {
-      task.status = "failed";
-      task.running = false;
-      task.lastError = resolved ? `${resolved.runtimeAgentId} unavailable` : "No configured agent selected";
-      task.messages.push(createErrorMessage(resolved ? `${resolved.agent.name || resolved.agent.id} is not available on this machine.` : "No configured agent is selected."));
-      task.updatedAt = Date.now();
+    const preparedResolved = prepareTaskRunExecutionValue({
+      task,
+      resolved,
+      createErrorMessage: (content) => createErrorMessage(content),
+    });
+    if (!preparedResolved) {
       this.emit();
       return this.snapshot();
     }
 
-    task.status = "running";
-    task.progress = "in_progress";
-    task.running = true;
-    task.lastError = undefined;
-    task.pendingAssistantMessageId = undefined;
-    task.updatedAt = Date.now();
     this.emit();
-    void this.runChat(task, task.prompt, resolved);
+    void this.runChat(task, task.prompt, preparedResolved);
     return this.snapshot();
   }
 
@@ -2310,26 +2271,19 @@ export class AgentHub {
     const resolved = this.resolveConfiguredAgent(task.configuredAgentId, task.modelId);
     task.messages.push(createUserMessage(task.prompt));
 
-    if (!resolved?.runtime?.available) {
-      const error = resolved ? `${resolved.agent.name || resolved.agent.id} is not available on this machine.` : "No configured agent is selected.";
-      task.status = "failed";
-      task.running = false;
-      task.lastError = resolved ? `${resolved.runtimeAgentId} unavailable` : "No configured agent selected";
-      task.messages.push(createErrorMessage(error));
-      task.updatedAt = Date.now();
-      this.failTeamStepFromTask(task, error);
+    const preparedResolved = prepareTaskRunExecutionValue({
+      task,
+      resolved,
+      createErrorMessage: (content) => createErrorMessage(content),
+      onUnavailable: (error) => this.failTeamStepFromTask(task, error),
+    });
+    if (!preparedResolved) {
       this.emit();
       return;
     }
 
-    task.status = "running";
-    task.progress = "in_progress";
-    task.running = true;
-    task.lastError = undefined;
-    task.pendingAssistantMessageId = undefined;
-    task.updatedAt = Date.now();
     this.emit();
-    void this.runChat(task, task.prompt, resolved);
+    void this.runChat(task, task.prompt, preparedResolved);
   }
 
   private async startTeamRun(teamRunId: string): Promise<void> {
