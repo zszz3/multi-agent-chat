@@ -22,6 +22,10 @@ export const FALLBACK_MODEL_OPTIONS: Record<AgentId, AgentModelOption[]> = {
     { id: "glm-5.1", label: "GLM-5.1" },
     { id: "kimi-k2.6", label: "Kimi K2.6" },
   ],
+  hermes: [
+    { id: DEFAULT_MODEL_ID, label: "Default" },
+    { id: "hermes-default", label: "Hermes Default" },
+  ],
 };
 
 export function defaultModelForAgent(_agentId: AgentId): string {

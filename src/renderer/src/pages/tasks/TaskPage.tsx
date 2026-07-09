@@ -175,7 +175,10 @@ export function TaskPage({
             <div className="task-detail-status-row">
               <span className={`agent-badge mini ${agentAccent(activeRuntimeId)}`}>{activeTaskConfiguredAgent?.name || agentLabel(activeRuntimeId)}</span>
               <TaskStatusChip label={activeTask.running ? "Running" : activeTask.status} tone={activeTask.running ? "running" : activeTask.status} />
-              <TaskStatusChip label={activeTask.sessionId ? "Session linked" : "No session"} tone={activeTask.sessionId ? "done" : "backlog"} />
+              <TaskStatusChip
+                label={activeTask.runtimeConversation ? "Conversation linked" : "No conversation"}
+                tone={activeTask.runtimeConversation ? "done" : "backlog"}
+              />
             </div>
             <div className="task-section-divider">
               <span>Metadata</span>
@@ -188,7 +191,7 @@ export function TaskPage({
               <TaskMeta label="Run status" value={activeTask.status} />
               <TaskMeta label="Progress" value={taskProgressLabel(activeTask.progress)} />
               <TaskMeta label="Work dir" value={activeTask.workDir} />
-              <TaskMeta label="Session" value={activeTask.sessionId ?? "not started"} />
+              <TaskMeta label="Conversation" value={activeTask.runtimeConversation ? "linked" : "not started"} />
             </div>
             <div className="task-section-divider">
               <span>Full prompt</span>

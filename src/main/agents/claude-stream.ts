@@ -81,7 +81,16 @@ export function normalizeClaudeStreamEvent(raw: unknown, state?: ClaudeStreamSta
   if (type === "result") {
     const events: AgentEvent[] = [];
     const sessionId = asString(record.session_id);
-    if (sessionId) events.push({ type: "session", sessionId });
+    if (sessionId) {
+      events.push({
+        type: "runtime_conversation",
+        runtimeConversation: {
+          runtimeId: "claude",
+          codecVersion: "v1",
+          payload: { native: { sessionId } },
+        },
+      });
+    }
 
     const text = asString(record.result) || extractText(record);
     if (text && state?.lastText && text.startsWith(state.lastText) && text !== state.lastText) {

@@ -1,6 +1,7 @@
 import { useMemo } from "react";
 import type { AppSnapshot } from "../../../../../shared/types";
-import { configuredAgentModelId, defaultConfiguredAgentId } from "../../../app/agents";
+import { defaultConfiguredAgentId } from "../../../app/agents";
+import type { WorkflowService } from "../../../app/services/workflow-service";
 import type { WorkflowController } from "../workflow-controller";
 import type { WorkflowDraftController } from "./useWorkflowDraft";
 import type { WorkflowRunnerController } from "./useWorkflowRunner";
@@ -8,6 +9,7 @@ import type { WorkflowRunnerController } from "./useWorkflowRunner";
 interface UseWorkflowFeatureControllerOptions {
   snapshot: AppSnapshot;
   setSnapshot: (snapshot: AppSnapshot) => void;
+  workflows: WorkflowService;
   draft: WorkflowDraftController;
   runner: WorkflowRunnerController;
   language: "en" | "zh";
@@ -19,6 +21,7 @@ interface UseWorkflowFeatureControllerOptions {
 export function useWorkflowFeatureController({
   snapshot,
   setSnapshot,
+  workflows,
   draft,
   runner,
   language,
@@ -33,7 +36,7 @@ export function useWorkflowFeatureController({
 
   return useMemo(
     () => ({
-      workflowId: draft.workflowId,
+      ...(draft.workflowId ? { workflowId: draft.workflowId } : {}),
       title: draft.workflowTitle,
       status: draft.workflowStatus,
       graph: draft.workflowGraph,
@@ -56,45 +59,60 @@ export function useWorkflowFeatureController({
       finalReport: draft.workflowFinalReport,
       onObjectiveChange: draft.setWorkflowObjective,
       onPauseNode: async (nodeId: string) => {
-        if (!activeRunId || typeof window.multiAgentChat.pauseWorkflowNode !== "function") return;
-        const result = await window.multiAgentChat.pauseWorkflowNode({ workflowId: draft.workflowId, runId: activeRunId, nodeId });
-        setSnapshot(await window.multiAgentChat.getSnapshot());
-        if (!result.ok && result.error) draft.setWorkflowError(result.error);
+        if (!draft.workflowId || !activeRunId) return;
+        const result = await workflows.pauseNode({ workflowId: draft.workflowId, runId: activeRunId, nodeId });
+        if (!result.ok && result.error) {
+          const next = await workflows.patchDraft({ workflowId: draft.workflowId, error: result.error });
+          setSnapshot(next);
+        }
       },
       onStartNode: async (nodeId: string) => {
-        if (!activeRunId || typeof window.multiAgentChat.startWorkflowNode !== "function") return;
-        draft.setWorkflowRunning(true);
-        draft.setWorkflowStatus("running");
-        const result = await window.multiAgentChat.startWorkflowNode({ workflowId: draft.workflowId, runId: activeRunId, nodeId });
-        setSnapshot(await window.multiAgentChat.getSnapshot());
-        if (!result.ok && result.error) draft.setWorkflowError(result.error);
+        if (!draft.workflowId || !activeRunId) return;
+        const result = await workflows.startNode({ workflowId: draft.workflowId, runId: activeRunId, nodeId });
+        if (!result.ok && result.error) {
+          const next = await workflows.patchDraft({ workflowId: draft.workflowId, error: result.error });
+          setSnapshot(next);
+        }
       },
       onAnswerGate: async (nodeId: string, answer: string) => {
-        if (!activeRunId || typeof window.multiAgentChat.answerWorkflowGate !== "function") return;
-        draft.setWorkflowRunning(true);
-        draft.setWorkflowStatus("running");
-        const result = await window.multiAgentChat.answerWorkflowGate({ workflowId: draft.workflowId, runId: activeRunId, nodeId, answer });
-        setSnapshot(await window.multiAgentChat.getSnapshot());
-        if (!result.ok && result.error) draft.setWorkflowError(result.error);
+        if (!draft.workflowId || !activeRunId) return;
+        const result = await workflows.answerGate({ workflowId: draft.workflowId, runId: activeRunId, nodeId, answer });
+        if (!result.ok && result.error) {
+          const next = await workflows.patchDraft({ workflowId: draft.workflowId, error: result.error });
+          setSnapshot(next);
+        }
       },
       onSelectConfiguredAgent: (configuredAgentId: string) => {
-        draft.setWorkflowConfiguredAgentId(configuredAgentId);
-        draft.setWorkflowModelId(configuredAgentModelId(configuredAgentId, undefined, snapshot.configuredAgents, snapshot.channels));
+        void draft.selectConfiguredAgent(configuredAgentId);
       },
-      onSelectModel: draft.setWorkflowModelId,
-      onDraftGraph: draft.draftWorkflowGraph,
+      onSelectModel: (modelId: string) => {
+        void draft.selectModel(modelId);
+      },
+      onDraftGraph: () => {
+        void draft.draftWorkflowGraph();
+      },
       onReplyChange: draft.setWorkflowReply,
-      onSendReply: draft.sendWorkflowReply,
-      onUpdateNode: draft.updateWorkflowNode,
-      onRunGraph: runner.runWorkflowGraph,
-      onResetSession: draft.resetWorkflowSession,
-      onStopGrill: draft.stopWorkflowGrill,
+      onSendReply: () => {
+        void draft.sendWorkflowReply();
+      },
+      onUpdateNode: (nodeId: string, update) => {
+        void draft.updateWorkflowNode(nodeId, update);
+      },
+      onRunGraph: async () => {
+        const result = await runner.runWorkflowGraphInternal();
+        if (!result.ok && result.error && draft.workflowId) {
+          const next = await workflows.patchDraft({ workflowId: draft.workflowId, error: result.error });
+          setSnapshot(next);
+        }
+      },
+      onResetSession: () => draft.resetWorkflowSession(),
+      onStopGrill: () => draft.stopWorkflowGrill(),
       onChooseWorkDir,
       onRefresh,
       ...(onReadOutputFile ? { onReadOutputFile } : {}),
-      ...(typeof window.multiAgentChat.listWorkflowOutputs === "function"
+      ...(draft.workflowId
         ? {
-            onListOutputs: () => window.multiAgentChat.listWorkflowOutputs(draft.workflowId),
+            onListOutputs: () => workflows.listOutputs(draft.workflowId as string),
           }
         : {}),
       language,
@@ -107,12 +125,13 @@ export function useWorkflowFeatureController({
       onChooseWorkDir,
       onReadOutputFile,
       onRefresh,
-      runner.runWorkflowGraph,
+      runner,
       setSnapshot,
       snapshot.channels,
       snapshot.configuredAgents,
       snapshot.runtimes,
       snapshot.workDir,
+      workflows,
     ],
   );
 }

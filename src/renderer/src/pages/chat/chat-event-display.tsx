@@ -18,6 +18,21 @@ export function chatEventDisplayContent(event: ChatEvent): string {
     const to = event.toAgentId ? agentLabel(event.toAgentId) : "Agent";
     return event.content ? `${from} → ${to}\n${event.content}` : `${from} → ${to}`;
   }
+  if (event.type === "approval_request") {
+    const label = event.requestState === "expired" ? "approval expired" : "approval pending";
+    return event.content ? `${label}\n${event.content}` : label;
+  }
+  if (event.type === "approval_response") {
+    const label = event.decision === "rejected" ? "approval rejected" : "approval approved";
+    return event.content ? `${label}\n${event.content}` : label;
+  }
+  if (event.type === "user_input_request") {
+    const label = event.requestState === "expired" ? "input request expired" : "input request";
+    return event.content ? `${label}\n${event.content}` : label;
+  }
+  if (event.type === "user_input_response") {
+    return event.content ? `input provided\n${event.content}` : "input provided";
+  }
   if (event.type === "error") {
     return event.content ? `error\n${event.content}` : "error";
   }

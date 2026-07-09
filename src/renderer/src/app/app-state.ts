@@ -7,6 +7,7 @@ import type {
   AppSnapshot,
   ChatSession,
   ConfiguredAgent,
+  RuntimeConversation,
   TaskRun,
   TeamRun,
   WorkflowGrillMessage,
@@ -204,7 +205,7 @@ export function workflowTaskLiveDetail(task: TaskRun): string {
 
   const latestAssistant = [...task.messages].reverse().find((message) => message.role === "assistant" && message.content.trim());
   if (latestAssistant) return `Output: ${compactWorkflowActivity(latestAssistant.content)}`;
-  if (task.sessionId) return `Session ${task.sessionId}`;
+  if (task.runtimeConversation) return "Conversation linked";
   return "Starting agent...";
 }
 
@@ -221,7 +222,7 @@ export interface WorkflowDraftPersistInput {
   runContextDocument: string;
   contextDocument: string;
   finalReport: string;
-  agentSessionId: string | undefined;
+  runtimeConversation?: RuntimeConversation;
 }
 
 export function workflowDraftShouldPersist(input: WorkflowDraftPersistInput): boolean {
@@ -235,7 +236,7 @@ export function workflowDraftShouldPersist(input: WorkflowDraftPersistInput): bo
       input.runContextDocument.trim() ||
       input.contextDocument.trim() ||
       input.finalReport.trim() ||
-      input.agentSessionId,
+      input.runtimeConversation,
   );
   return hasContent || input.activeWorkflowId === input.workflowId || input.workflowIds.includes(input.workflowId);
 }

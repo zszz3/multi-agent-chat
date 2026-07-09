@@ -102,6 +102,18 @@ export class CodexRpcClient {
     this.write({ jsonrpc: "2.0", id, error: { code, message } });
   }
 
+  async interruptTurn(threadId: string, turnId: string | undefined): Promise<void> {
+    if (!turnId) {
+      await this.shutdown();
+      return;
+    }
+    try {
+      await this.request("turn/cancel", { threadId, turnId });
+    } catch {
+      await this.shutdown();
+    }
+  }
+
   async shutdown(): Promise<void> {
     this.rl?.close();
     this.rl = null;

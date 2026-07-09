@@ -24,13 +24,16 @@ import type {
   AgentWorkflowPhase,
   AgentWorkflowSnapshot,
   AgentWorkflowTarget,
+  AckScheduledWorkflowEventRequest,
   AppSnapshot,
   ChatEvent,
   ChatMessage,
+  ChatRuntimeSessionState,
   ChatSession,
   CodexPluginCatalogItem,
   AppendWorkflowContextRequest,
   AppendWorkflowRunContextRequest,
+  CreateWorkflowDraftRequest,
   CreateWorkflowRequest,
   FinishWorkflowRunRequest,
   CreateAgentTeamRequest,
@@ -40,11 +43,18 @@ import type {
   GeneratedConfigFile,
   ImportedCodexConfig,
   CodexDefaultConfig,
+  PatchWorkflowDraftRequest,
   PauseWorkflowNodeRequest,
   ProviderBalanceResult,
   RunWorkflowGraphRequest,
   RunAgentTeamRequest,
+  RuntimeContinuationPolicy,
+  RuntimeInteractionCapabilities,
+  RuntimeConversation,
+  RuntimeExecutionMode,
+  RuntimeResumeCapabilities,
   RunTaskRequest,
+  SendWorkflowDraftReplyRequest,
   StartWorkflowNodeRequest,
   ScheduledWorkflowFrequency,
   ScheduledWorkflowOperationResult,
@@ -52,6 +62,7 @@ import type {
   ScheduledWorkflowRunStatus,
   ScheduledWorkflowRunnerConfig,
   ScheduledWorkflowRunnerStatus,
+  ScheduledWorkflowDueEvent,
   ScheduledWorkflowSchedule,
   ScheduledWorkflowStoreState,
   StartWorkflowRunRequest,
@@ -82,14 +93,19 @@ import type {
 } from "../shared/types";
 import { normalizeConfigChannelsForStorage } from "../shared/config-channels";
 import { DEFAULT_MODEL_ID, defaultChannelForAgent, defaultModelForAgent, isModelForChannel, runtimeModelId } from "../shared/models";
-import { validateWorkflowGraph } from "../shared/workflow-graph";
+import { buildWorkflowAgentPrompt } from "../shared/workflow-agent";
+import { createWorkflowGraphFromObjective, parseWorkflowGraphUpsert, validateWorkflowGraph } from "../shared/workflow-graph";
+import { defaultWorkflowWorkDirSuffix } from "../shared/workflow-run";
 import { detectAgentRuntimes } from "./agents/detect";
+import { InteractiveSessionManager } from "./agents/interactive-session-manager";
+import { ClaudeAgentSdkAdapter } from "./agents/claude-agent-sdk";
 import { CodexRpcClient } from "./agents/codex-rpc";
 import { codexEnvironmentForChannel } from "./agents/codex-env";
-import { claudeCliModelForChannel, claudeEnvironmentForChannel } from "./agents/claude-env";
-import { ClaudeRunner } from "./agents/claude-runner";
-import { createClaudeStreamState, normalizeClaudeStreamEvent } from "./agents/claude-stream";
-import { RuntimeAgentExecutorFactory, type AgentExecutorFactory } from "./agent-executor";
+import { claudeCliModelForChannel } from "./agents/claude-env";
+import type { RuntimeCapabilities } from "./agents/runtime-capabilities";
+import type { InteractiveSessionContext, InteractiveSessionSnapshot, RuntimeDriverRegistry, RuntimeSurface } from "./agents/runtime-driver";
+import { RuntimeRouter } from "./agents/runtime-router";
+import { createRuntimeDriverRegistry, RuntimeAgentExecutorFactory, type AgentExecutorFactory } from "./agent-executor";
 import { execCli, spawnCli } from "./cli-launcher";
 import { queryProviderBalance, type ProviderBalanceQueryOptions } from "./provider-balance";
 import {
@@ -113,6 +129,7 @@ const CODEX_TASK_DEVELOPER_INSTRUCTIONS =
   "You are executing a single local task from a lightweight desktop UI. Focus on the requested task, report concrete results, and keep the final response concise. User-visible tool activity is displayed separately by the UI.";
 const CODEX_WORKFLOW_DEVELOPER_INSTRUCTIONS =
   "You are the workflow builder and main review agent for a lightweight desktop UI. During workflow planning, interview the user one question at a time, include a recommended answer with every question, and produce only workflowGraph.upsert code when the workflow graph is ready. During completed workflow review, do not produce workflowGraph.upsert; write a Markdown Final User Report for the same user conversation and stay ready for follow-up questions.";
+const WORKFLOW_THINKING_MESSAGE = "Agent is thinking...";
 const PERSIST_DEBOUNCE_MS = 400;
 const WORKFLOW_AGENT_IDLE_TIMEOUT_MS = 10 * 60_000;
 const MAX_WORKFLOW_COUNT = 200;
@@ -126,6 +143,12 @@ const MAX_WORKFLOW_TITLE_CHARS = 160;
 const MAX_WORKFLOW_OBJECTIVE_CHARS = 4000;
 const AGENT_TEST_TIMEOUT_MS = 45_000;
 const AGENT_TEST_PROMPT = "只回复 OK，不要调用任何工具。";
+
+interface ActiveWorkflowDraftRequest {
+  requestId: string;
+  assistantMessageId: string;
+  content: string;
+}
 
 export function createWorkflowAgentTimeout(input: { timeoutMs: number; onTimeout: () => void }): { refresh: () => void; clear: () => void } {
   let timer: ReturnType<typeof setTimeout> | undefined;
@@ -147,7 +170,9 @@ interface PersistedChatSessionRecord {
   title: string;
   configuredAgentId: string;
   modelId?: string;
-  sessionId: string | undefined;
+  channelId?: string;
+  runtimeState?: ChatRuntimeSessionState;
+  runtimeConversation?: RuntimeConversation;
   lastError: string | undefined;
   createdAt: number;
   updatedAt: number;
@@ -176,7 +201,7 @@ interface PersistedTaskRunRecord {
   workDir: string;
   status: TaskRunStatus;
   progress?: TaskProgress;
-  sessionId: string | undefined;
+  runtimeConversation?: RuntimeConversation;
   lastError: string | undefined;
   createdAt: number;
   updatedAt: number;
@@ -227,8 +252,8 @@ interface PersistedTeamRunRecord {
   updatedAt: number;
 }
 
-interface PersistedAppStateV2 {
-  version: 2;
+interface PersistedAppStateV4 {
+  version: 4;
   activeChatId: string | null;
   activeTaskId?: string | null;
   activeTeamId?: string | null;
@@ -281,6 +306,7 @@ function createErrorMessage(content: string): ChatMessage {
 function defaultTitle(agentId: AgentId): string {
   if (agentId === "codex") return "New Codex chat";
   if (agentId === "claude") return "New Claude chat";
+  if (agentId === "hermes") return "New Hermes chat";
   return "New API chat";
 }
 
@@ -307,7 +333,7 @@ function titleFromPrompt(prompt: string): string {
 }
 
 function isAgentId(value: unknown): value is AgentId {
-  return value === "codex" || value === "claude" || value === "api";
+  return value === "codex" || value === "claude" || value === "api" || value === "hermes";
 }
 
 function isMessageRole(value: unknown): value is ChatMessage["role"] {
@@ -315,7 +341,26 @@ function isMessageRole(value: unknown): value is ChatMessage["role"] {
 }
 
 function isChatEventType(value: unknown): value is ChatEvent["type"] {
-  return value === "meta" || value === "system" || value === "tool_call" || value === "tool_result" || value === "handoff" || value === "error";
+  return (
+    value === "meta" ||
+    value === "system" ||
+    value === "tool_call" ||
+    value === "tool_result" ||
+    value === "handoff" ||
+    value === "approval_request" ||
+    value === "approval_response" ||
+    value === "user_input_request" ||
+    value === "user_input_response" ||
+    value === "error"
+  );
+}
+
+function isInteractionRequestState(value: unknown): value is "live" | "resolved" | "expired" {
+  return value === "live" || value === "resolved" || value === "expired";
+}
+
+function isApprovalDecision(value: unknown): value is "approved" | "rejected" {
+  return value === "approved" || value === "rejected";
 }
 
 function isTaskRunStatus(value: unknown): value is TaskRunStatus {
@@ -324,6 +369,14 @@ function isTaskRunStatus(value: unknown): value is TaskRunStatus {
 
 function isTaskProgress(value: unknown): value is TaskProgress {
   return value === "backlog" || value === "todo" || value === "in_progress" || value === "in_review" || value === "done";
+}
+
+function isExecutionStyle(value: unknown): value is ChatRuntimeSessionState["executionStyle"] {
+  return value === "oneshot" || value === "interactive";
+}
+
+function isRuntimeAttachmentState(value: unknown): value is ChatRuntimeSessionState["attachmentState"] {
+  return value === "detached" || value === "idle" || value === "running" || value === "interrupted";
 }
 
 function isAgentTeamMode(value: unknown): value is AgentTeamMode {
@@ -401,6 +454,32 @@ function asArray(value: unknown): unknown[] {
 
 function asBoolean(value: unknown): boolean {
   return value === true;
+}
+
+function defaultRuntimeSessionCapabilities(): RuntimeResumeCapabilities & RuntimeInteractionCapabilities {
+  return {
+    supportsInProcessConversationResume: true,
+    supportsResumeAfterDetach: false,
+    supportsResumeAfterAppRestart: false,
+    supportsTurnResume: false,
+    supportsInterrupt: true,
+    supportsContinue: true,
+    supportsApprovalRequests: false,
+    supportsUserInputRequests: false,
+  };
+}
+
+function cloneRuntimeState(runtimeSession: ChatRuntimeSessionState): ChatRuntimeSessionState {
+  return {
+    executionStyle: runtimeSession.executionStyle,
+    attachmentState: runtimeSession.attachmentState,
+    attachmentGeneration: runtimeSession.attachmentGeneration,
+    ...(runtimeSession.activeTurnId !== undefined ? { activeTurnId: runtimeSession.activeTurnId } : {}),
+    ...(runtimeSession.lastMeaningfulActivityAt !== undefined
+      ? { lastMeaningfulActivityAt: runtimeSession.lastMeaningfulActivityAt }
+      : {}),
+    capabilities: { ...runtimeSession.capabilities },
+  };
 }
 
 function hasAgentConversationMessages(messages: ChatMessage[]): boolean {
@@ -498,98 +577,10 @@ function isCodexWarningMessage(message: string): boolean {
   return /skill descriptions were shortened/i.test(message) || /context budget/i.test(message);
 }
 
-function extractClaudePrintOutput(stdout: string): string {
-  let output = "";
-  const streamState = createClaudeStreamState();
-  for (const line of stdout.split(/\r?\n/)) {
-    if (!line.trim()) continue;
-    try {
-      const raw = JSON.parse(line) as unknown;
-      for (const event of normalizeClaudeStreamEvent(raw, streamState)) {
-        if (event.type === "delta") output += event.content;
-        if (event.type === "completed" && !output && event.content) output = event.content;
-      }
-    } catch {
-      // Ignore non-JSON noise.
-    }
-  }
-  return output.trim();
-}
-
-function handleClaudeTestLine(line: string, streamState: ReturnType<typeof createClaudeStreamState>, emit: AgentTestEmit): string[] {
-  try {
-    const raw = JSON.parse(line) as {
-      type?: string;
-      subtype?: string;
-      model?: unknown;
-      hook_name?: unknown;
-      outcome?: unknown;
-      result?: unknown;
-    };
-    const output: string[] = [];
-    if (raw.type === "system") {
-      if (raw.subtype === "init") {
-        const model = typeof raw.model === "string" ? raw.model : "default";
-        emit({ type: "phase", content: `Claude initialized with model ${model}.` });
-      } else if (typeof raw.hook_name === "string") {
-        const outcome = typeof raw.outcome === "string" ? ` (${raw.outcome})` : "";
-        emit({ type: "phase", content: `Claude ${raw.subtype ?? "system"}: ${raw.hook_name}${outcome}.` });
-      } else if (raw.subtype) {
-        emit({ type: "phase", content: `Claude system: ${raw.subtype}.` });
-      }
-    }
-    if (raw.type === "result" && typeof raw.result === "string") {
-      emit({ type: "assistant", content: raw.result });
-      output.push(raw.result);
-    }
-    for (const event of normalizeClaudeStreamEvent(raw, streamState)) {
-      if (event.type === "delta") {
-        emit({ type: "assistant_delta", content: event.content });
-        output.push(event.content);
-      }
-      if (event.type === "completed" && event.content) {
-        emit({ type: "assistant", content: event.content });
-        if (output.length === 0) output.push(event.content);
-      }
-      if (event.type === "tool_call" || event.type === "tool_result") {
-        emit({ type: "tool", content: event.content });
-      }
-      if (event.type === "error") {
-        emit({ type: "error", content: event.error });
-      }
-    }
-    return output;
-  } catch {
-    return [];
-  }
-}
-
-function extractClaudeSessionId(line: string): string | undefined {
-  try {
-    const raw = JSON.parse(line) as { session_id?: unknown; sessionId?: unknown };
-    const sessionId = typeof raw.session_id === "string" ? raw.session_id : typeof raw.sessionId === "string" ? raw.sessionId : undefined;
-    return sessionId && /^[0-9a-f-]{36}$/i.test(sessionId) ? sessionId : undefined;
-  } catch {
-    return undefined;
-  }
-}
-
 function claudeProjectStoragePath(workDir: string, sessionId: string): string {
-  const slug = workDir.replace(/[\\/]/g, "-");
-  return path.join(os.homedir(), ".claude", "projects", slug, `${sessionId}.jsonl`);
-}
-
-async function deleteClaudeTestSessions(workDir: string, sessionIds: Iterable<string>): Promise<number> {
-  let deleted = 0;
-  for (const sessionId of sessionIds) {
-    try {
-      await rm(claudeProjectStoragePath(workDir, sessionId), { force: true });
-      deleted += 1;
-    } catch {
-      // Best-effort cleanup only; test result should not depend on local history deletion.
-    }
-  }
-  return deleted;
+  const slug = workDir.replace(/[:\\/]/g, "-");
+  const homeDir = process.env.HOME || process.env.USERPROFILE || os.homedir();
+  return path.join(homeDir, ".claude", "projects", slug, `${sessionId}.jsonl`);
 }
 
 async function deleteCodexTestSessions(executable: string, home: string, sessionIds: Iterable<string>): Promise<number> {
@@ -721,6 +712,7 @@ function formatElapsed(ms: number): string {
 function agentLabel(agentId: AgentId): string {
   if (agentId === "codex") return "Codex";
   if (agentId === "claude") return "Claude Code";
+  if (agentId === "hermes") return "Hermes";
   return "API";
 }
 
@@ -914,7 +906,9 @@ class ChatState {
   readonly kind = "chat";
   id: string = randomUUID();
   title: string;
-  sessionId: string | undefined = undefined;
+  channelId: string | undefined = undefined;
+  runtimeState: ChatRuntimeSessionState | undefined = undefined;
+  runtimeConversation: RuntimeConversation | undefined = undefined;
   running = false;
   messages: ChatMessage[] = [];
   pendingAssistantMessageId: string | undefined = undefined;
@@ -935,7 +929,7 @@ class TaskState {
   readonly kind = "task";
   id: string = randomUUID();
   title: string;
-  sessionId: string | undefined = undefined;
+  runtimeConversation: RuntimeConversation | undefined = undefined;
   running = false;
   status: TaskRunStatus = "queued";
   progress: TaskProgress = "todo";
@@ -1062,6 +1056,7 @@ export class AgentHub {
   private activeTeamId: string | undefined;
   private activeTeamRunId: string | undefined;
   private workflows = new Map<string, WorkflowDraftState>();
+  private activeWorkflowDraftRequests = new Map<string, ActiveWorkflowDraftRequest>();
   private workflowRuns = new Map<string, WorkflowRunState>();
   private scheduledWorkflowSchedules = new Map<string, ScheduledWorkflowSchedule>();
   private scheduledWorkflowRuns = new Map<string, ScheduledWorkflowRun>();
@@ -1079,29 +1074,62 @@ export class AgentHub {
   private sqliteStore: SqliteAppStore | undefined = undefined;
   private modelConfigPath: string | undefined = undefined;
   private persistTimer: ReturnType<typeof setTimeout> | undefined = undefined;
+  private idleSweepTimer: ReturnType<typeof setInterval> | undefined = undefined;
   private persistInFlight: Promise<void> | undefined = undefined;
   private readonly executorFactory: AgentExecutorFactory;
+  private readonly runtimeDrivers: RuntimeDriverRegistry;
+  private readonly runtimeRouter: RuntimeRouter;
+  private readonly interactiveSessions: InteractiveSessionManager;
   private readonly executables: Record<AgentId, string>;
   private readonly workflowRuntime: WorkflowRuntime;
+  private readonly claudeSdkAdapter: Pick<ClaudeAgentSdkAdapter, "runOneShot">;
 
   constructor(
     executables: Partial<Record<AgentId, string>> = {},
     executorFactory?: AgentExecutorFactory,
+    runtimeDrivers?: RuntimeDriverRegistry,
   ) {
     this.executables = {
       codex: executables.codex ?? process.env.CODEX_PATH ?? "codex",
       claude: executables.claude ?? process.env.CLAUDE_PATH ?? "claude",
       api: executables.api ?? "api",
+      hermes: executables.hermes ?? process.env.HERMES_PATH ?? "hermes",
     };
-    this.executorFactory =
-      executorFactory ??
-      new RuntimeAgentExecutorFactory({
+    this.claudeSdkAdapter = new ClaudeAgentSdkAdapter();
+    this.runtimeDrivers =
+      runtimeDrivers ??
+      createRuntimeDriverRegistry({
         executables: this.executables,
         channelById: (channelId) => this.channelById(channelId),
         respondToCodexServerRequest: (client, id, method, params) => {
           this.respondToCodexServerRequest(client, id, method, params);
         },
+        runClaudeOneShot: (input) => this.claudeSdkAdapter.runOneShot(input),
+        askWorkflowByRuntime: {
+          api: (input) =>
+            this.askApiWorkflowAgent({
+              requestId: input.requestId,
+              prompt: input.prompt,
+              channelId: input.channelId,
+              modelId: input.runtimeConfig.model,
+              runtimeConversation: input.runtimeConversation,
+              onEvent: input.onEvent,
+            }),
+        },
+        testChannelByRuntime: {
+          codex: (input) => this.testCodexAgent(this.channelOrThrow(input.channelId), input.modelId, input.workDir, input.emit),
+          claude: (input) => this.testClaudeAgent(this.channelOrThrow(input.channelId), input.modelId, input.workDir, input.emit),
+          api: (input) => this.testApiAgent(this.channelOrThrow(input.channelId), input.modelId, input.emit),
+        },
       });
+    this.runtimeRouter = new RuntimeRouter(this.runtimeDrivers);
+    this.executorFactory =
+      executorFactory ??
+      new RuntimeAgentExecutorFactory(this.runtimeRouter);
+    this.interactiveSessions = new InteractiveSessionManager({
+      createSession: (context) => this.runtimeRouter.createInteractiveSession(context),
+      now: () => Date.now(),
+    });
     this.workflowRuntime = new WorkflowRuntime({
       snapshot: () => this.snapshot(),
       startWorkflowRun: (input) => this.startWorkflowRun(input),
@@ -1125,48 +1153,40 @@ export class AgentHub {
         command: runtime.command || this.executables[runtime.id],
       });
     }
+    this.idleSweepTimer ??= setInterval(() => {
+      void this.interactiveSessions.sweepExpiredSessions(Date.now());
+    }, 30 * 60 * 1000);
     this.emit();
   }
 
-  async loadPersistedState(storagePath: string, legacyJsonPath?: string): Promise<void> {
+  async loadPersistedState(storagePath: string): Promise<void> {
     this.storagePath = storagePath;
     if (path.extname(storagePath) === ".db") {
       this.sqliteStore = new SqliteAppStore(storagePath);
       try {
         const persisted = await this.sqliteStore.load();
         if (persisted !== undefined) {
-          const hadChannels = Array.isArray(asRecord(persisted)?.channels);
-          this.restorePersistedState(persisted);
-          if (!hadChannels) await this.persistState();
+          if (!this.restorePersistedState(persisted)) {
+            this.reinitializePersistedState();
+          }
+          if (!Array.isArray(asRecord(persisted)?.channels) || !this.isPersistedAppStateV4(persisted)) await this.persistState();
           return;
         }
       } catch (error) {
         console.warn(`Failed to load app state from SQLite ${storagePath}:`, error);
       }
-      let migratedLegacyState = false;
-      if (legacyJsonPath) {
-        try {
-          const raw = await readFile(legacyJsonPath, "utf8");
-          const parsed = JSON.parse(raw) as unknown;
-          this.restorePersistedState(parsed);
-          await this.persistState();
-          migratedLegacyState = true;
-        } catch (error) {
-          const code = error && typeof error === "object" ? (error as { code?: unknown }).code : undefined;
-          if (code !== "ENOENT") {
-            console.warn(`Failed to migrate chat history from ${legacyJsonPath}:`, error);
-          }
-        }
-      }
-      if (!migratedLegacyState) await this.persistState();
+      await this.persistState();
       return;
     }
     try {
       const raw = await readFile(storagePath, "utf8");
       const parsed = JSON.parse(raw) as unknown;
-      const hadChannels = Array.isArray(asRecord(parsed)?.channels);
-      this.restorePersistedState(parsed);
-      if (!hadChannels) await this.persistState();
+      if (!this.restorePersistedState(parsed)) {
+        this.reinitializePersistedState();
+        await this.persistState();
+        return;
+      }
+      if (!Array.isArray(asRecord(parsed)?.channels)) await this.persistState();
     } catch (error) {
       const code = error && typeof error === "object" ? (error as { code?: unknown }).code : undefined;
       if (code !== "ENOENT") {
@@ -1258,11 +1278,19 @@ export class AgentHub {
     return fallbackId ? this.configuredAgents.get(fallbackId) : undefined;
   }
 
-  private resolveConfiguredAgent(configuredAgentId: string | undefined, modelIdOverride?: string): ResolvedConfiguredAgent | undefined {
+  private resolveConfiguredAgent(
+    configuredAgentId: string | undefined,
+    modelIdOverride?: string,
+    channelIdOverride?: string,
+  ): ResolvedConfiguredAgent | undefined {
     const agent = this.configuredAgentOrDefault(configuredAgentId);
     if (!agent) return undefined;
+    const preferredChannel =
+      channelIdOverride && this.channelById(channelIdOverride)?.agentId === agent.runtimeAgentId
+        ? this.channelById(channelIdOverride)
+        : this.channelById(agent.channelId);
     const channel =
-      this.channelById(agent.channelId) ??
+      preferredChannel ??
       this.channels.find((item) => item.agentId === agent.runtimeAgentId) ??
       this.channels[0];
     if (!channel) return undefined;
@@ -1283,8 +1311,30 @@ export class AgentHub {
     };
   }
 
-  private normalizeModelIdForConfiguredAgent(configuredAgentId: string | undefined, modelId: string | undefined): string {
-    return this.resolveConfiguredAgent(configuredAgentId, modelId)?.modelId ?? DEFAULT_MODEL_ID;
+  private channelOrThrow(channelId: string): AgentChannel {
+    const channel = this.channelById(channelId);
+    if (!channel) throw new Error(`Channel ${channelId} was not found.`);
+    return channel;
+  }
+
+  private runtimeForDriver(runtimeAgentId: AgentId): AgentRuntime {
+    return (
+      this.runtimes.get(runtimeAgentId) ?? {
+        id: runtimeAgentId,
+        label: agentLabel(runtimeAgentId),
+        command: this.executables[runtimeAgentId],
+        version: null,
+        available: false,
+      }
+    );
+  }
+
+  private normalizeModelIdForConfiguredAgent(
+    configuredAgentId: string | undefined,
+    modelId: string | undefined,
+    channelIdOverride?: string,
+  ): string {
+    return this.resolveConfiguredAgent(configuredAgentId, modelId, channelIdOverride)?.modelId ?? DEFAULT_MODEL_ID;
   }
 
   async testConfiguredAgent(agentId: string, onEvent?: (event: AgentTestEvent) => void): Promise<AgentTestResult> {
@@ -1311,12 +1361,13 @@ export class AgentHub {
     try {
       emit({ type: "phase", content: `Testing ${agent.name || agent.id} with ${agentLabel(agent.runtimeAgentId)} / ${channel.providerName ?? channel.label}.` });
       emit({ type: "user", content: AGENT_TEST_PROMPT });
-      const output =
-        agent.runtimeAgentId === "api"
-          ? await this.testApiAgent(channel, agent.modelId, emit)
-          : agent.runtimeAgentId === "codex"
-            ? await this.testCodexAgent(channel, agent.modelId, emit)
-            : await this.testClaudeAgent(channel, agent.modelId, emit);
+      const output = await this.runtimeRouter.testChannel(agent.runtimeAgentId, {
+        runtime: this.runtimeForDriver(agent.runtimeAgentId),
+        channelId: channel.id,
+        modelId: agent.modelId,
+        workDir: this.workDir,
+        emit,
+      });
       const elapsedMs = Date.now() - startedAt;
       return {
         ...base,
@@ -1360,12 +1411,13 @@ export class AgentHub {
     try {
       emit({ type: "phase", content: `Testing ${agentLabel(channel.agentId)} / ${channel.providerName ?? channel.label}.` });
       emit({ type: "user", content: AGENT_TEST_PROMPT });
-      const output =
-        channel.agentId === "api"
-          ? await this.testApiAgent(channel, modelId, emit)
-          : channel.agentId === "codex"
-            ? await this.testCodexAgent(channel, modelId, emit)
-            : await this.testClaudeAgent(channel, modelId, emit);
+      const output = await this.runtimeRouter.testChannel(channel.agentId, {
+        runtime: this.runtimeForDriver(channel.agentId),
+        channelId: channel.id,
+        modelId,
+        workDir: this.workDir,
+        emit,
+      });
       const elapsedMs = Date.now() - startedAt;
       return {
         ...base,
@@ -1452,6 +1504,7 @@ export class AgentHub {
         // The chat is already gone from app state; deletion should still succeed.
       }
     }
+    await this.interactiveSessions.dispose(chatId, "app_shutdown");
     await this.deleteAgentSession(chat);
 
     return this.snapshot();
@@ -1459,12 +1512,33 @@ export class AgentHub {
 
   setChatAgent(chatId: string, configuredAgentId: string): void {
     const chat = this.chats.get(chatId);
-    if (!chat || !this.canConfigureChat(chat)) return;
     const configuredAgent = this.configuredAgentOrDefault(configuredAgentId);
     if (!configuredAgent) return;
+    if (!chat) return;
+
+    const before = this.resolveConfiguredAgent(chat.configuredAgentId, chat.modelId, chat.channelId);
     chat.configuredAgentId = configuredAgent.id;
-    chat.modelId = this.normalizeModelIdForConfiguredAgent(configuredAgent.id, configuredAgent.modelId);
+    chat.channelId = undefined;
+    chat.modelId = this.normalizeModelIdForConfiguredAgent(configuredAgent.id, configuredAgent.modelId, chat.channelId);
     if (!hasAgentConversationMessages(chat.messages)) chat.title = configuredAgent.name || configuredAgent.id;
+
+    const after = this.resolveConfiguredAgent(chat.configuredAgentId, chat.modelId, chat.channelId);
+    if (before?.runtimeAgentId !== after?.runtimeAgentId && (chat.runtimeConversation || chat.runtimeState || hasAgentConversationMessages(chat.messages))) {
+      chat.runtimeConversation = undefined;
+      if (chat.runtimeState) {
+        chat.runtimeState.attachmentState = "detached";
+        chat.runtimeState.attachmentGeneration = 0;
+        delete chat.runtimeState.activeTurnId;
+      }
+      this.appendEventToAssistant(chat, {
+        id: randomUUID(),
+        type: "system",
+        content: "Runtime session reset after agent change.",
+        timestamp: Date.now(),
+      });
+      void this.interactiveSessions.dispose(chat.id, "error");
+    }
+
     chat.updatedAt = Date.now();
     this.activeChatId = chatId;
     this.emit();
@@ -1472,8 +1546,8 @@ export class AgentHub {
 
   setChatModel(chatId: string, modelId: string): void {
     const chat = this.chats.get(chatId);
-    if (!chat || !this.canConfigureChat(chat)) return;
-    const normalizedModelId = this.normalizeModelIdForConfiguredAgent(chat.configuredAgentId, modelId);
+    if (!chat) return;
+    const normalizedModelId = this.normalizeModelIdForConfiguredAgent(chat.configuredAgentId, modelId, chat.channelId);
     if (chat.modelId === normalizedModelId) return;
     chat.modelId = normalizedModelId;
     chat.updatedAt = Date.now();
@@ -1482,12 +1556,15 @@ export class AgentHub {
   }
 
   setChatChannel(chatId: string, channelId: string): void {
-    void chatId;
-    void channelId;
-  }
-
-  private canConfigureChat(chat: ChatState): boolean {
-    return !chat.running && !chat.sessionId && !hasAgentConversationMessages(chat.messages);
+    const chat = this.chats.get(chatId);
+    const configuredAgent = chat ? this.configuredAgentOrDefault(chat.configuredAgentId) : undefined;
+    const channel = this.channelById(channelId);
+    if (!chat || !configuredAgent || !channel || channel.agentId !== configuredAgent.runtimeAgentId) return;
+    chat.channelId = channel.id;
+    chat.modelId = this.normalizeModelIdForConfiguredAgent(chat.configuredAgentId, chat.modelId, chat.channelId);
+    chat.updatedAt = Date.now();
+    this.activeChatId = chatId;
+    this.emit();
   }
 
   setWorkDir(workDir: string): void {
@@ -1502,6 +1579,7 @@ export class AgentHub {
     this.tasks.clear();
     this.teamRuns.clear();
     this.workflows.clear();
+    this.activeWorkflowDraftRequests.clear();
     this.workflowRuns.clear();
     this.scheduledWorkflowSchedules.clear();
     this.scheduledWorkflowRuns.clear();
@@ -1518,6 +1596,7 @@ export class AgentHub {
   updateWorkflowDraft(draft: WorkflowDraftState | undefined): AppSnapshot {
     if (!draft) {
       this.workflows.clear();
+      this.activeWorkflowDraftRequests.clear();
       this.workflowRuns.clear();
       this.activeWorkflowId = undefined;
       this.emit();
@@ -1526,6 +1605,166 @@ export class AgentHub {
     const normalized = this.cloneWorkflowDraft(draft);
     this.workflows.set(normalized.workflowId, normalized);
     this.activeWorkflowId = normalized.workflowId;
+    this.emit();
+    return this.snapshot();
+  }
+
+  createWorkflowDraft(input: CreateWorkflowDraftRequest = {}): AppSnapshot {
+    if (this.workflows.size >= MAX_WORKFLOW_COUNT) return this.snapshot();
+    const now = Date.now();
+    const graph = createWorkflowGraphFromObjective("");
+    const workflow = this.cloneWorkflowDraft({
+      workflowId: `wf_${randomUUID()}`,
+      title: input.title?.trim() || graph.title,
+      status: "draft",
+      revision: 1,
+      configuredAgentId: this.normalizeWorkflowConfiguredAgentId(input.configuredAgentId),
+      modelId: this.normalizeModelIdForConfiguredAgent(input.configuredAgentId, input.modelId),
+      objective: "",
+      graph,
+      graphReady: false,
+      messages: [],
+      reply: "",
+      error: undefined,
+      runProgress: [],
+      runContextDocument: "",
+      contextDocument: "",
+      runIds: [],
+      createdAt: now,
+      updatedAt: now,
+    });
+    this.workflows.set(workflow.workflowId, workflow);
+    this.activeWorkflowId = workflow.workflowId;
+    this.emit();
+    return this.snapshot();
+  }
+
+  patchWorkflowDraft(input: PatchWorkflowDraftRequest): AppSnapshot {
+    const current = this.workflows.get(input.workflowId);
+    if (!current) return this.snapshot();
+    const next = this.applyWorkflowDraftPatch(current, input);
+    this.workflows.set(next.workflowId, next);
+    this.activeWorkflowId = next.workflowId;
+    this.emit();
+    return this.snapshot();
+  }
+
+  resetWorkflowDraftSession(workflowId: string): AppSnapshot {
+    const current = this.workflows.get(workflowId);
+    if (!current) return this.snapshot();
+    this.activeWorkflowDraftRequests.delete(workflowId);
+    const graph = createWorkflowGraphFromObjective("");
+    const {
+      finalReport: _currentFinalReport,
+      runtimeConversation: _currentRuntimeConversation,
+      ...currentWithoutFinalReportOrConversation
+    } = current;
+    const next = this.cloneWorkflowDraft({
+      ...currentWithoutFinalReportOrConversation,
+      title: graph.title,
+      status: "draft",
+      revision: current.revision + 1,
+      objective: "",
+      graph,
+      graphReady: false,
+      messages: [],
+      reply: "",
+      error: undefined,
+      runProgress: [],
+      runContextDocument: "",
+      contextDocument: "",
+      runIds: [],
+      updatedAt: Date.now(),
+    });
+    this.workflows.set(next.workflowId, next);
+    this.activeWorkflowId = next.workflowId;
+    this.emit();
+    return this.snapshot();
+  }
+
+  async sendWorkflowDraftReply(input: SendWorkflowDraftReplyRequest): Promise<AppSnapshot> {
+    const workflow = this.workflows.get(input.workflowId);
+    if (!workflow) return this.snapshot();
+    const text = input.reply.trim();
+    if (!text) return this.snapshot();
+    const activeRequest = this.activeWorkflowDraftRequests.get(workflow.workflowId);
+    if (activeRequest) return this.snapshot();
+
+    const starting = workflow.messages.length === 0;
+    const now = Date.now();
+    const requestId = `workflow-${now}-${Math.random().toString(36).slice(2)}`;
+    const assistantMessageId = `grill-assistant-${now}`;
+    const { finalReport: _workflowFinalReport, ...workflowWithoutFinalReport } = workflow;
+    const nextMessages = [
+      ...workflow.messages,
+      { id: `grill-user-${now}`, role: "user" as const, content: text },
+      { id: assistantMessageId, role: "assistant" as const, content: WORKFLOW_THINKING_MESSAGE },
+    ];
+    const next = this.cloneWorkflowDraft({
+      ...(starting ? workflowWithoutFinalReport : workflow),
+      title: workflow.title || workflow.graph.title || "Untitled workflow",
+      status: workflow.status === "running" ? workflow.status : "draft",
+      revision: workflow.revision + 1,
+      objective: starting ? text : workflow.objective,
+      graphReady: starting ? false : workflow.graphReady,
+      messages: nextMessages,
+      reply: "",
+      error: undefined,
+      ...(starting
+        ? {
+            runProgress: [],
+            runContextDocument: "",
+            runIds: [],
+          }
+        : {}),
+      updatedAt: now,
+    });
+    this.workflows.set(next.workflowId, next);
+    this.activeWorkflowId = next.workflowId;
+    this.activeWorkflowDraftRequests.set(next.workflowId, {
+      requestId,
+      assistantMessageId,
+      content: "",
+    });
+    this.emit();
+
+    try {
+      const response = await this.askWorkflowAgent(
+        {
+          requestId,
+          prompt: starting ? buildWorkflowAgentPrompt({ objective: text }) : text,
+          configuredAgentId: next.configuredAgentId,
+          runtimeId: this.resolveConfiguredAgent(next.configuredAgentId, next.modelId)?.runtimeAgentId ?? DEFAULT_AGENT,
+          executionMode: "oneshot",
+          continuationPolicy: "fresh",
+          runtimeConfig: { model: next.modelId },
+          workDir: next.workDir || this.workDir,
+        },
+        (event) => this.handleWorkflowDraftAgentEvent(next.workflowId, event),
+      );
+      this.completeWorkflowDraftRequest(next.workflowId, requestId, response.content, response.runtimeConversation);
+    } catch (error) {
+      this.failWorkflowDraftRequest(next.workflowId, requestId, error instanceof Error ? error.message : String(error));
+    }
+
+    return this.snapshot();
+  }
+
+  abandonWorkflowDraftReply(workflowId: string): AppSnapshot {
+    const request = this.activeWorkflowDraftRequests.get(workflowId);
+    const workflow = this.workflows.get(workflowId);
+    if (!request || !workflow) return this.snapshot();
+    this.activeWorkflowDraftRequests.delete(workflowId);
+    const stoppedContent = request.content.trim() || "Stopped: workflow agent did not return a complete response yet.";
+    const next = this.cloneWorkflowDraft({
+      ...workflow,
+      revision: workflow.revision + 1,
+      messages: this.replaceWorkflowDraftMessage(workflow.messages, request.assistantMessageId, stoppedContent),
+      error: undefined,
+      updatedAt: Date.now(),
+    });
+    this.workflows.set(next.workflowId, next);
+    if (this.activeWorkflowId === next.workflowId) this.activeWorkflowId = next.workflowId;
     this.emit();
     return this.snapshot();
   }
@@ -1557,7 +1796,7 @@ export class AgentHub {
       contextDocument: input.contextDocument ?? "",
       ...(input.finalReport !== undefined ? { finalReport: input.finalReport } : {}),
       runIds: input.runIds ?? [],
-      agentSessionId: input.agentSessionId,
+      ...(input.runtimeConversation ? { runtimeConversation: input.runtimeConversation } : {}),
       createdAt: input.createdAt ?? now,
       updatedAt: input.updatedAt ?? now,
     });
@@ -1593,7 +1832,6 @@ export class AgentHub {
         runContextDocument: "",
         contextDocument: "",
         runIds: [],
-        agentSessionId: undefined,
         createdAt: now,
         updatedAt: now,
       });
@@ -1629,6 +1867,7 @@ export class AgentHub {
   deleteWorkflow(workflowId: string): AppSnapshot {
     if (!this.workflows.has(workflowId)) return this.snapshot();
     this.workflows.delete(workflowId);
+    this.activeWorkflowDraftRequests.delete(workflowId);
     for (const run of [...this.workflowRuns.values()]) {
       if (run.workflowId === workflowId) this.workflowRuns.delete(run.runId);
     }
@@ -1669,7 +1908,11 @@ export class AgentHub {
       runContextDocument: input.runContextDocument ?? current.runContextDocument,
       contextDocument: input.contextDocument ?? current.contextDocument,
       ...((input.finalReport ?? current.finalReport) !== undefined ? { finalReport: input.finalReport ?? current.finalReport } : {}),
-      agentSessionId: input.agentSessionId ?? current.agentSessionId,
+      ...(input.runtimeConversation !== undefined
+        ? { runtimeConversation: input.runtimeConversation }
+        : current.runtimeConversation
+          ? { runtimeConversation: current.runtimeConversation }
+          : {}),
       revision: current.revision + 1,
       updatedAt: Date.now(),
     });
@@ -1714,6 +1957,7 @@ export class AgentHub {
     const workflow = this.workflows.get(input.workflowId);
     if (!workflow) return { ok: false, error: `Workflow ${input.workflowId} was not found.` };
     if (workflow.status === "running") return { ok: false, error: "Workflow is already running." };
+    this.activeWorkflowDraftRequests.delete(workflow.workflowId);
     const runId = `run_${randomUUID()}`;
     const run: WorkflowRunState = {
       runId,
@@ -1728,10 +1972,14 @@ export class AgentHub {
       lastError: undefined,
     };
     this.workflowRuns.set(runId, run);
+    const { finalReport: _workflowFinalReport, ...workflowWithoutFinalReport } = workflow;
     this.workflows.set(workflow.workflowId, this.cloneWorkflowDraft({
-      ...workflow,
+      ...workflowWithoutFinalReport,
       status: "running",
       runIds: [...workflow.runIds, runId],
+      error: undefined,
+      runProgress: [],
+      runContextDocument: input.contextDocument ?? workflow.runContextDocument,
       updatedAt: Date.now(),
     }));
     this.emit();
@@ -1760,6 +2008,7 @@ export class AgentHub {
       runProgress: input.progress ?? workflow.runProgress,
       runContextDocument: input.contextDocument ?? workflow.runContextDocument,
       ...((input.finalReport ?? workflow.finalReport) !== undefined ? { finalReport: input.finalReport ?? workflow.finalReport } : {}),
+      error: input.lastError,
       updatedAt: Date.now(),
     }));
     this.emit();
@@ -1767,7 +2016,19 @@ export class AgentHub {
   }
 
   runWorkflowGraph(input: RunWorkflowGraphRequest): WorkflowOperationResult {
-    return this.workflowRuntime.runWorkflowGraph(input);
+    const result = this.workflowRuntime.runWorkflowGraph(input);
+    if (!result.ok && result.error) {
+      const workflow = this.workflows.get(input.workflowId);
+      if (workflow) {
+        this.workflows.set(workflow.workflowId, this.cloneWorkflowDraft({
+          ...workflow,
+          error: result.error,
+          updatedAt: Date.now(),
+        }));
+        this.emit();
+      }
+    }
+    return result;
   }
 
   pauseWorkflowNode(input: PauseWorkflowNodeRequest): Promise<WorkflowOperationResult> {
@@ -1780,6 +2041,82 @@ export class AgentHub {
 
   answerWorkflowGate(input: AnswerWorkflowGateRequest): Promise<WorkflowOperationResult> {
     return this.workflowRuntime.answerWorkflowGate(input);
+  }
+
+  async runScheduledWorkflowEvent(
+    event: ScheduledWorkflowDueEvent,
+    ackEvent: (eventId: string, request: AckScheduledWorkflowEventRequest) => Promise<void>,
+  ): Promise<void> {
+    const target = this.scheduledWorkflowEventTarget(event);
+    if (!target) {
+      await ackEvent(event.eventId, {
+        status: "failed",
+        message: "Scheduled event payload is missing scheduleId or workflowId.",
+      });
+      return;
+    }
+
+    const workflow = this.workflows.get(target.workflowId);
+    const runId = `scheduled_run_${event.eventId}`;
+    if (!workflow) {
+      await ackEvent(event.eventId, {
+        status: "failed",
+        message: `Workflow ${target.workflowId} was not found locally.`,
+      });
+      return;
+    }
+
+    this.recordScheduledWorkflowRun({
+      runId,
+      scheduleId: target.scheduleId,
+      workflowId: workflow.workflowId,
+      eventId: event.eventId,
+      title: event.title || workflow.title,
+      status: "running",
+      startedAt: Date.now(),
+      finishedAt: undefined,
+      message: event.message || "Runner started workflow.",
+    });
+
+    const started = this.runWorkflowGraph({
+      workflowId: workflow.workflowId,
+      contextDocument: workflow.contextDocument,
+    });
+    if (!started.ok || !started.runId) {
+      const message = started.error || "Workflow failed to start.";
+      this.finishScheduledWorkflowRun(runId, {
+        status: "failed",
+        message,
+        finishedAt: Date.now(),
+      });
+      await ackEvent(event.eventId, {
+        status: "failed",
+        message,
+      });
+      return;
+    }
+
+    const workflowRun = await this.waitForWorkflowRunToSettle(started.runId);
+    const completed = workflowRun.status === "completed";
+    const awaitingInput = workflowRun.progress.some((item) => item.status === "awaiting_input");
+    const status = completed ? "completed" : "failed";
+    const message = completed
+      ? "Workflow completed."
+      : awaitingInput
+        ? "Workflow requires human input before it can finish."
+        : workflowRun.lastError || (workflowRun.status === "stopped" ? "Workflow stopped before completion." : "Workflow failed.");
+
+    this.finishScheduledWorkflowRun(runId, {
+      status,
+      workflowRunId: workflowRun.runId,
+      message,
+      finishedAt: Date.now(),
+    });
+    await ackEvent(event.eventId, {
+      status,
+      workflowRunId: workflowRun.runId,
+      message,
+    });
   }
 
   private updateWorkflowRunState(input: WorkflowRunStateUpdate): void {
@@ -2040,44 +2377,184 @@ export class AgentHub {
     return () => this.listeners.delete(listener);
   }
 
-async sendPrompt(prompt: string, chatId = this.activeChatId): Promise<void> {
-if (!chatId) return;
-const chat = this.chats.get(chatId);
-if (!chat || chat.running) return;
-const trimmedPrompt = prompt.trim();
-if (!trimmedPrompt) return;
+  private runtimeStateFromCapabilities(capabilities: RuntimeCapabilities): ChatRuntimeSessionState {
+    return {
+      executionStyle: capabilities.chatStyle,
+      attachmentState: "detached",
+      attachmentGeneration: 0,
+      capabilities: {
+        ...capabilities.resume,
+        supportsInterrupt: capabilities.supportsInterrupt,
+        supportsContinue: capabilities.supportsContinue,
+        supportsApprovalRequests: capabilities.supportsApprovalRequests,
+        supportsUserInputRequests: capabilities.supportsUserInputRequests,
+      },
+    };
+  }
 
-if (trimmedPrompt.startsWith("/")) {
-await this.handleSlashCommand(chat, trimmedPrompt);
-return;
-}
+  private syncInteractiveChatState(chat: ChatState, state: InteractiveSessionSnapshot): void {
+    chat.runtimeState = cloneRuntimeState(state.runtimeState);
+    chat.runtimeConversation = state.runtimeConversation
+      ? this.runtimeRouter.cloneConversation(state.runtimeConversation)
+      : undefined;
+    chat.updatedAt = Date.now();
+    this.emit();
+  }
 
- const resolved = this.resolveConfiguredAgent(chat.configuredAgentId, chat.modelId);
- if (!resolved) {
- chat.messages.push(createErrorMessage("No configured agent is selected."));
- chat.lastError = "No configured agent selected";
- chat.updatedAt = Date.now();
- this.emit();
- return;
- }
- if (!resolved.runtime?.available) {
- chat.messages.push(createErrorMessage(`${resolved.agent.name || resolved.agent.id} is not available on this machine.`));
- chat.lastError = `${resolved.runtimeAgentId} unavailable`;
- chat.updatedAt = Date.now();
- this.emit();
- return;
- }
+  private supportsContinuationPolicy(
+    runtimeId: AgentId,
+    surface: RuntimeSurface,
+    executionMode: RuntimeExecutionMode,
+    continuationPolicy: RuntimeContinuationPolicy,
+  ): boolean {
+    const driver = this.runtimeDrivers.maybeDriverFor(runtimeId);
+    if (!driver) return false;
+    const support = driver?.surfaceSupport.find((item) => item.surface === surface);
+    if (!support) return false;
+    if (!support.executionModes.includes(executionMode)) return false;
+    if (!support.continuationPolicies.includes(continuationPolicy)) return false;
+    if (continuationPolicy !== "fresh" && !driver.runtimeStateCodec) return false;
+    return true;
+  }
 
-if (!hasAgentConversationMessages(chat.messages)) chat.title = titleFromPrompt(trimmedPrompt);
-chat.messages.push(createUserMessage(trimmedPrompt));
- chat.running = true;
-chat.lastError = undefined;
-chat.pendingAssistantMessageId = undefined;
-chat.updatedAt = Date.now();
-this.activeChatId = chat.id;
-this.emit();
- void this.runChat(chat, trimmedPrompt, resolved);
-}
+  private surfaceSupportFor(runtimeId: AgentId, surface: RuntimeSurface) {
+    return this.runtimeDrivers.maybeDriverFor(runtimeId)?.surfaceSupport.find((item) => item.surface === surface);
+  }
+
+  private selectExecutionMode(
+    runtimeId: AgentId,
+    surface: RuntimeSurface,
+    preferred: RuntimeExecutionMode,
+  ): RuntimeExecutionMode {
+    const support = this.surfaceSupportFor(runtimeId, surface);
+    if (!support) return "oneshot";
+    if (support.executionModes.length === 0) return "oneshot";
+    if (support.executionModes.includes(preferred)) return preferred;
+    if (preferred !== "oneshot" && support.executionModes.includes("oneshot")) return "oneshot";
+    if (preferred !== "interactive" && support.executionModes.includes("interactive")) return "interactive";
+    return "oneshot";
+  }
+
+  private defaultContinuationPolicy(
+    runtimeId: AgentId,
+    surface: RuntimeSurface,
+    executionMode: RuntimeExecutionMode,
+  ): RuntimeContinuationPolicy {
+    if (surface === "chat") {
+      for (const policy of ["resume-preferred", "fresh", "resume-required"] as const) {
+        if (this.supportsContinuationPolicy(runtimeId, surface, executionMode, policy)) {
+          return policy;
+        }
+      }
+    }
+    return "fresh";
+  }
+
+  private cloneConversationForPolicy(
+    continuationPolicy: RuntimeContinuationPolicy,
+    runtimeConversation: RuntimeConversation | undefined,
+  ): RuntimeConversation | undefined {
+    if (!runtimeConversation || continuationPolicy === "fresh") return undefined;
+    return this.runtimeRouter.cloneConversation(runtimeConversation);
+  }
+
+  private buildInteractiveChatContext(chat: ChatState, resolved: ResolvedConfiguredAgent): InteractiveSessionContext {
+    const executionMode = this.selectExecutionMode(resolved.runtimeAgentId, "chat", "interactive");
+    const continuationPolicy = this.defaultContinuationPolicy(resolved.runtimeAgentId, "chat", executionMode);
+    const runtimeConversation = this.cloneConversationForPolicy(continuationPolicy, chat.runtimeConversation);
+    return {
+      chatId: chat.id,
+      configuredAgentId: chat.configuredAgentId,
+      runtimeId: resolved.runtimeAgentId,
+      executionMode,
+      continuationPolicy,
+      runtimeConfig: { model: resolved.modelId },
+      ...(runtimeConversation ? { runtimeConversation } : {}),
+      runtime: resolved.runtime as AgentRuntime,
+      channelId: resolved.channel.id,
+      workDir: this.runWorkDir(chat),
+      developerInstructions: CODEX_CHAT_DEVELOPER_INSTRUCTIONS,
+      emit: (event) => this.handleAgentEvent(chat, event),
+      syncState: (state) => this.syncInteractiveChatState(chat, state),
+    };
+  }
+
+  async sendPrompt(prompt: string, chatId = this.activeChatId): Promise<void> {
+    if (!chatId) return;
+    const chat = this.chats.get(chatId);
+    if (!chat || chat.running) return;
+    const trimmedPrompt = prompt.trim();
+    if (!trimmedPrompt) return;
+
+    if (trimmedPrompt.startsWith("/")) {
+      await this.handleSlashCommand(chat, trimmedPrompt);
+      return;
+    }
+
+    const resolved = this.resolveConfiguredAgent(chat.configuredAgentId, chat.modelId, chat.channelId);
+    if (!resolved) {
+      chat.messages.push(createErrorMessage("No configured agent is selected."));
+      chat.lastError = "No configured agent selected";
+      chat.updatedAt = Date.now();
+      this.emit();
+      return;
+    }
+    if (!resolved.runtime?.available) {
+      chat.messages.push(createErrorMessage(`${resolved.agent.name || resolved.agent.id} is not available on this machine.`));
+      chat.lastError = `${resolved.runtimeAgentId} unavailable`;
+      chat.updatedAt = Date.now();
+      this.emit();
+      return;
+    }
+
+    const executionMode = this.selectExecutionMode(resolved.runtimeAgentId, "chat", "interactive");
+    const supportsInteractiveChat = executionMode === "interactive";
+    const capabilities = supportsInteractiveChat ? this.runtimeRouter.capabilitiesFor(resolved.runtime) : undefined;
+
+    if (capabilities && !chat.runtimeState) {
+      chat.runtimeState = this.runtimeStateFromCapabilities(capabilities);
+    }
+
+    if (!hasAgentConversationMessages(chat.messages)) chat.title = titleFromPrompt(trimmedPrompt);
+    chat.messages.push(createUserMessage(trimmedPrompt));
+    chat.running = true;
+    chat.lastError = undefined;
+    chat.pendingAssistantMessageId = undefined;
+    chat.updatedAt = Date.now();
+    this.activeChatId = chat.id;
+    this.emit();
+
+    if (supportsInteractiveChat) {
+      let session: ReturnType<InteractiveSessionManager["getOrCreate"]> | undefined;
+      try {
+        const context = this.buildInteractiveChatContext(chat, resolved);
+        session = this.interactiveSessions.getOrCreate(chat.id, context);
+        const interactiveSession = session;
+        this.syncInteractiveChatState(chat, interactiveSession.snapshot());
+        this.activeStops.set(chat.id, async () => {
+          if (!chat.running) return;
+          await this.interactiveSessions.interrupt(chat.id);
+          this.syncInteractiveChatState(chat, interactiveSession.snapshot());
+        });
+        await this.interactiveSessions.dispatch(chat.id, context, async (managed, lease) => {
+          await managed.ensureAttached();
+          const attachedState = managed.snapshot();
+          lease.syncAttachmentGeneration(attachedState.runtimeState.attachmentGeneration);
+          this.syncInteractiveChatState(chat, attachedState);
+          await managed.sendPrompt(trimmedPrompt);
+          this.syncInteractiveChatState(chat, managed.snapshot());
+        });
+      } catch (error) {
+        if (session) {
+          this.syncInteractiveChatState(chat, session.snapshot());
+        }
+        this.markRunFailed(chat, error instanceof Error ? error.message : String(error));
+      }
+      return;
+    }
+
+    void this.runChat(chat, trimmedPrompt, resolved);
+  }
 
   private async handleSlashCommand(chat: ChatState, prompt: string): Promise<void> {
     chat.messages.push(createUserMessage(prompt, true));
@@ -2124,7 +2601,7 @@ this.emit();
   }
 
   private async slashStatus(chat: ChatState): Promise<string> {
-    const resolved = this.resolveConfiguredAgent(chat.configuredAgentId, chat.modelId);
+    const resolved = this.resolveConfiguredAgent(chat.configuredAgentId, chat.modelId, chat.channelId);
     if (resolved?.runtimeAgentId !== "codex") return "Codex app-server status\nThis status command is only available for Codex chats.";
 
     try {
@@ -2134,7 +2611,7 @@ this.emit();
         const models = await this.readCodexModels(client);
         const pluginResult = await client.request("plugin/list", { cwds: [this.workDir] });
         const plugins = this.codexPluginSummaries(pluginResult);
-        const mcpServers = await this.readCodexMcpServers(client, chat.sessionId);
+        const mcpServers = await this.readCodexMcpServers(client, undefined);
 
         const model = asOptionalString(config.model) ?? "default";
         const provider = asOptionalString(config.model_provider) ?? "default";
@@ -2166,7 +2643,7 @@ this.emit();
   }
 
   private async slashModels(chat: ChatState): Promise<string> {
-    const resolved = this.resolveConfiguredAgent(chat.configuredAgentId, chat.modelId);
+    const resolved = this.resolveConfiguredAgent(chat.configuredAgentId, chat.modelId, chat.channelId);
     if (resolved?.runtimeAgentId !== "codex") return "Codex models\nModel catalog is only available for Codex chats.";
 
     try {
@@ -2194,7 +2671,7 @@ this.emit();
     if (args.length > 0 && args[0] !== "list") {
       return "Plugins\nOnly /plugins and /plugin list are supported here for now.";
     }
-    const resolved = this.resolveConfiguredAgent(chat.configuredAgentId, chat.modelId);
+    const resolved = this.resolveConfiguredAgent(chat.configuredAgentId, chat.modelId, chat.channelId);
     if (resolved?.runtimeAgentId !== "codex") return "Plugins\nPlugins are currently Codex-specific in this app.";
 
     try {
@@ -2226,7 +2703,7 @@ this.emit();
 
   private async withCodexAppServer<T>(chat: ChatState, callback: (client: CodexRpcClient) => Promise<T>): Promise<T> {
     const executable = this.executables.codex;
-    const resolved = this.resolveConfiguredAgent(chat.configuredAgentId, chat.modelId);
+    const resolved = this.resolveConfiguredAgent(chat.configuredAgentId, chat.modelId, chat.channelId);
     if (!resolved || resolved.runtimeAgentId !== "codex") {
       throw new Error("Codex app-server requires a Codex configured agent.");
     }
@@ -2364,22 +2841,31 @@ this.emit();
   async askWorkflowAgent(input: WorkflowAgentRequest, onEvent?: (event: WorkflowAgentEvent) => void): Promise<WorkflowAgentResponse> {
     const prompt = input.prompt.trim();
     if (!prompt) throw new Error("Workflow agent prompt is required");
-    const resolved = this.resolveConfiguredAgent(input.configuredAgentId, input.modelId);
+    const resolved = this.resolveConfiguredAgent(input.configuredAgentId, input.runtimeConfig.model);
     if (!resolved) throw new Error("No configured agent is selected.");
+    if (resolved.runtimeAgentId !== input.runtimeId) {
+      throw new Error(`Configured agent ${resolved.agent.id} does not match runtime ${input.runtimeId}.`);
+    }
     const runtime = resolved.runtime;
     if (!runtime?.available) throw new Error(`${resolved.agent.name || resolved.agent.id} is not available on this machine.`);
     const channelId = resolved.channel.id;
-    const modelId = resolved.modelId;
     const workDir = input.workDir?.trim() || this.workDir;
+    const runtimeConversation = this.cloneConversationForPolicy(input.continuationPolicy, input.runtimeConversation);
 
     const requestId = input.requestId ?? randomUUID();
-    if (resolved.runtimeAgentId === "codex") {
-      return this.askCodexWorkflowAgent({ requestId, prompt, runtime, channelId, modelId, workDir, sessionId: input.sessionId, onEvent });
-    }
-    if (resolved.runtimeAgentId === "api") {
-      return this.askApiWorkflowAgent({ requestId, prompt, channelId, modelId, sessionId: input.sessionId, onEvent });
-    }
-    return this.askClaudeWorkflowAgent({ requestId, prompt, runtime, channelId, modelId, workDir, sessionId: input.sessionId, onEvent });
+    return this.runtimeRouter.askWorkflow({
+      requestId,
+      runtimeId: input.runtimeId,
+      executionMode: input.executionMode,
+      continuationPolicy: input.continuationPolicy,
+      runtimeConfig: input.runtimeConfig,
+      ...(runtimeConversation ? { runtimeConversation } : {}),
+      prompt,
+      runtime,
+      channelId,
+      workDir,
+      onEvent,
+    });
   }
 
   async stopChat(chatId: string): Promise<void> {
@@ -2389,6 +2875,12 @@ this.emit();
     this.activeStops.delete(chatId);
     if (stop) await stop();
     chat.running = false;
+    if (chat.runtimeState) {
+      chat.runtimeState.attachmentState = "interrupted";
+      chat.runtimeState.lastMeaningfulActivityAt = Date.now();
+      delete chat.runtimeState.activeTurnId;
+    }
+    chat.messages = this.expirePendingInteractionEvents(chat.messages);
     chat.messages.push(createErrorMessage("Stopped"));
     chat.updatedAt = Date.now();
     this.emit();
@@ -2545,38 +3037,13 @@ this.emit();
   }
 
   private async deleteAgentSession(run: RunState): Promise<void> {
-    const resolved = this.resolveConfiguredAgent(run.configuredAgentId, run.modelId);
-    if (!run.sessionId || !resolved) return;
-    if (resolved.runtimeAgentId === "codex") {
-      try {
-        await execCli({
-          executable: this.executables.codex,
-          args: ["archive", run.sessionId],
-          cwd: process.cwd(),
-          env: process.env,
-          timeout: 10_000,
-          windowsHide: true,
-          maxBuffer: 1024 * 64,
-        });
-      } catch (error) {
-        console.warn(`Failed to archive Codex session ${run.sessionId}:`, error);
-      }
-      try {
-        await deleteCodexSessionFiles(codexHome(), run.sessionId);
-      } catch (error) {
-        console.warn(`Failed to delete local Codex session ${run.sessionId}:`, error);
-      }
-      return;
-    }
-
-    if (resolved.runtimeAgentId === "claude") {
-      const workDir = "workDir" in run ? run.workDir : this.workDir;
-      try {
-        await rm(claudeProjectStoragePath(workDir, run.sessionId), { force: true });
-      } catch (error) {
-        console.warn(`Failed to delete Claude session ${run.sessionId}:`, error);
-      }
-    }
+    const resolved = this.resolveConfiguredAgent(run.configuredAgentId, run.modelId, run.kind === "chat" ? run.channelId : undefined);
+    if (!resolved) return;
+    const workDir = "workDir" in run ? run.workDir : this.workDir;
+    await this.runtimeRouter.deleteSessionArtifacts(resolved.runtimeAgentId, {
+      workDir,
+      ...(run.runtimeConversation ? { runtimeConversation: this.runtimeRouter.cloneConversation(run.runtimeConversation) } : {}),
+    });
   }
 
   private createChatState(configuredAgentId: string): ChatState {
@@ -2683,6 +3150,177 @@ this.emit();
       nodes: graph.nodes.map((node) => this.cloneWorkflowGraphNode(node)),
       edges: graph.edges.map((edge) => this.cloneWorkflowGraphEdge(edge)),
     };
+  }
+
+  private applyWorkflowDraftPatch(current: WorkflowDraftState, patch: PatchWorkflowDraftRequest): WorkflowDraftState {
+    const now = Date.now();
+    const {
+      finalReport: _currentFinalReport,
+      runtimeConversation: _currentRuntimeConversation,
+      ...currentWithoutOptionalRuntimeFields
+    } = current;
+    const nextConfiguredAgentId =
+      patch.configuredAgentId !== undefined ? this.normalizeWorkflowConfiguredAgentId(patch.configuredAgentId) : current.configuredAgentId;
+    const nextModelId =
+      patch.configuredAgentId !== undefined || patch.modelId !== undefined
+        ? this.normalizeModelIdForConfiguredAgent(nextConfiguredAgentId, patch.modelId ?? current.modelId)
+        : current.modelId;
+    const nextGraph = patch.graph ? this.cloneWorkflowGraph(patch.graph) : current.graph;
+    const next: WorkflowDraftState = this.cloneWorkflowDraft({
+      ...currentWithoutOptionalRuntimeFields,
+      title: patch.title ?? current.title,
+      status: patch.status ?? current.status,
+      revision: current.revision + 1,
+      configuredAgentId: nextConfiguredAgentId,
+      modelId: nextModelId,
+      objective: patch.objective ?? current.objective,
+      ...(patch.workDir === null ? {} : patch.workDir !== undefined ? { workDir: patch.workDir } : current.workDir ? { workDir: current.workDir } : {}),
+      graph: nextGraph,
+      graphReady: patch.graphReady ?? current.graphReady,
+      messages: patch.messages ?? current.messages,
+      reply: patch.reply ?? current.reply,
+      error: patch.error === null ? undefined : patch.error ?? current.error,
+      runProgress: patch.resetRunState ? [] : patch.runProgress ?? current.runProgress,
+      runContextDocument: patch.resetRunState ? "" : patch.runContextDocument ?? current.runContextDocument,
+      contextDocument: patch.contextDocument ?? current.contextDocument,
+      ...(patch.finalReport === null
+        ? {}
+        : patch.finalReport !== undefined
+          ? { finalReport: patch.finalReport }
+          : patch.resetRunState
+            ? {}
+            : current.finalReport !== undefined
+              ? { finalReport: current.finalReport }
+              : {}),
+      runIds: patch.resetRunState ? [] : [...current.runIds],
+      ...(patch.runtimeConversation === null
+        ? {}
+        : patch.runtimeConversation !== undefined
+          ? { runtimeConversation: this.runtimeRouter.cloneConversation(patch.runtimeConversation) }
+          : current.runtimeConversation !== undefined
+            ? { runtimeConversation: this.runtimeRouter.cloneConversation(current.runtimeConversation) }
+            : {}),
+      createdAt: current.createdAt,
+      updatedAt: now,
+    });
+    if (patch.resetRunState) next.status = "draft";
+    return next;
+  }
+
+  private replaceWorkflowDraftMessage(messages: WorkflowDraftState["messages"], messageId: string, content: string): WorkflowDraftState["messages"] {
+    return messages.map((message) => (message.id === messageId ? { ...message, content } : message));
+  }
+
+  private handleWorkflowDraftAgentEvent(workflowId: string, event: WorkflowAgentEvent): void {
+    const activeRequest = this.activeWorkflowDraftRequests.get(workflowId);
+    if (!activeRequest || activeRequest.requestId !== event.requestId) return;
+
+    if (event.type === "delta") {
+      activeRequest.content += event.content;
+      const workflow = this.workflows.get(workflowId);
+      if (!workflow) return;
+      this.workflows.set(workflowId, this.cloneWorkflowDraft({
+        ...workflow,
+        revision: workflow.revision + 1,
+        messages: this.replaceWorkflowDraftMessage(workflow.messages, activeRequest.assistantMessageId, activeRequest.content || WORKFLOW_THINKING_MESSAGE),
+        updatedAt: Date.now(),
+      }));
+      this.emit();
+      return;
+    }
+
+    if (event.type === "completed") {
+      this.completeWorkflowDraftRequest(workflowId, event.requestId, event.content, event.runtimeConversation);
+      return;
+    }
+
+    if (event.type === "error") {
+      this.failWorkflowDraftRequest(workflowId, event.requestId, event.error);
+    }
+  }
+
+  private completeWorkflowDraftRequest(workflowId: string, requestId: string, content: string, runtimeConversation: RuntimeConversation | undefined): void {
+    const activeRequest = this.activeWorkflowDraftRequests.get(workflowId);
+    if (!activeRequest || activeRequest.requestId !== requestId) return;
+    this.activeWorkflowDraftRequests.delete(workflowId);
+    const workflow = this.workflows.get(workflowId);
+    if (!workflow) return;
+
+    const finalContent = (content.trim() || activeRequest.content.trim() || WORKFLOW_THINKING_MESSAGE).trim();
+    const parsedGraph = parseWorkflowGraphUpsert(finalContent);
+    const { finalReport: _workflowFinalReport, ...workflowWithoutFinalReport } = workflow;
+    const next = this.cloneWorkflowDraft({
+      ...(parsedGraph ? workflowWithoutFinalReport : workflow),
+      title: parsedGraph?.title ?? workflow.title,
+      status: workflow.status === "running" ? workflow.status : "draft",
+      revision: workflow.revision + 1,
+      objective: parsedGraph?.objective ?? workflow.objective,
+      graph: parsedGraph ? this.cloneWorkflowGraph(parsedGraph) : workflow.graph,
+      graphReady: parsedGraph ? true : workflow.graphReady,
+      messages: this.replaceWorkflowDraftMessage(workflow.messages, activeRequest.assistantMessageId, finalContent),
+      reply: "",
+      error: undefined,
+      runProgress: parsedGraph ? [] : workflow.runProgress,
+      runContextDocument: parsedGraph ? "" : workflow.runContextDocument,
+      contextDocument: workflow.contextDocument,
+      runIds: parsedGraph ? [] : workflow.runIds,
+      ...(parsedGraph ? {} : workflow.finalReport !== undefined ? { finalReport: workflow.finalReport } : {}),
+      ...(runtimeConversation !== undefined
+        ? { runtimeConversation: this.runtimeRouter.cloneConversation(runtimeConversation) }
+        : workflow.runtimeConversation !== undefined
+          ? { runtimeConversation: this.runtimeRouter.cloneConversation(workflow.runtimeConversation) }
+          : {}),
+      createdAt: workflow.createdAt,
+      updatedAt: Date.now(),
+    });
+    this.workflows.set(workflowId, next);
+    this.emit();
+  }
+
+  private failWorkflowDraftRequest(workflowId: string, requestId: string, error: string): void {
+    const activeRequest = this.activeWorkflowDraftRequests.get(workflowId);
+    if (!activeRequest || activeRequest.requestId !== requestId) return;
+    this.activeWorkflowDraftRequests.delete(workflowId);
+    const workflow = this.workflows.get(workflowId);
+    if (!workflow) return;
+    this.workflows.set(workflowId, this.cloneWorkflowDraft({
+      ...workflow,
+      revision: workflow.revision + 1,
+      messages: this.replaceWorkflowDraftMessage(workflow.messages, activeRequest.assistantMessageId, `Workflow agent error: ${error}`),
+      error,
+      updatedAt: Date.now(),
+    }));
+    this.emit();
+  }
+
+  private scheduledWorkflowEventTarget(event: ScheduledWorkflowDueEvent): { scheduleId: string; workflowId: string } | undefined {
+    const scheduleId = asOptionalString(event.payload?.scheduleId)?.trim();
+    const workflowId = asOptionalString(event.payload?.workflowId)?.trim();
+    if (!scheduleId || !workflowId) return undefined;
+    return { scheduleId, workflowId };
+  }
+
+  private waitForWorkflowRunToSettle(runId: string): Promise<WorkflowRunState> {
+    const immediate = this.workflowRuns.get(runId);
+    if (immediate && (immediate.status === "completed" || immediate.status === "failed" || immediate.status === "stopped" || immediate.progress.some((item) => item.status === "awaiting_input"))) {
+      return Promise.resolve(this.cloneWorkflowRun(immediate));
+    }
+
+    return new Promise<WorkflowRunState>((resolve, reject) => {
+      let stopListening: () => void = () => {};
+      stopListening = this.onChange(() => {
+        const run = this.workflowRuns.get(runId);
+        if (!run) {
+          stopListening();
+          reject(new Error(`Workflow run ${runId} was not found.`));
+          return;
+        }
+        if (run.status === "completed" || run.status === "failed" || run.status === "stopped" || run.progress.some((item) => item.status === "awaiting_input")) {
+          stopListening();
+          resolve(this.cloneWorkflowRun(run));
+        }
+      });
+    });
   }
 
   private activeWorkflowDraft(): WorkflowDraftState | undefined {
@@ -2816,7 +3454,7 @@ this.emit();
       contextDocument: draft.contextDocument,
       ...(draft.finalReport !== undefined ? { finalReport: draft.finalReport } : {}),
       runIds: draft.runIds.map((runId) => runId),
-      agentSessionId: draft.agentSessionId,
+      ...(draft.runtimeConversation ? { runtimeConversation: this.runtimeRouter.cloneConversation(draft.runtimeConversation) } : {}),
       createdAt: draft.createdAt || draft.updatedAt || now,
       updatedAt: draft.updatedAt,
     };
@@ -2876,7 +3514,10 @@ this.emit();
   private normalizeRunSelections(): void {
     for (const chat of this.chats.values()) {
       chat.configuredAgentId = this.configuredAgentOrDefault(chat.configuredAgentId)?.id ?? this.defaultConfiguredAgentId();
-      chat.modelId = this.normalizeModelIdForConfiguredAgent(chat.configuredAgentId, chat.modelId);
+      if (chat.channelId && this.channelById(chat.channelId)?.agentId !== this.configuredAgentOrDefault(chat.configuredAgentId)?.runtimeAgentId) {
+        chat.channelId = undefined;
+      }
+      chat.modelId = this.normalizeModelIdForConfiguredAgent(chat.configuredAgentId, chat.modelId, chat.channelId);
     }
     for (const task of this.tasks.values()) {
       task.configuredAgentId = this.configuredAgentOrDefault(task.configuredAgentId)?.id ?? this.defaultConfiguredAgentId();
@@ -2896,7 +3537,9 @@ this.emit();
       title: chat.title,
       configuredAgentId: chat.configuredAgentId,
       modelId: chat.modelId,
-      sessionId: chat.sessionId,
+      ...(chat.channelId ? { channelId: chat.channelId } : {}),
+      ...(chat.runtimeState ? { runtimeState: cloneRuntimeState(chat.runtimeState) } : {}),
+      ...(chat.runtimeConversation ? { runtimeConversation: this.runtimeRouter.cloneConversation(chat.runtimeConversation) } : {}),
       running: chat.running,
       messages: chat.messages.map((message) => this.serializeMessage(message)),
       pendingAssistantMessageId: chat.pendingAssistantMessageId,
@@ -2917,7 +3560,7 @@ this.emit();
       status: task.status,
       progress: task.progress,
       running: task.running,
-      sessionId: task.sessionId,
+      ...(task.runtimeConversation ? { runtimeConversation: this.runtimeRouter.cloneConversation(task.runtimeConversation) } : {}),
       messages: task.messages.map((message) => this.serializeMessage(message)),
       pendingAssistantMessageId: task.pendingAssistantMessageId,
       lastError: task.lastError,
@@ -3218,15 +3861,21 @@ this.emit();
       return;
     }
     const developerInstructions = run.kind === "task" ? CODEX_TASK_DEVELOPER_INSTRUCTIONS : CODEX_CHAT_DEVELOPER_INSTRUCTIONS;
+    const executionMode = run.kind === "chat" ? this.selectExecutionMode(resolved.runtimeAgentId, "chat", "oneshot") : "oneshot";
+    const continuationPolicy =
+      run.kind === "chat" ? this.defaultContinuationPolicy(resolved.runtimeAgentId, "chat", executionMode) : "fresh";
+    const runtimeConversation = this.cloneConversationForPolicy(continuationPolicy, run.runtimeConversation);
     const executor = this.executorFactory.create({
       runId: run.id,
       runKind: run.kind,
-      agentId: resolved.runtimeAgentId,
+      runtimeId: resolved.runtimeAgentId,
+      executionMode,
+      continuationPolicy,
+      runtimeConfig: { model: resolved.modelId },
+      ...(runtimeConversation ? { runtimeConversation } : {}),
       runtime,
       channelId: resolved.channel.id,
-      modelId: resolved.modelId,
       prompt,
-      sessionId: run.sessionId,
       workDir: this.runWorkDir(run),
       developerInstructions,
       emit: (event) => this.handleAgentEvent(run, event),
@@ -3247,114 +3896,7 @@ this.emit();
     }
   }
 
-  private async askCodexWorkflowAgent(input: {
-    requestId: string;
-    prompt: string;
-    runtime: AgentRuntime;
-    channelId: string;
-    modelId: string;
-    workDir: string;
-    sessionId: string | undefined;
-    onEvent: ((event: WorkflowAgentEvent) => void) | undefined;
-  }): Promise<WorkflowAgentResponse> {
-    const executable = input.runtime.command || this.executables.codex;
-    const model = runtimeModelId(input.modelId);
-    const channel = this.channelById(input.channelId);
-
-    let settled = false;
-    let content = "";
-    let sessionId = input.sessionId;
-    let timeout: ReturnType<typeof createWorkflowAgentTimeout> | undefined;
-    let client: CodexRpcClient | undefined;
-
-    return new Promise<WorkflowAgentResponse>((resolve, reject) => {
-      const settle = (callback: () => void): void => {
-        if (settled) return;
-        settled = true;
-        timeout?.clear();
-        void client?.shutdown();
-        callback();
-      };
-
-      timeout = createWorkflowAgentTimeout({
-        timeoutMs: WORKFLOW_AGENT_IDLE_TIMEOUT_MS,
-        onTimeout: () => settle(() => reject(new Error("Workflow agent timed out after 10 minutes without activity"))),
-      });
-
-      client = new CodexRpcClient({
-        executable,
-        cwd: input.workDir,
-        extraArgs: codexAppServerConfigArgs(channel, input.modelId),
-        env: codexEnvironmentForChannel(channel),
-        onEvent: (event) => {
-          timeout?.refresh();
-          if (event.type === "delta") {
-            content += event.content;
-            input.onEvent?.({ requestId: input.requestId, type: "delta", content: event.content });
-            return;
-          }
-          if (event.type === "completed") {
-            if (!content && event.content) content = event.content;
-            input.onEvent?.({ requestId: input.requestId, type: "completed", content: content.trim(), sessionId });
-            settle(() => resolve({ content: content.trim(), sessionId }));
-            return;
-          }
-          if (event.type === "error") {
-            input.onEvent?.({ requestId: input.requestId, type: "error", error: event.error });
-            settle(() => reject(new Error(event.error)));
-          }
-        },
-        onRequest: (id, method, params) => {
-          if (client) this.respondToCodexServerRequest(client, id, method, params);
-        },
-        onExit: (_code, _signal, stderr) => {
-          if (settled) return;
-          settle(() => reject(new Error(stderr.trim() || "Workflow Codex agent exited before completing")));
-        },
-      });
-
-      void (async () => {
-        try {
-          await client.start();
-          const threadResult = sessionId
-            ? await client.request("thread/resume", {
-                threadId: sessionId,
-                model,
-                modelProvider: null,
-                cwd: input.workDir,
-                approvalPolicy: "never",
-                config: null,
-                baseInstructions: null,
-                developerInstructions: CODEX_WORKFLOW_DEVELOPER_INSTRUCTIONS,
-              })
-            : await client.request("thread/start", {
-                model,
-                modelProvider: null,
-                profile: null,
-                cwd: input.workDir,
-                approvalPolicy: "never",
-                config: null,
-                baseInstructions: null,
-                developerInstructions: CODEX_WORKFLOW_DEVELOPER_INSTRUCTIONS,
-                compactPrompt: null,
-                includeApplyPatchTool: null,
-                experimentalRawEvents: true,
-                persistExtendedHistory: true,
-              });
-
-          sessionId = (threadResult as { thread?: { id?: string } }).thread?.id ?? sessionId;
-          await client.request("turn/start", {
-            threadId: sessionId,
-            input: [{ type: "text", text: input.prompt, text_elements: [] }],
-          });
-        } catch (error) {
-          settle(() => reject(error instanceof Error ? error : new Error(String(error))));
-        }
-      })();
-    });
-  }
-
-  private async testCodexAgent(channel: AgentChannel, modelId: string, emit: AgentTestEmit): Promise<string> {
+  private async testCodexAgent(channel: AgentChannel, modelId: string, workDir: string, emit: AgentTestEmit): Promise<string> {
     const args = [
       "exec",
       "--ephemeral",
@@ -3371,7 +3913,7 @@ this.emit();
     const result = await runStreamingCommand({
       executable: this.executables.codex,
       args,
-      cwd: this.workDir,
+      cwd: workDir,
       env: codexEnvironmentForChannel(channel),
       timeoutMs: AGENT_TEST_TIMEOUT_MS,
       onStdoutLine: (line) => {
@@ -3390,48 +3932,58 @@ this.emit();
     throw new Error(stderrText ? `Codex completed without assistant text. stderr: ${stderrText}` : "Codex completed without assistant text.");
   }
 
-  private async testClaudeAgent(channel: AgentChannel, modelId: string, emit: AgentTestEmit): Promise<string> {
-    const cliModel = claudeCliModelForChannel(channel, modelId);
-    const env = claudeEnvironmentForChannel(channel, modelId, process.env);
-    const envModel = typeof env.ANTHROPIC_MODEL === "string" ? env.ANTHROPIC_MODEL : "default";
-    const args = [
-      "--print",
-      "--output-format",
-      "stream-json",
-      "--verbose",
-      "--include-partial-messages",
-      "--permission-mode",
-      "bypassPermissions",
-      ...(cliModel ? ["--model", cliModel] : []),
-      AGENT_TEST_PROMPT,
-    ];
-    emit({ type: "phase", content: `Launching Claude Code with model ${cliModel ?? envModel}.` });
+  private async testClaudeAgent(channel: AgentChannel, modelId: string, workDir: string, emit: AgentTestEmit): Promise<string> {
+    const sdkModel = claudeCliModelForChannel(channel, modelId);
+    emit({ type: "phase", content: `Launching Claude Code with model ${sdkModel ?? "default"}.` });
+    emit({ type: "user", content: AGENT_TEST_PROMPT });
+
     let output = "";
-    const sessionIds = new Set<string>();
-    const streamState = createClaudeStreamState();
-    const result = await runStreamingCommand({
-      executable: this.executables.claude,
-      args,
-      cwd: this.workDir,
-      env,
-      timeoutMs: AGENT_TEST_TIMEOUT_MS,
-      onStdoutLine: (line) => {
-        const sessionId = extractClaudeSessionId(line);
-        if (sessionId) sessionIds.add(sessionId);
-        for (const event of handleClaudeTestLine(line, streamState, emit)) output += event;
-      },
-      onStderr: (text) => emit({ type: "stderr", content: text }),
-    });
-    const deletedSessions = await deleteClaudeTestSessions(this.workDir, sessionIds);
-    if (deletedSessions > 0) emit({ type: "phase", content: `Deleted ${deletedSessions} Claude test session${deletedSessions === 1 ? "" : "s"}.` });
-    if (result.timedOut) throw new Error(`Claude test timed out after ${formatElapsed(AGENT_TEST_TIMEOUT_MS)} without producing a final response.`);
-    if (result.code !== 0) {
-      const detail = (result.stderr.trim() || output.trim() || result.stdout.trim()).slice(0, 800);
-      throw new Error(`Claude test exited with ${result.code ?? result.signal ?? "unknown"}: ${detail}`);
+    let completedContent: string | undefined;
+    let emittedAssistant = false;
+    let errorMessage: string | undefined;
+
+    try {
+      await this.claudeSdkAdapter.runOneShot({
+        prompt: AGENT_TEST_PROMPT,
+        cwd: workDir,
+        ...(sdkModel ? { modelId: sdkModel } : {}),
+        onEvent: (event) => {
+          if (event.type === "delta") {
+            output += event.content;
+            emit({ type: "assistant_delta", content: event.content });
+            return;
+          }
+          if (event.type === "completed") {
+            if (event.content) {
+              completedContent = event.content;
+              if (!emittedAssistant) {
+                emit({ type: "assistant", content: event.content });
+                emittedAssistant = true;
+              }
+            }
+            return;
+          }
+          if (event.type === "tool_call" || event.type === "tool_result") {
+            emit({ type: "tool", content: event.content });
+            return;
+          }
+          if (event.type === "error") {
+            errorMessage = event.error;
+            emit({ type: "error", content: event.error });
+          }
+        },
+      });
+    } catch (error) {
+      throw errorMessage
+        ? new Error(errorMessage)
+        : error instanceof Error
+          ? error
+          : new Error(String(error));
     }
-    if (output.trim()) return output.trim();
-    const stderrText = result.stderr.trim();
-    throw new Error(stderrText ? `Claude completed without assistant text. stderr: ${stderrText}` : "Claude completed without assistant text.");
+
+    const finalOutput = completedContent?.trim() || output.trim();
+    if (finalOutput) return finalOutput;
+    throw new Error("Claude completed without assistant text.");
   }
 
   private async testApiAgent(channel: AgentChannel, modelId: string, emit: AgentTestEmit): Promise<string> {
@@ -3461,7 +4013,7 @@ this.emit();
     prompt: string;
     channelId: string;
     modelId: string;
-    sessionId: string | undefined;
+    runtimeConversation: RuntimeConversation | undefined;
     onEvent: ((event: WorkflowAgentEvent) => void) | undefined;
   }): Promise<WorkflowAgentResponse> {
     const channel = this.channelById(input.channelId);
@@ -3481,75 +4033,8 @@ this.emit();
     if (!response.ok) throw new Error(`API workflow request failed (${response.status}): ${text.slice(0, 800)}`);
     const content = this.extractApiContent(channel, text).trim();
     input.onEvent?.({ requestId: input.requestId, type: "delta", content });
-    input.onEvent?.({ requestId: input.requestId, type: "completed", content, sessionId: input.sessionId });
-    return { content, sessionId: input.sessionId };
-  }
-
-  private async askClaudeWorkflowAgent(input: {
-    requestId: string;
-    prompt: string;
-    runtime: AgentRuntime;
-    channelId: string;
-    modelId: string;
-    workDir: string;
-    sessionId: string | undefined;
-    onEvent: ((event: WorkflowAgentEvent) => void) | undefined;
-  }): Promise<WorkflowAgentResponse> {
-    let content = "";
-    let sessionId = input.sessionId;
-    let errorMessage: string | undefined;
-
-    return new Promise<WorkflowAgentResponse>((resolve, reject) => {
-      let timeout: ReturnType<typeof createWorkflowAgentTimeout> | undefined;
-      let runner: ClaudeRunner | undefined;
-      let settled = false;
-      const settle = (callback: () => void): void => {
-        if (settled) return;
-        settled = true;
-        timeout?.clear();
-        callback();
-      };
-      timeout = createWorkflowAgentTimeout({
-        timeoutMs: WORKFLOW_AGENT_IDLE_TIMEOUT_MS,
-        onTimeout: () => {
-          void runner?.stop();
-          settle(() => reject(new Error("Workflow agent timed out after 10 minutes without activity")));
-        },
-      });
-      const channel = this.channelById(input.channelId);
-      runner = new ClaudeRunner({
-        executable: input.runtime.command || this.executables.claude,
-        cwd: input.workDir,
-        env: claudeEnvironmentForChannel(channel, input.modelId, process.env),
-        prompt: input.prompt,
-        modelId: claudeCliModelForChannel(channel, input.modelId),
-        sessionId,
-        onEvent: (event) => {
-          timeout?.refresh();
-          if (event.type === "delta") {
-            content += event.content;
-            input.onEvent?.({ requestId: input.requestId, type: "delta", content: event.content });
-          }
-          if (event.type === "completed" && !content && event.content) content = event.content;
-          if (event.type === "session") sessionId = event.sessionId;
-          if (event.type === "error") {
-            errorMessage = event.error;
-            input.onEvent?.({ requestId: input.requestId, type: "error", error: event.error });
-          }
-        },
-        onExit: (code) => {
-          if (code !== 0) {
-            settle(() => reject(new Error(errorMessage ?? `Claude exited with code ${code}`)));
-            return;
-          }
-          input.onEvent?.({ requestId: input.requestId, type: "completed", content: content.trim(), sessionId });
-          settle(() => resolve({ content: content.trim(), sessionId }));
-        },
-      });
-      void runner.start().catch((error) => {
-        settle(() => reject(error instanceof Error ? error : new Error(String(error))));
-      });
-    });
+    input.onEvent?.({ requestId: input.requestId, type: "completed", content, ...(input.runtimeConversation ? { runtimeConversation: input.runtimeConversation } : {}) });
+    return { content, ...(input.runtimeConversation ? { runtimeConversation: input.runtimeConversation } : {}) };
   }
 
   private resolveApiModel(channel: AgentChannel, modelId: string): string | undefined {
@@ -3612,14 +4097,26 @@ this.emit();
   }
 
   private handleAgentEvent(run: RunState, event: AgentEvent): void {
-    if (event.type === "session") {
-      run.sessionId = event.sessionId;
+    const runtimeState = run.kind === "chat" ? run.runtimeState : undefined;
+    const touchRuntimeState = (attachmentState: ChatRuntimeSessionState["attachmentState"], clearTurn = false): void => {
+      if (!runtimeState) return;
+      runtimeState.attachmentState = attachmentState;
+      runtimeState.lastMeaningfulActivityAt = Date.now();
+      if (clearTurn) delete runtimeState.activeTurnId;
+    };
+
+    if (event.type === "runtime_conversation") {
+      run.runtimeConversation = this.runtimeRouter.cloneConversation(event.runtimeConversation);
+      if (runtimeState) {
+        runtimeState.lastMeaningfulActivityAt = Date.now();
+      }
       run.updatedAt = Date.now();
       this.emit();
       return;
     }
 
     if (event.type === "delta") {
+      touchRuntimeState("running");
       if (!run.pendingAssistantMessageId) {
         const message = createAssistantMessage(event.content);
         run.pendingAssistantMessageId = message.id;
@@ -3634,6 +4131,7 @@ this.emit();
     }
 
     if (event.type === "meta" || event.type === "system" || event.type === "tool_call" || event.type === "tool_result" || event.type === "handoff") {
+      touchRuntimeState("running");
       this.appendEventToAssistant(run, {
         id: randomUUID(),
         type: event.type,
@@ -3649,7 +4147,41 @@ this.emit();
       return;
     }
 
+    if (event.type === "approval_request" || event.type === "user_input_request") {
+      touchRuntimeState("running");
+      this.appendEventToAssistant(run, {
+        id: randomUUID(),
+        type: event.type,
+        content: event.content,
+        requestId: event.requestId,
+        requestState: "live",
+        timestamp: Date.now(),
+        ...(event.metadata ? { metadata: event.metadata } : {}),
+      });
+      run.updatedAt = Date.now();
+      this.emit();
+      return;
+    }
+
+    if (event.type === "approval_response" || event.type === "user_input_response") {
+      touchRuntimeState("running");
+      this.resolvePendingRequest(run, event.requestId, event.type === "approval_response" ? "approval_request" : "user_input_request");
+      this.appendEventToAssistant(run, {
+        id: randomUUID(),
+        type: event.type,
+        content: event.content ?? "",
+        requestId: event.requestId,
+        timestamp: Date.now(),
+        ...(event.type === "approval_response" ? { decision: event.decision } : {}),
+        ...(event.metadata ? { metadata: event.metadata } : {}),
+      });
+      run.updatedAt = Date.now();
+      this.emit();
+      return;
+    }
+
     if (event.type === "completed") {
+      touchRuntimeState("idle", true);
       if (event.content) {
         if (!run.pendingAssistantMessageId) {
           run.messages.push(createAssistantMessage(event.content));
@@ -3671,6 +4203,7 @@ this.emit();
     }
 
     if (event.type === "error") {
+      touchRuntimeState("interrupted", true);
       run.lastError = event.error;
       run.messages.push(createErrorMessage(event.error));
       run.pendingAssistantMessageId = undefined;
@@ -3703,64 +4236,69 @@ this.emit();
     message.events = [...(message.events ?? []), event];
   }
 
+  private resolvePendingRequest(run: RunState, requestId: string, type: "approval_request" | "user_input_request"): void {
+    for (const message of [...run.messages].reverse()) {
+      const existing = [...(message.events ?? [])]
+        .reverse()
+        .find((item) => item.type === type && item.requestId === requestId && item.requestState === "live");
+      if (existing) {
+        existing.requestState = "resolved";
+        return;
+      }
+    }
+  }
+
+  private expirePendingInteractionEvents(messages: ChatMessage[]): ChatMessage[] {
+    return messages.map((message) => ({
+      ...message,
+      ...(message.events
+        ? {
+            events: message.events.map((event) =>
+              event.type === "approval_request" || event.type === "user_input_request"
+                ? event.requestState === "live"
+                  ? { ...event, requestState: "expired" as const }
+                  : event
+                : event,
+            ),
+          }
+        : {}),
+    }));
+  }
+
   private emit(): void {
     const snapshot = this.snapshot();
     for (const listener of this.listeners) listener(snapshot);
     this.schedulePersist();
   }
 
-  private restorePersistedState(raw: unknown): void {
-    if (!raw || typeof raw !== "object") return;
-    const record = raw as Record<string, unknown>;
+  private restorePersistedState(raw: unknown): boolean {
+    if (!this.isPersistedAppStateV4(raw)) return false;
+    const record = raw as PersistedAppStateV4 & Record<string, unknown>;
     if (Array.isArray(record.channels)) {
       this.channels = normalizeConfigChannelsForStorage(normalizeChannels(record.channels));
     }
-    if (record.version === 2) {
-      this.restorePersistedStateV2(record);
-      return;
-    }
-    this.restorePersistedStateV1(record);
-  }
 
-  private restorePersistedStateV1(record: Record<string, unknown>): void {
-    const chats = Array.isArray(record.chats)
-      ? record.chats.map((item) => this.restoreChatState(item)).filter((item): item is ChatState => Boolean(item))
-      : [];
-    this.installRestoredChats(chats, asOptionalString(record.activeChatId), asOptionalString(record.workDir));
-    this.installRestoredTasks([], undefined);
-    this.installRestoredTeams([], [], undefined, undefined);
-    this.restoreScheduledWorkflowStore(undefined);
-  }
-
-  private restorePersistedStateV2(record: Record<string, unknown>): void {
     const messagesByChat = new Map<string, ChatMessage[]>();
-    if (Array.isArray(record.messages)) {
-      for (const item of record.messages) {
-        if (!item || typeof item !== "object") continue;
-        const messageRecord = item as Record<string, unknown>;
-        const chatId = asOptionalString(messageRecord.chatId);
-        const message = this.restoreMessage(messageRecord);
-        if (!chatId || !message) continue;
-        const messages = messagesByChat.get(chatId) ?? [];
-        messages.push(message);
-        messagesByChat.set(chatId, messages);
-      }
+    for (const item of record.messages) {
+      const messageRecord = asRecord(item);
+      const chatId = asOptionalString(messageRecord?.chatId);
+      const message = messageRecord ? this.restoreMessage(messageRecord) : undefined;
+      if (!chatId || !message) return false;
+      const messages = messagesByChat.get(chatId) ?? [];
+      messages.push(message);
+      messagesByChat.set(chatId, messages);
     }
 
     const eventsByMessage = new Map<string, ChatEvent[]>();
-    if (Array.isArray(record.events)) {
-      for (const item of record.events) {
-        if (!item || typeof item !== "object") continue;
-        const eventRecord = item as Record<string, unknown>;
-        const messageId = asOptionalString(eventRecord.messageId);
-        const event = this.restoreEvent(eventRecord);
-        if (!messageId || !event) continue;
-        const events = eventsByMessage.get(messageId) ?? [];
-        events.push(event);
-        eventsByMessage.set(messageId, events);
-      }
+    for (const item of record.events) {
+      const eventRecord = asRecord(item);
+      const messageId = asOptionalString(eventRecord?.messageId);
+      const event = eventRecord ? this.restoreEvent(eventRecord) : undefined;
+      if (!messageId || !event) return false;
+      const events = eventsByMessage.get(messageId) ?? [];
+      events.push(event);
+      eventsByMessage.set(messageId, events);
     }
-
     for (const messages of messagesByChat.values()) {
       for (const message of messages) {
         const events = eventsByMessage.get(message.id);
@@ -3769,33 +4307,26 @@ this.emit();
     }
 
     const messagesByTask = new Map<string, ChatMessage[]>();
-    if (Array.isArray(record.taskMessages)) {
-      for (const item of record.taskMessages) {
-        if (!item || typeof item !== "object") continue;
-        const messageRecord = item as Record<string, unknown>;
-        const taskId = asOptionalString(messageRecord.taskId);
-        const message = this.restoreMessage(messageRecord);
-        if (!taskId || !message) continue;
-        const messages = messagesByTask.get(taskId) ?? [];
-        messages.push(message);
-        messagesByTask.set(taskId, messages);
-      }
+    for (const item of record.taskMessages ?? []) {
+      const messageRecord = asRecord(item);
+      const taskId = asOptionalString(messageRecord?.taskId);
+      const message = messageRecord ? this.restoreMessage(messageRecord) : undefined;
+      if (!taskId || !message) return false;
+      const messages = messagesByTask.get(taskId) ?? [];
+      messages.push(message);
+      messagesByTask.set(taskId, messages);
     }
 
     const taskEventsByMessage = new Map<string, ChatEvent[]>();
-    if (Array.isArray(record.taskEvents)) {
-      for (const item of record.taskEvents) {
-        if (!item || typeof item !== "object") continue;
-        const eventRecord = item as Record<string, unknown>;
-        const messageId = asOptionalString(eventRecord.messageId);
-        const event = this.restoreEvent(eventRecord);
-        if (!messageId || !event) continue;
-        const events = taskEventsByMessage.get(messageId) ?? [];
-        events.push(event);
-        taskEventsByMessage.set(messageId, events);
-      }
+    for (const item of record.taskEvents ?? []) {
+      const eventRecord = asRecord(item);
+      const messageId = asOptionalString(eventRecord?.messageId);
+      const event = eventRecord ? this.restoreEvent(eventRecord) : undefined;
+      if (!messageId || !event) return false;
+      const events = taskEventsByMessage.get(messageId) ?? [];
+      events.push(event);
+      taskEventsByMessage.set(messageId, events);
     }
-
     for (const messages of messagesByTask.values()) {
       for (const message of messages) {
         const events = taskEventsByMessage.get(message.id);
@@ -3805,45 +4336,73 @@ this.emit();
 
     this.installRestoredConfiguredAgents(Array.isArray(record.configuredAgents) ? record.configuredAgents : []);
 
-    const chats = Array.isArray(record.sessions)
-      ? record.sessions
-          .map((item) => {
-            if (!item || typeof item !== "object") return null;
-            const sessionRecord = item as Record<string, unknown>;
-            const chatId = asOptionalString(sessionRecord.id);
-            return this.restoreChatState({
-              ...sessionRecord,
-              messages: chatId ? messagesByChat.get(chatId) ?? [] : [],
-            });
-          })
-          .filter((item): item is ChatState => Boolean(item))
-      : [];
+    const chats: ChatState[] = [];
+    for (const item of record.sessions) {
+      const sessionRecord = asRecord(item);
+      const chatId = asOptionalString(sessionRecord?.id);
+      if (!sessionRecord || !chatId) return false;
+      const chat = this.restoreChatState({
+        ...sessionRecord,
+        messages: messagesByChat.get(chatId) ?? [],
+      });
+      if (!chat) return false;
+      chats.push(chat);
+    }
     this.installRestoredChats(chats, asOptionalString(record.activeChatId), asOptionalString(record.workDir));
 
-    const tasks = Array.isArray(record.tasks)
-      ? record.tasks
-          .map((item) => {
-            if (!item || typeof item !== "object") return null;
-            const taskRecord = item as Record<string, unknown>;
-            const taskId = asOptionalString(taskRecord.id);
-            return this.restoreTaskState({
-              ...taskRecord,
-              messages: taskId ? messagesByTask.get(taskId) ?? [] : [],
-            });
-          })
-          .filter((item): item is TaskState => Boolean(item))
-      : [];
+    const tasks: TaskState[] = [];
+    for (const item of record.tasks ?? []) {
+      const taskRecord = asRecord(item);
+      const taskId = asOptionalString(taskRecord?.id);
+      if (!taskRecord || !taskId) return false;
+      const task = this.restoreTaskState({
+        ...taskRecord,
+        messages: messagesByTask.get(taskId) ?? [],
+      });
+      if (!task) return false;
+      tasks.push(task);
+    }
     this.installRestoredTasks(tasks, asOptionalString(record.activeTaskId));
 
-    const teams = Array.isArray(record.teams)
-      ? record.teams.map((item) => this.restoreTeamState(item)).filter((item): item is AgentTeamState => Boolean(item))
-      : [];
-    const teamRuns = Array.isArray(record.teamRuns)
-      ? record.teamRuns.map((item) => this.restoreTeamRunState(item)).filter((item): item is TeamRunState => Boolean(item))
-      : [];
-    this.installRestoredTeams(teams, teamRuns, asOptionalString(record.activeTeamId), asOptionalString(record.activeTeamRunId));
-    this.restoreWorkflowStore(record.workflowStore, record.workflowDraft);
+    const teams = (record.teams ?? []).map((item) => this.restoreTeamState(item));
+    if (teams.some((item) => !item)) return false;
+    const teamRuns = (record.teamRuns ?? []).map((item) => this.restoreTeamRunState(item));
+    if (teamRuns.some((item) => !item)) return false;
+    this.installRestoredTeams(
+      teams.filter((item): item is AgentTeamState => Boolean(item)),
+      teamRuns.filter((item): item is TeamRunState => Boolean(item)),
+      asOptionalString(record.activeTeamId),
+      asOptionalString(record.activeTeamRunId),
+    );
+    if (!this.restoreWorkflowStore(record.workflowStore)) return false;
     this.restoreScheduledWorkflowStore(record.scheduledWorkflowStore);
+    return true;
+  }
+
+  private isPersistedAppStateV4(raw: unknown): raw is PersistedAppStateV4 {
+    const record = asRecord(raw);
+    return Boolean(
+      record
+      && record.version === 4
+      && typeof record.workDir === "string"
+      && Array.isArray(record.sessions)
+      && Array.isArray(record.messages)
+      && Array.isArray(record.events)
+      && Array.isArray(record.tasks)
+      && Array.isArray(record.taskMessages)
+      && Array.isArray(record.taskEvents)
+      && Array.isArray(record.teams)
+      && Array.isArray(record.teamRuns),
+    );
+  }
+
+  private reinitializePersistedState(): void {
+    this.installRestoredConfiguredAgents([]);
+    this.installRestoredChats([], undefined, undefined);
+    this.installRestoredTasks([], undefined);
+    this.installRestoredTeams([], [], undefined, undefined);
+    void this.restoreWorkflowStore(undefined);
+    this.restoreScheduledWorkflowStore(undefined);
   }
 
   private installRestoredConfiguredAgents(rawAgents: unknown[]): void {
@@ -3918,9 +4477,43 @@ this.emit();
     this.activeTeamRunId = activeTeamRunId && this.teamRuns.has(activeTeamRunId) ? activeTeamRunId : [...this.teamRuns.keys()][0];
   }
 
+  private runtimeSupportsInteractiveChat(runtimeAgentId: AgentId): boolean {
+    return this.selectExecutionMode(runtimeAgentId, "chat", "interactive") === "interactive";
+  }
+
+  private restoreRuntimeState(raw: unknown): ChatRuntimeSessionState | undefined {
+    const record = asRecord(raw);
+    if (!record || !isExecutionStyle(record.executionStyle) || !isRuntimeAttachmentState(record.attachmentState)) return undefined;
+    const capabilitiesRecord = asRecord(record.capabilities);
+    const capabilities = defaultRuntimeSessionCapabilities();
+    if (capabilitiesRecord) {
+      capabilities.supportsInProcessConversationResume = asBoolean(capabilitiesRecord.supportsInProcessConversationResume);
+      capabilities.supportsResumeAfterDetach = asBoolean(capabilitiesRecord.supportsResumeAfterDetach);
+      capabilities.supportsResumeAfterAppRestart = asBoolean(capabilitiesRecord.supportsResumeAfterAppRestart);
+      capabilities.supportsTurnResume = asBoolean(capabilitiesRecord.supportsTurnResume);
+      capabilities.supportsInterrupt = asBoolean(capabilitiesRecord.supportsInterrupt);
+      capabilities.supportsContinue = asBoolean(capabilitiesRecord.supportsContinue);
+      capabilities.supportsApprovalRequests = asBoolean(capabilitiesRecord.supportsApprovalRequests);
+      capabilities.supportsUserInputRequests = asBoolean(capabilitiesRecord.supportsUserInputRequests);
+    }
+    const restored: ChatRuntimeSessionState = {
+      executionStyle: record.executionStyle,
+      attachmentState: record.attachmentState,
+      attachmentGeneration: Math.max(0, Math.floor(asNumber(record.attachmentGeneration, 0))),
+      capabilities,
+    };
+    const activeTurnId = asOptionalString(record.activeTurnId);
+    if (activeTurnId) restored.activeTurnId = activeTurnId;
+    if (typeof record.lastMeaningfulActivityAt === "number") {
+      restored.lastMeaningfulActivityAt = record.lastMeaningfulActivityAt;
+    }
+    return restored;
+  }
+
   private restoreChatState(raw: unknown): ChatState | null {
     if (!raw || typeof raw !== "object") return null;
     const record = raw as Record<string, unknown>;
+    if ("sessionId" in record || "runtimeSession" in record) return null;
 
     const now = Date.now();
     const configuredAgent = this.configuredAgentOrDefault(asOptionalString(record.configuredAgentId));
@@ -3930,9 +4523,18 @@ this.emit();
       this.normalizeModelIdForConfiguredAgent(configuredAgent.id, asOptionalString(record.modelId) ?? configuredAgent.modelId),
       configuredAgent.name || "New Chat",
     );
+    const channelId = asOptionalString(record.channelId);
+    chat.channelId =
+      channelId && this.channelById(channelId)?.agentId === configuredAgent.runtimeAgentId
+        ? channelId
+        : undefined;
+    chat.modelId = this.normalizeModelIdForConfiguredAgent(
+      configuredAgent.id,
+      asOptionalString(record.modelId) ?? configuredAgent.modelId,
+      chat.channelId,
+    );
     chat.id = asOptionalString(record.id) ?? chat.id;
     chat.title = asOptionalString(record.title) ?? (configuredAgent.name || "New Chat");
-    chat.sessionId = asOptionalString(record.sessionId);
     chat.running = false;
     chat.pendingAssistantMessageId = undefined;
     chat.lastError = asOptionalString(record.lastError);
@@ -3941,13 +4543,28 @@ this.emit();
     const messages = Array.isArray(record.messages)
       ? record.messages.map((message) => this.restoreMessage(message)).filter((message): message is ChatMessage => Boolean(message))
       : [];
-    chat.messages = this.normalizeRestoredMessages(messages);
+    chat.messages = this.expirePendingInteractionEvents(this.normalizeRestoredMessages(messages));
+    const restoredRuntimeState = record.runtimeState === undefined ? undefined : this.restoreRuntimeState(record.runtimeState);
+    if (record.runtimeState !== undefined && !restoredRuntimeState) return null;
+    const restoredRuntimeConversation =
+      record.runtimeConversation === undefined ? undefined : this.runtimeRouter.restorePersistedConversation(record.runtimeConversation);
+    if (record.runtimeConversation !== undefined && !restoredRuntimeConversation) return null;
+    if (restoredRuntimeState && this.runtimeSupportsInteractiveChat(configuredAgent.runtimeAgentId)) {
+      chat.runtimeState = {
+        ...cloneRuntimeState(restoredRuntimeState),
+        attachmentState: "detached",
+        attachmentGeneration: 0,
+      };
+      delete chat.runtimeState.activeTurnId;
+    }
+    chat.runtimeConversation = restoredRuntimeConversation ? this.runtimeRouter.cloneConversation(restoredRuntimeConversation) : undefined;
     return chat;
   }
 
   private restoreTaskState(raw: unknown): TaskState | null {
     if (!raw || typeof raw !== "object") return null;
     const record = raw as Record<string, unknown>;
+    if ("sessionId" in record) return null;
     if (typeof record.prompt !== "string") return null;
 
     const configuredAgent = this.configuredAgentOrDefault(asOptionalString(record.configuredAgentId));
@@ -3961,7 +4578,6 @@ this.emit();
     );
     task.id = asOptionalString(record.id) ?? task.id;
     task.title = asOptionalString(record.title) ?? titleFromPrompt(record.prompt);
-    task.sessionId = asOptionalString(record.sessionId);
     task.progress = isTaskProgress(record.progress) ? record.progress : "todo";
     const status = isTaskRunStatus(record.status) ? record.status : "completed";
     task.status = status === "running" ? "failed" : status;
@@ -3974,6 +4590,10 @@ this.emit();
       ? record.messages.map((message) => this.restoreMessage(message)).filter((message): message is ChatMessage => Boolean(message))
       : [];
     task.messages = this.normalizeRestoredMessages(messages);
+    const restoredRuntimeConversation =
+      record.runtimeConversation === undefined ? undefined : this.runtimeRouter.restorePersistedConversation(record.runtimeConversation);
+    if (record.runtimeConversation !== undefined && !restoredRuntimeConversation) return null;
+    task.runtimeConversation = restoredRuntimeConversation ? this.runtimeRouter.cloneConversation(restoredRuntimeConversation) : undefined;
     return task;
   }
 
@@ -4056,33 +4676,30 @@ this.emit();
     };
   }
 
-  private restoreWorkflowStore(rawStore: unknown, legacyDraft: unknown): void {
+  private restoreWorkflowStore(rawStore: unknown): boolean {
     this.workflows.clear();
     this.workflowRuns.clear();
     this.activeWorkflowId = undefined;
 
     const storeRecord = asRecord(rawStore);
-    if (storeRecord) {
-      for (const item of asArray(storeRecord.workflows)) {
-        const workflow = this.restoreWorkflowDraft(item);
-        if (workflow) this.workflows.set(workflow.workflowId, workflow);
-      }
-      for (const item of asArray(storeRecord.runs)) {
-        const run = this.restoreWorkflowRun(item);
-        if (run) this.workflowRuns.set(run.runId, run);
-      }
-      const activeWorkflowId = asOptionalString(storeRecord.activeWorkflowId);
-      this.activeWorkflowId =
-        activeWorkflowId && this.workflows.has(activeWorkflowId)
-          ? activeWorkflowId
-          : [...this.workflows.values()].sort((left, right) => right.updatedAt - left.updatedAt)[0]?.workflowId;
-      return;
+    if (rawStore === undefined) return true;
+    if (!storeRecord) return false;
+    for (const item of asArray(storeRecord.workflows)) {
+      const workflow = this.restoreWorkflowDraft(item);
+      if (!workflow) return false;
+      this.workflows.set(workflow.workflowId, workflow);
     }
-
-    const workflow = this.restoreWorkflowDraft(legacyDraft);
-    if (!workflow) return;
-    this.workflows.set(workflow.workflowId, workflow);
-    this.activeWorkflowId = workflow.workflowId;
+    for (const item of asArray(storeRecord.runs)) {
+      const run = this.restoreWorkflowRun(item);
+      if (!run) return false;
+      this.workflowRuns.set(run.runId, run);
+    }
+    const activeWorkflowId = asOptionalString(storeRecord.activeWorkflowId);
+    this.activeWorkflowId =
+      activeWorkflowId && this.workflows.has(activeWorkflowId)
+        ? activeWorkflowId
+        : [...this.workflows.values()].sort((left, right) => right.updatedAt - left.updatedAt)[0]?.workflowId;
+    return true;
   }
 
   private restoreScheduledWorkflowStore(rawStore: unknown): void {
@@ -4173,9 +4790,13 @@ this.emit();
   private restoreWorkflowDraft(raw: unknown): WorkflowDraftState | undefined {
     const record = asRecord(raw);
     if (!record) return undefined;
+    if ("agentSessionId" in record) return undefined;
     const graph = this.restoreWorkflowGraph(record.graph);
     if (!graph) return undefined;
     const finalReport = asOptionalString(record.finalReport);
+    const restoredRuntimeConversation =
+      record.runtimeConversation === undefined ? undefined : this.runtimeRouter.restorePersistedConversation(record.runtimeConversation);
+    if (record.runtimeConversation !== undefined && !restoredRuntimeConversation) return undefined;
     return this.cloneWorkflowDraft({
       workflowId: asOptionalString(record.workflowId) ?? `wf_${randomUUID()}`,
       title: asOptionalString(record.title) ?? graph.title,
@@ -4207,7 +4828,7 @@ this.emit();
       contextDocument: asOptionalString(record.contextDocument) ?? "",
       ...(finalReport !== undefined ? { finalReport } : {}),
       runIds: asArray(record.runIds).map((item) => asOptionalString(item)).filter((item): item is string => Boolean(item)),
-      agentSessionId: asOptionalString(record.agentSessionId),
+      ...(restoredRuntimeConversation ? { runtimeConversation: restoredRuntimeConversation } : {}),
       createdAt: asNumber(record.createdAt, asNumber(record.updatedAt, Date.now())),
       updatedAt: asNumber(record.updatedAt, Date.now()),
     });
@@ -4403,6 +5024,10 @@ this.emit();
     if (name) event.name = name;
     if (isAgentId(record.fromAgentId)) event.fromAgentId = record.fromAgentId;
     if (isAgentId(record.toAgentId)) event.toAgentId = record.toAgentId;
+    const requestId = asOptionalString(record.requestId);
+    if (requestId) event.requestId = requestId;
+    if (isInteractionRequestState(record.requestState)) event.requestState = record.requestState;
+    if (isApprovalDecision(record.decision)) event.decision = record.decision;
     const metadata = asRecord(record.metadata);
     if (metadata) event.metadata = metadata;
     return event;
@@ -4442,7 +5067,7 @@ this.emit();
     }, PERSIST_DEBOUNCE_MS);
   }
 
-  private buildPersistedPayload(): PersistedAppStateV2 {
+  private buildPersistedPayload(): PersistedAppStateV4 {
     const sessions: PersistedChatSessionRecord[] = [];
     const messages: PersistedChatMessageRecord[] = [];
     const events: PersistedChatEventRecord[] = [];
@@ -4458,7 +5083,9 @@ this.emit();
         title: chat.title,
         configuredAgentId: chat.configuredAgentId,
         modelId: chat.modelId,
-        sessionId: chat.sessionId,
+        ...(chat.channelId ? { channelId: chat.channelId } : {}),
+        ...(chat.runtimeState ? { runtimeState: cloneRuntimeState(chat.runtimeState) } : {}),
+        ...(chat.runtimeConversation ? { runtimeConversation: this.runtimeRouter.cloneConversation(chat.runtimeConversation) } : {}),
         lastError: chat.lastError,
         createdAt: chat.createdAt,
         updatedAt: chat.updatedAt,
@@ -4492,7 +5119,7 @@ this.emit();
         workDir: task.workDir,
         status: task.status,
         progress: task.progress,
-        sessionId: task.sessionId,
+        ...(task.runtimeConversation ? { runtimeConversation: this.runtimeRouter.cloneConversation(task.runtimeConversation) } : {}),
         lastError: task.lastError,
         createdAt: task.createdAt,
         updatedAt: task.updatedAt,
@@ -4557,7 +5184,7 @@ this.emit();
     }
 
     return {
-      version: 2,
+      version: 4,
       activeChatId: this.activeChatId ?? null,
       activeTaskId: this.activeTaskId ?? null,
       activeTeamId: this.activeTeamId ?? null,

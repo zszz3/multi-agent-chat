@@ -35,7 +35,7 @@ import {
   withOptionalString,
 } from "./runtime-utils";
 
-const AGENTS: AgentId[] = ["codex", "claude", "api"];
+const AGENTS: AgentId[] = ["codex", "claude", "api", "hermes"];
 
 const CONFIG_TEXT = {
   zh: {

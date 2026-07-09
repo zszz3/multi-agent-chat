@@ -42,11 +42,16 @@ function sourcePathFor(filePath: string): string {
   return `src/shared/${filePath.replace(/^\.\//, "")}`;
 }
 
+function normalizeNewlines(markdown: string): string {
+  return markdown.replace(/\r\n/g, "\n");
+}
+
 function parseFrontmatter(markdown: string): Record<string, string> {
-  if (!markdown.startsWith("---\n")) return {};
-  const end = markdown.indexOf("\n---", 4);
+  const normalized = normalizeNewlines(markdown);
+  if (!normalized.startsWith("---\n")) return {};
+  const end = normalized.indexOf("\n---", 4);
   if (end === -1) return {};
-  const frontmatter = markdown.slice(4, end).split("\n");
+  const frontmatter = normalized.slice(4, end).split("\n");
   const values: Record<string, string> = {};
   for (const line of frontmatter) {
     const match = line.match(/^([A-Za-z0-9_-]+):\s*(.*)$/);
@@ -90,13 +95,14 @@ function orderedSkillEntries(): Array<[string, string]> {
 export function loadBundledSkillTemplates(): SkillTemplate[] {
   return orderedSkillEntries().map(([filePath, prompt]) => {
     const id = skillIdFromPath(filePath);
-    const frontmatter = parseFrontmatter(prompt);
+    const normalizedPrompt = normalizeNewlines(prompt);
+    const frontmatter = parseFrontmatter(normalizedPrompt);
     const metadata = metadataFor(id);
     const template: SkillTemplate = {
       id,
       name: frontmatter.name || id,
       description: frontmatter.description || "",
-      prompt,
+      prompt: normalizedPrompt,
       tags: metadata.tags ?? [id],
       sourceLabel: metadata.sourceLabel ?? "bundled skill",
       sourcePath: sourcePathFor(filePath),
@@ -104,7 +110,7 @@ export function loadBundledSkillTemplates(): SkillTemplate[] {
     const sourceUrl = metadata.sourceUrl;
     if (sourceUrl) template.sourceUrl = sourceUrl;
     const translationZh = skillTranslationFiles[`./bundled-skills/${id}/SKILL.zh.md`];
-    if (translationZh) template.translationZh = translationZh;
+    if (translationZh) template.translationZh = normalizeNewlines(translationZh);
     return template;
   });
 }

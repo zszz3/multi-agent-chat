@@ -1,4 +1,4 @@
-export type AgentId = "codex" | "claude" | "api";
+export type AgentId = "codex" | "claude" | "api" | "hermes";
 
 export interface AgentRuntime {
   id: AgentId;
@@ -183,14 +183,67 @@ export interface CodexDefaultConfig {
   plugins: AgentPluginConfig[] | null;
 }
 
+export type ExecutionStyle = "oneshot" | "interactive";
+export type RuntimeExecutionMode = ExecutionStyle;
+export type RuntimeContinuationPolicy = "fresh" | "resume-preferred" | "resume-required";
+
+export interface RuntimeConfig {
+  model: string;
+  [key: string]: unknown;
+}
+
+export interface RuntimeConversation {
+  runtimeId: AgentId;
+  codecVersion: string;
+  payload: unknown;
+}
+
+export interface RuntimeRequest {
+  runtimeId: AgentId;
+  executionMode: RuntimeExecutionMode;
+  continuationPolicy: RuntimeContinuationPolicy;
+  runtimeConfig: RuntimeConfig;
+  runtimeConversation?: RuntimeConversation;
+}
+
+export interface RuntimeResumeCapabilities {
+  supportsInProcessConversationResume: boolean;
+  supportsResumeAfterDetach: boolean;
+  supportsResumeAfterAppRestart: boolean;
+  supportsTurnResume: boolean;
+}
+
+export interface RuntimeInteractionCapabilities {
+  supportsInterrupt: boolean;
+  supportsContinue: boolean;
+  supportsApprovalRequests: boolean;
+  supportsUserInputRequests: boolean;
+}
+
+export type InteractionRequestState = "live" | "resolved" | "expired";
+export type ApprovalDecision = "approved" | "rejected";
+
+export interface ChatRuntimeSessionState {
+  executionStyle: ExecutionStyle;
+  attachmentState: "detached" | "idle" | "running" | "interrupted";
+  attachmentGeneration: number;
+  activeTurnId?: string;
+  lastMeaningfulActivityAt?: number;
+  capabilities: RuntimeResumeCapabilities & RuntimeInteractionCapabilities;
+}
+
 export type AgentEvent =
-  | { type: "session"; sessionId: string }
+  | { type: "runtime_conversation"; runtimeConversation: RuntimeConversation }
   | { type: "delta"; content: string }
   | { type: "meta"; content: string }
   | { type: "system"; content: string; metadata?: Record<string, unknown> }
   | { type: "tool_call"; content: string; name?: string; metadata?: Record<string, unknown> }
   | { type: "tool_result"; content: string; name?: string; metadata?: Record<string, unknown> }
   | { type: "handoff"; content: string; fromAgentId?: AgentId; toAgentId?: AgentId; metadata?: Record<string, unknown> }
+  | { type: "approval_request"; requestId: string; content: string; metadata?: Record<string, unknown> }
+  | { type: "approval_response"; requestId: string; decision: ApprovalDecision; content?: string; metadata?: Record<string, unknown> }
+  | { type: "user_input_request"; requestId: string; content: string; metadata?: Record<string, unknown> }
+  | { type: "user_input_response"; requestId: string; content: string; metadata?: Record<string, unknown> }
   | { type: "completed"; content?: string }
   | { type: "error"; error: string };
 
@@ -211,13 +264,26 @@ export interface ChatMessage {
 
 export interface ChatEvent {
   id: string;
-  type: "meta" | "system" | "tool_call" | "tool_result" | "handoff" | "error";
+  type:
+    | "meta"
+    | "system"
+    | "tool_call"
+    | "tool_result"
+    | "handoff"
+    | "approval_request"
+    | "approval_response"
+    | "user_input_request"
+    | "user_input_response"
+    | "error";
   content: string;
   timestamp: number;
   agentId?: AgentId;
   name?: string;
   fromAgentId?: AgentId;
   toAgentId?: AgentId;
+  requestId?: string;
+  requestState?: InteractionRequestState;
+  decision?: ApprovalDecision;
   metadata?: Record<string, unknown>;
 }
 
@@ -226,7 +292,9 @@ export interface ChatSession {
   title: string;
   configuredAgentId: string;
   modelId: string;
-  sessionId: string | undefined;
+  channelId?: string;
+  runtimeState?: ChatRuntimeSessionState;
+  runtimeConversation?: RuntimeConversation;
   running: boolean;
   messages: ChatMessage[];
   pendingAssistantMessageId: string | undefined;
@@ -248,7 +316,7 @@ export interface TaskRun {
   status: TaskRunStatus;
   progress: TaskProgress;
   running: boolean;
-  sessionId: string | undefined;
+  runtimeConversation?: RuntimeConversation;
   messages: ChatMessage[];
   pendingAssistantMessageId: string | undefined;
   lastError: string | undefined;
@@ -263,23 +331,21 @@ export interface RunTaskRequest {
   workDir?: string;
 }
 
-export interface WorkflowAgentRequest {
+export interface WorkflowAgentRequest extends RuntimeRequest {
   requestId?: string;
   prompt: string;
   configuredAgentId: string;
-  modelId?: string;
   workDir?: string;
-  sessionId?: string;
 }
 
 export interface WorkflowAgentResponse {
   content: string;
-  sessionId: string | undefined;
+  runtimeConversation?: RuntimeConversation;
 }
 
 export type WorkflowAgentEvent =
   | { requestId: string; type: "delta"; content: string }
-  | { requestId: string; type: "completed"; content: string; sessionId: string | undefined }
+  | { requestId: string; type: "completed"; content: string; runtimeConversation?: RuntimeConversation }
   | { requestId: string; type: "error"; error: string };
 
 export type AgentTeamMode = "pipeline" | "parallel" | "supervisor";
@@ -566,7 +632,7 @@ export interface WorkflowDraftState {
   contextDocument: string;
   finalReport?: string;
   runIds: string[];
-  agentSessionId: string | undefined;
+  runtimeConversation?: RuntimeConversation;
   createdAt: number;
   updatedAt: number;
 }
@@ -716,9 +782,41 @@ export interface CreateWorkflowRequest {
   contextDocument?: string;
   finalReport?: string;
   runIds?: string[];
-  agentSessionId?: string;
+  runtimeConversation?: RuntimeConversation;
   createdAt?: number;
   updatedAt?: number;
+}
+
+export interface CreateWorkflowDraftRequest {
+  title?: string;
+  configuredAgentId?: string;
+  modelId?: string;
+}
+
+export interface PatchWorkflowDraftRequest {
+  workflowId: string;
+  title?: string;
+  status?: WorkflowStatus;
+  configuredAgentId?: string;
+  modelId?: string;
+  objective?: string;
+  workDir?: string | null;
+  graph?: WorkflowGraph;
+  graphReady?: boolean;
+  messages?: WorkflowGrillMessage[];
+  reply?: string;
+  error?: string | null;
+  runProgress?: WorkflowRunProgressItem[];
+  runContextDocument?: string;
+  contextDocument?: string;
+  finalReport?: string | null;
+  runtimeConversation?: RuntimeConversation | null;
+  resetRunState?: boolean;
+}
+
+export interface SendWorkflowDraftReplyRequest {
+  workflowId: string;
+  reply: string;
 }
 
 export interface UpdateWorkflowRequest {
@@ -737,7 +835,7 @@ export interface UpdateWorkflowRequest {
   runContextDocument?: string;
   contextDocument?: string;
   finalReport?: string;
-  agentSessionId?: string;
+  runtimeConversation?: RuntimeConversation;
 }
 
 export interface AppendWorkflowContextRequest {

@@ -1,5 +1,5 @@
 import { type RefObject } from "react";
-import { CircleStop, Copy, Plus, Send, Wand2 } from "lucide-react";
+import { CircleStop, Plus, Send, Wand2 } from "lucide-react";
 import type { AgentChannel, AgentId, AgentRuntime, ChatMessage, ChatSession, ConfiguredAgent } from "../../../../shared/types";
 import { agentAccent, agentLabel } from "../../app/agents";
 import { shouldSendComposerKey } from "../../app/composer";
@@ -78,13 +78,12 @@ export function ChatPage({
             <span className={`agent-badge mini ${agentAccent(activeChatRuntimeId)}`} title={activeChatConfigTitle}>
               {activeChatConfiguredAgent?.name || agentLabel(activeChatRuntimeId)}
             </span>
-            {activeChat.sessionId ? (
-              <button className="chat-session-id" type="button" title="Copy session id" onClick={() => copySessionId(activeChat.sessionId!)}>
-                <Copy size={11} />
-                <span>{`session ${activeChat.sessionId}`}</span>
-              </button>
+            {activeChat.runtimeConversation ? (
+              <span className="chat-session-id" title="Runtime conversation linked">
+                Conversation linked
+              </span>
             ) : (
-              <span>No provider session yet</span>
+              <span>No provider conversation yet</span>
             )}
           </div>
         </div>
@@ -187,11 +186,6 @@ export function ChatPage({
       </section>
     </>
   );
-}
-
-function copySessionId(sessionId: string): void {
-  const write = globalThis.navigator?.clipboard?.writeText(sessionId);
-  if (write) void write.catch(() => undefined);
 }
 
 function CliMessage({ message, agentId, streaming = false }: { message: ChatMessage; agentId: AgentId; streaming?: boolean }) {

@@ -18,7 +18,14 @@
 
 - `index.ts`：Electron 启动、窗口创建、IPC 注册、本地服务启动
 - `agent-hub.ts`：应用状态中心和主要业务编排层
-- `agent-executor.ts`：Codex / Claude / API 的统一执行适配层
+- `agent-executor.ts`：薄 runtime driver registry 和 one-shot 执行桥
+- `agents/runtime-driver.ts`：共享 runtime capability 与 interactive session 契约
+- `agents/interactive-session-manager.ts`：interactive runtime 的按 chat 排队和 idle-detach 编排
+- `agents/codex-interactive-session.ts`：可复用的 Codex chat attachment
+- `agents/claude-agent-sdk.ts`：官方 Claude Agent SDK 的 one-shot 适配层
+- `agents/claude-agent-sdk-interactive.ts`：官方 Claude Agent SDK 的 streaming-input helper
+- `agents/claude-interactive-session.ts`：基于官方 SDK 的可复用 Claude chat attachment
+- `agents/claude-stream.ts`：共享 Claude 事件归一化 helper
 - `model-config.ts`：channel 归一化、配置导入导出、Codex 配置生成
 - `provider-balance.ts`：provider 余额查询
 - `scheduled-workflow-cloud.ts`：调度工作流的云端同步逻辑
@@ -56,6 +63,8 @@
 - 管理 configured agents 和 channels
 - 创建、切换、删除 chat
 - 发送 prompt，收集事件流，写回 chat session
+- 在应用重启后把 interactive chat 恢复成 `detached` 的安全状态
+- 统一协调 interactive session 的 idle sweep 与恢复路径
 - 创建、运行、停止 task
 - 创建和运行 team / team run
 - 管理 workflow store、workflow draft 和 workflow run
@@ -67,22 +76,28 @@
 
 ## 执行层
 
-执行统一入口是 `RuntimeAgentExecutorFactory`。
+执行层现在明确分成两种风格：
 
-它根据 runtime 选择不同后端：
+- `oneshot`：每次 task、workflow 或 stateless API 调用各起一次执行
+- `interactive`：每个逻辑 chat 背后维护一个可惰性附着的 runtime session
 
-- Codex：`CodexRpcClient`
-- Claude：`ClaudeRunner`
-- API：HTTP 请求
+选择边界仍然从 `RuntimeAgentExecutorFactory` 进入，但真正的 runtime 分发已经下沉到 driver registry。
 
-这一层的意义是把“执行一个 Agent”抽象成统一接口，让 chat、task、workflow 都能复用。
+当前后端形态是：
+
+- Codex：one-shot 和 interactive 都复用 `CodexRpcClient`，chat 复用由 `CodexInteractiveSession` 管理
+- Claude：one-shot 通过 `ClaudeAgentSdkAdapter`，interactive 通过 `ClaudeInteractiveSession` + `ClaudeAgentSdkInteractive`
+- API：直接 `fetch`，并保持 one-shot only
+
+`AgentHub` 仍然拥有 snapshot，以及应用自有 `runtimeState` / `runtimeConversation` 的持久化语义，但 interactive 进程的生命周期已经收敛到 `InteractiveSessionManager` 和 `src/main/agents/` 下的 runtime-specific session helper。
+在进入 `RuntimeRouter` 之前，main 层上游现在会显式构建 `runtimeId`、`executionMode`、`continuationPolicy`、`runtimeConfig.model` 这组 runtime 请求字段，而不是继续依赖通用 `sessionId` 语义或 runtime-native payload 解析。
 
 开发时要尽量保持这个边界：
 
-- 运行时差异留在执行层
-- 上层功能只关心 prompt、model、channel、事件流和 session
+- runtime 差异留在 driver / session / transport 层
+- 上层功能只关心 prompt、channel、`runtimeId`、`executionMode`、`continuationPolicy`、`runtimeConfig.model`、事件流，以及可选的 opaque `runtimeConversation`
 
-不要把 provider 特殊逻辑散落到 task、workflow、chat 的高层逻辑里。
+不要把 provider 或 runtime-specific 特殊逻辑散落到 task、workflow、chat 的高层逻辑里。
 
 ## IPC 设计
 
