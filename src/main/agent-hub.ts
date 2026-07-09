@@ -1,5 +1,5 @@
 import { randomUUID } from "node:crypto";
-import type { Dirent } from "node:fs";
+import { existsSync, type Dirent } from "node:fs";
 import { mkdir, readFile, readdir, rename, rm, writeFile } from "node:fs/promises";
 import os from "node:os";
 import path from "node:path";
@@ -128,7 +128,7 @@ const CODEX_CHAT_DEVELOPER_INSTRUCTIONS =
 const CODEX_TASK_DEVELOPER_INSTRUCTIONS =
   "You are executing a single local task from a lightweight desktop UI. Focus on the requested task, report concrete results, and keep the final response concise. User-visible tool activity is displayed separately by the UI.";
 const CODEX_WORKFLOW_DEVELOPER_INSTRUCTIONS =
-  "You are the workflow builder and main review agent for a lightweight desktop UI. During workflow planning, interview the user one question at a time, include a recommended answer with every question, and produce only workflowGraph.upsert code when the workflow graph is ready. During completed workflow review, do not produce workflowGraph.upsert; write a Markdown Final User Report for the same user conversation and stay ready for follow-up questions.";
+  "You are the workflow builder and main review agent for a lightweight desktop UI. During workflow planning, interview the user one question at a time and include a recommended answer with every question. When the workflow graph is ready, use the MCP workflow_create tool to create the editable workflow DAG. If workflow tools are unavailable, fall back to producing only workflowGraph.upsert code. During completed workflow review, do not create or upsert workflow graphs; write a Markdown Final User Report for the same user conversation and stay ready for follow-up questions.";
 const WORKFLOW_THINKING_MESSAGE = "Agent is thinking...";
 const PERSIST_DEBOUNCE_MS = 400;
 const WORKFLOW_AGENT_IDLE_TIMEOUT_MS = 10 * 60_000;
@@ -454,6 +454,90 @@ function asArray(value: unknown): unknown[] {
 
 function asBoolean(value: unknown): boolean {
   return value === true;
+}
+
+const WORKFLOW_TOOL_NAMES = new Set<CodexWorkflowToolName>([
+  "workflow_create",
+  "workflow_validate",
+  "workflow_context_append",
+]);
+
+function normalizeWorkflowToolName(value: unknown): CodexWorkflowToolName | undefined {
+  if (typeof value !== "string") return undefined;
+  const candidates = [
+    value,
+    ...value.split("__"),
+    ...value.split(/[.:/]/),
+  ];
+  for (const candidate of candidates) {
+    const normalized = candidate.trim().toLowerCase().replace(/-/g, "_");
+    if (WORKFLOW_TOOL_NAMES.has(normalized as CodexWorkflowToolName)) return normalized as CodexWorkflowToolName;
+  }
+  return undefined;
+}
+
+function findWorkflowToolName(value: unknown, depth = 0): CodexWorkflowToolName | undefined {
+  if (depth > 4) return undefined;
+  const record = asRecord(value);
+  if (!record) return undefined;
+  for (const key of ["name", "toolName", "tool_name", "serverToolName", "dynamicToolName"]) {
+    const name = normalizeWorkflowToolName(record[key]);
+    if (name) return name;
+  }
+  for (const nested of Object.values(record)) {
+    const name = findWorkflowToolName(nested, depth + 1);
+    if (name) return name;
+  }
+  return undefined;
+}
+
+function parseToolInputRecord(value: unknown): Record<string, unknown> | undefined {
+  const record = asRecord(value);
+  if (record) return record;
+  if (typeof value !== "string" || !value.trim()) return undefined;
+  try {
+    return asRecord(JSON.parse(value) as unknown);
+  } catch {
+    return undefined;
+  }
+}
+
+function looksLikeWorkflowToolInput(record: Record<string, unknown>): boolean {
+  return "graph" in record || "workflowId" in record || "report" in record || "handoff" in record;
+}
+
+function findWorkflowToolInput(value: unknown, depth = 0): Record<string, unknown> | undefined {
+  if (depth > 4) return undefined;
+  const record = asRecord(value);
+  if (!record) return undefined;
+  for (const key of ["arguments", "args", "input", "parameters", "params", "json"]) {
+    const parsed = parseToolInputRecord(record[key]);
+    if (parsed) return parsed;
+  }
+  if (looksLikeWorkflowToolInput(record)) return record;
+  for (const key of ["toolCall", "tool_call", "call", "request", "payload"]) {
+    const parsed = findWorkflowToolInput(record[key], depth + 1);
+    if (parsed) return parsed;
+  }
+  return undefined;
+}
+
+function asWorkflowGraph(value: unknown): WorkflowGraph | undefined {
+  const record = asRecord(value);
+  if (!record || !Array.isArray(record.nodes) || !Array.isArray(record.edges)) return undefined;
+  return record as unknown as WorkflowGraph;
+}
+
+function quoteTomlString(value: string): string {
+  return JSON.stringify(value);
+}
+
+function quoteTomlStringArray(values: string[]): string {
+  return `[${values.map(quoteTomlString).join(", ")}]`;
+}
+
+function firstExistingPath(paths: string[]): string | undefined {
+  return paths.find((candidate) => existsSync(candidate));
 }
 
 function defaultRuntimeSessionCapabilities(): RuntimeResumeCapabilities & RuntimeInteractionCapabilities {
@@ -1044,6 +1128,26 @@ interface ResolvedConfiguredAgent {
 }
 type Listener = (snapshot: AppSnapshot) => void;
 type AgentTestEmit = (event: Omit<AgentTestEvent, "agentId" | "timestamp">) => void;
+type CodexWorkflowToolName = "workflow_create" | "workflow_validate" | "workflow_context_append";
+
+interface CodexServerRequestOptions {
+  onWorkflowGraph?: (payload: { graph: WorkflowGraph; workflowId?: string; revision?: number }) => void;
+}
+
+interface CodexWorkflowToolCallResult {
+  handled: boolean;
+  success?: boolean;
+  payload?: Record<string, unknown>;
+  graph?: WorkflowGraph;
+  workflowId?: string;
+  revision?: number;
+}
+
+interface WorkflowMcpLaunchConfig {
+  command: string;
+  args: string[];
+  env: Record<string, string>;
+}
 
 export class AgentHub {
   private runtimes = new Map<AgentId, AgentRuntime>();
@@ -1073,6 +1177,7 @@ export class AgentHub {
   private storagePath: string | undefined = undefined;
   private sqliteStore: SqliteAppStore | undefined = undefined;
   private modelConfigPath: string | undefined = undefined;
+  private mcpBridgeDiscoveryPath: string | undefined = undefined;
   private persistTimer: ReturnType<typeof setTimeout> | undefined = undefined;
   private idleSweepTimer: ReturnType<typeof setInterval> | undefined = undefined;
   private persistInFlight: Promise<void> | undefined = undefined;
@@ -1101,9 +1206,11 @@ export class AgentHub {
       createRuntimeDriverRegistry({
         executables: this.executables,
         channelById: (channelId) => this.channelById(channelId),
-        respondToCodexServerRequest: (client, id, method, params) => {
-          this.respondToCodexServerRequest(client, id, method, params);
+        respondToCodexServerRequest: (client, id, method, params, options) => {
+          this.respondToCodexServerRequest(client, id, method, params, options);
         },
+        codexWorkflowExtraArgs: () => this.workflowMcpServerConfigArgs(),
+        claudeWorkflowMcpServers: () => this.workflowClaudeMcpServers(),
         runClaudeOneShot: (input) => this.claudeSdkAdapter.runOneShot(input),
         askWorkflowByRuntime: {
           api: (input) =>
@@ -1572,6 +1679,10 @@ export class AgentHub {
     this.emit();
   }
 
+  setMcpBridgeDiscoveryPath(discoveryPath: string | undefined): void {
+    this.mcpBridgeDiscoveryPath = discoveryPath;
+  }
+
   clearHistory(): void {
     for (const stop of this.activeStops.values()) void stop();
     this.activeStops.clear();
@@ -1742,9 +1853,9 @@ export class AgentHub {
         },
         (event) => this.handleWorkflowDraftAgentEvent(next.workflowId, event),
       );
-      this.completeWorkflowDraftRequest(next.workflowId, requestId, response.content, response.runtimeConversation);
+      this.completeWorkflowDraftRequest(this.workflowIdForActiveDraftRequest(requestId) ?? next.workflowId, requestId, response.content, response.runtimeConversation);
     } catch (error) {
-      this.failWorkflowDraftRequest(next.workflowId, requestId, error instanceof Error ? error.message : String(error));
+      this.failWorkflowDraftRequest(this.workflowIdForActiveDraftRequest(requestId) ?? next.workflowId, requestId, error instanceof Error ? error.message : String(error));
     }
 
     return this.snapshot();
@@ -2782,7 +2893,109 @@ export class AgentHub {
     return summaries;
   }
 
-  private respondToCodexServerRequest(client: CodexRpcClient, id: number, method: string, params: Record<string, unknown>): void {
+  private workflowMcpServerLaunchConfig(): WorkflowMcpLaunchConfig | undefined {
+    if (!this.mcpBridgeDiscoveryPath) return undefined;
+    const cwd = process.cwd();
+    const tsxCli = firstExistingPath([
+      path.join(cwd, "node_modules", "tsx", "dist", "cli.mjs"),
+      path.join(cwd, "node_modules", ".bin", process.platform === "win32" ? "tsx.cmd" : "tsx"),
+    ]);
+    const serverScript = firstExistingPath([
+      path.join(cwd, "src", "mcp", "server.ts"),
+      path.join(cwd, "out", "mcp", "server.js"),
+    ]);
+    if (!tsxCli || !serverScript) return undefined;
+    return {
+      command: "node",
+      args: [tsxCli, serverScript],
+      env: { MULTI_AGENT_CHAT_MCP_BRIDGE: this.mcpBridgeDiscoveryPath },
+    };
+  }
+
+  private workflowMcpServerConfigArgs(): string[] {
+    const launchConfig = this.workflowMcpServerLaunchConfig();
+    if (!launchConfig) return [];
+    return [
+      "-c",
+      `mcp_servers.multi_agent_chat.command=${quoteTomlString(launchConfig.command)}`,
+      "-c",
+      `mcp_servers.multi_agent_chat.args=${quoteTomlStringArray(launchConfig.args)}`,
+      "-c",
+      `mcp_servers.multi_agent_chat.env.MULTI_AGENT_CHAT_MCP_BRIDGE=${quoteTomlString(launchConfig.env.MULTI_AGENT_CHAT_MCP_BRIDGE ?? "")}`,
+    ];
+  }
+
+  private workflowClaudeMcpServers(): Record<string, { type: "stdio"; command: string; args: string[]; env: Record<string, string> }> | undefined {
+    const launchConfig = this.workflowMcpServerLaunchConfig();
+    if (!launchConfig) return undefined;
+    return {
+      multi_agent_chat: {
+        type: "stdio",
+        command: launchConfig.command,
+        args: launchConfig.args,
+        env: launchConfig.env,
+      },
+    };
+  }
+
+  private handleCodexWorkflowToolCall(params: Record<string, unknown>): CodexWorkflowToolCallResult {
+    const toolName = findWorkflowToolName(params);
+    if (!toolName) return { handled: false };
+    const input = findWorkflowToolInput(params) ?? {};
+    if (toolName === "workflow_create") {
+      const graph = asWorkflowGraph(input.graph);
+      const request: CreateWorkflowRequest = {
+        title: asOptionalString(input.title) ?? graph?.title ?? "",
+        objective: asOptionalString(input.objective) ?? graph?.objective ?? "",
+        graph: graph ?? ({ title: "", objective: "", nodes: [], edges: [] } as WorkflowGraph),
+        graphReady: true,
+      };
+      const configuredAgentId = asOptionalString(input.configuredAgentId);
+      if (configuredAgentId) request.configuredAgentId = configuredAgentId;
+      const modelId = asOptionalString(input.modelId);
+      if (modelId) request.modelId = modelId;
+      const workDir = asOptionalString(input.workDir);
+      if (workDir) request.workDir = workDir;
+      const result = this.createWorkflow(request);
+      const workflow = result.workflowId ? this.workflows.get(result.workflowId) : undefined;
+      const toolCallResult: CodexWorkflowToolCallResult = {
+        handled: true,
+        success: result.ok,
+        payload: (workflow ? { ...result, workflow } : result) as Record<string, unknown>,
+      };
+      if (result.ok && workflow) toolCallResult.graph = workflow.graph;
+      if (result.workflowId) toolCallResult.workflowId = result.workflowId;
+      if (result.revision !== undefined) toolCallResult.revision = result.revision;
+      return toolCallResult;
+    }
+    if (toolName === "workflow_validate") {
+      const workflowId = asOptionalString(input.workflowId) ?? "";
+      const workflow = workflowId ? this.workflows.get(workflowId) : undefined;
+      const graph = asWorkflowGraph(input.graph) ?? workflow?.graph;
+      if (!graph) return { handled: true, success: false, payload: { ok: false, error: "workflow_validate requires graph or workflowId." } };
+      const validation = validateWorkflowGraph(graph);
+      return {
+        handled: true,
+        success: validation.valid,
+        payload: { ok: validation.valid, validation, error: validation.valid ? undefined : validation.errors[0] },
+      };
+    }
+    const result = this.appendWorkflowContext({
+      workflowId: asOptionalString(input.workflowId) ?? "",
+      report: asOptionalString(input.report) ?? "",
+      handoff: asOptionalString(input.handoff) ?? "",
+      artifacts: Array.isArray(input.artifacts) ? (input.artifacts as WorkflowArtifactReference[]) : [],
+    });
+    return { handled: true, success: result.ok, payload: result as unknown as Record<string, unknown> };
+  }
+
+  private respondToCodexServerRequest(
+    client: CodexRpcClient,
+    id: number,
+    method: string,
+    params: Record<string, unknown>,
+    options: CodexServerRequestOptions = {},
+  ): void {
     if (method === "item/commandExecution/requestApproval" || method === "execCommandApproval") {
       client.respond(id, { decision: "accept" });
       return;
@@ -2800,6 +3013,21 @@ export class AgentHub {
       return;
     }
     if (method === "item/tool/call" || method === "mcp/dynamicToolCall") {
+      const toolResult = this.handleCodexWorkflowToolCall(params);
+      if (toolResult.handled) {
+        if (toolResult.graph && toolResult.workflowId) {
+          options.onWorkflowGraph?.({
+            graph: toolResult.graph,
+            workflowId: toolResult.workflowId,
+            ...(toolResult.revision !== undefined ? { revision: toolResult.revision } : {}),
+          });
+        }
+        client.respond(id, {
+          contentItems: [{ type: "inputText", text: JSON.stringify(toolResult.payload ?? { ok: toolResult.success !== false }) }],
+          success: toolResult.success !== false,
+        });
+        return;
+      }
       client.respond(id, {
         contentItems: [{ type: "inputText", text: "Multi Agent Chat does not handle Codex tool calls in the demo." }],
         success: false,
@@ -3211,6 +3439,53 @@ export class AgentHub {
     return messages.map((message) => (message.id === messageId ? { ...message, content } : message));
   }
 
+  private workflowIdForActiveDraftRequest(requestId: string): string | undefined {
+    for (const [workflowId, request] of this.activeWorkflowDraftRequests) {
+      if (request.requestId === requestId) return workflowId;
+    }
+    return undefined;
+  }
+
+  private handleWorkflowDraftGraphEvent(workflowId: string, event: Extract<WorkflowAgentEvent, { type: "workflow_graph" }>, activeRequest: ActiveWorkflowDraftRequest): void {
+    const targetWorkflowId = event.workflowId && this.workflows.has(event.workflowId) ? event.workflowId : workflowId;
+    const sourceWorkflow = this.workflows.get(workflowId);
+    const targetWorkflow = this.workflows.get(targetWorkflowId);
+    if (!targetWorkflow) return;
+
+    const content = event.content ?? "Workflow graph created.";
+    activeRequest.content = content;
+    const baseMessages = targetWorkflow.messages.length > 0 ? targetWorkflow.messages : sourceWorkflow?.messages ?? [];
+    const messages = baseMessages.some((message) => message.id === activeRequest.assistantMessageId)
+      ? this.replaceWorkflowDraftMessage(baseMessages, activeRequest.assistantMessageId, content)
+      : [...baseMessages, { id: activeRequest.assistantMessageId, role: "assistant" as const, content }];
+
+    if (targetWorkflowId !== workflowId) {
+      this.activeWorkflowDraftRequests.delete(workflowId);
+      this.activeWorkflowDraftRequests.set(targetWorkflowId, activeRequest);
+      this.workflows.delete(workflowId);
+    }
+
+    const { finalReport: _targetFinalReport, ...targetWithoutFinalReport } = targetWorkflow;
+    this.workflows.set(targetWorkflowId, this.cloneWorkflowDraft({
+      ...targetWithoutFinalReport,
+      title: event.graph.title || targetWorkflow.title,
+      status: targetWorkflow.status === "running" ? "running" : "draft",
+      revision: targetWorkflow.revision + 1,
+      objective: event.graph.objective || targetWorkflow.objective,
+      graph: this.cloneWorkflowGraph(event.graph),
+      graphReady: true,
+      messages,
+      reply: "",
+      error: undefined,
+      runProgress: [],
+      runContextDocument: "",
+      runIds: [],
+      updatedAt: Date.now(),
+    }));
+    this.activeWorkflowId = targetWorkflowId;
+    this.emit();
+  }
+
   private handleWorkflowDraftAgentEvent(workflowId: string, event: WorkflowAgentEvent): void {
     const activeRequest = this.activeWorkflowDraftRequests.get(workflowId);
     if (!activeRequest || activeRequest.requestId !== event.requestId) return;
@@ -3226,6 +3501,11 @@ export class AgentHub {
         updatedAt: Date.now(),
       }));
       this.emit();
+      return;
+    }
+
+    if (event.type === "workflow_graph") {
+      this.handleWorkflowDraftGraphEvent(workflowId, event, activeRequest);
       return;
     }
 

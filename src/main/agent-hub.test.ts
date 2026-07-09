@@ -377,6 +377,7 @@ const readline = require("readline");
 const callsPath = ${JSON.stringify(callsPath)};
 const counterPath = ${JSON.stringify(counterPath)};
 let threadIndex = 0;
+fs.appendFileSync(callsPath, JSON.stringify({ method: "process/argv", params: { args: process.argv.slice(2) } }) + "\\n");
 
 function write(message) {
   process.stdout.write(JSON.stringify(message) + "\\n");
@@ -433,6 +434,101 @@ rl.on("line", (line) => {
 });
 `;
   const executable = await writeNodeCliLauncher(dir, "codex-sequential-fake", script);
+  return { executable, callsPath };
+}
+
+async function writeWorkflowToolCodexFake(dir: string): Promise<{ executable: string; callsPath: string }> {
+  const callsPath = path.join(dir, "workflow-tool-calls.jsonl");
+  const graph = {
+    title: "MCP Planned Workflow",
+    objective: "Build a workflow through MCP",
+    nodes: [
+      { id: "start", kind: "start", title: "Start", prompt: "" },
+      { id: "plan", kind: "agent", title: "Plan", prompt: "Plan the work." },
+      { id: "end", kind: "end", title: "Done", prompt: "" },
+    ],
+    edges: [
+      { id: "start->plan", fromNodeId: "start", toNodeId: "plan" },
+      { id: "plan->end", fromNodeId: "plan", toNodeId: "end" },
+    ],
+  };
+  const script = `#!/usr/bin/env node
+const fs = require("fs");
+const readline = require("readline");
+
+const callsPath = ${JSON.stringify(callsPath)};
+const graph = ${JSON.stringify(graph)};
+let threadIndex = 0;
+fs.appendFileSync(callsPath, JSON.stringify({ method: "process/argv", params: { args: process.argv.slice(2) } }) + "\\n");
+
+function write(message) {
+  process.stdout.write(JSON.stringify(message) + "\\n");
+}
+
+function record(message) {
+  if (!message.method) return;
+  fs.appendFileSync(callsPath, JSON.stringify({ method: message.method, params: message.params ?? null }) + "\\n");
+}
+
+function completeAfterToolResponse(response) {
+  fs.appendFileSync(callsPath, JSON.stringify({ method: "client/toolResponse", params: response.result ?? response.error ?? null }) + "\\n");
+  write({
+    jsonrpc: "2.0",
+    method: "turn/completed",
+    params: {
+      turn: {
+        status: "completed",
+        type: "message",
+        role: "assistant",
+        content: [{ type: "output_text", text: "Workflow created through MCP." }]
+      }
+    }
+  });
+}
+
+const rl = readline.createInterface({ input: process.stdin });
+rl.on("line", (line) => {
+  if (!line.trim()) return;
+  const message = JSON.parse(line);
+  if (!message.method && message.id === 900) {
+    completeAfterToolResponse(message);
+    return;
+  }
+  record(message);
+  if (message.id === undefined) return;
+
+  if (message.method === "initialize") {
+    write({ jsonrpc: "2.0", id: message.id, result: {} });
+    return;
+  }
+  if (message.method === "thread/start") {
+    threadIndex += 1;
+    write({ jsonrpc: "2.0", id: message.id, result: { thread: { id: "thread-" + threadIndex } } });
+    return;
+  }
+  if (message.method === "turn/start") {
+    write({ jsonrpc: "2.0", id: message.id, result: { turn: { id: "turn-1" } } });
+    setTimeout(() => {
+      write({
+        jsonrpc: "2.0",
+        id: 900,
+        method: "mcp/dynamicToolCall",
+        params: {
+          name: "workflow_create",
+          arguments: {
+            title: graph.title,
+            objective: graph.objective,
+            graph
+          }
+        }
+      });
+    }, 10);
+    return;
+  }
+  write({ jsonrpc: "2.0", id: message.id, error: { code: -32601, message: "unknown method " + message.method } });
+});
+`;
+  const executable = await writeNodeCliLauncher(dir, "codex-workflow-tool-fake", script);
   return { executable, callsPath };
 }
 
@@ -2663,6 +2759,77 @@ fs.writeFileSync(${JSON.stringify(argsPath)}, process.argv.slice(2).join("\\n") 
     expect(calls.some((call) => call.method === "thread/start" && call.params.developerInstructions.includes("Final User Report"))).toBe(true);
   });
 
+  test("injects the local workflow MCP server into Codex workflow agent runs", async () => {
+    const dir = await mkdtemp(path.join(os.tmpdir(), "multi-agent-chat-workflow-mcp-"));
+    const fake = await writeSequentialCodexFake(dir);
+    const hub = new AgentHub({ codex: fake.executable, claude: "missing-claude-for-test" });
+    hub.setMcpBridgeDiscoveryPath(path.join(dir, "mcp-bridge.json"));
+    (hub as any).runtimes.set("codex", {
+      id: "codex",
+      label: "Codex",
+      command: fake.executable,
+      version: "test",
+      available: true,
+    });
+
+    await (hub as any).askWorkflowAgent({
+      requestId: "workflow-mcp-config-test",
+      prompt: "Use workflow tools when ready.",
+      configuredAgentId: "default-agent",
+      workDir: dir,
+      runtimeId: "codex",
+      executionMode: "oneshot",
+      continuationPolicy: "fresh",
+      runtimeConfig: { model: DEFAULT_MODEL_ID },
+    });
+
+    const calls = (await readFile(fake.callsPath, "utf8")).trim().split("\n").map((line) => JSON.parse(line) as any);
+    const argv = calls.find((call) => call.method === "process/argv")?.params.args as string[];
+    expect(argv.join("\n")).toContain("mcp_servers.multi_agent_chat.command");
+    expect(argv.join("\n")).toContain("mcp_servers.multi_agent_chat.args");
+    expect(argv.join("\n")).toContain("mcp_servers.multi_agent_chat.env.MULTI_AGENT_CHAT_MCP_BRIDGE");
+    expect(argv.join("\n")).toContain(path.join(dir, "mcp-bridge.json"));
+  });
+
+  test("creates and activates a workflow from Codex workflow_create tool calls", async () => {
+    const dir = await mkdtemp(path.join(os.tmpdir(), "multi-agent-chat-workflow-tool-"));
+    const fake = await writeWorkflowToolCodexFake(dir);
+    const hub = new AgentHub({ codex: fake.executable, claude: "missing-claude-for-test" });
+    (hub as any).runtimes.set("codex", {
+      id: "codex",
+      label: "Codex",
+      command: fake.executable,
+      version: "test",
+      available: true,
+    });
+    const created = hub.createWorkflowDraft({ configuredAgentId: "default-agent" });
+    const sourceWorkflowId = created.workflowDraft?.workflowId;
+    expect(sourceWorkflowId).toBeTruthy();
+
+    const next = await hub.sendWorkflowDraftReply({
+      workflowId: sourceWorkflowId!,
+      reply: "Create the workflow with the MCP workflow_create tool.",
+    });
+
+    expect(next.workflowDraft).toMatchObject({
+      workflowId: expect.stringMatching(/^wf_/),
+      title: "MCP Planned Workflow",
+      objective: "Build a workflow through MCP",
+      graphReady: true,
+      messages: [
+        { role: "user", content: "Create the workflow with the MCP workflow_create tool." },
+        { role: "assistant", content: "Workflow created through MCP." },
+      ],
+      runtimeConversation: runtimeConversation("codex", { native: { threadId: "thread-1" } }),
+    });
+    expect(next.workflowDraft?.workflowId).not.toBe(sourceWorkflowId);
+    expect(next.workflowDraft?.graph.nodes.map((node) => node.id)).toEqual(["start", "plan", "end"]);
+    expect(next.workflowStore.workflows.some((workflow) => workflow.workflowId === sourceWorkflowId)).toBe(false);
+
+    const calls = (await readFile(fake.callsPath, "utf8")).trim().split("\n").map((line) => JSON.parse(line) as any);
+    expect(calls.some((call) => call.method === "client/toolResponse" && call.params.success === true)).toBe(true);
+  });
+
   test("asks a Claude workflow agent through the official SDK one-shot path without resuming when continuationPolicy is fresh", async () => {
     const dir = await mkdtemp(path.join(os.tmpdir(), "multi-agent-chat-claude-workflow-sdk-"));
     const hub = new AgentHub({ codex: "missing-codex-for-test", claude: "missing-claude-for-test" });
@@ -2721,6 +2888,47 @@ fs.writeFileSync(${JSON.stringify(argsPath)}, process.argv.slice(2).join("\\n") 
       developerInstructions: expect.stringContaining("workflow builder"),
     });
     expect(oneShotInput?.resumeSessionId).toBeUndefined();
+  });
+
+  test("passes the local workflow MCP server to Claude workflow SDK runs", async () => {
+    const dir = await mkdtemp(path.join(os.tmpdir(), "multi-agent-chat-claude-workflow-mcp-"));
+    const hub = new AgentHub({ codex: "missing-codex-for-test", claude: "missing-claude-for-test" });
+    hub.setMcpBridgeDiscoveryPath(path.join(dir, "mcp-bridge.json"));
+    addConfiguredAgents(hub, [configuredAgent("claude-agent", { runtimeAgentId: "claude", name: "Claude Agent" })]);
+    (hub as any).runtimes.set("claude", {
+      id: "claude",
+      label: "Claude",
+      command: "claude",
+      version: "test",
+      available: true,
+    });
+
+    const runOneShot = vi.fn(async (input: any) => {
+      input.onEvent({ type: "delta", content: "workflow-sdk" });
+      input.onEvent({ type: "completed", content: "workflow-sdk" });
+    });
+    (hub as any).claudeSdkAdapter = { runOneShot };
+
+    await (hub as any).askWorkflowAgent({
+      requestId: "claude-workflow-mcp-test",
+      prompt: "Plan the repo",
+      configuredAgentId: "claude-agent",
+      workDir: dir,
+      runtimeId: "claude",
+      executionMode: "oneshot",
+      continuationPolicy: "fresh",
+      runtimeConfig: { model: DEFAULT_MODEL_ID },
+    });
+
+    const oneShotInput = runOneShot.mock.calls[0]?.[0];
+    expect(oneShotInput?.mcpServers).toMatchObject({
+      multi_agent_chat: {
+        type: "stdio",
+        command: "node",
+        env: { MULTI_AGENT_CHAT_MCP_BRIDGE: path.join(dir, "mcp-bridge.json") },
+      },
+    });
+    expect(oneShotInput?.mcpServers?.multi_agent_chat.args.join("\n")).toContain("src/mcp/server.ts");
   });
 
   test("resumes a Claude workflow agent through the official SDK one-shot path when continuationPolicy is resume-preferred", async () => {

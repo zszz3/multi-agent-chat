@@ -10,6 +10,7 @@ import type {
   RuntimeConversation,
   RuntimeRequest,
   WorkflowAgentResponse,
+  WorkflowGraph,
 } from "../shared/types";
 import { DEFAULT_MODEL_ID, runtimeModelId } from "../shared/models";
 import { codexEnvironmentForChannel } from "./agents/codex-env";
@@ -42,7 +43,7 @@ export { RuntimeDriverRegistry } from "./agents/runtime-driver";
 const HERMES_AGENT_TEST_PROMPT = "Reply with OK only.";
 const WORKFLOW_AGENT_IDLE_TIMEOUT_MS = 10 * 60_000;
 const WORKFLOW_DEVELOPER_INSTRUCTIONS =
-  "You are the workflow builder and main review agent for a lightweight desktop UI. During workflow planning, interview the user one question at a time, include a recommended answer with every question, and produce only workflowGraph.upsert code when the workflow graph is ready. During completed workflow review, do not produce workflowGraph.upsert; write a Markdown Final User Report for the same user conversation and stay ready for follow-up questions.";
+  "You are the workflow builder and main review agent for a lightweight desktop UI. During workflow planning, interview the user one question at a time and include a recommended answer with every question. When the workflow graph is ready, use the MCP workflow_create tool to create the editable workflow DAG. If workflow tools are unavailable, fall back to producing only workflowGraph.upsert code. During completed workflow review, do not create or upsert workflow graphs; write a Markdown Final User Report for the same user conversation and stay ready for follow-up questions.";
 
 export interface AgentExecutionContext extends RuntimeRequest {
   runId: string;
@@ -73,12 +74,21 @@ interface RuntimeAgentExecutorFactoryOptions {
     id: number,
     method: string,
     params: Record<string, unknown>,
+    options?: CodexServerRequestOptions,
   ) => void;
+  codexWorkflowExtraArgs?: () => string[];
+  claudeWorkflowMcpServers?: () => ClaudeAgentSdkRunInput["mcpServers"] | undefined;
   runClaudeOneShot?: (input: ClaudeAgentSdkRunInput) => Promise<void>;
   askWorkflowByRuntime?: Partial<Record<AgentId, (input: RuntimeWorkflowRequestContext) => Promise<WorkflowAgentResponse>>>;
   testChannelByRuntime?: Partial<Record<AgentId, (input: RuntimeChannelTestContext) => Promise<string>>>;
   deleteSessionArtifactsByRuntime?: Partial<Record<AgentId, (input: RuntimeSessionCleanupContext) => Promise<void>>>;
 }
+
+interface CodexServerRequestOptions {
+  onWorkflowGraph?: (payload: { graph: WorkflowGraph; workflowId?: string; revision?: number }) => void;
+}
+
+type WorkflowToolName = "workflow_create" | "workflow_validate" | "workflow_context_append";
 
 function modelFromRuntimeConfig(runtimeConfig: RuntimeRequest["runtimeConfig"]): string {
   return runtimeConfig.model;
@@ -154,6 +164,65 @@ function cloneClaudeRuntimeConversation(conversation: RuntimeConversation): Runt
 
 function support(surface: RuntimeSurfaceSupport["surface"], executionModes: RuntimeSurfaceSupport["executionModes"], continuationPolicies: RuntimeSurfaceSupport["continuationPolicies"]): RuntimeSurfaceSupport {
   return { surface, executionModes, continuationPolicies };
+}
+
+function asRecord(value: unknown): Record<string, unknown> | undefined {
+  return value && typeof value === "object" && !Array.isArray(value) ? (value as Record<string, unknown>) : undefined;
+}
+
+function asOptionalString(value: unknown): string | undefined {
+  return typeof value === "string" && value.trim() ? value.trim() : undefined;
+}
+
+const WORKFLOW_TOOL_NAMES = new Set<WorkflowToolName>([
+  "workflow_create",
+  "workflow_validate",
+  "workflow_context_append",
+]);
+
+function normalizeWorkflowToolName(value: unknown): WorkflowToolName | undefined {
+  if (typeof value !== "string") return undefined;
+  const candidates = [
+    value,
+    ...value.split("__"),
+    ...value.split(/[.:/]/),
+  ];
+  for (const candidate of candidates) {
+    const normalized = candidate.trim().toLowerCase().replace(/-/g, "_");
+    if (WORKFLOW_TOOL_NAMES.has(normalized as WorkflowToolName)) return normalized as WorkflowToolName;
+  }
+  return undefined;
+}
+
+function parseToolInputRecord(value: unknown): Record<string, unknown> | undefined {
+  const record = asRecord(value);
+  if (record) return record;
+  if (typeof value !== "string" || !value.trim()) return undefined;
+  try {
+    return asRecord(JSON.parse(value) as unknown);
+  } catch {
+    return undefined;
+  }
+}
+
+function asWorkflowGraph(value: unknown): WorkflowGraph | undefined {
+  const record = asRecord(value);
+  if (!record || !Array.isArray(record.nodes) || !Array.isArray(record.edges)) return undefined;
+  return record as unknown as WorkflowGraph;
+}
+
+function workflowGraphPayloadFromToolResult(content: string): { graph: WorkflowGraph; workflowId?: string; revision?: number } | undefined {
+  const payload = parseToolInputRecord(content);
+  if (!payload) return undefined;
+  const workflow = asRecord(payload.workflow);
+  const graph = asWorkflowGraph(workflow?.graph ?? payload.graph);
+  if (!graph) return undefined;
+  const result: { graph: WorkflowGraph; workflowId?: string; revision?: number } = { graph };
+  const workflowId = asOptionalString(payload.workflowId) ?? asOptionalString(workflow?.workflowId);
+  if (workflowId) result.workflowId = workflowId;
+  const revision = typeof payload.revision === "number" ? payload.revision : typeof workflow?.revision === "number" ? workflow.revision : undefined;
+  if (revision !== undefined) result.revision = revision;
+  return result;
 }
 
 function createWorkflowAgentTimeout(input: { timeoutMs: number; onTimeout: () => void }): { refresh: () => void; clear: () => void } {
@@ -326,7 +395,10 @@ async function runCodexWorkflow(
     client = new CodexRpcClient({
       executable,
       cwd: input.workDir,
-      extraArgs: codexAppServerConfigArgs(channel, modelFromRuntimeConfig(input.runtimeConfig)),
+      extraArgs: [
+        ...codexAppServerConfigArgs(channel, modelFromRuntimeConfig(input.runtimeConfig)),
+        ...(options.codexWorkflowExtraArgs?.() ?? []),
+      ],
       env: codexEnvironmentForChannel(channel),
       onEvent: (event) => {
         timeout?.refresh();
@@ -347,7 +419,21 @@ async function runCodexWorkflow(
         }
       },
       onRequest: (id, method, params) => {
-        if (client) options.respondToCodexServerRequest(client, id, method, params);
+        if (client) {
+          options.respondToCodexServerRequest(client, id, method, params, {
+            onWorkflowGraph: ({ graph, workflowId, revision }) => {
+              const workflowEvent = {
+                requestId: input.requestId,
+                type: "workflow_graph" as const,
+                graph,
+                content: "Workflow graph created through MCP.",
+                ...(workflowId ? { workflowId } : {}),
+                ...(revision !== undefined ? { revision } : {}),
+              };
+              input.onEvent?.(workflowEvent);
+            },
+          });
+        }
       },
       onExit: (_code, _signal, stderr) => {
         if (settled) return;
@@ -415,6 +501,8 @@ async function runClaudeWorkflow(
   let completedContent: string | undefined;
   let runtimeConversation = input.runtimeConversation ? cloneClaudeRuntimeConversation(input.runtimeConversation) : undefined;
   let errorMessage: string | undefined;
+  const emittedWorkflowIds = new Set<string>();
+  const mcpServers = options.claudeWorkflowMcpServers?.();
 
   try {
     await runClaudeOneShot({
@@ -423,10 +511,27 @@ async function runClaudeWorkflow(
       ...(sdkModel ? { modelId: sdkModel } : {}),
       developerInstructions: WORKFLOW_DEVELOPER_INSTRUCTIONS,
       ...(resumeSessionId ? { resumeSessionId } : {}),
+      ...(mcpServers ? { mcpServers } : {}),
       onEvent: (event) => {
         if (event.type === "delta") {
           content += event.content;
           input.onEvent?.({ requestId: input.requestId, type: "delta", content: event.content });
+          return;
+        }
+        if (event.type === "tool_result" && normalizeWorkflowToolName(event.name) === "workflow_create") {
+          const payload = workflowGraphPayloadFromToolResult(event.content);
+          if (!payload) return;
+          const dedupeKey = payload.workflowId ?? payload.graph.title;
+          if (emittedWorkflowIds.has(dedupeKey)) return;
+          emittedWorkflowIds.add(dedupeKey);
+          input.onEvent?.({
+            requestId: input.requestId,
+            type: "workflow_graph",
+            graph: payload.graph,
+            content: "Workflow graph created through MCP.",
+            ...(payload.workflowId ? { workflowId: payload.workflowId } : {}),
+            ...(payload.revision !== undefined ? { revision: payload.revision } : {}),
+          });
           return;
         }
         if (event.type === "completed" && event.content) {

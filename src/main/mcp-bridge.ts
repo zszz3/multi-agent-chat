@@ -299,7 +299,9 @@ async function routeWorkflowRequest(hub: AgentHub, route: string, body: unknown,
     if (configuredAgentId) request.configuredAgentId = configuredAgentId;
     const workDir = asString(record.workDir);
     if (workDir) request.workDir = workDir;
-    return hub.createWorkflow(request);
+    const result = hub.createWorkflow(request);
+    const workflow = result.workflowId ? hub.snapshot().workflowStore.workflows.find((item) => item.workflowId === result.workflowId) : undefined;
+    return workflow ? { ...result, workflow } : result;
   }
   if (route === "/mcp/workflow/update") {
     const request: UpdateWorkflowRequest = {

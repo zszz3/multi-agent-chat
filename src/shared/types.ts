@@ -345,6 +345,7 @@ export interface WorkflowAgentResponse {
 
 export type WorkflowAgentEvent =
   | { requestId: string; type: "delta"; content: string }
+  | { requestId: string; type: "workflow_graph"; graph: WorkflowGraph; workflowId?: string; revision?: number; content?: string }
   | { requestId: string; type: "completed"; content: string; runtimeConversation?: RuntimeConversation }
   | { requestId: string; type: "error"; error: string };
 

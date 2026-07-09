@@ -71,6 +71,28 @@ Software engineering resumes should emphasize:
 [Strong Action Verb] [specific task/project] using [tools/methods], resulting in [quantified outcome].
 ```
 
+### Technical Project Bullets
+
+For software projects, do not write a feature list. Each bullet should show:
+
+1. **Problem** - the non-trivial engineering challenge.
+2. **Approach** - the abstraction, architecture, algorithm, integration, or reliability mechanism used.
+3. **Result** - the measurable or concrete engineering outcome.
+
+Prefer engineering mechanisms over raw variable names or local implementation trivia. For example, write "source-file state snapshot with metadata version checks" instead of "mtime / size / indexed_at", unless those fields are directly relevant to the target role.
+
+Avoid weak verbs such as "supported", "integrated", or "implemented" unless followed by the concrete design. Good project bullets should explain *how* the capability works, not only that it exists.
+
+When possible, include an order-of-magnitude result:
+
+```text
+Optimized unchanged-session indexing with source-file state snapshots and metadata version checks, skipping parsing and full-text index rebuilds for unchanged sessions and reducing a 250-session reload from 2s+ to 10ms-level latency.
+```
+
+For projects involving many named products, mention product names once in the project description, then use generic terms such as "Agent", "source", "provider", or "target runtime" in bullets to avoid noisy repetition.
+
+Do not overclaim concurrency or distributed systems. If the implementation uses batched writes and yields the event loop, call it "batched processing" or "event-loop yielding", not "parallel indexing".
+
 ### Strong Action Verbs by Category
 
 | Category | Verbs |

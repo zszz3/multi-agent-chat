@@ -16,8 +16,9 @@ describe("workflow agent prompt", () => {
     expect(prompt).toContain("Ask exactly one question");
     expect(prompt).toContain("recommended answer");
     expect(prompt).toContain("DAG");
+    expect(prompt).toContain("workflow_create");
     expect(prompt).toContain("workflowGraph.upsert");
-    expect(prompt).toContain("Output code template");
+    expect(prompt).toContain("Fallback output code template");
     expect(prompt).toContain(WORKFLOW_GRAPH_CODE_TEMPLATE);
     expect(prompt).toContain("Workflow storage plan");
     expect(prompt).toContain("shared memory");

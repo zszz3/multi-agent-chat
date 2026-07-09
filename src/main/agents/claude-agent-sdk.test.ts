@@ -37,7 +37,7 @@ describe("ClaudeAgentSdkAdapter", () => {
     );
   });
 
-  test("passes Claude SDK query options for cwd, model, resume, and appended system instructions", async () => {
+  test("passes Claude SDK query options for cwd, model, resume, mcp servers, and appended system instructions", async () => {
     const runOneShot = vi.fn(async function* (input: { prompt: string; options?: Record<string, unknown> }) {
       yield { type: "result", subtype: "success", result: "done", session_id: "claude-session-2" };
       expect(input).toMatchObject({
@@ -46,6 +46,13 @@ describe("ClaudeAgentSdkAdapter", () => {
           cwd: "C:/repo",
           model: "claude-opus",
           resume: "claude-session-1",
+          mcpServers: {
+            multi_agent_chat: {
+              type: "stdio",
+              command: "node",
+              args: ["server.js"],
+            },
+          },
           systemPrompt: {
             type: "preset",
             preset: "claude_code",
@@ -62,6 +69,13 @@ describe("ClaudeAgentSdkAdapter", () => {
       modelId: "claude-opus",
       developerInstructions: "Keep answers short.",
       resumeSessionId: "claude-session-1",
+      mcpServers: {
+        multi_agent_chat: {
+          type: "stdio",
+          command: "node",
+          args: ["server.js"],
+        },
+      },
       onEvent: () => undefined,
     });
 
