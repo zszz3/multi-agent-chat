@@ -1,0 +1,101 @@
+import { mkdir, rename, writeFile } from "node:fs/promises";
+import path from "node:path";
+import type {
+  ScheduledWorkflowRun,
+  ScheduledWorkflowRunnerConfig,
+  ScheduledWorkflowRunnerStatus,
+  ScheduledWorkflowSchedule,
+  WorkflowDraftState,
+  WorkflowRunState,
+} from "../../../shared/types";
+import type { SqliteAppStore } from "./sqlite-store";
+import { restoreScheduledWorkflowStoreCollections, restoreWorkflowStoreCollections } from "../workflow/agent-hub-workflow-restore";
+import { asRecord, type PersistedAppStateV4 } from "./agent-hub-persistence";
+
+export function isPersistedAppStateV4(raw: unknown): raw is PersistedAppStateV4 {
+  const record = asRecord(raw);
+  return Boolean(
+    record
+      && record.version === 4
+      && typeof record.workDir === "string"
+      && Array.isArray(record.sessions)
+      && Array.isArray(record.messages)
+      && Array.isArray(record.events)
+      && Array.isArray(record.tasks)
+      && Array.isArray(record.taskMessages)
+      && Array.isArray(record.taskEvents)
+      && Array.isArray(record.teams)
+      && Array.isArray(record.teamRuns),
+  );
+}
+
+export function restoreWorkflowStoreState(input: {
+  rawStore: unknown;
+  workflowsTarget: Map<string, WorkflowDraftState>;
+  workflowRunsTarget: Map<string, WorkflowRunState>;
+  restoreWorkflowDraft: (raw: unknown) => WorkflowDraftState | undefined;
+  restoreWorkflowRun: (raw: unknown) => WorkflowRunState | undefined;
+}): { ok: boolean; activeWorkflowId: string | undefined } {
+  input.workflowsTarget.clear();
+  input.workflowRunsTarget.clear();
+
+  const restored = restoreWorkflowStoreCollections(input.rawStore, {
+    restoreWorkflowDraft: input.restoreWorkflowDraft,
+    restoreWorkflowRun: input.restoreWorkflowRun,
+  });
+  if (!restored) {
+    return { ok: false, activeWorkflowId: undefined };
+  }
+
+  for (const workflow of restored.workflows) input.workflowsTarget.set(workflow.workflowId, workflow);
+  for (const run of restored.runs) input.workflowRunsTarget.set(run.runId, run);
+  return {
+    ok: true,
+    activeWorkflowId: restored.activeWorkflowId,
+  };
+}
+
+export function restoreScheduledWorkflowStoreState(input: {
+  rawStore: unknown;
+  schedulesTarget: Map<string, ScheduledWorkflowSchedule>;
+  runsTarget: Map<string, ScheduledWorkflowRun>;
+  restoreRunnerConfig: (raw: unknown) => ScheduledWorkflowRunnerConfig | undefined;
+  restoreSchedule: (raw: unknown) => ScheduledWorkflowSchedule | undefined;
+  restoreRun: (raw: unknown) => ScheduledWorkflowRun | undefined;
+}): {
+  activeScheduledWorkflowId: string | undefined;
+  runnerConfig: ScheduledWorkflowRunnerConfig;
+  runnerStatus: ScheduledWorkflowRunnerStatus;
+} {
+  input.schedulesTarget.clear();
+  input.runsTarget.clear();
+
+  const restored = restoreScheduledWorkflowStoreCollections(input.rawStore, {
+    restoreRunnerConfig: input.restoreRunnerConfig,
+    restoreSchedule: input.restoreSchedule,
+    restoreRun: input.restoreRun,
+  });
+  for (const schedule of restored.schedules) input.schedulesTarget.set(schedule.scheduleId, schedule);
+  for (const run of restored.runs) input.runsTarget.set(run.runId, run);
+  return {
+    activeScheduledWorkflowId: restored.activeScheduleId,
+    runnerConfig: restored.runnerConfig,
+    runnerStatus: restored.runnerStatus,
+  };
+}
+
+export async function writePersistedPayload(input: {
+  storagePath: string;
+  sqliteStore: SqliteAppStore | undefined;
+  payload: PersistedAppStateV4;
+}): Promise<void> {
+  if (input.sqliteStore) {
+    await input.sqliteStore.save(input.payload);
+    return;
+  }
+
+  const tempPath = `${input.storagePath}.${process.pid}.${Date.now()}.tmp`;
+  await mkdir(path.dirname(input.storagePath), { recursive: true });
+  await writeFile(tempPath, `${JSON.stringify(input.payload, null, 2)}\n`, "utf8");
+  await rename(tempPath, input.storagePath);
+}

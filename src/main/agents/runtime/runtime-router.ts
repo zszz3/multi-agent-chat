@@ -1,4 +1,4 @@
-import type { AgentExecutionContext, AgentExecutor } from "../../hub/agent-executor";
+import type { AgentExecutionContext, AgentExecutor } from "../../hub/runtime/agent-executor";
 import type { AgentId, AgentRuntime, RuntimeContinuationPolicy, RuntimeConversation, RuntimeExecutionMode } from "../../../shared/types";
 import {
   RuntimeDriverRegistry,

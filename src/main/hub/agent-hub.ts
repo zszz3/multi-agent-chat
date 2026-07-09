@@ -1,6 +1,6 @@
 import { randomUUID } from "node:crypto";
 import type { Dirent } from "node:fs";
-import { mkdir, readFile, readdir, rename, rm, writeFile } from "node:fs/promises";
+import { readFile, readdir } from "node:fs/promises";
 import os from "node:os";
 import path from "node:path";
 import {
@@ -17,12 +17,6 @@ import type {
   AgentTestResult,
   AgentTeam,
   AgentTeamMember,
-  AgentTeamMode,
-  AgentWorkflowEdge,
-  AgentWorkflowNode,
-  AgentWorkflowNodeStatus,
-  AgentWorkflowPhase,
-  AgentWorkflowSnapshot,
   AgentWorkflowTarget,
   AckScheduledWorkflowEventRequest,
   AppSnapshot,
@@ -49,14 +43,11 @@ import type {
   RunWorkflowGraphRequest,
   RunAgentTeamRequest,
   RuntimeContinuationPolicy,
-  RuntimeInteractionCapabilities,
   RuntimeConversation,
   RuntimeExecutionMode,
-  RuntimeResumeCapabilities,
   RunTaskRequest,
   SendWorkflowDraftReplyRequest,
   StartWorkflowNodeRequest,
-  ScheduledWorkflowFrequency,
   ScheduledWorkflowOperationResult,
   ScheduledWorkflowRun,
   ScheduledWorkflowRunStatus,
@@ -68,11 +59,8 @@ import type {
   StartWorkflowRunRequest,
   TaskProgress,
   TaskRun,
-  TaskRunStatus,
   TeamRun,
-  TeamRunStatus,
   TeamRunStep,
-  TeamRunStepStatus,
   UpdateAgentTeamRequest,
   UpdateWorkflowRequest,
   WorkflowAgentRequest,
@@ -88,29 +76,27 @@ import type {
   WorkflowRunState,
   WorkflowStatus,
   WorkflowStoreState,
-  WorkflowRunNodeStatus,
   WorkflowRunProgressItem,
 } from "../../shared/types";
 import { normalizeConfigChannelsForStorage } from "../../shared/config-channels";
-import { DEFAULT_MODEL_ID, defaultChannelForAgent, defaultModelForAgent, isModelForChannel, runtimeModelId } from "../../shared/models";
+import { DEFAULT_MODEL_ID, defaultChannelForAgent, defaultModelForAgent, isModelForChannel } from "../../shared/models";
 import { buildWorkflowAgentPrompt } from "../../shared/workflow-agent";
-import { createWorkflowGraphFromObjective, parseWorkflowGraphUpsert, validateWorkflowGraph } from "../../shared/workflow-graph";
+import { createWorkflowGraphFromObjective, validateWorkflowGraph } from "../../shared/workflow-graph";
 import { defaultWorkflowWorkDirSuffix } from "../../shared/workflow-run";
 import { detectAgentRuntimes } from "../agents/runtime/detect";
 import { InteractiveSessionManager } from "../agents/runtime/interactive-session-manager";
 import { ClaudeAgentSdkAdapter } from "../agents/claude/claude-agent-sdk";
-import { CodexRpcClient } from "../agents/codex/codex-rpc";
-import { codexEnvironmentForChannel } from "../agents/codex/codex-env";
-import { claudeCliModelForChannel } from "../agents/claude/claude-env";
+import type { CodexRpcClient } from "../agents/codex/codex-rpc";
 import type { RuntimeCapabilities } from "../agents/runtime/runtime-capabilities";
 import type { InteractiveSessionContext, InteractiveSessionSnapshot, RuntimeDriverRegistry, RuntimeSurface } from "../agents/runtime/runtime-driver";
 import { RuntimeRouter } from "../agents/runtime/runtime-router";
-import { createRuntimeDriverRegistry, RuntimeAgentExecutorFactory, type AgentExecutorFactory } from "./agent-executor";
-import { execCli, spawnCli } from "../platform/cli-launcher";
+import { createRuntimeDriverRegistry, RuntimeAgentExecutorFactory, type AgentExecutorFactory } from "./runtime/agent-executor";
+import {
+  askApiWorkflowAgent as askApiWorkflowAgentValue,
+  testApiAgent as testApiAgentValue,
+} from "./api/agent-hub-api";
 import { queryProviderBalance, type ProviderBalanceQueryOptions } from "../channels/provider-balance";
 import {
-  codexAppServerConfigArgs,
-  codexHome,
   createDefaultChannels,
   generateCodexConfigs as writeCodexConfigs,
   importCodexConfigs as readCodexConfigs,
@@ -119,9 +105,138 @@ import {
   normalizeChannels,
   saveModelChannels as writeModelChannels,
 } from "../channels/model-config";
-import { SqliteAppStore } from "./sqlite-store";
+import { SqliteAppStore } from "./persisted/sqlite-store";
 import { resolveWorkDirFile } from "../platform/local-file-preview";
 import { WorkflowRuntime, type WorkflowRunStateUpdate } from "../workflows/workflow-runtime";
+import { ChatState, TaskState, AgentTeamState, TeamRunState } from "./state/agent-hub-state";
+import {
+  buildInteractiveChatContext as buildInteractiveChatContextValue,
+  dispatchInteractiveChatPrompt as dispatchInteractiveChatPromptValue,
+  runtimeStateFromCapabilities as runtimeStateFromCapabilitiesValue,
+  syncInteractiveChatState as syncInteractiveChatStateValue,
+} from "./chat/agent-hub-interactive";
+import {
+  asArray,
+  asNumber,
+  asOptionalString,
+  asRecord,
+  cloneRuntimeState,
+  isAgentTeamMode,
+  isAgentWorkflowTarget,
+  isApprovalDecision,
+  isChatEventType,
+  isInteractionRequestState,
+  isMessageRole,
+  isTaskProgress,
+  isWorkflowGraphNodeKind,
+  isWorkflowRunNodeStatus,
+} from "./persisted/agent-hub-persistence";
+import type { PersistedAppStateV4 } from "./persisted/agent-hub-persistence";
+import {
+  formatElapsed,
+  sanitizeTestError,
+} from "./runtime/agent-hub-cli";
+import {
+  testClaudeAgent as testClaudeAgentValue,
+  testCodexAgent as testCodexAgentValue,
+} from "./runtime/agent-hub-agent-test";
+import { runAgentExecution as runAgentExecutionValue } from "./runtime/agent-hub-runner";
+import { runRuntimeChannelTest as runRuntimeChannelTestValue } from "./runtime/agent-hub-runtime-test";
+import {
+  codexPluginSummaries,
+  respondToCodexServerRequest,
+} from "./codex/agent-hub-codex-app";
+import {
+  agentLabel,
+  cloneAgentChannel,
+  createAssistantMessage,
+  createErrorMessage,
+  createUserMessage,
+  hasAgentConversationMessages,
+  titleFromPrompt,
+} from "./chat/agent-hub-ui";
+import { buildWorkflowSnapshot, cloneTeamMember } from "./team/agent-team-workflow";
+import {
+  beginTeamRunStep as beginTeamRunStepValue,
+  composeTeamStepPrompt as composeTeamStepPromptValue,
+  failTeamStepFromTask as failTeamStepFromTaskValue,
+  finishTeamStepFromTask as finishTeamStepFromTaskValue,
+} from "./team/agent-hub-team-run";
+import {
+  cloneChannels,
+  serializeChat,
+  serializeTask,
+  serializeTeam,
+  serializeTeamRun,
+} from "./state/agent-hub-snapshot";
+import {
+  restoreWorkflowGraph,
+} from "./state/agent-hub-restore";
+import {
+  restoreChatState as restoreChatStateValue,
+  restoreConfiguredAgentState,
+  restoreRuntimeState as restoreRuntimeStateValue,
+  restoreTaskState as restoreTaskStateValue,
+  restoreTeamRunState as restoreTeamRunStateValue,
+  restoreTeamRunStep as restoreTeamRunStepValue,
+  restoreTeamState as restoreTeamStateValue,
+} from "./persisted/agent-hub-state-restore";
+import { buildPersistedPayload } from "./persisted/agent-hub-persisted-payload";
+import {
+  isPersistedAppStateV4 as isPersistedAppStateV4Value,
+  restoreScheduledWorkflowStoreState as restoreScheduledWorkflowStoreStateValue,
+  restoreWorkflowStoreState as restoreWorkflowStoreStateValue,
+  writePersistedPayload,
+} from "./persisted/agent-hub-persisted-store";
+import {
+  installRestoredChats as installRestoredChatsValue,
+  installRestoredTasks as installRestoredTasksValue,
+  installRestoredTeams as installRestoredTeamsValue,
+  restorePersistedCollections,
+} from "./persisted/agent-hub-persisted-restore";
+import {
+  appendEventToAssistant as appendEventToAssistantValue,
+  expirePendingInteractionEvents as expirePendingInteractionEventsValue,
+  handleAgentEvent as handleAgentEventValue,
+  markRunExited as markRunExitedValue,
+  markRunFailed as markRunFailedValue,
+  resolvePendingRequest as resolvePendingRequestValue,
+} from "./chat/agent-hub-run-events";
+import {
+  runSlashCommand as runSlashCommandValue,
+  withCodexAppServer as withCodexAppServerValue,
+  type ResolvedConfiguredAgentForSlash,
+} from "./codex/agent-hub-slash";
+import {
+  restoreScheduledWorkflowRunnerConfig as restoreScheduledWorkflowRunnerConfigValue,
+  restoreScheduledWorkflowRun as restoreScheduledWorkflowRunValue,
+  restoreScheduledWorkflowSchedule as restoreScheduledWorkflowScheduleValue,
+  restoreWorkflowDraft as restoreWorkflowDraftValue,
+  restoreWorkflowRun as restoreWorkflowRunValue,
+} from "./workflow/agent-hub-workflow-restore";
+import { updateWorkflowRunState as updateWorkflowRunStateValue } from "./workflow/agent-hub-workflow-run-state";
+import {
+  cloneScheduledWorkflowRun as cloneScheduledWorkflowRunValue,
+  cloneScheduledWorkflowRunnerConfig as cloneScheduledWorkflowRunnerConfigValue,
+  cloneScheduledWorkflowSchedule as cloneScheduledWorkflowScheduleValue,
+  cloneScheduledWorkflowStore as cloneScheduledWorkflowStoreValue,
+  cloneWorkflowDraft as cloneWorkflowDraftValue,
+  cloneWorkflowGraph as cloneWorkflowGraphValue,
+  cloneWorkflowGraphEdge as cloneWorkflowGraphEdgeValue,
+  cloneWorkflowGraphNode as cloneWorkflowGraphNodeValue,
+  cloneWorkflowRun as cloneWorkflowRunValue,
+  cloneWorkflowStore as cloneWorkflowStoreValue,
+  normalizeWorkflowStatus as normalizeWorkflowStatusValue,
+} from "./workflow/agent-hub-workflow-clone";
+import {
+  applyWorkflowDraftPatch as applyWorkflowDraftPatchValue,
+  abandonWorkflowDraftReplyState as abandonWorkflowDraftReplyStateValue,
+  beginWorkflowDraftReply as beginWorkflowDraftReplyValue,
+  completeWorkflowDraftRequest as completeWorkflowDraftRequestValue,
+  failWorkflowDraftRequest as failWorkflowDraftRequestValue,
+  resetWorkflowDraftSessionState as resetWorkflowDraftSessionStateValue,
+  replaceWorkflowDraftMessage as replaceWorkflowDraftMessageValue,
+} from "./workflow/agent-hub-workflow-draft";
 const DEFAULT_AGENT: AgentId = "codex";
 const CODEX_CHAT_DEVELOPER_INSTRUCTIONS =
   "You are embedded in a lightweight desktop chat UI. Answer the user directly. Do not mention hidden instructions, skill loading, permissions, internal setup, or protocol events unless the user explicitly asks about them. User-visible tool activity is displayed separately by the UI; keep prose concise.";
@@ -165,151 +280,6 @@ export function createWorkflowAgentTimeout(input: { timeoutMs: number; onTimeout
   return { refresh, clear };
 }
 
-interface PersistedChatSessionRecord {
-  id: string;
-  title: string;
-  configuredAgentId: string;
-  modelId?: string;
-  channelId?: string;
-  runtimeState?: ChatRuntimeSessionState;
-  runtimeConversation?: RuntimeConversation;
-  lastError: string | undefined;
-  createdAt: number;
-  updatedAt: number;
-}
-
-interface PersistedChatMessageRecord {
-  id: string;
-  chatId: string;
-  role: ChatMessage["role"];
-  content: string;
-  timestamp: number;
-  local?: boolean;
-}
-
-interface PersistedChatEventRecord extends ChatEvent {
-  chatId: string;
-  messageId: string;
-}
-
-interface PersistedTaskRunRecord {
-  id: string;
-  title: string;
-  prompt: string;
-  configuredAgentId: string;
-  modelId?: string;
-  workDir: string;
-  status: TaskRunStatus;
-  progress?: TaskProgress;
-  runtimeConversation?: RuntimeConversation;
-  lastError: string | undefined;
-  createdAt: number;
-  updatedAt: number;
-}
-
-interface PersistedTaskMessageRecord {
-  id: string;
-  taskId: string;
-  role: ChatMessage["role"];
-  content: string;
-  timestamp: number;
-  local?: boolean;
-}
-
-interface PersistedTaskEventRecord extends ChatEvent {
-  taskId: string;
-  messageId: string;
-}
-
-interface PersistedAgentTeamRecord {
-  id: string;
-  name: string;
-  mode: AgentTeamMode;
-  sharedContext: string;
-  members: AgentTeamMember[];
-  workflow?: AgentWorkflowSnapshot;
-  createdAt: number;
-  updatedAt: number;
-}
-
-interface PersistedTeamRunRecord {
-  id: string;
-  teamId: string;
-  teamName: string;
-  title: string;
-  prompt: string;
-  membersSnapshot?: AgentTeamMember[];
-  target: AgentWorkflowTarget | undefined;
-  mode: AgentTeamMode;
-  status: TeamRunStatus;
-  currentStepIndex: number;
-  workDir: string;
-  sharedContextSnapshot: string;
-  workflow?: AgentWorkflowSnapshot;
-  steps: TeamRunStep[];
-  lastError: string | undefined;
-  createdAt: number;
-  updatedAt: number;
-}
-
-interface PersistedAppStateV4 {
-  version: 4;
-  activeChatId: string | null;
-  activeTaskId?: string | null;
-  activeTeamId?: string | null;
-  activeTeamRunId?: string | null;
-  workDir: string;
-  sessions: PersistedChatSessionRecord[];
-  messages: PersistedChatMessageRecord[];
-  events: PersistedChatEventRecord[];
-  tasks?: PersistedTaskRunRecord[];
-  taskMessages?: PersistedTaskMessageRecord[];
-  taskEvents?: PersistedTaskEventRecord[];
-  teams?: PersistedAgentTeamRecord[];
-  teamRuns?: PersistedTeamRunRecord[];
-  workflowStore?: WorkflowStoreState;
-  workflowDraft?: WorkflowDraftState;
-  scheduledWorkflowStore?: ScheduledWorkflowStoreState;
-  channels?: AgentChannel[];
-  configuredAgents?: ConfiguredAgent[];
-}
-
-function createAssistantMessage(content = "", local = false): ChatMessage {
-  return {
-    id: randomUUID(),
-    role: "assistant",
-    content,
-    timestamp: Date.now(),
-    ...(local ? { local: true } : {}),
-  };
-}
-
-function createUserMessage(content: string, local = false): ChatMessage {
-  return {
-    id: randomUUID(),
-    role: "user",
-    content,
-    timestamp: Date.now(),
-    ...(local ? { local: true } : {}),
-  };
-}
-
-function createErrorMessage(content: string): ChatMessage {
-  return {
-    id: randomUUID(),
-    role: "error",
-    content,
-    timestamp: Date.now(),
-  };
-}
-
-function defaultTitle(agentId: AgentId): string {
-  if (agentId === "codex") return "New Codex chat";
-  if (agentId === "claude") return "New Claude chat";
-  if (agentId === "hermes") return "New Hermes chat";
-  return "New API chat";
-}
-
 function createDefaultConfiguredAgent(channels: AgentChannel[], now = Date.now()): ConfiguredAgent {
   const runtimeAgentId = DEFAULT_AGENT;
   const channelId = defaultChannelForAgent(runtimeAgentId, channels);
@@ -324,713 +294,6 @@ function createDefaultConfiguredAgent(channels: AgentChannel[], now = Date.now()
     createdAt: now,
     updatedAt: now,
   };
-}
-
-function titleFromPrompt(prompt: string): string {
-  const oneLine = prompt.replace(/\s+/g, " ").trim();
-  if (!oneLine) return "New chat";
-  return oneLine.length > 56 ? `${oneLine.slice(0, 56)}...` : oneLine;
-}
-
-function isAgentId(value: unknown): value is AgentId {
-  return value === "codex" || value === "claude" || value === "api" || value === "hermes";
-}
-
-function isMessageRole(value: unknown): value is ChatMessage["role"] {
-  return value === "user" || value === "assistant" || value === "error" || value === "meta";
-}
-
-function isChatEventType(value: unknown): value is ChatEvent["type"] {
-  return (
-    value === "meta" ||
-    value === "system" ||
-    value === "tool_call" ||
-    value === "tool_result" ||
-    value === "handoff" ||
-    value === "approval_request" ||
-    value === "approval_response" ||
-    value === "user_input_request" ||
-    value === "user_input_response" ||
-    value === "error"
-  );
-}
-
-function isInteractionRequestState(value: unknown): value is "live" | "resolved" | "expired" {
-  return value === "live" || value === "resolved" || value === "expired";
-}
-
-function isApprovalDecision(value: unknown): value is "approved" | "rejected" {
-  return value === "approved" || value === "rejected";
-}
-
-function isTaskRunStatus(value: unknown): value is TaskRunStatus {
-  return value === "queued" || value === "running" || value === "completed" || value === "failed" || value === "stopped";
-}
-
-function isTaskProgress(value: unknown): value is TaskProgress {
-  return value === "backlog" || value === "todo" || value === "in_progress" || value === "in_review" || value === "done";
-}
-
-function isExecutionStyle(value: unknown): value is ChatRuntimeSessionState["executionStyle"] {
-  return value === "oneshot" || value === "interactive";
-}
-
-function isRuntimeAttachmentState(value: unknown): value is ChatRuntimeSessionState["attachmentState"] {
-  return value === "detached" || value === "idle" || value === "running" || value === "interrupted";
-}
-
-function isAgentTeamMode(value: unknown): value is AgentTeamMode {
-  return value === "pipeline" || value === "parallel" || value === "supervisor";
-}
-
-function isWorkflowGraphNodeKind(value: unknown): value is WorkflowGraphNode["kind"] {
-  return value === "start" || value === "agent" || value === "end";
-}
-
-function isWorkflowGrillMessageRole(value: unknown): value is WorkflowDraftState["messages"][number]["role"] {
-  return value === "assistant" || value === "user";
-}
-
-function isWorkflowRunNodeStatus(value: unknown): value is WorkflowRunNodeStatus {
-  return value === "queued" || value === "running" || value === "completed" || value === "failed";
-}
-
-function isScheduledWorkflowRunStatus(value: unknown): value is ScheduledWorkflowRunStatus {
-  return value === "queued" || value === "running" || value === "completed" || value === "failed" || value === "skipped";
-}
-
-function normalizeScheduledWorkflowFrequency(value: unknown): ScheduledWorkflowFrequency {
-  return value === "weekly" || value === "monthly" ? value : "daily";
-}
-
-function normalizeScheduledWorkflowTimeOfDay(value: unknown): string {
-  const raw = asOptionalString(value)?.trim();
-  return raw && /^\d{2}:\d{2}$/.test(raw) ? raw : DEFAULT_SCHEDULED_WORKFLOW_TIME_OF_DAY;
-}
-
-function normalizeScheduledWorkflowWeekdays(value: unknown): number[] | undefined {
-  if (!Array.isArray(value)) return undefined;
-  const days = [...new Set(value.filter((day): day is number => Number.isInteger(day) && day >= 0 && day <= 6))];
-  return days.length > 0 ? days : undefined;
-}
-
-function normalizeScheduledWorkflowDayOfMonth(value: unknown): number | undefined {
-  return typeof value === "number" && Number.isInteger(value) ? Math.min(31, Math.max(1, value)) : undefined;
-}
-
-function isAgentWorkflowTarget(value: unknown): value is AgentWorkflowTarget {
-  if (!value || typeof value !== "object") return false;
-  const record = value as Partial<AgentWorkflowTarget>;
-  return (
-    (record.kind === "workspace" || record.kind === "task" || record.kind === "custom") &&
-    typeof record.label === "string" &&
-    typeof record.value === "string"
-  );
-}
-
-function isTeamRunStatus(value: unknown): value is TeamRunStatus {
-  return value === "queued" || value === "running" || value === "completed" || value === "failed" || value === "stopped";
-}
-
-function isTeamRunStepStatus(value: unknown): value is TeamRunStepStatus {
-  return value === "queued" || value === "running" || value === "completed" || value === "failed" || value === "stopped";
-}
-
-function asNumber(value: unknown, fallback: number): number {
-  return typeof value === "number" && Number.isFinite(value) ? value : fallback;
-}
-
-function asOptionalString(value: unknown): string | undefined {
-  return typeof value === "string" ? value : undefined;
-}
-
-function asRecord(value: unknown): Record<string, unknown> | undefined {
-  return value && typeof value === "object" && !Array.isArray(value) ? (value as Record<string, unknown>) : undefined;
-}
-
-function asArray(value: unknown): unknown[] {
-  return Array.isArray(value) ? value : [];
-}
-
-function asBoolean(value: unknown): boolean {
-  return value === true;
-}
-
-function defaultRuntimeSessionCapabilities(): RuntimeResumeCapabilities & RuntimeInteractionCapabilities {
-  return {
-    supportsInProcessConversationResume: true,
-    supportsResumeAfterDetach: false,
-    supportsResumeAfterAppRestart: false,
-    supportsTurnResume: false,
-    supportsInterrupt: true,
-    supportsContinue: true,
-    supportsApprovalRequests: false,
-    supportsUserInputRequests: false,
-  };
-}
-
-function cloneRuntimeState(runtimeSession: ChatRuntimeSessionState): ChatRuntimeSessionState {
-  return {
-    executionStyle: runtimeSession.executionStyle,
-    attachmentState: runtimeSession.attachmentState,
-    attachmentGeneration: runtimeSession.attachmentGeneration,
-    ...(runtimeSession.activeTurnId !== undefined ? { activeTurnId: runtimeSession.activeTurnId } : {}),
-    ...(runtimeSession.lastMeaningfulActivityAt !== undefined
-      ? { lastMeaningfulActivityAt: runtimeSession.lastMeaningfulActivityAt }
-      : {}),
-    capabilities: { ...runtimeSession.capabilities },
-  };
-}
-
-function hasAgentConversationMessages(messages: ChatMessage[]): boolean {
-  return messages.some((message) => !message.local);
-}
-
-function extractCodexExecOutput(stdout: string): string {
-  let output = "";
-  for (const line of stdout.split(/\r?\n/)) {
-    if (!line.trim()) continue;
-    try {
-      const event = JSON.parse(line) as {
-        type?: string;
-        item?: { type?: string; text?: unknown };
-        text?: unknown;
-        message?: unknown;
-        delta?: unknown;
-      };
-      if (event.type === "item.completed" && event.item?.type === "agent_message" && typeof event.item.text === "string") {
-        output += event.item.text;
-      } else if (event.type === "agent_message" && typeof event.text === "string") {
-        output += event.text;
-      } else if (typeof event.delta === "string") {
-        output += event.delta;
-      } else if (typeof event.message === "string") {
-        output = event.message;
-      }
-    } catch {
-      // Ignore non-JSON noise.
-    }
-  }
-  return output.trim();
-}
-
-function handleCodexTestLine(line: string, emit: AgentTestEmit): string {
-  try {
-    const event = JSON.parse(line) as {
-      type?: string;
-      item?: { type?: string; text?: unknown; message?: unknown; command?: unknown; name?: unknown };
-      text?: unknown;
-      message?: unknown;
-      delta?: unknown;
-    };
-    if (event.type === "item.completed") {
-      if (event.item?.type === "agent_message" && typeof event.item.text === "string") {
-        emit({ type: "assistant", content: event.item.text });
-        return event.item.text;
-      }
-      if (event.item?.type === "command_execution") {
-        const command = typeof event.item.command === "string" ? event.item.command : JSON.stringify(event.item);
-        emit({ type: "tool", content: command });
-      }
-      if (event.item?.type === "error") {
-        const message = typeof event.item.message === "string" ? event.item.message : JSON.stringify(event.item);
-        emit({ type: isCodexWarningMessage(message) ? "warning" : "error", content: message });
-      }
-    }
-    if (event.type === "agent_message" && typeof event.text === "string") {
-      emit({ type: "assistant", content: event.text });
-      return event.text;
-    }
-    if (typeof event.delta === "string") {
-      emit({ type: "assistant_delta", content: event.delta });
-      return event.delta;
-    }
-    if (typeof event.message === "string") {
-      emit({ type: "assistant", content: event.message });
-      return event.message;
-    }
-  } catch {
-    // Ignore non-JSON noise.
-  }
-  return "";
-}
-
-function extractCodexSessionId(line: string): string | undefined {
-  try {
-    const raw = JSON.parse(line) as Record<string, unknown>;
-    const candidates = [
-      raw.session_id,
-      raw.sessionId,
-      raw.thread_id,
-      raw.threadId,
-      raw.id,
-      asRecord(raw.thread)?.id,
-      asRecord(raw.session)?.id,
-    ];
-    return candidates.find((candidate): candidate is string => typeof candidate === "string" && /^[0-9a-f-]{36}$/i.test(candidate));
-  } catch {
-    return undefined;
-  }
-}
-
-function isCodexWarningMessage(message: string): boolean {
-  return /skill descriptions were shortened/i.test(message) || /context budget/i.test(message);
-}
-
-function claudeProjectStoragePath(workDir: string, sessionId: string): string {
-  const slug = workDir.replace(/[:\\/]/g, "-");
-  const homeDir = process.env.HOME || process.env.USERPROFILE || os.homedir();
-  return path.join(homeDir, ".claude", "projects", slug, `${sessionId}.jsonl`);
-}
-
-async function deleteCodexTestSessions(executable: string, home: string, sessionIds: Iterable<string>): Promise<number> {
-  let deleted = 0;
-  for (const sessionId of sessionIds) {
-    // Best-effort archive first so the session leaves Codex's active list cleanly,
-    // then remove the local rollout file so nothing lingers on disk.
-    try {
-      await execCli({
-        executable,
-        args: ["archive", sessionId],
-        cwd: process.cwd(),
-        env: process.env,
-        timeout: 10_000,
-        windowsHide: true,
-        maxBuffer: 1024 * 64,
-      });
-    } catch {
-      // Ignore archive failures; the local file deletion below is what matters.
-    }
-    try {
-      deleted += await deleteCodexSessionFiles(home, sessionId);
-    } catch {
-      // Best-effort cleanup only; test result should not depend on local history deletion.
-    }
-  }
-  return deleted;
-}
-
-async function deleteCodexSessionFiles(home: string, sessionId: string): Promise<number> {
-  const root = path.join(home, "sessions");
-  let deleted = 0;
-  const visit = async (dir: string): Promise<void> => {
-    let entries: Dirent[];
-    try {
-      entries = await readdir(dir, { withFileTypes: true });
-    } catch {
-      return;
-    }
-    await Promise.all(
-      entries.map(async (entry) => {
-        const entryPath = path.join(dir, entry.name);
-        if (entry.isDirectory()) {
-          await visit(entryPath);
-          return;
-        }
-        if (!entry.isFile() || !entry.name.includes(sessionId)) return;
-        await rm(entryPath, { force: true });
-        deleted += 1;
-      }),
-    );
-  };
-  await visit(root);
-  return deleted;
-}
-
-async function runStreamingCommand(input: {
-  executable: string;
-  args: string[];
-  cwd: string;
-  env: NodeJS.ProcessEnv;
-  timeoutMs: number;
-  onStdoutLine: (line: string) => void;
-  onStderr: (text: string) => void;
-}): Promise<{ code: number | null; signal: NodeJS.Signals | null; stdout: string; stderr: string; timedOut: boolean }> {
-  return new Promise((resolve, reject) => {
-    const proc = spawnCli({
-      executable: input.executable,
-      args: input.args,
-      cwd: input.cwd,
-      env: input.env,
-      stdio: ["ignore", "pipe", "pipe"],
-    });
-    let stdout = "";
-    let stderr = "";
-    let stdoutBuffer = "";
-    let settled = false;
-    let timedOut = false;
-    const timer = setTimeout(() => {
-      timedOut = true;
-      proc.kill("SIGTERM");
-    }, input.timeoutMs);
-
-    const settle = (callback: () => void): void => {
-      if (settled) return;
-      settled = true;
-      clearTimeout(timer);
-      callback();
-    };
-
-    proc.stdout?.on("data", (chunk: Buffer) => {
-      const text = chunk.toString();
-      stdout += text;
-      stdoutBuffer += text;
-      let newline = stdoutBuffer.indexOf("\n");
-      while (newline >= 0) {
-        const line = stdoutBuffer.slice(0, newline).trim();
-        stdoutBuffer = stdoutBuffer.slice(newline + 1);
-        if (line) input.onStdoutLine(line);
-        newline = stdoutBuffer.indexOf("\n");
-      }
-    });
-
-    proc.stderr?.on("data", (chunk: Buffer) => {
-      const text = chunk.toString();
-      stderr += text;
-      const trimmed = text.trim();
-      if (trimmed) input.onStderr(trimmed);
-    });
-
-    proc.on("error", (error) => settle(() => reject(error)));
-    proc.on("close", (code, signal) => {
-      if (stdoutBuffer.trim()) input.onStdoutLine(stdoutBuffer.trim());
-      settle(() => resolve({ code, signal, stdout, stderr, timedOut }));
-    });
-  });
-}
-
-function sanitizeTestError(error: unknown): string {
-  const message = error instanceof Error ? error.message : String(error);
-  return message.replace(/Bearer\s+[A-Za-z0-9._-]+/g, "Bearer [redacted]").slice(0, 1200);
-}
-
-function formatElapsed(ms: number): string {
-  if (ms < 1000) return `${ms}ms`;
-  return `${(ms / 1000).toFixed(1)}s`;
-}
-
-function agentLabel(agentId: AgentId): string {
-  if (agentId === "codex") return "Codex";
-  if (agentId === "claude") return "Claude Code";
-  if (agentId === "hermes") return "Hermes";
-  return "API";
-}
-
-function cloneAgentChannel(channel: AgentChannel): AgentChannel {
-  const cloned: AgentChannel = {
-    id: channel.id,
-    agentId: channel.agentId,
-    label: channel.label,
-    models: channel.models.map((model) => ({ ...model })),
-  };
-  if (channel.profileName !== undefined) cloned.profileName = channel.profileName;
-  if (channel.presetId !== undefined) cloned.presetId = channel.presetId;
-  if (channel.modelProvider !== undefined) cloned.modelProvider = channel.modelProvider;
-  if (channel.providerName !== undefined) cloned.providerName = channel.providerName;
-  if (channel.baseUrl !== undefined) cloned.baseUrl = channel.baseUrl;
-  if (channel.wireApi !== undefined) cloned.wireApi = channel.wireApi;
-  if (channel.modelCatalogJson !== undefined) cloned.modelCatalogJson = channel.modelCatalogJson;
-  if (channel.modelReasoningEffort !== undefined) cloned.modelReasoningEffort = channel.modelReasoningEffort;
-  if (channel.httpHeaders !== undefined) cloned.httpHeaders = { ...channel.httpHeaders };
-  if (channel.plugins !== undefined) cloned.plugins = channel.plugins.map((plugin) => ({ ...plugin }));
-  return cloned;
-}
-
-function cloneTeamMember(member: AgentTeamMember): AgentTeamMember {
-  return {
-    ...member,
-    ...(member.canvasPosition ? { canvasPosition: { ...member.canvasPosition } } : {}),
-  };
-}
-
-function workflowMemberNodeId(memberId: string): string {
-  return `member:${memberId}`;
-}
-
-function workflowSynthesisMemberId(memberId: string): string {
-  return `${memberId}:synthesis`;
-}
-
-function workflowSynthesisNodeId(memberId: string): string {
-  return `synthesis:${memberId}`;
-}
-
-function workflowEdge(fromNodeId: string, toNodeId: string, label?: string): AgentWorkflowEdge {
-  return {
-    id: `${fromNodeId}->${toNodeId}`,
-    fromNodeId,
-    toNodeId,
-    ...(label ? { label } : {}),
-  };
-}
-
-function workflowTerminalStatus(runStatus: TeamRunStatus | undefined, terminal: "start" | "done"): AgentWorkflowNodeStatus {
-  if (!runStatus) return "idle";
-  if (terminal === "start") return runStatus === "queued" ? "queued" : "completed";
-  if (runStatus === "completed" || runStatus === "failed" || runStatus === "stopped") return runStatus;
-  return "queued";
-}
-
-function workflowJoinStatus(steps: TeamRunStep[] | undefined): AgentWorkflowNodeStatus {
-  if (!steps || steps.length === 0) return "idle";
-  if (steps.some((step) => step.status === "failed")) return "failed";
-  if (steps.some((step) => step.status === "stopped")) return "stopped";
-  if (steps.every((step) => step.status === "completed")) return "completed";
-  if (steps.some((step) => step.status === "running" || step.status === "completed")) return "running";
-  return "queued";
-}
-
-function buildWorkflowSnapshot(input: {
-  mode: AgentTeamMode;
-  members: AgentTeamMember[];
-  steps?: TeamRunStep[];
-  runStatus?: TeamRunStatus;
-}): AgentWorkflowSnapshot {
-  const stepByMemberId = new Map((input.steps ?? []).map((step) => [step.teamMemberId, step]));
-  const nodes: AgentWorkflowNode[] = [
-    {
-      id: "start",
-      kind: "start",
-      label: "Start",
-      status: workflowTerminalStatus(input.runStatus, "start"),
-    },
-  ];
-  const edges: AgentWorkflowEdge[] = [];
-  const agentNodes = input.members.map((member): AgentWorkflowNode => {
-    const step = stepByMemberId.get(member.id);
-    return {
-      id: workflowMemberNodeId(member.id),
-      kind: "agent",
-      label: member.roleName,
-      status: step?.status ?? "idle",
-      teamMemberId: member.id,
-      ...(step ? { stepId: step.id } : {}),
-      ...(member.prompt.trim() ? { description: member.prompt.trim() } : {}),
-      ...(member.canvasPosition ? { canvasPosition: { ...member.canvasPosition } } : {}),
-    };
-  });
-
-  if (input.mode === "parallel") {
-    nodes.push(...agentNodes, { id: "join", kind: "join", label: "Join", status: workflowJoinStatus(input.steps) }, {
-      id: "done",
-      kind: "done",
-      label: "Done",
-      status: workflowTerminalStatus(input.runStatus, "done"),
-    });
-    for (const node of agentNodes) {
-      edges.push(workflowEdge("start", node.id, "fan out"));
-      edges.push(workflowEdge(node.id, "join", "complete"));
-    }
-    edges.push(workflowEdge("join", "done"));
-    return {
-      mode: input.mode,
-      phases: [
-        { id: "phase:start", title: "Start", nodeIds: ["start"] },
-        { id: "phase:workers", title: "Parallel agents", nodeIds: agentNodes.map((node) => node.id) },
-        { id: "phase:join", title: "Join", nodeIds: ["join"] },
-        { id: "phase:done", title: "Done", nodeIds: ["done"] },
-      ],
-      nodes,
-      edges,
-    };
-  }
-
-  if (input.mode === "supervisor" && input.members.length > 0) {
-    const lead = input.members[0]!;
-    const leadNode = agentNodes[0]!;
-    const workerNodes = agentNodes.slice(1);
-    const synthesisStep = stepByMemberId.get(workflowSynthesisMemberId(lead.id));
-    const synthesisNode: AgentWorkflowNode = {
-      id: workflowSynthesisNodeId(lead.id),
-      kind: "synthesis",
-      label: `${lead.roleName} Synthesis`,
-      status: synthesisStep?.status ?? "idle",
-      teamMemberId: workflowSynthesisMemberId(lead.id),
-      ...(synthesisStep ? { stepId: synthesisStep.id } : {}),
-      description: "Synthesize worker artifacts into the final coordinated answer.",
-    };
-    nodes.push(...agentNodes, synthesisNode, {
-      id: "done",
-      kind: "done",
-      label: "Done",
-      status: workflowTerminalStatus(input.runStatus, "done"),
-    });
-    edges.push(workflowEdge("start", leadNode.id));
-    if (workerNodes.length === 0) {
-      edges.push(workflowEdge(leadNode.id, synthesisNode.id));
-    } else {
-      for (const node of workerNodes) {
-        edges.push(workflowEdge(leadNode.id, node.id, "delegate"));
-        edges.push(workflowEdge(node.id, synthesisNode.id, "artifact"));
-      }
-    }
-    edges.push(workflowEdge(synthesisNode.id, "done"));
-    return {
-      mode: input.mode,
-      phases: [
-        { id: "phase:lead", title: "Lead", nodeIds: ["start", leadNode.id] },
-        { id: "phase:workers", title: "Workers", nodeIds: workerNodes.map((node) => node.id) },
-        { id: "phase:synthesis", title: "Synthesis", nodeIds: [synthesisNode.id] },
-        { id: "phase:done", title: "Done", nodeIds: ["done"] },
-      ],
-      nodes,
-      edges,
-    };
-  }
-
-  nodes.push(...agentNodes, {
-    id: "done",
-    kind: "done",
-    label: "Done",
-    status: workflowTerminalStatus(input.runStatus, "done"),
-  });
-  let previousNodeId = "start";
-  for (const node of agentNodes) {
-    edges.push(workflowEdge(previousNodeId, node.id));
-    previousNodeId = node.id;
-  }
-  edges.push(workflowEdge(previousNodeId, "done"));
-  return {
-    mode: input.mode,
-    phases: [
-      { id: "phase:start", title: "Start", nodeIds: ["start"] },
-      ...agentNodes.map((node) => ({ id: `phase:${node.id}`, title: node.label, nodeIds: [node.id] })),
-      { id: "phase:done", title: "Done", nodeIds: ["done"] },
-    ],
-    nodes,
-    edges,
-  };
-}
-
-class ChatState {
-  readonly kind = "chat";
-  id: string = randomUUID();
-  title: string;
-  channelId: string | undefined = undefined;
-  runtimeState: ChatRuntimeSessionState | undefined = undefined;
-  runtimeConversation: RuntimeConversation | undefined = undefined;
-  running = false;
-  messages: ChatMessage[] = [];
-  pendingAssistantMessageId: string | undefined = undefined;
-  lastError: string | undefined = undefined;
-  createdAt = Date.now();
-  updatedAt = this.createdAt;
-
-  constructor(
-    public configuredAgentId: string,
-    public modelId: string,
-    title = "New Chat",
-  ) {
-    this.title = title;
-  }
-}
-
-class TaskState {
-  readonly kind = "task";
-  id: string = randomUUID();
-  title: string;
-  runtimeConversation: RuntimeConversation | undefined = undefined;
-  running = false;
-  status: TaskRunStatus = "queued";
-  progress: TaskProgress = "todo";
-  messages: ChatMessage[] = [];
-  pendingAssistantMessageId: string | undefined = undefined;
-  lastError: string | undefined = undefined;
-  teamRunId: string | undefined = undefined;
-  teamStepId: string | undefined = undefined;
-  createdAt = Date.now();
-  updatedAt = this.createdAt;
-
-  constructor(
-    public prompt: string,
-    public configuredAgentId: string,
-    public modelId: string,
-    public workDir: string,
-  ) {
-    this.title = titleFromPrompt(prompt);
-  }
-}
-
-class AgentTeamState {
-  id: string = randomUUID();
-  createdAt = Date.now();
-  updatedAt = this.createdAt;
-
-  constructor(
-    public name: string,
-    public mode: AgentTeamMode,
-    public sharedContext: string,
-    public members: AgentTeamMember[],
-  ) {}
-}
-
-class TeamRunState {
-  id: string = randomUUID();
-  title: string;
-  status: TeamRunStatus = "queued";
-  currentStepIndex = 0;
-  steps: TeamRunStep[];
-  membersSnapshot: AgentTeamMember[];
-  lastError: string | undefined = undefined;
-  createdAt = Date.now();
-  updatedAt = this.createdAt;
-
-  constructor(
-    team: AgentTeamState,
-    public prompt: string,
-    public target: AgentWorkflowTarget | undefined,
-    public workDir: string,
-  ) {
-    this.teamId = team.id;
-    this.teamName = team.name;
-    this.mode = team.mode;
-    this.sharedContextSnapshot = team.sharedContext;
-    this.membersSnapshot = team.members.map((member) => cloneTeamMember(member));
-    this.title = titleFromPrompt(prompt);
-    this.steps = this.createSteps(team);
-  }
-
-  private createSteps(team: AgentTeamState): TeamRunStep[] {
-    const memberSteps: TeamRunStep[] = team.members.map((member): TeamRunStep => ({
-      id: randomUUID(),
-      teamMemberId: member.id,
-      roleName: member.roleName,
-      prompt: member.prompt,
-      configuredAgentId: member.configuredAgentId,
-      status: "queued",
-      taskId: undefined,
-      artifact: undefined,
-      lastError: undefined,
-      startedAt: undefined,
-      completedAt: undefined,
-    }));
-    if (team.mode !== "supervisor" || memberSteps.length <= 1) return memberSteps;
-
-    const supervisor = team.members[0];
-    if (!supervisor) return memberSteps;
-    return [
-      memberSteps[0]!,
-      ...memberSteps.slice(1),
-      {
-        id: randomUUID(),
-        teamMemberId: `${supervisor.id}:synthesis`,
-        roleName: `${supervisor.roleName} Synthesis`,
-        prompt: `${supervisor.prompt}\n\nSynthesize worker artifacts into a final coordinated answer.`,
-        configuredAgentId: supervisor.configuredAgentId,
-        status: "queued",
-        taskId: undefined,
-        artifact: undefined,
-        lastError: undefined,
-        startedAt: undefined,
-        completedAt: undefined,
-      },
-    ];
-  }
-
-  teamId: string;
-  teamName: string;
-  mode: AgentTeamMode;
-  sharedContextSnapshot: string;
 }
 
 type RunState = ChatState | TaskState;
@@ -1102,7 +365,7 @@ export class AgentHub {
         executables: this.executables,
         channelById: (channelId) => this.channelById(channelId),
         respondToCodexServerRequest: (client, id, method, params) => {
-          this.respondToCodexServerRequest(client, id, method, params);
+          respondToCodexServerRequest(client, id, method, params);
         },
         runClaudeOneShot: (input) => this.claudeSdkAdapter.runOneShot(input),
         askWorkflowByRuntime: {
@@ -1239,7 +502,7 @@ export class AgentHub {
     }
     const chat = this.createChatState(this.defaultConfiguredAgentIdForRuntime("codex"));
     return this.withCodexAppServer(chat, async (client) => {
-      return this.codexPluginSummaries(await client.request("plugin/list", { cwds: [this.workDir] }));
+      return codexPluginSummaries(await client.request("plugin/list", { cwds: [this.workDir] }));
     });
   }
 
@@ -1346,100 +609,47 @@ export class AgentHub {
       throw new Error(`Agent runtime ${agent.runtimeAgentId} does not match channel runtime ${channel.agentId}.`);
     }
 
-    const startedAt = Date.now();
-    const base = {
+    return runRuntimeChannelTestValue({
       agentId: agent.id,
       runtimeAgentId: agent.runtimeAgentId,
       channelId: channel.id,
       modelId: agent.modelId,
-    };
-
-    const emit: AgentTestEmit = (event) => {
-      onEvent?.({ agentId, timestamp: Date.now(), ...event } as AgentTestEvent);
-    };
-
-    try {
-      emit({ type: "phase", content: `Testing ${agent.name || agent.id} with ${agentLabel(agent.runtimeAgentId)} / ${channel.providerName ?? channel.label}.` });
-      emit({ type: "user", content: AGENT_TEST_PROMPT });
-      const output = await this.runtimeRouter.testChannel(agent.runtimeAgentId, {
-        runtime: this.runtimeForDriver(agent.runtimeAgentId),
-        channelId: channel.id,
-        modelId: agent.modelId,
-        workDir: this.workDir,
-        emit,
-      });
-      const elapsedMs = Date.now() - startedAt;
-      return {
-        ...base,
-        ok: true,
-        status: "passed",
-        message: `${agent.name || agent.id} test passed in ${formatElapsed(elapsedMs)}.`,
-        output: output.trim().slice(0, 2000),
-        elapsedMs,
-        testedAt: Date.now(),
-      };
-    } catch (error) {
-      const elapsedMs = Date.now() - startedAt;
-      emit({ type: "error", content: sanitizeTestError(error) });
-      return {
-        ...base,
-        ok: false,
-        status: "failed",
-        message: sanitizeTestError(error),
-        elapsedMs,
-        testedAt: Date.now(),
-      };
-    }
+      phaseMessage: `Testing ${agent.name || agent.id} with ${agentLabel(agent.runtimeAgentId)} / ${channel.providerName ?? channel.label}.`,
+      successLabel: agent.name || agent.id,
+      testPrompt: AGENT_TEST_PROMPT,
+      onEvent,
+      runTest: (emit) =>
+        this.runtimeRouter.testChannel(agent.runtimeAgentId, {
+          runtime: this.runtimeForDriver(agent.runtimeAgentId),
+          channelId: channel.id,
+          modelId: agent.modelId,
+          workDir: this.workDir,
+          emit,
+        }),
+    });
   }
 
   async testRuntimeChannel(channelId: string, onEvent?: (event: AgentTestEvent) => void): Promise<AgentTestResult> {
     const channel = this.channelById(channelId);
     if (!channel) throw new Error(`Channel ${channelId} was not found.`);
-    const modelId = DEFAULT_MODEL_ID;
-    const startedAt = Date.now();
-    const base = {
+    return runRuntimeChannelTestValue({
       agentId: channel.id,
       runtimeAgentId: channel.agentId,
       channelId: channel.id,
-      modelId,
-    };
-
-    const emit: AgentTestEmit = (event) => {
-      onEvent?.({ agentId: channel.id, timestamp: Date.now(), ...event } as AgentTestEvent);
-    };
-
-    try {
-      emit({ type: "phase", content: `Testing ${agentLabel(channel.agentId)} / ${channel.providerName ?? channel.label}.` });
-      emit({ type: "user", content: AGENT_TEST_PROMPT });
-      const output = await this.runtimeRouter.testChannel(channel.agentId, {
-        runtime: this.runtimeForDriver(channel.agentId),
-        channelId: channel.id,
-        modelId,
-        workDir: this.workDir,
-        emit,
-      });
-      const elapsedMs = Date.now() - startedAt;
-      return {
-        ...base,
-        ok: true,
-        status: "passed",
-        message: `${channel.label || channel.id} test passed in ${formatElapsed(elapsedMs)}.`,
-        output: output.trim().slice(0, 2000),
-        elapsedMs,
-        testedAt: Date.now(),
-      };
-    } catch (error) {
-      const elapsedMs = Date.now() - startedAt;
-      emit({ type: "error", content: sanitizeTestError(error) });
-      return {
-        ...base,
-        ok: false,
-        status: "failed",
-        message: sanitizeTestError(error),
-        elapsedMs,
-        testedAt: Date.now(),
-      };
-    }
+      modelId: DEFAULT_MODEL_ID,
+      phaseMessage: `Testing ${agentLabel(channel.agentId)} / ${channel.providerName ?? channel.label}.`,
+      successLabel: channel.label || channel.id,
+      testPrompt: AGENT_TEST_PROMPT,
+      onEvent,
+      runTest: (emit) =>
+        this.runtimeRouter.testChannel(channel.agentId, {
+          runtime: this.runtimeForDriver(channel.agentId),
+          channelId: channel.id,
+          modelId: DEFAULT_MODEL_ID,
+          workDir: this.workDir,
+          emit,
+        }),
+    });
   }
 
   async queryRuntimeChannelBalance(channelId: string, options: ProviderBalanceQueryOptions = {}): Promise<ProviderBalanceResult> {
@@ -1470,7 +680,7 @@ export class AgentHub {
     this.chats.set(chat.id, chat);
     this.activeChatId = chat.id;
     this.emit();
-    return this.serializeChat(chat);
+    return serializeChat({ chat, cloneConversation: (conversation) => this.runtimeRouter.cloneConversation(conversation) });
   }
 
   selectChat(chatId: string): void {
@@ -1653,28 +863,9 @@ export class AgentHub {
     const current = this.workflows.get(workflowId);
     if (!current) return this.snapshot();
     this.activeWorkflowDraftRequests.delete(workflowId);
-    const graph = createWorkflowGraphFromObjective("");
-    const {
-      finalReport: _currentFinalReport,
-      runtimeConversation: _currentRuntimeConversation,
-      ...currentWithoutFinalReportOrConversation
-    } = current;
-    const next = this.cloneWorkflowDraft({
-      ...currentWithoutFinalReportOrConversation,
-      title: graph.title,
-      status: "draft",
-      revision: current.revision + 1,
-      objective: "",
-      graph,
-      graphReady: false,
-      messages: [],
-      reply: "",
-      error: undefined,
-      runProgress: [],
-      runContextDocument: "",
-      contextDocument: "",
-      runIds: [],
-      updatedAt: Date.now(),
+    const next = resetWorkflowDraftSessionStateValue({
+      workflow: current,
+      cloneDraft: (draft) => this.cloneWorkflowDraft(draft),
     });
     this.workflows.set(next.workflowId, next);
     this.activeWorkflowId = next.workflowId;
@@ -1690,61 +881,38 @@ export class AgentHub {
     const activeRequest = this.activeWorkflowDraftRequests.get(workflow.workflowId);
     if (activeRequest) return this.snapshot();
 
-    const starting = workflow.messages.length === 0;
-    const now = Date.now();
-    const requestId = `workflow-${now}-${Math.random().toString(36).slice(2)}`;
-    const assistantMessageId = `grill-assistant-${now}`;
-    const { finalReport: _workflowFinalReport, ...workflowWithoutFinalReport } = workflow;
-    const nextMessages = [
-      ...workflow.messages,
-      { id: `grill-user-${now}`, role: "user" as const, content: text },
-      { id: assistantMessageId, role: "assistant" as const, content: WORKFLOW_THINKING_MESSAGE },
-    ];
-    const next = this.cloneWorkflowDraft({
-      ...(starting ? workflowWithoutFinalReport : workflow),
-      title: workflow.title || workflow.graph.title || "Untitled workflow",
-      status: workflow.status === "running" ? workflow.status : "draft",
-      revision: workflow.revision + 1,
-      objective: starting ? text : workflow.objective,
-      graphReady: starting ? false : workflow.graphReady,
-      messages: nextMessages,
-      reply: "",
-      error: undefined,
-      ...(starting
-        ? {
-            runProgress: [],
-            runContextDocument: "",
-            runIds: [],
-          }
-        : {}),
-      updatedAt: now,
+    const started = beginWorkflowDraftReplyValue({
+      workflow,
+      reply: text,
+      thinkingMessage: WORKFLOW_THINKING_MESSAGE,
+      cloneDraft: (draft) => this.cloneWorkflowDraft(draft),
     });
-    this.workflows.set(next.workflowId, next);
-    this.activeWorkflowId = next.workflowId;
-    this.activeWorkflowDraftRequests.set(next.workflowId, {
-      requestId,
-      assistantMessageId,
-      content: "",
-    });
+    this.workflows.set(started.next.workflowId, started.next);
+    this.activeWorkflowId = started.next.workflowId;
+    this.activeWorkflowDraftRequests.set(started.next.workflowId, started.request);
     this.emit();
 
     try {
       const response = await this.askWorkflowAgent(
         {
-          requestId,
-          prompt: starting ? buildWorkflowAgentPrompt({ objective: text }) : text,
-          configuredAgentId: next.configuredAgentId,
-          runtimeId: this.resolveConfiguredAgent(next.configuredAgentId, next.modelId)?.runtimeAgentId ?? DEFAULT_AGENT,
+          requestId: started.request.requestId,
+          prompt: started.starting ? buildWorkflowAgentPrompt({ objective: text }) : text,
+          configuredAgentId: started.next.configuredAgentId,
+          runtimeId: this.resolveConfiguredAgent(started.next.configuredAgentId, started.next.modelId)?.runtimeAgentId ?? DEFAULT_AGENT,
           executionMode: "oneshot",
           continuationPolicy: "fresh",
-          runtimeConfig: { model: next.modelId },
-          workDir: next.workDir || this.workDir,
+          runtimeConfig: { model: started.next.modelId },
+          workDir: started.next.workDir || this.workDir,
         },
-        (event) => this.handleWorkflowDraftAgentEvent(next.workflowId, event),
+        (event) => this.handleWorkflowDraftAgentEvent(started.next.workflowId, event),
       );
-      this.completeWorkflowDraftRequest(next.workflowId, requestId, response.content, response.runtimeConversation);
+      this.completeWorkflowDraftRequest(started.next.workflowId, started.request.requestId, response.content, response.runtimeConversation);
     } catch (error) {
-      this.failWorkflowDraftRequest(next.workflowId, requestId, error instanceof Error ? error.message : String(error));
+      this.failWorkflowDraftRequest(
+        started.next.workflowId,
+        started.request.requestId,
+        error instanceof Error ? error.message : String(error),
+      );
     }
 
     return this.snapshot();
@@ -1755,13 +923,10 @@ export class AgentHub {
     const workflow = this.workflows.get(workflowId);
     if (!request || !workflow) return this.snapshot();
     this.activeWorkflowDraftRequests.delete(workflowId);
-    const stoppedContent = request.content.trim() || "Stopped: workflow agent did not return a complete response yet.";
-    const next = this.cloneWorkflowDraft({
-      ...workflow,
-      revision: workflow.revision + 1,
-      messages: this.replaceWorkflowDraftMessage(workflow.messages, request.assistantMessageId, stoppedContent),
-      error: undefined,
-      updatedAt: Date.now(),
+    const next = abandonWorkflowDraftReplyStateValue({
+      workflow,
+      activeRequest: request,
+      cloneDraft: (draft) => this.cloneWorkflowDraft(draft),
     });
     this.workflows.set(next.workflowId, next);
     if (this.activeWorkflowId === next.workflowId) this.activeWorkflowId = next.workflowId;
@@ -2123,27 +1288,14 @@ export class AgentHub {
     const workflow = this.workflows.get(input.workflowId);
     const run = this.workflowRuns.get(input.runId);
     if (!workflow || !run || run.workflowId !== input.workflowId) return;
-
-    const nextRun: WorkflowRunState = {
-      ...run,
-      status: input.status ?? run.status,
-      progress: input.progress ?? run.progress,
-      events: input.appendEvents && input.appendEvents.length > 0 ? [...run.events, ...input.appendEvents] : run.events,
-      contextDocument: input.contextDocument ?? run.contextDocument,
-      ...((input.finalReport ?? run.finalReport) !== undefined ? { finalReport: input.finalReport ?? run.finalReport } : {}),
-      lastError: input.lastError ?? run.lastError,
-    };
-    this.workflowRuns.set(run.runId, nextRun);
-
-    this.workflows.set(workflow.workflowId, this.cloneWorkflowDraft({
-      ...workflow,
-      status: input.status ?? workflow.status,
-      runProgress: input.progress ?? workflow.runProgress,
-      runContextDocument: input.contextDocument ?? workflow.runContextDocument,
-      ...((input.finalReport ?? workflow.finalReport) !== undefined ? { finalReport: input.finalReport ?? workflow.finalReport } : {}),
-      error: input.lastError ?? workflow.error,
-      updatedAt: Date.now(),
-    }));
+    const next = updateWorkflowRunStateValue({
+      workflow,
+      run,
+      update: input,
+      cloneDraft: (draft) => this.cloneWorkflowDraft(draft),
+    });
+    this.workflowRuns.set(run.runId, next.nextRun);
+    this.workflows.set(workflow.workflowId, next.nextWorkflow);
     this.emit();
   }
 
@@ -2273,20 +1425,20 @@ export class AgentHub {
       activeTeamRunId: this.activeTeamRunId,
       workDir: this.workDir,
       runtimes: [...this.runtimes.values()],
-      channels: this.channels.map((channel) => cloneAgentChannel(channel)),
+      channels: cloneChannels(this.channels),
       configuredAgents: this.listConfiguredAgents(),
       chats: [...this.chats.values()]
         .sort((left, right) => right.updatedAt - left.updatedAt)
-        .map((chat) => this.serializeChat(chat)),
+        .map((chat) => serializeChat({ chat, cloneConversation: (conversation) => this.runtimeRouter.cloneConversation(conversation) })),
       tasks: [...this.tasks.values()]
         .sort((left, right) => right.updatedAt - left.updatedAt)
-        .map((task) => this.serializeTask(task)),
+        .map((task) => serializeTask({ task, cloneConversation: (conversation) => this.runtimeRouter.cloneConversation(conversation) })),
       teams: [...this.teams.values()]
         .sort((left, right) => right.updatedAt - left.updatedAt)
-        .map((team) => this.serializeTeam(team)),
+        .map((team) => serializeTeam(team)),
       teamRuns: [...this.teamRuns.values()]
         .sort((left, right) => right.updatedAt - left.updatedAt)
-        .map((run) => this.serializeTeamRun(run)),
+        .map((run) => serializeTeamRun(run)),
       workflowStore: this.cloneWorkflowStore(),
       scheduledWorkflowStore: this.cloneScheduledWorkflowStore(),
       workflowDraft: this.activeWorkflowDraft(),
@@ -2378,26 +1530,15 @@ export class AgentHub {
   }
 
   private runtimeStateFromCapabilities(capabilities: RuntimeCapabilities): ChatRuntimeSessionState {
-    return {
-      executionStyle: capabilities.chatStyle,
-      attachmentState: "detached",
-      attachmentGeneration: 0,
-      capabilities: {
-        ...capabilities.resume,
-        supportsInterrupt: capabilities.supportsInterrupt,
-        supportsContinue: capabilities.supportsContinue,
-        supportsApprovalRequests: capabilities.supportsApprovalRequests,
-        supportsUserInputRequests: capabilities.supportsUserInputRequests,
-      },
-    };
+    return runtimeStateFromCapabilitiesValue(capabilities);
   }
 
   private syncInteractiveChatState(chat: ChatState, state: InteractiveSessionSnapshot): void {
-    chat.runtimeState = cloneRuntimeState(state.runtimeState);
-    chat.runtimeConversation = state.runtimeConversation
-      ? this.runtimeRouter.cloneConversation(state.runtimeConversation)
-      : undefined;
-    chat.updatedAt = Date.now();
+    syncInteractiveChatStateValue({
+      chat,
+      state,
+      cloneConversation: (conversation) => this.runtimeRouter.cloneConversation(conversation),
+    });
     this.emit();
   }
 
@@ -2459,24 +1600,19 @@ export class AgentHub {
   }
 
   private buildInteractiveChatContext(chat: ChatState, resolved: ResolvedConfiguredAgent): InteractiveSessionContext {
-    const executionMode = this.selectExecutionMode(resolved.runtimeAgentId, "chat", "interactive");
-    const continuationPolicy = this.defaultContinuationPolicy(resolved.runtimeAgentId, "chat", executionMode);
-    const runtimeConversation = this.cloneConversationForPolicy(continuationPolicy, chat.runtimeConversation);
-    return {
-      chatId: chat.id,
-      configuredAgentId: chat.configuredAgentId,
-      runtimeId: resolved.runtimeAgentId,
-      executionMode,
-      continuationPolicy,
-      runtimeConfig: { model: resolved.modelId },
-      ...(runtimeConversation ? { runtimeConversation } : {}),
-      runtime: resolved.runtime as AgentRuntime,
-      channelId: resolved.channel.id,
+    return buildInteractiveChatContextValue({
+      chat,
+      resolved,
       workDir: this.runWorkDir(chat),
       developerInstructions: CODEX_CHAT_DEVELOPER_INSTRUCTIONS,
+      selectExecutionMode: (runtimeId, surface, preferred) => this.selectExecutionMode(runtimeId, surface, preferred),
+      defaultContinuationPolicy: (runtimeId, surface, executionMode) =>
+        this.defaultContinuationPolicy(runtimeId, surface, executionMode),
+      cloneConversationForPolicy: (continuationPolicy, runtimeConversation) =>
+        this.cloneConversationForPolicy(continuationPolicy, runtimeConversation),
       emit: (event) => this.handleAgentEvent(chat, event),
       syncState: (state) => this.syncInteractiveChatState(chat, state),
-    };
+    });
   }
 
   async sendPrompt(prompt: string, chatId = this.activeChatId): Promise<void> {
@@ -2525,31 +1661,17 @@ export class AgentHub {
     this.emit();
 
     if (supportsInteractiveChat) {
-      let session: ReturnType<InteractiveSessionManager["getOrCreate"]> | undefined;
-      try {
-        const context = this.buildInteractiveChatContext(chat, resolved);
-        session = this.interactiveSessions.getOrCreate(chat.id, context);
-        const interactiveSession = session;
-        this.syncInteractiveChatState(chat, interactiveSession.snapshot());
-        this.activeStops.set(chat.id, async () => {
-          if (!chat.running) return;
-          await this.interactiveSessions.interrupt(chat.id);
-          this.syncInteractiveChatState(chat, interactiveSession.snapshot());
-        });
-        await this.interactiveSessions.dispatch(chat.id, context, async (managed, lease) => {
-          await managed.ensureAttached();
-          const attachedState = managed.snapshot();
-          lease.syncAttachmentGeneration(attachedState.runtimeState.attachmentGeneration);
-          this.syncInteractiveChatState(chat, attachedState);
-          await managed.sendPrompt(trimmedPrompt);
-          this.syncInteractiveChatState(chat, managed.snapshot());
-        });
-      } catch (error) {
-        if (session) {
-          this.syncInteractiveChatState(chat, session.snapshot());
-        }
-        this.markRunFailed(chat, error instanceof Error ? error.message : String(error));
-      }
+      await dispatchInteractiveChatPromptValue({
+        chat,
+        prompt: trimmedPrompt,
+        interactiveSessions: this.interactiveSessions,
+        buildContext: () => this.buildInteractiveChatContext(chat, resolved),
+        syncInteractiveChatState: (currentChat, state) => this.syncInteractiveChatState(currentChat, state),
+        registerStop: (stop) => {
+          this.activeStops.set(chat.id, stop);
+        },
+        markRunFailed: (currentChat, error) => this.markRunFailed(currentChat, error),
+      });
       return;
     }
 
@@ -2570,243 +1692,34 @@ export class AgentHub {
   }
 
   private async runSlashCommand(chat: ChatState, prompt: string): Promise<string> {
-    const [command = "", ...args] = prompt.slice(1).trim().split(/\s+/).filter(Boolean);
-    switch (command.toLowerCase()) {
-      case "":
-      case "help":
-      case "h":
-      case "?":
-        return this.slashHelp();
-      case "status":
-        return this.slashStatus(chat);
-      case "model":
-      case "models":
-        return this.slashModels(chat);
-      case "plugin":
-      case "plugins":
-        return this.slashPlugins(chat, args);
-      default:
-        return `Unknown command: /${command}\nType /help to see available commands.`;
-    }
-  }
-
-  private slashHelp(): string {
-    return [
-      "Slash commands",
-      "/status - read Codex app-server config, model, plugin, and MCP status.",
-      "/models - list models from Codex app-server.",
-      "/plugins - list Codex plugins from app-server marketplaces.",
-      "/help - show this command list.",
-    ].join("\n");
-  }
-
-  private async slashStatus(chat: ChatState): Promise<string> {
-    const resolved = this.resolveConfiguredAgent(chat.configuredAgentId, chat.modelId, chat.channelId);
-    if (resolved?.runtimeAgentId !== "codex") return "Codex app-server status\nThis status command is only available for Codex chats.";
-
-    try {
-      return await this.withCodexAppServer(chat, async (client) => {
-        const configResult = asRecord(await client.request("config/read", { includeLayers: true, cwd: this.workDir })) ?? {};
-        const config = asRecord(configResult.config) ?? {};
-        const models = await this.readCodexModels(client);
-        const pluginResult = await client.request("plugin/list", { cwds: [this.workDir] });
-        const plugins = this.codexPluginSummaries(pluginResult);
-        const mcpServers = await this.readCodexMcpServers(client, undefined);
-
-        const model = asOptionalString(config.model) ?? "default";
-        const provider = asOptionalString(config.model_provider) ?? "default";
-        const approval = asOptionalString(config.approval_policy) ?? "default";
-        const sandbox = asOptionalString(config.sandbox_mode) ?? "default";
-        const reasoning = asOptionalString(config.model_reasoning_effort) ?? "default";
-        const webSearch = asOptionalString(config.web_search) ?? "default";
-        const enabledPlugins = plugins.filter((plugin) => plugin.enabled).length;
-        const installedPlugins = plugins.filter((plugin) => plugin.installed).length;
-        const visibleModels = models.filter((modelItem) => !asBoolean(asRecord(modelItem)?.hidden)).length;
-
-        return [
-          "Codex app-server status",
-          `Model: ${model}`,
-          `Provider: ${provider}`,
-          `Approval: ${approval}`,
-          `Sandbox: ${sandbox}`,
-          `Reasoning: ${reasoning}`,
-          `Web search: ${webSearch}`,
-          `Models: ${visibleModels} visible, ${models.length} total`,
-          `Plugins: ${plugins.length} total, ${enabledPlugins} enabled, ${installedPlugins} installed`,
-          `MCP servers: ${mcpServers.length}`,
-          `CWD: ${this.workDir}`,
-        ].join("\n");
-      });
-    } catch (error) {
-      return `Codex app-server status\nUnable to read Codex app-server status: ${error instanceof Error ? error.message : String(error)}`;
-    }
-  }
-
-  private async slashModels(chat: ChatState): Promise<string> {
-    const resolved = this.resolveConfiguredAgent(chat.configuredAgentId, chat.modelId, chat.channelId);
-    if (resolved?.runtimeAgentId !== "codex") return "Codex models\nModel catalog is only available for Codex chats.";
-
-    try {
-      return await this.withCodexAppServer(chat, async (client) => {
-        const configResult = asRecord(await client.request("config/read", { includeLayers: true, cwd: this.workDir })) ?? {};
-        const config = asRecord(configResult.config) ?? {};
-        const currentModel = asOptionalString(config.model);
-        const models = await this.readCodexModels(client);
-        const visibleModels = models.filter((item) => !asBoolean(asRecord(item)?.hidden));
-        const lines = visibleModels.map((item) => {
-          const model = asRecord(item) ?? {};
-          const id = asOptionalString(model.id) ?? asOptionalString(model.model) ?? "unknown";
-          const displayName = asOptionalString(model.displayName) ?? id;
-          const marker = id === currentModel || model.model === currentModel || model.isDefault === true ? "*" : "-";
-          return `${marker} ${displayName} (${id})`;
-        });
-        return ["Codex models", ...lines].join("\n");
-      });
-    } catch (error) {
-      return `Codex models\nUnable to read Codex model catalog: ${error instanceof Error ? error.message : String(error)}`;
-    }
-  }
-
-  private async slashPlugins(chat: ChatState, args: string[]): Promise<string> {
-    if (args.length > 0 && args[0] !== "list") {
-      return "Plugins\nOnly /plugins and /plugin list are supported here for now.";
-    }
-    const resolved = this.resolveConfiguredAgent(chat.configuredAgentId, chat.modelId, chat.channelId);
-    if (resolved?.runtimeAgentId !== "codex") return "Plugins\nPlugins are currently Codex-specific in this app.";
-
-    try {
-      return await this.withCodexAppServer(chat, async (client) => {
-        const plugins = this.codexPluginSummaries(await client.request("plugin/list", { cwds: [this.workDir] }));
-        const enabledPlugins = plugins.filter((plugin) => plugin.enabled).length;
-        const installedPlugins = plugins.filter((plugin) => plugin.installed).length;
-        const grouped = new Map<string, CodexPluginCatalogItem[]>();
-        for (const plugin of plugins) {
-          const items = grouped.get(plugin.marketplace) ?? [];
-          items.push(plugin);
-          grouped.set(plugin.marketplace, items);
-        }
-
-        const lines = [`Codex plugins`, `${plugins.length} total, ${enabledPlugins} enabled, ${installedPlugins} installed`];
-        for (const [marketplace, items] of grouped) {
-          lines.push("", `Marketplace: ${marketplace}`);
-          for (const plugin of items) {
-            const state = plugin.enabled ? "enabled" : plugin.installed ? "installed" : "available";
-            lines.push(`- ${plugin.id} [${state}]${plugin.version ? ` ${plugin.version}` : ""}`);
-          }
-        }
-        return lines.join("\n");
-      });
-    } catch (error) {
-      return `Codex plugins\nUnable to read Codex plugins: ${error instanceof Error ? error.message : String(error)}`;
-    }
+    return runSlashCommandValue({
+      chat,
+      prompt,
+      executable: this.executables.codex,
+      workDir: this.workDir,
+      resolveConfiguredAgent: (configuredAgentId, modelIdOverride, channelIdOverride) =>
+        this.resolveConfiguredAgentForSlash(configuredAgentId, modelIdOverride, channelIdOverride),
+    });
   }
 
   private async withCodexAppServer<T>(chat: ChatState, callback: (client: CodexRpcClient) => Promise<T>): Promise<T> {
-    const executable = this.executables.codex;
-    const resolved = this.resolveConfiguredAgent(chat.configuredAgentId, chat.modelId, chat.channelId);
-    if (!resolved || resolved.runtimeAgentId !== "codex") {
-      throw new Error("Codex app-server requires a Codex configured agent.");
-    }
-    const channel = resolved.channel;
-    const client = new CodexRpcClient({
-      executable,
-      cwd: this.workDir,
-      extraArgs: codexAppServerConfigArgs(channel, resolved.modelId),
-      env: codexEnvironmentForChannel(channel),
-      onEvent: () => undefined,
-      onRequest: (id, method, params) => {
-        this.respondToCodexServerRequest(client, id, method, params);
-      },
+    return withCodexAppServerValue({
+      chat,
+      executable: this.executables.codex,
+      workDir: this.workDir,
+      resolved: this.resolveConfiguredAgentForSlash(chat.configuredAgentId, chat.modelId, chat.channelId),
+      callback,
     });
-
-    await client.start();
-    try {
-      return await callback(client);
-    } finally {
-      await client.shutdown();
-    }
   }
 
-  private async readCodexModels(client: CodexRpcClient): Promise<unknown[]> {
-    const models: unknown[] = [];
-    let cursor: string | null = null;
-    do {
-      const result: Record<string, unknown> = asRecord(await client.request("model/list", { cursor, limit: 200, includeHidden: false })) ?? {};
-      models.push(...asArray(result.data));
-      cursor = asOptionalString(result.nextCursor) ?? null;
-    } while (cursor);
-    return models;
-  }
-
-  private async readCodexMcpServers(client: CodexRpcClient, threadId: string | undefined): Promise<unknown[]> {
-    const servers: unknown[] = [];
-    let cursor: string | null = null;
-    do {
-      const result: Record<string, unknown> =
-        asRecord(
-          await client.request("mcpServerStatus/list", {
-            cursor,
-            limit: 200,
-            detail: "toolsAndAuthOnly",
-            threadId: threadId ?? null,
-          }),
-        ) ?? {};
-      servers.push(...asArray(result.data));
-      cursor = asOptionalString(result.nextCursor) ?? null;
-    } while (cursor);
-    return servers;
-  }
-
-  private codexPluginSummaries(result: unknown): CodexPluginCatalogItem[] {
-    const summaries: CodexPluginCatalogItem[] = [];
-    const response = asRecord(result) ?? {};
-    for (const marketplaceItem of asArray(response.marketplaces)) {
-      const marketplace = asRecord(marketplaceItem) ?? {};
-      const marketplaceName = asOptionalString(marketplace.name) ?? "unknown";
-      for (const pluginItem of asArray(marketplace.plugins)) {
-        const plugin = asRecord(pluginItem) ?? {};
-        const id = asOptionalString(plugin.id);
-        if (!id) continue;
-        const summary: CodexPluginCatalogItem = {
-          id,
-          name: asOptionalString(plugin.name) ?? id,
-          marketplace: marketplaceName,
-          installed: asBoolean(plugin.installed),
-          enabled: asBoolean(plugin.enabled),
-        };
-        const version = asOptionalString(plugin.localVersion);
-        if (version) summary.version = version;
-        summaries.push(summary);
-      }
-    }
-    return summaries;
-  }
-
-  private respondToCodexServerRequest(client: CodexRpcClient, id: number, method: string, params: Record<string, unknown>): void {
-    if (method === "item/commandExecution/requestApproval" || method === "execCommandApproval") {
-      client.respond(id, { decision: "accept" });
-      return;
-    }
-    if (method === "item/tool/requestUserInput") {
-      client.respond(id, { answers: {} });
-      return;
-    }
-    if (method === "mcpServer/elicitation/request") {
-      client.respond(id, { action: "decline", content: null, _meta: null });
-      return;
-    }
-    if (method === "item/permissions/requestApproval") {
-      client.respond(id, { permissions: params.permissions ?? {}, scope: "turn" });
-      return;
-    }
-    if (method === "item/tool/call" || method === "mcp/dynamicToolCall") {
-      client.respond(id, {
-        contentItems: [{ type: "inputText", text: "Multi Agent Chat does not handle Codex tool calls in the demo." }],
-        success: false,
-      });
-      return;
-    }
-    client.respond(id, {});
+  private resolveConfiguredAgentForSlash(
+    configuredAgentId: string | undefined,
+    modelIdOverride?: string,
+    channelIdOverride?: string,
+  ): ResolvedConfiguredAgentForSlash | undefined {
+    const resolved = this.resolveConfiguredAgent(configuredAgentId, modelIdOverride, channelIdOverride);
+    if (!resolved) return undefined;
+    return resolved;
   }
 
   async runTask(input: RunTaskRequest): Promise<AppSnapshot> {
@@ -3115,100 +2028,31 @@ export class AgentHub {
   }
 
   private cloneWorkflowGraphNode(node: WorkflowGraphNode): WorkflowGraphNode {
-    const cloned: WorkflowGraphNode = {
-      id: node.id,
-      kind: node.kind,
-      title: node.title,
-      prompt: node.prompt,
-    };
-    if (
-      node.position &&
-      typeof node.position.x === "number" &&
-      typeof node.position.y === "number" &&
-      Number.isFinite(node.position.x) &&
-      Number.isFinite(node.position.y)
-    ) {
-      cloned.position = { x: node.position.x, y: node.position.y };
-    }
-    if (typeof node.configuredAgentId === "string" && node.configuredAgentId) cloned.configuredAgentId = node.configuredAgentId;
-    if (typeof node.modelId === "string" && node.modelId) cloned.modelId = node.modelId;
-    return cloned;
+    return cloneWorkflowGraphNodeValue(node);
   }
 
   private cloneWorkflowGraphEdge(edge: WorkflowGraphEdge): WorkflowGraphEdge {
-    return {
-      id: edge.id,
-      fromNodeId: edge.fromNodeId,
-      toNodeId: edge.toNodeId,
-    };
+    return cloneWorkflowGraphEdgeValue(edge);
   }
 
   private cloneWorkflowGraph(graph: WorkflowGraph): WorkflowGraph {
-    return {
-      title: graph.title,
-      objective: graph.objective,
-      nodes: graph.nodes.map((node) => this.cloneWorkflowGraphNode(node)),
-      edges: graph.edges.map((edge) => this.cloneWorkflowGraphEdge(edge)),
-    };
+    return cloneWorkflowGraphValue(graph);
   }
 
   private applyWorkflowDraftPatch(current: WorkflowDraftState, patch: PatchWorkflowDraftRequest): WorkflowDraftState {
-    const now = Date.now();
-    const {
-      finalReport: _currentFinalReport,
-      runtimeConversation: _currentRuntimeConversation,
-      ...currentWithoutOptionalRuntimeFields
-    } = current;
-    const nextConfiguredAgentId =
-      patch.configuredAgentId !== undefined ? this.normalizeWorkflowConfiguredAgentId(patch.configuredAgentId) : current.configuredAgentId;
-    const nextModelId =
-      patch.configuredAgentId !== undefined || patch.modelId !== undefined
-        ? this.normalizeModelIdForConfiguredAgent(nextConfiguredAgentId, patch.modelId ?? current.modelId)
-        : current.modelId;
-    const nextGraph = patch.graph ? this.cloneWorkflowGraph(patch.graph) : current.graph;
-    const next: WorkflowDraftState = this.cloneWorkflowDraft({
-      ...currentWithoutOptionalRuntimeFields,
-      title: patch.title ?? current.title,
-      status: patch.status ?? current.status,
-      revision: current.revision + 1,
-      configuredAgentId: nextConfiguredAgentId,
-      modelId: nextModelId,
-      objective: patch.objective ?? current.objective,
-      ...(patch.workDir === null ? {} : patch.workDir !== undefined ? { workDir: patch.workDir } : current.workDir ? { workDir: current.workDir } : {}),
-      graph: nextGraph,
-      graphReady: patch.graphReady ?? current.graphReady,
-      messages: patch.messages ?? current.messages,
-      reply: patch.reply ?? current.reply,
-      error: patch.error === null ? undefined : patch.error ?? current.error,
-      runProgress: patch.resetRunState ? [] : patch.runProgress ?? current.runProgress,
-      runContextDocument: patch.resetRunState ? "" : patch.runContextDocument ?? current.runContextDocument,
-      contextDocument: patch.contextDocument ?? current.contextDocument,
-      ...(patch.finalReport === null
-        ? {}
-        : patch.finalReport !== undefined
-          ? { finalReport: patch.finalReport }
-          : patch.resetRunState
-            ? {}
-            : current.finalReport !== undefined
-              ? { finalReport: current.finalReport }
-              : {}),
-      runIds: patch.resetRunState ? [] : [...current.runIds],
-      ...(patch.runtimeConversation === null
-        ? {}
-        : patch.runtimeConversation !== undefined
-          ? { runtimeConversation: this.runtimeRouter.cloneConversation(patch.runtimeConversation) }
-          : current.runtimeConversation !== undefined
-            ? { runtimeConversation: this.runtimeRouter.cloneConversation(current.runtimeConversation) }
-            : {}),
-      createdAt: current.createdAt,
-      updatedAt: now,
+    return applyWorkflowDraftPatchValue({
+      current,
+      patch,
+      normalizeConfiguredAgentId: (configuredAgentId) => this.normalizeWorkflowConfiguredAgentId(configuredAgentId),
+      normalizeModelId: (configuredAgentId, modelId) => this.normalizeModelIdForConfiguredAgent(configuredAgentId, modelId),
+      cloneGraph: (graph) => this.cloneWorkflowGraph(graph),
+      cloneConversation: (conversation) => this.runtimeRouter.cloneConversation(conversation),
+      cloneDraft: (draft) => this.cloneWorkflowDraft(draft),
     });
-    if (patch.resetRunState) next.status = "draft";
-    return next;
   }
 
   private replaceWorkflowDraftMessage(messages: WorkflowDraftState["messages"], messageId: string, content: string): WorkflowDraftState["messages"] {
-    return messages.map((message) => (message.id === messageId ? { ...message, content } : message));
+    return replaceWorkflowDraftMessageValue(messages, messageId, content);
   }
 
   private handleWorkflowDraftAgentEvent(workflowId: string, event: WorkflowAgentEvent): void {
@@ -3245,33 +2089,15 @@ export class AgentHub {
     this.activeWorkflowDraftRequests.delete(workflowId);
     const workflow = this.workflows.get(workflowId);
     if (!workflow) return;
-
-    const finalContent = (content.trim() || activeRequest.content.trim() || WORKFLOW_THINKING_MESSAGE).trim();
-    const parsedGraph = parseWorkflowGraphUpsert(finalContent);
-    const { finalReport: _workflowFinalReport, ...workflowWithoutFinalReport } = workflow;
-    const next = this.cloneWorkflowDraft({
-      ...(parsedGraph ? workflowWithoutFinalReport : workflow),
-      title: parsedGraph?.title ?? workflow.title,
-      status: workflow.status === "running" ? workflow.status : "draft",
-      revision: workflow.revision + 1,
-      objective: parsedGraph?.objective ?? workflow.objective,
-      graph: parsedGraph ? this.cloneWorkflowGraph(parsedGraph) : workflow.graph,
-      graphReady: parsedGraph ? true : workflow.graphReady,
-      messages: this.replaceWorkflowDraftMessage(workflow.messages, activeRequest.assistantMessageId, finalContent),
-      reply: "",
-      error: undefined,
-      runProgress: parsedGraph ? [] : workflow.runProgress,
-      runContextDocument: parsedGraph ? "" : workflow.runContextDocument,
-      contextDocument: workflow.contextDocument,
-      runIds: parsedGraph ? [] : workflow.runIds,
-      ...(parsedGraph ? {} : workflow.finalReport !== undefined ? { finalReport: workflow.finalReport } : {}),
-      ...(runtimeConversation !== undefined
-        ? { runtimeConversation: this.runtimeRouter.cloneConversation(runtimeConversation) }
-        : workflow.runtimeConversation !== undefined
-          ? { runtimeConversation: this.runtimeRouter.cloneConversation(workflow.runtimeConversation) }
-          : {}),
-      createdAt: workflow.createdAt,
-      updatedAt: Date.now(),
+    const next = completeWorkflowDraftRequestValue({
+      workflow,
+      activeRequest,
+      content,
+      runtimeConversation,
+      thinkingMessage: WORKFLOW_THINKING_MESSAGE,
+      cloneGraph: (graph) => this.cloneWorkflowGraph(graph),
+      cloneConversation: (conversation) => this.runtimeRouter.cloneConversation(conversation),
+      cloneDraft: (draft) => this.cloneWorkflowDraft(draft),
     });
     this.workflows.set(workflowId, next);
     this.emit();
@@ -3283,12 +2109,11 @@ export class AgentHub {
     this.activeWorkflowDraftRequests.delete(workflowId);
     const workflow = this.workflows.get(workflowId);
     if (!workflow) return;
-    this.workflows.set(workflowId, this.cloneWorkflowDraft({
-      ...workflow,
-      revision: workflow.revision + 1,
-      messages: this.replaceWorkflowDraftMessage(workflow.messages, activeRequest.assistantMessageId, `Workflow agent error: ${error}`),
+    this.workflows.set(workflowId, failWorkflowDraftRequestValue({
+      workflow,
+      activeRequest,
       error,
-      updatedAt: Date.now(),
+      cloneDraft: (draft) => this.cloneWorkflowDraft(draft),
     }));
     this.emit();
   }
@@ -3329,139 +2154,61 @@ export class AgentHub {
   }
 
   private cloneWorkflowStore(): WorkflowStoreState {
-    return {
+    return cloneWorkflowStoreValue({
       activeWorkflowId: this.activeWorkflowId,
-      workflows: [...this.workflows.values()]
-        .sort((left, right) => right.createdAt - left.createdAt)
-        .map((workflow) => this.cloneWorkflowDraft(workflow)),
-      runs: [...this.workflowRuns.values()]
-        .sort((left, right) => right.startedAt - left.startedAt)
-        .map((run) => this.cloneWorkflowRun(run)),
-    };
+      workflows: this.workflows.values(),
+      workflowRuns: this.workflowRuns.values(),
+      cloneDraft: (draft) => this.cloneWorkflowDraft(draft),
+      cloneRun: (run) => this.cloneWorkflowRun(run),
+    });
   }
 
   private cloneWorkflowRun(run: WorkflowRunState): WorkflowRunState {
-    return {
-      runId: run.runId,
-      workflowId: run.workflowId,
-      status: run.status,
-      graphSnapshot: this.cloneWorkflowGraph(run.graphSnapshot),
-      progress: run.progress.map((item) => ({
-        nodeId: item.nodeId,
-        title: item.title,
-        status: item.status,
-        ...(item.detail !== undefined ? { detail: item.detail } : {}),
-        ...(item.taskId !== undefined ? { taskId: item.taskId } : {}),
-      })),
-      events: run.events.map((event) => ({ ...event })),
-      contextDocument: run.contextDocument,
-      ...(run.finalReport !== undefined ? { finalReport: run.finalReport } : {}),
-      startedAt: run.startedAt,
-      finishedAt: run.finishedAt,
-      lastError: run.lastError,
-    };
+    return cloneWorkflowRunValue(run);
   }
 
   private cloneScheduledWorkflowStore(): ScheduledWorkflowStoreState {
-    return {
+    return cloneScheduledWorkflowStoreValue({
       activeScheduleId: this.activeScheduledWorkflowId,
-      runnerConfig: this.cloneScheduledWorkflowRunnerConfig(this.scheduledWorkflowRunnerConfig),
-      runnerStatus: { ...this.scheduledWorkflowRunnerStatus },
-      schedules: [...this.scheduledWorkflowSchedules.values()]
-        .sort((left, right) => right.createdAt - left.createdAt)
-        .map((schedule) => this.cloneScheduledWorkflowSchedule(schedule)),
-      runs: [...this.scheduledWorkflowRuns.values()]
-        .sort((left, right) => right.startedAt - left.startedAt)
-        .map((run) => this.cloneScheduledWorkflowRun(run)),
-    };
+      runnerConfig: this.scheduledWorkflowRunnerConfig,
+      runnerStatus: this.scheduledWorkflowRunnerStatus,
+      schedules: this.scheduledWorkflowSchedules.values(),
+      runs: this.scheduledWorkflowRuns.values(),
+      cloneRunnerConfig: (config) => this.cloneScheduledWorkflowRunnerConfig(config),
+      cloneSchedule: (schedule) => this.cloneScheduledWorkflowSchedule(schedule),
+      cloneRun: (run) => this.cloneScheduledWorkflowRun(run),
+    });
   }
 
   private cloneScheduledWorkflowRunnerConfig(config: ScheduledWorkflowRunnerConfig): ScheduledWorkflowRunnerConfig {
-    return {
-      baseUrl: config.baseUrl?.trim() ?? "",
-      ...(config.tenantId !== undefined ? { tenantId: config.tenantId } : {}),
-      ...(config.userId !== undefined ? { userId: config.userId } : {}),
-      ...(config.deviceName !== undefined ? { deviceName: config.deviceName } : {}),
-      ...(config.deviceId !== undefined ? { deviceId: config.deviceId } : {}),
-      ...(config.runnerToken !== undefined ? { runnerToken: config.runnerToken } : {}),
-    };
+    return cloneScheduledWorkflowRunnerConfigValue(config);
   }
 
   private cloneScheduledWorkflowSchedule(schedule: ScheduledWorkflowSchedule): ScheduledWorkflowSchedule {
-    const now = Date.now();
-    return {
-      scheduleId: schedule.scheduleId || `sched_${randomUUID()}`,
-      workflowId: schedule.workflowId,
-      title: schedule.title || this.workflows.get(schedule.workflowId)?.title || "Scheduled workflow",
-      enabled: schedule.enabled !== false,
-      intervalSeconds: Math.max(60, Math.floor(schedule.intervalSeconds || 3600)),
-      frequency: normalizeScheduledWorkflowFrequency(schedule.frequency),
-      timeOfDay: normalizeScheduledWorkflowTimeOfDay(schedule.timeOfDay),
-      timezone: schedule.timezone?.trim() || DEFAULT_SCHEDULED_WORKFLOW_TIMEZONE,
-      ...(normalizeScheduledWorkflowWeekdays(schedule.weekdays) !== undefined ? { weekdays: normalizeScheduledWorkflowWeekdays(schedule.weekdays) } : {}),
-      ...(normalizeScheduledWorkflowDayOfMonth(schedule.dayOfMonth) !== undefined ? { dayOfMonth: normalizeScheduledWorkflowDayOfMonth(schedule.dayOfMonth) } : {}),
-      ...(schedule.nextRunAt !== undefined ? { nextRunAt: schedule.nextRunAt } : {}),
-      ...(schedule.lastRunAt !== undefined ? { lastRunAt: schedule.lastRunAt } : {}),
-      source: schedule.source === "local" ? "local" : "cloud",
-      createdAt: Number.isFinite(schedule.createdAt) ? schedule.createdAt : now,
-      updatedAt: Number.isFinite(schedule.updatedAt) ? schedule.updatedAt : now,
-    };
+    const workflowTitle = this.workflows.get(schedule.workflowId)?.title;
+    return workflowTitle === undefined
+      ? cloneScheduledWorkflowScheduleValue({ schedule })
+      : cloneScheduledWorkflowScheduleValue({ schedule, workflowTitle });
   }
 
   private cloneScheduledWorkflowRun(run: ScheduledWorkflowRun): ScheduledWorkflowRun {
-    return {
-      runId: run.runId || `scheduled_run_${randomUUID()}`,
-      scheduleId: run.scheduleId,
-      workflowId: run.workflowId,
-      ...(run.eventId !== undefined ? { eventId: run.eventId } : {}),
-      ...(run.workflowRunId !== undefined ? { workflowRunId: run.workflowRunId } : {}),
-      title: run.title || this.scheduledWorkflowSchedules.get(run.scheduleId)?.title || "Scheduled workflow",
-      status: isScheduledWorkflowRunStatus(run.status) ? run.status : "failed",
-      startedAt: Number.isFinite(run.startedAt) ? run.startedAt : Date.now(),
-      finishedAt: run.finishedAt,
-      ...(run.message !== undefined ? { message: run.message } : {}),
-    };
+    const scheduleTitle = this.scheduledWorkflowSchedules.get(run.scheduleId)?.title;
+    return scheduleTitle === undefined
+      ? cloneScheduledWorkflowRunValue({ run })
+      : cloneScheduledWorkflowRunValue({ run, scheduleTitle });
   }
 
   private cloneWorkflowDraft(draft: WorkflowDraftState): WorkflowDraftState {
-    const now = Date.now();
-    return {
-      workflowId: draft.workflowId || `wf_${randomUUID()}`,
-      title: draft.title || draft.graph.title || draft.objective || "Untitled workflow",
-      status: this.normalizeWorkflowStatus(draft.status),
-      revision: Number.isFinite(draft.revision) && draft.revision > 0 ? Math.floor(draft.revision) : 1,
-      configuredAgentId: this.normalizeWorkflowConfiguredAgentId(draft.configuredAgentId),
-      modelId: this.normalizeModelIdForConfiguredAgent(draft.configuredAgentId, draft.modelId),
-      objective: draft.objective,
-      ...(draft.workDir ? { workDir: draft.workDir } : {}),
-      graph: this.cloneWorkflowGraph(draft.graph),
-      graphReady: draft.graphReady,
-      messages: draft.messages.map((message) => ({
-        id: message.id,
-        role: message.role,
-        content: message.content,
-      })),
-      reply: draft.reply,
-      error: draft.error,
-      runProgress: draft.runProgress.map((item) => ({
-        nodeId: item.nodeId,
-        title: item.title,
-        status: item.status,
-        ...(item.detail !== undefined ? { detail: item.detail } : {}),
-        ...(item.taskId !== undefined ? { taskId: item.taskId } : {}),
-      })),
-      runContextDocument: draft.runContextDocument,
-      contextDocument: draft.contextDocument,
-      ...(draft.finalReport !== undefined ? { finalReport: draft.finalReport } : {}),
-      runIds: draft.runIds.map((runId) => runId),
-      ...(draft.runtimeConversation ? { runtimeConversation: this.runtimeRouter.cloneConversation(draft.runtimeConversation) } : {}),
-      createdAt: draft.createdAt || draft.updatedAt || now,
-      updatedAt: draft.updatedAt,
-    };
+    return cloneWorkflowDraftValue({
+      draft,
+      normalizeConfiguredAgentId: (configuredAgentId) => this.normalizeWorkflowConfiguredAgentId(configuredAgentId),
+      normalizeModelId: (configuredAgentId, modelId) => this.normalizeModelIdForConfiguredAgent(configuredAgentId, modelId),
+      cloneConversation: (conversation) => this.runtimeRouter.cloneConversation(conversation),
+    });
   }
 
   private normalizeWorkflowStatus(status: WorkflowStatus): WorkflowStatus {
-    return status === "running" || status === "completed" || status === "failed" || status === "stopped" ? status : "draft";
+    return normalizeWorkflowStatusValue(status);
   }
 
   private normalizeWorkflowConfiguredAgentId(configuredAgentId: string | undefined): string {
@@ -3531,165 +2278,34 @@ export class AgentHub {
     }
   }
 
-  private serializeChat(chat: ChatState): ChatSession {
-    return {
-      id: chat.id,
-      title: chat.title,
-      configuredAgentId: chat.configuredAgentId,
-      modelId: chat.modelId,
-      ...(chat.channelId ? { channelId: chat.channelId } : {}),
-      ...(chat.runtimeState ? { runtimeState: cloneRuntimeState(chat.runtimeState) } : {}),
-      ...(chat.runtimeConversation ? { runtimeConversation: this.runtimeRouter.cloneConversation(chat.runtimeConversation) } : {}),
-      running: chat.running,
-      messages: chat.messages.map((message) => this.serializeMessage(message)),
-      pendingAssistantMessageId: chat.pendingAssistantMessageId,
-      lastError: chat.lastError,
-      createdAt: chat.createdAt,
-      updatedAt: chat.updatedAt,
-    };
-  }
-
-  private serializeTask(task: TaskState): TaskRun {
-    return {
-      id: task.id,
-      title: task.title,
-      prompt: task.prompt,
-      configuredAgentId: task.configuredAgentId,
-      modelId: task.modelId,
-      workDir: task.workDir,
-      status: task.status,
-      progress: task.progress,
-      running: task.running,
-      ...(task.runtimeConversation ? { runtimeConversation: this.runtimeRouter.cloneConversation(task.runtimeConversation) } : {}),
-      messages: task.messages.map((message) => this.serializeMessage(message)),
-      pendingAssistantMessageId: task.pendingAssistantMessageId,
-      lastError: task.lastError,
-      createdAt: task.createdAt,
-      updatedAt: task.updatedAt,
-    };
-  }
-
-  private serializeTeam(team: AgentTeamState): AgentTeam {
-    return {
-      id: team.id,
-      name: team.name,
-      mode: team.mode,
-      sharedContext: team.sharedContext,
-      members: team.members.map((member) => cloneTeamMember(member)),
-      workflow: buildWorkflowSnapshot({ mode: team.mode, members: team.members }),
-      createdAt: team.createdAt,
-      updatedAt: team.updatedAt,
-    };
-  }
-
-  private serializeTeamRun(run: TeamRunState): TeamRun {
-    return {
-      id: run.id,
-      teamId: run.teamId,
-      teamName: run.teamName,
-      title: run.title,
-      prompt: run.prompt,
-      target: run.target ? { ...run.target } : undefined,
-      mode: run.mode,
-      status: run.status,
-      currentStepIndex: run.currentStepIndex,
-      workDir: run.workDir,
-      sharedContextSnapshot: run.sharedContextSnapshot,
-      workflow: buildWorkflowSnapshot({
-        mode: run.mode,
-        members: run.membersSnapshot,
-        steps: run.steps,
-        runStatus: run.status,
-      }),
-      steps: run.steps.map((step) => ({ ...step })),
-      lastError: run.lastError,
-      createdAt: run.createdAt,
-      updatedAt: run.updatedAt,
-    };
-  }
-
-  private serializeMessage(message: ChatMessage): ChatMessage {
-    const copy: ChatMessage = {
-      id: message.id,
-      role: message.role,
-      content: message.content,
-      timestamp: message.timestamp,
-    };
-    if (message.events && message.events.length > 0) {
-      copy.events = message.events.map((event) => ({ ...event }));
-    }
-    if (message.local) copy.local = true;
-    return copy;
-  }
-
   private runWorkDir(run: RunState): string {
     return run.kind === "task" ? run.workDir : this.workDir;
   }
 
   private composeTeamStepPrompt(run: TeamRunState, stepIndex: number): string {
-    const step = run.steps[stepIndex];
-    const previousArtifacts = run.steps
-      .slice(0, stepIndex)
-      .filter((item) => item.artifact?.trim())
-      .map((item, index) => [`### ${index + 1}. ${item.roleName}`, item.artifact].join("\n"))
-      .join("\n\n");
-
-    return [
-      `You are running step ${stepIndex + 1} of ${run.steps.length} in the agent team "${run.teamName}".`,
-      step ? `Role: ${step.roleName}` : "",
-      "",
-      "## Member Prompt",
-      step?.prompt.trim() || "No member-specific prompt provided.",
-      "",
-      "## Original Task",
-      run.prompt,
-      "",
-      "## Target",
-      run.target ? `${run.target.label}: ${run.target.value}` : run.workDir,
-      "",
-      "## Shared Context",
-      run.sharedContextSnapshot.trim() || "No shared context provided.",
-      "",
-      "## Previous Agent Artifacts",
-      previousArtifacts || "No previous artifacts. You are the first step.",
-      "",
-      "## Instructions",
-      "Produce a concise artifact for the next agent in this pipeline. Include decisions, risks, and concrete next steps when relevant.",
-    ]
-      .filter((part) => part !== "")
-      .join("\n");
+    return composeTeamStepPromptValue(run, stepIndex);
   }
 
   private async startTeamRunStep(teamRunId: string, stepIndex: number): Promise<void> {
     const run = this.teamRuns.get(teamRunId);
     if (!run || run.status !== "running") return;
-    const step = run.steps[stepIndex];
-    if (!step) {
-      run.status = "completed";
-      run.updatedAt = Date.now();
+    const prepared = beginTeamRunStepValue({
+      run,
+      stepIndex,
+      composePrompt: (currentRun, currentStepIndex) => this.composeTeamStepPrompt(currentRun, currentStepIndex),
+      createTask: (request) => this.createTaskState(request),
+    });
+    if (!prepared) {
+      return;
+    }
+    if ("completed" in prepared) {
       this.emit();
       return;
     }
-    if (step.status !== "queued") return;
 
-    const prompt = this.composeTeamStepPrompt(run, stepIndex);
-    const task = this.createTaskState({
-      prompt,
-      configuredAgentId: step.configuredAgentId,
-      workDir: run.workDir,
-    });
-    task.title = `${run.teamName}: ${step.roleName}`;
-    task.teamRunId = run.id;
-    task.teamStepId = step.id;
+    const task = prepared.task;
     this.tasks.set(task.id, task);
     this.activeTaskId = task.id;
-
-    step.status = "running";
-    step.taskId = task.id;
-    step.startedAt = Date.now();
-    step.lastError = undefined;
-    run.currentStepIndex = stepIndex;
-    run.updatedAt = Date.now();
 
     const resolved = this.resolveConfiguredAgent(task.configuredAgentId, task.modelId);
     task.messages.push(createUserMessage(task.prompt));
@@ -3726,286 +2342,97 @@ export class AgentHub {
     await this.startTeamRunStep(run.id, 0);
   }
 
-  private extractTaskArtifact(task: TaskState): string {
-    return task.messages
-      .filter((message) => message.role === "assistant" && message.content.trim())
-      .map((message) => message.content.trim())
-      .join("\n\n")
-      .trim();
-  }
-
   private finishTeamStepFromTask(task: TaskState): void {
     if (!task.teamRunId || !task.teamStepId) return;
     const run = this.teamRuns.get(task.teamRunId);
-    const stepIndex = run?.steps.findIndex((step) => step.id === task.teamStepId) ?? -1;
-    const step = stepIndex >= 0 ? run?.steps[stepIndex] : undefined;
-    if (!run || !step || step.status !== "running") return;
-
-    if (task.status === "completed") {
-      step.status = "completed";
-      step.artifact = this.extractTaskArtifact(task);
-      step.lastError = undefined;
-      step.completedAt = Date.now();
-      run.updatedAt = step.completedAt;
-
-      if (run.mode === "parallel") {
-        if (run.steps.every((item) => item.status === "completed")) {
-          run.status = "completed";
-          run.currentStepIndex = stepIndex;
-        }
-        return;
-      }
-
-      if (run.mode === "supervisor" && this.advanceSupervisorRun(run, stepIndex)) {
-        return;
-      }
-
-      const nextStep = run.steps[stepIndex + 1];
-      if (nextStep) {
-        run.currentStepIndex = stepIndex + 1;
-        void this.startTeamRunStep(run.id, stepIndex + 1);
-      } else {
-        run.status = "completed";
-        run.currentStepIndex = stepIndex;
-      }
-      return;
+    if (!run) return;
+    const result = finishTeamStepFromTaskValue({ run, task });
+    for (const nextStepIndex of result.startStepIndexes) {
+      void this.startTeamRunStep(run.id, nextStepIndex);
     }
-
-    if (task.status === "stopped") {
-      step.status = "stopped";
-      step.lastError = task.lastError ?? "Stopped";
-      step.completedAt = Date.now();
-      run.status = "stopped";
-      run.lastError = step.lastError;
-      run.updatedAt = step.completedAt;
-      return;
-    }
-
-    if (task.status === "failed") {
-      this.failTeamStepFromTask(task, task.lastError ?? "Agent step failed");
-    }
-  }
-
-  private advanceSupervisorRun(run: TeamRunState, completedStepIndex: number): boolean {
-    if (run.steps.length <= 1) return false;
-    const synthesisIndex = run.steps.length - 1;
-    if (completedStepIndex === 0) {
-      const workerIndexes = run.steps.slice(1, synthesisIndex).map((_step, offset) => offset + 1);
-      if (workerIndexes.length === 0) {
-        run.currentStepIndex = synthesisIndex;
-        void this.startTeamRunStep(run.id, synthesisIndex);
-        return true;
-      }
-      run.currentStepIndex = workerIndexes[0] ?? 0;
-      for (const workerIndex of workerIndexes) {
-        void this.startTeamRunStep(run.id, workerIndex);
-      }
-      return true;
-    }
-
-    if (completedStepIndex > 0 && completedStepIndex < synthesisIndex) {
-      const workersComplete = run.steps.slice(1, synthesisIndex).every((item) => item.status === "completed");
-      if (workersComplete) {
-        run.currentStepIndex = synthesisIndex;
-        void this.startTeamRunStep(run.id, synthesisIndex);
-      }
-      return true;
-    }
-
-    if (completedStepIndex === synthesisIndex) {
-      run.status = "completed";
-      run.currentStepIndex = synthesisIndex;
-      return true;
-    }
-
-    return false;
   }
 
   private failTeamStepFromTask(task: TaskState, error: string): void {
     if (!task.teamRunId || !task.teamStepId) return;
     const run = this.teamRuns.get(task.teamRunId);
-    const step = run?.steps.find((item) => item.id === task.teamStepId);
-    if (!run || !step || step.status !== "running") return;
-    step.status = "failed";
-    step.lastError = error;
-    step.completedAt = Date.now();
-    run.status = "failed";
-    run.lastError = error;
-    run.updatedAt = step.completedAt;
+    if (!run) return;
+    failTeamStepFromTaskValue({ run, taskStepId: task.teamStepId, error });
   }
 
   private markRunExited(run: RunState): void {
-    run.running = false;
-    if (run.kind === "task" && run.status === "running") {
-      run.status = run.lastError ? "failed" : "completed";
-      if (!run.lastError) run.progress = "in_review";
-    }
-    if (run.kind === "task") this.finishTeamStepFromTask(run);
+    markRunExitedValue(run, (task) => this.finishTeamStepFromTask(task));
   }
 
   private markRunFailed(run: RunState, error: string): void {
-    run.running = false;
-    run.lastError = error;
-    if (run.kind === "task") run.status = "failed";
-    run.messages.push(createErrorMessage(error));
-    run.updatedAt = Date.now();
-    this.activeStops.delete(run.id);
-    if (run.kind === "task") this.finishTeamStepFromTask(run);
-    this.emit();
-  }
-
-  private async runChat(run: RunState, prompt: string, resolved: ResolvedConfiguredAgent): Promise<void> {
-    const runtime = resolved.runtime;
-    if (!runtime?.available) {
-      this.markRunFailed(run, `${resolved.agent.name || resolved.agent.id} is not available on this machine.`);
-      return;
-    }
-    const developerInstructions = run.kind === "task" ? CODEX_TASK_DEVELOPER_INSTRUCTIONS : CODEX_CHAT_DEVELOPER_INSTRUCTIONS;
-    const executionMode = run.kind === "chat" ? this.selectExecutionMode(resolved.runtimeAgentId, "chat", "oneshot") : "oneshot";
-    const continuationPolicy =
-      run.kind === "chat" ? this.defaultContinuationPolicy(resolved.runtimeAgentId, "chat", executionMode) : "fresh";
-    const runtimeConversation = this.cloneConversationForPolicy(continuationPolicy, run.runtimeConversation);
-    const executor = this.executorFactory.create({
-      runId: run.id,
-      runKind: run.kind,
-      runtimeId: resolved.runtimeAgentId,
-      executionMode,
-      continuationPolicy,
-      runtimeConfig: { model: resolved.modelId },
-      ...(runtimeConversation ? { runtimeConversation } : {}),
-      runtime,
-      channelId: resolved.channel.id,
-      prompt,
-      workDir: this.runWorkDir(run),
-      developerInstructions,
-      emit: (event) => this.handleAgentEvent(run, event),
-      onExit: (code) => {
-        if (resolved.runtimeAgentId === "claude" && typeof code === "number" && code !== 0) run.lastError = `Claude exited with code ${code}`;
-        this.markRunExited(run);
-        run.updatedAt = Date.now();
+    markRunFailedValue({
+      run,
+      error,
+      takeStop: (runId) => this.activeStops.get(runId),
+      finishTaskRun: (task) => this.finishTeamStepFromTask(task),
+      emit: () => {
         this.activeStops.delete(run.id);
         this.emit();
       },
     });
-    this.activeStops.set(run.id, () => executor.stop());
+  }
 
-    try {
-      await executor.start();
-    } catch (error) {
-      this.markRunFailed(run, error instanceof Error ? error.message : String(error));
-    }
+  private async runChat(run: RunState, prompt: string, resolved: ResolvedConfiguredAgent): Promise<void> {
+    await runAgentExecutionValue({
+      run,
+      prompt,
+      resolved,
+      workDir: this.runWorkDir(run),
+      chatDeveloperInstructions: CODEX_CHAT_DEVELOPER_INSTRUCTIONS,
+      taskDeveloperInstructions: CODEX_TASK_DEVELOPER_INSTRUCTIONS,
+      executorFactory: this.executorFactory,
+      selectExecutionMode: (runtimeId, surface, preferred) => this.selectExecutionMode(runtimeId, surface, preferred),
+      defaultContinuationPolicy: (runtimeId, surface, executionMode) =>
+        this.defaultContinuationPolicy(runtimeId, surface, executionMode),
+      cloneConversationForPolicy: (continuationPolicy, runtimeConversation) =>
+        this.cloneConversationForPolicy(continuationPolicy, runtimeConversation),
+      handleAgentEvent: (currentRun, event) => this.handleAgentEvent(currentRun, event),
+      markRunExited: (currentRun) => this.markRunExited(currentRun),
+      markRunFailed: (currentRun, error) => this.markRunFailed(currentRun, error),
+      registerStop: (runId, stop) => {
+        this.activeStops.set(runId, stop);
+      },
+      clearStop: (runId) => this.activeStops.delete(runId),
+      emit: () => this.emit(),
+    });
   }
 
   private async testCodexAgent(channel: AgentChannel, modelId: string, workDir: string, emit: AgentTestEmit): Promise<string> {
-    const args = [
-      "exec",
-      "--ephemeral",
-      "--json",
-      "--skip-git-repo-check",
-      "--sandbox",
-      "read-only",
-      ...codexAppServerConfigArgs(channel, modelId),
-      AGENT_TEST_PROMPT,
-    ];
-    emit({ type: "phase", content: `Launching codex exec --ephemeral with model ${runtimeModelId(modelId) ?? "default"}.` });
-    let output = "";
-    const sessionIds = new Set<string>();
-    const result = await runStreamingCommand({
+    return testCodexAgentValue({
       executable: this.executables.codex,
-      args,
-      cwd: workDir,
-      env: codexEnvironmentForChannel(channel),
+      channel,
+      modelId,
+      workDir,
+      emit,
+      testPrompt: AGENT_TEST_PROMPT,
       timeoutMs: AGENT_TEST_TIMEOUT_MS,
-      onStdoutLine: (line) => {
-        const sessionId = extractCodexSessionId(line);
-        if (sessionId) sessionIds.add(sessionId);
-        const eventOutput = handleCodexTestLine(line, emit);
-        if (eventOutput) output += eventOutput;
-      },
-      onStderr: (text) => emit({ type: "stderr", content: text }),
     });
-    const deletedSessions = await deleteCodexTestSessions(this.executables.codex, codexHome(), sessionIds);
-    if (deletedSessions > 0) emit({ type: "phase", content: `Deleted ${deletedSessions} Codex test session${deletedSessions === 1 ? "" : "s"}.` });
-    if (result.code !== 0) throw new Error(`Codex test exited with ${result.code ?? result.signal ?? "unknown"}: ${result.stderr.trim().slice(0, 800)}`);
-    if (output.trim()) return output.trim();
-    const stderrText = result.stderr.trim();
-    throw new Error(stderrText ? `Codex completed without assistant text. stderr: ${stderrText}` : "Codex completed without assistant text.");
   }
 
   private async testClaudeAgent(channel: AgentChannel, modelId: string, workDir: string, emit: AgentTestEmit): Promise<string> {
-    const sdkModel = claudeCliModelForChannel(channel, modelId);
-    emit({ type: "phase", content: `Launching Claude Code with model ${sdkModel ?? "default"}.` });
-    emit({ type: "user", content: AGENT_TEST_PROMPT });
-
-    let output = "";
-    let completedContent: string | undefined;
-    let emittedAssistant = false;
-    let errorMessage: string | undefined;
-
-    try {
-      await this.claudeSdkAdapter.runOneShot({
-        prompt: AGENT_TEST_PROMPT,
-        cwd: workDir,
-        ...(sdkModel ? { modelId: sdkModel } : {}),
-        onEvent: (event) => {
-          if (event.type === "delta") {
-            output += event.content;
-            emit({ type: "assistant_delta", content: event.content });
-            return;
-          }
-          if (event.type === "completed") {
-            if (event.content) {
-              completedContent = event.content;
-              if (!emittedAssistant) {
-                emit({ type: "assistant", content: event.content });
-                emittedAssistant = true;
-              }
-            }
-            return;
-          }
-          if (event.type === "tool_call" || event.type === "tool_result") {
-            emit({ type: "tool", content: event.content });
-            return;
-          }
-          if (event.type === "error") {
-            errorMessage = event.error;
-            emit({ type: "error", content: event.error });
-          }
-        },
-      });
-    } catch (error) {
-      throw errorMessage
-        ? new Error(errorMessage)
-        : error instanceof Error
-          ? error
-          : new Error(String(error));
-    }
-
-    const finalOutput = completedContent?.trim() || output.trim();
-    if (finalOutput) return finalOutput;
-    throw new Error("Claude completed without assistant text.");
+    return testClaudeAgentValue({
+      adapter: this.claudeSdkAdapter,
+      channel,
+      modelId,
+      workDir,
+      emit,
+      testPrompt: AGENT_TEST_PROMPT,
+    });
   }
 
   private async testApiAgent(channel: AgentChannel, modelId: string, emit: AgentTestEmit): Promise<string> {
-    if (!channel.baseUrl) throw new Error("API agent requires a provider base URL.");
-    const model = this.resolveApiModel(channel, modelId);
-    if (!model) throw new Error("API agent requires a model.");
-    emit({ type: "phase", content: `Sending HTTP request to ${this.apiRequestUrl(channel)} with model ${model}.` });
-    const response = await fetch(this.apiRequestUrl(channel), {
-      method: "POST",
-      signal: AbortSignal.timeout(AGENT_TEST_TIMEOUT_MS),
-      headers: {
-        "content-type": "application/json",
-        ...(channel.httpHeaders ?? {}),
-      },
-      body: JSON.stringify(this.apiRequestBody(channel, model, AGENT_TEST_PROMPT, "You are testing whether this configured agent can respond.")),
+    return testApiAgentValue({
+      channel,
+      modelId,
+      timeoutMs: AGENT_TEST_TIMEOUT_MS,
+      testPrompt: AGENT_TEST_PROMPT,
+      systemPrompt: "You are testing whether this configured agent can respond.",
+      emit,
     });
-    const text = await response.text();
-    if (!response.ok) throw new Error(`API test failed (${response.status}): ${text.slice(0, 800)}`);
-    const output = this.extractApiContent(channel, text).trim();
-    if (!output) throw new Error("API returned an empty response.");
-    emit({ type: "assistant", content: output });
-    return output;
   }
 
   private async askApiWorkflowAgent(input: {
@@ -4017,252 +2444,43 @@ export class AgentHub {
     onEvent: ((event: WorkflowAgentEvent) => void) | undefined;
   }): Promise<WorkflowAgentResponse> {
     const channel = this.channelById(input.channelId);
-    if (!channel?.baseUrl) throw new Error("API workflow agent requires a provider base URL");
-    const model = this.resolveApiModel(channel, input.modelId);
-    if (!model) throw new Error("API workflow agent requires a model");
-
-    const response = await fetch(this.apiRequestUrl(channel), {
-      method: "POST",
-      headers: {
-        "content-type": "application/json",
-        ...(channel.httpHeaders ?? {}),
-      },
-      body: JSON.stringify(this.apiRequestBody(channel, model, input.prompt, CODEX_WORKFLOW_DEVELOPER_INSTRUCTIONS)),
+    if (!channel) throw new Error("API workflow agent requires a provider base URL");
+    return askApiWorkflowAgentValue({
+      requestId: input.requestId,
+      prompt: input.prompt,
+      channel,
+      modelId: input.modelId,
+      runtimeConversation: input.runtimeConversation,
+      workflowDeveloperInstructions: CODEX_WORKFLOW_DEVELOPER_INSTRUCTIONS,
+      onEvent: input.onEvent,
     });
-    const text = await response.text();
-    if (!response.ok) throw new Error(`API workflow request failed (${response.status}): ${text.slice(0, 800)}`);
-    const content = this.extractApiContent(channel, text).trim();
-    input.onEvent?.({ requestId: input.requestId, type: "delta", content });
-    input.onEvent?.({ requestId: input.requestId, type: "completed", content, ...(input.runtimeConversation ? { runtimeConversation: input.runtimeConversation } : {}) });
-    return { content, ...(input.runtimeConversation ? { runtimeConversation: input.runtimeConversation } : {}) };
-  }
-
-  private resolveApiModel(channel: AgentChannel, modelId: string): string | undefined {
-    const model = runtimeModelId(modelId);
-    if (model) return model;
-    return channel.models.find((item) => item.id !== DEFAULT_MODEL_ID)?.id;
-  }
-
-  private apiRequestUrl(channel: AgentChannel): string {
-    if (channel.modelProvider === "anthropic-api") {
-      const normalized = (channel.baseUrl ?? "").replace(/\/+$/, "");
-      if (normalized.endsWith("/messages")) return normalized;
-      return `${normalized}/messages`;
-    }
-    return this.chatCompletionsUrl(channel.baseUrl ?? "");
-  }
-
-  private apiRequestBody(channel: AgentChannel, model: string, prompt: string, system: string): Record<string, unknown> {
-    if (channel.modelProvider === "anthropic-api") {
-      return {
-        model,
-        max_tokens: 4096,
-        system,
-        messages: [{ role: "user", content: prompt }],
-      };
-    }
-    return {
-      model,
-      messages: [
-        { role: "system", content: system },
-        { role: "user", content: prompt },
-      ],
-      stream: false,
-    };
-  }
-
-  private chatCompletionsUrl(baseUrl: string): string {
-    const normalized = baseUrl.replace(/\/+$/, "");
-    if (normalized.endsWith("/chat/completions")) return normalized;
-    return `${normalized}/chat/completions`;
-  }
-
-  private extractApiContent(channel: AgentChannel, text: string): string {
-    if (channel.modelProvider === "anthropic-api") {
-      const parsed = JSON.parse(text) as { content?: Array<{ type?: string; text?: unknown }> };
-      const content = parsed.content
-        ?.map((item) => (typeof item.text === "string" ? item.text : ""))
-        .filter(Boolean)
-        .join("");
-      if (content) return content;
-      return JSON.stringify(parsed, null, 2);
-    }
-    const parsed = JSON.parse(text) as {
-      choices?: Array<{ message?: { content?: unknown }; text?: unknown }>;
-      output_text?: unknown;
-    };
-    const first = parsed.choices?.[0];
-    const content = first?.message?.content ?? first?.text ?? parsed.output_text;
-    return typeof content === "string" ? content : JSON.stringify(parsed, null, 2);
   }
 
   private handleAgentEvent(run: RunState, event: AgentEvent): void {
-    const runtimeState = run.kind === "chat" ? run.runtimeState : undefined;
-    const touchRuntimeState = (attachmentState: ChatRuntimeSessionState["attachmentState"], clearTurn = false): void => {
-      if (!runtimeState) return;
-      runtimeState.attachmentState = attachmentState;
-      runtimeState.lastMeaningfulActivityAt = Date.now();
-      if (clearTurn) delete runtimeState.activeTurnId;
-    };
-
-    if (event.type === "runtime_conversation") {
-      run.runtimeConversation = this.runtimeRouter.cloneConversation(event.runtimeConversation);
-      if (runtimeState) {
-        runtimeState.lastMeaningfulActivityAt = Date.now();
-      }
-      run.updatedAt = Date.now();
-      this.emit();
-      return;
-    }
-
-    if (event.type === "delta") {
-      touchRuntimeState("running");
-      if (!run.pendingAssistantMessageId) {
-        const message = createAssistantMessage(event.content);
-        run.pendingAssistantMessageId = message.id;
-        run.messages.push(message);
-      } else {
-        const message = run.messages.find((item) => item.id === run.pendingAssistantMessageId);
-        if (message) message.content += event.content;
-      }
-      run.updatedAt = Date.now();
-      this.emit();
-      return;
-    }
-
-    if (event.type === "meta" || event.type === "system" || event.type === "tool_call" || event.type === "tool_result" || event.type === "handoff") {
-      touchRuntimeState("running");
-      this.appendEventToAssistant(run, {
-        id: randomUUID(),
-        type: event.type,
-        content: event.content,
-        timestamp: Date.now(),
-        ...("name" in event && event.name ? { name: event.name } : {}),
-        ...("fromAgentId" in event && event.fromAgentId ? { fromAgentId: event.fromAgentId } : {}),
-        ...("toAgentId" in event && event.toAgentId ? { toAgentId: event.toAgentId } : {}),
-        ...("metadata" in event && event.metadata ? { metadata: event.metadata } : {}),
-      });
-      run.updatedAt = Date.now();
-      this.emit();
-      return;
-    }
-
-    if (event.type === "approval_request" || event.type === "user_input_request") {
-      touchRuntimeState("running");
-      this.appendEventToAssistant(run, {
-        id: randomUUID(),
-        type: event.type,
-        content: event.content,
-        requestId: event.requestId,
-        requestState: "live",
-        timestamp: Date.now(),
-        ...(event.metadata ? { metadata: event.metadata } : {}),
-      });
-      run.updatedAt = Date.now();
-      this.emit();
-      return;
-    }
-
-    if (event.type === "approval_response" || event.type === "user_input_response") {
-      touchRuntimeState("running");
-      this.resolvePendingRequest(run, event.requestId, event.type === "approval_response" ? "approval_request" : "user_input_request");
-      this.appendEventToAssistant(run, {
-        id: randomUUID(),
-        type: event.type,
-        content: event.content ?? "",
-        requestId: event.requestId,
-        timestamp: Date.now(),
-        ...(event.type === "approval_response" ? { decision: event.decision } : {}),
-        ...(event.metadata ? { metadata: event.metadata } : {}),
-      });
-      run.updatedAt = Date.now();
-      this.emit();
-      return;
-    }
-
-    if (event.type === "completed") {
-      touchRuntimeState("idle", true);
-      if (event.content) {
-        if (!run.pendingAssistantMessageId) {
-          run.messages.push(createAssistantMessage(event.content));
-        }
-      }
-      run.pendingAssistantMessageId = undefined;
-      run.running = false;
-      if (run.kind === "task" && run.status !== "stopped") {
-        run.status = "completed";
-        run.progress = "in_review";
-      }
-      run.updatedAt = Date.now();
-      const stop = this.activeStops.get(run.id);
-      this.activeStops.delete(run.id);
-      void stop?.();
-      if (run.kind === "task") this.finishTeamStepFromTask(run);
-      this.emit();
-      return;
-    }
-
-    if (event.type === "error") {
-      touchRuntimeState("interrupted", true);
-      run.lastError = event.error;
-      run.messages.push(createErrorMessage(event.error));
-      run.pendingAssistantMessageId = undefined;
-      run.running = false;
-      if (run.kind === "task" && run.status !== "stopped") run.status = "failed";
-      run.updatedAt = Date.now();
-      const stop = this.activeStops.get(run.id);
-      this.activeStops.delete(run.id);
-      void stop?.();
-      if (run.kind === "task") this.finishTeamStepFromTask(run);
-      this.emit();
-    }
+    handleAgentEventValue({
+      run,
+      event,
+      cloneConversation: (runtimeConversation) => this.runtimeRouter.cloneConversation(runtimeConversation),
+      takeStop: (runId) => {
+        const stop = this.activeStops.get(runId);
+        this.activeStops.delete(runId);
+        return stop;
+      },
+      finishTaskRun: (task) => this.finishTeamStepFromTask(task),
+      emit: () => this.emit(),
+    });
   }
 
   private appendEventToAssistant(run: RunState, event: ChatEvent): void {
-    let message = run.pendingAssistantMessageId
-      ? run.messages.find((item) => item.id === run.pendingAssistantMessageId && item.role === "assistant")
-      : undefined;
-
-    if (!message) {
-      message = [...run.messages].reverse().find((item) => item.role === "assistant");
-    }
-
-    if (!message) {
-      message = createAssistantMessage();
-      run.pendingAssistantMessageId = message.id;
-      run.messages.push(message);
-    }
-
-    message.events = [...(message.events ?? []), event];
+    appendEventToAssistantValue(run, event);
   }
 
   private resolvePendingRequest(run: RunState, requestId: string, type: "approval_request" | "user_input_request"): void {
-    for (const message of [...run.messages].reverse()) {
-      const existing = [...(message.events ?? [])]
-        .reverse()
-        .find((item) => item.type === type && item.requestId === requestId && item.requestState === "live");
-      if (existing) {
-        existing.requestState = "resolved";
-        return;
-      }
-    }
+    resolvePendingRequestValue(run, requestId, type);
   }
 
   private expirePendingInteractionEvents(messages: ChatMessage[]): ChatMessage[] {
-    return messages.map((message) => ({
-      ...message,
-      ...(message.events
-        ? {
-            events: message.events.map((event) =>
-              event.type === "approval_request" || event.type === "user_input_request"
-                ? event.requestState === "live"
-                  ? { ...event, requestState: "expired" as const }
-                  : event
-                : event,
-            ),
-          }
-        : {}),
-    }));
+    return expirePendingInteractionEventsValue(messages);
   }
 
   private emit(): void {
@@ -4278,99 +2496,20 @@ export class AgentHub {
       this.channels = normalizeConfigChannelsForStorage(normalizeChannels(record.channels));
     }
 
-    const messagesByChat = new Map<string, ChatMessage[]>();
-    for (const item of record.messages) {
-      const messageRecord = asRecord(item);
-      const chatId = asOptionalString(messageRecord?.chatId);
-      const message = messageRecord ? this.restoreMessage(messageRecord) : undefined;
-      if (!chatId || !message) return false;
-      const messages = messagesByChat.get(chatId) ?? [];
-      messages.push(message);
-      messagesByChat.set(chatId, messages);
-    }
-
-    const eventsByMessage = new Map<string, ChatEvent[]>();
-    for (const item of record.events) {
-      const eventRecord = asRecord(item);
-      const messageId = asOptionalString(eventRecord?.messageId);
-      const event = eventRecord ? this.restoreEvent(eventRecord) : undefined;
-      if (!messageId || !event) return false;
-      const events = eventsByMessage.get(messageId) ?? [];
-      events.push(event);
-      eventsByMessage.set(messageId, events);
-    }
-    for (const messages of messagesByChat.values()) {
-      for (const message of messages) {
-        const events = eventsByMessage.get(message.id);
-        if (events && events.length > 0) message.events = events;
-      }
-    }
-
-    const messagesByTask = new Map<string, ChatMessage[]>();
-    for (const item of record.taskMessages ?? []) {
-      const messageRecord = asRecord(item);
-      const taskId = asOptionalString(messageRecord?.taskId);
-      const message = messageRecord ? this.restoreMessage(messageRecord) : undefined;
-      if (!taskId || !message) return false;
-      const messages = messagesByTask.get(taskId) ?? [];
-      messages.push(message);
-      messagesByTask.set(taskId, messages);
-    }
-
-    const taskEventsByMessage = new Map<string, ChatEvent[]>();
-    for (const item of record.taskEvents ?? []) {
-      const eventRecord = asRecord(item);
-      const messageId = asOptionalString(eventRecord?.messageId);
-      const event = eventRecord ? this.restoreEvent(eventRecord) : undefined;
-      if (!messageId || !event) return false;
-      const events = taskEventsByMessage.get(messageId) ?? [];
-      events.push(event);
-      taskEventsByMessage.set(messageId, events);
-    }
-    for (const messages of messagesByTask.values()) {
-      for (const message of messages) {
-        const events = taskEventsByMessage.get(message.id);
-        if (events && events.length > 0) message.events = events;
-      }
-    }
-
     this.installRestoredConfiguredAgents(Array.isArray(record.configuredAgents) ? record.configuredAgents : []);
+    const restored = restorePersistedCollections(record, {
+      restoreChatState: (payload) => this.restoreChatState(payload),
+      restoreTaskState: (payload) => this.restoreTaskState(payload),
+      restoreTeamState: (payload) => this.restoreTeamState(payload),
+      restoreTeamRunState: (payload) => this.restoreTeamRunState(payload),
+    });
+    if (!restored) return false;
 
-    const chats: ChatState[] = [];
-    for (const item of record.sessions) {
-      const sessionRecord = asRecord(item);
-      const chatId = asOptionalString(sessionRecord?.id);
-      if (!sessionRecord || !chatId) return false;
-      const chat = this.restoreChatState({
-        ...sessionRecord,
-        messages: messagesByChat.get(chatId) ?? [],
-      });
-      if (!chat) return false;
-      chats.push(chat);
-    }
-    this.installRestoredChats(chats, asOptionalString(record.activeChatId), asOptionalString(record.workDir));
-
-    const tasks: TaskState[] = [];
-    for (const item of record.tasks ?? []) {
-      const taskRecord = asRecord(item);
-      const taskId = asOptionalString(taskRecord?.id);
-      if (!taskRecord || !taskId) return false;
-      const task = this.restoreTaskState({
-        ...taskRecord,
-        messages: messagesByTask.get(taskId) ?? [],
-      });
-      if (!task) return false;
-      tasks.push(task);
-    }
-    this.installRestoredTasks(tasks, asOptionalString(record.activeTaskId));
-
-    const teams = (record.teams ?? []).map((item) => this.restoreTeamState(item));
-    if (teams.some((item) => !item)) return false;
-    const teamRuns = (record.teamRuns ?? []).map((item) => this.restoreTeamRunState(item));
-    if (teamRuns.some((item) => !item)) return false;
+    this.installRestoredChats(restored.chats, asOptionalString(record.activeChatId), asOptionalString(record.workDir));
+    this.installRestoredTasks(restored.tasks, asOptionalString(record.activeTaskId));
     this.installRestoredTeams(
-      teams.filter((item): item is AgentTeamState => Boolean(item)),
-      teamRuns.filter((item): item is TeamRunState => Boolean(item)),
+      restored.teams,
+      restored.teamRuns,
       asOptionalString(record.activeTeamId),
       asOptionalString(record.activeTeamRunId),
     );
@@ -4380,20 +2519,7 @@ export class AgentHub {
   }
 
   private isPersistedAppStateV4(raw: unknown): raw is PersistedAppStateV4 {
-    const record = asRecord(raw);
-    return Boolean(
-      record
-      && record.version === 4
-      && typeof record.workDir === "string"
-      && Array.isArray(record.sessions)
-      && Array.isArray(record.messages)
-      && Array.isArray(record.events)
-      && Array.isArray(record.tasks)
-      && Array.isArray(record.taskMessages)
-      && Array.isArray(record.taskEvents)
-      && Array.isArray(record.teams)
-      && Array.isArray(record.teamRuns),
-    );
+    return isPersistedAppStateV4Value(raw);
   }
 
   private reinitializePersistedState(): void {
@@ -4419,48 +2545,35 @@ export class AgentHub {
   }
 
   private restoreConfiguredAgent(raw: unknown, now = Date.now()): ConfiguredAgent | undefined {
-    const record = asRecord(raw);
-    if (!record) return undefined;
-    const id = asOptionalString(record.id)?.trim();
-    const name = asOptionalString(record.name)?.trim();
-    const runtimeAgentId = isAgentId(record.runtimeAgentId) ? record.runtimeAgentId : DEFAULT_AGENT;
-    if (!id || !name) return undefined;
-    const fallbackChannelId = defaultChannelForAgent(runtimeAgentId, this.channels);
-    const channelId = asOptionalString(record.channelId);
-    const normalizedChannelId = channelId && this.channelById(channelId)?.agentId === runtimeAgentId ? channelId : fallbackChannelId;
-    const modelId = asOptionalString(record.modelId);
-    return {
-      id,
-      name,
-      description: asOptionalString(record.description) ?? "",
-      runtimeAgentId,
-      channelId: normalizedChannelId,
-      modelId: modelId && isModelForChannel(runtimeAgentId, normalizedChannelId, modelId, this.channels) ? modelId : defaultModelForAgent(runtimeAgentId),
-      tags: asArray(record.tags).map((tag) => asOptionalString(tag)).filter((tag): tag is string => Boolean(tag)),
-      createdAt: asNumber(record.createdAt, now),
-      updatedAt: asNumber(record.updatedAt, now),
-    };
+    return restoreConfiguredAgentState(
+      raw,
+      {
+        channels: this.channels,
+        channelById: (channelId) => this.channelById(channelId),
+        defaultAgentId: DEFAULT_AGENT,
+      },
+      now,
+    );
   }
 
   private installRestoredChats(chats: ChatState[], activeChatId: string | undefined, workDir: string | undefined): void {
-    this.chats.clear();
-    for (const chat of chats) this.chats.set(chat.id, chat);
-
-    if (this.chats.size === 0) {
-      const chat = this.createChatState(this.defaultConfiguredAgentId());
-      this.chats.set(chat.id, chat);
-      this.activeChatId = chat.id;
-    } else {
-      this.activeChatId = activeChatId && this.chats.has(activeChatId) ? activeChatId : [...this.chats.keys()][0];
-    }
-
-    if (workDir) this.workDir = workDir;
+    const installed = installRestoredChatsValue({
+      target: this.chats,
+      chats,
+      activeChatId,
+      workDir,
+      createDefaultChat: () => this.createChatState(this.defaultConfiguredAgentId()),
+    });
+    this.activeChatId = installed.activeChatId;
+    if (installed.workDir) this.workDir = installed.workDir;
   }
 
   private installRestoredTasks(tasks: TaskState[], activeTaskId: string | undefined): void {
-    this.tasks.clear();
-    for (const task of tasks) this.tasks.set(task.id, task);
-    this.activeTaskId = activeTaskId && this.tasks.has(activeTaskId) ? activeTaskId : [...this.tasks.keys()][0];
+    this.activeTaskId = installRestoredTasksValue({
+      target: this.tasks,
+      tasks,
+      activeTaskId,
+    });
   }
 
   private installRestoredTeams(
@@ -4469,12 +2582,16 @@ export class AgentHub {
     activeTeamId: string | undefined,
     activeTeamRunId: string | undefined,
   ): void {
-    this.teams.clear();
-    for (const team of teams) this.teams.set(team.id, team);
-    this.teamRuns.clear();
-    for (const run of teamRuns) this.teamRuns.set(run.id, run);
-    this.activeTeamId = activeTeamId && this.teams.has(activeTeamId) ? activeTeamId : [...this.teams.keys()][0];
-    this.activeTeamRunId = activeTeamRunId && this.teamRuns.has(activeTeamRunId) ? activeTeamRunId : [...this.teamRuns.keys()][0];
+    const installed = installRestoredTeamsValue({
+      teamsTarget: this.teams,
+      teams,
+      activeTeamId,
+      teamRunsTarget: this.teamRuns,
+      teamRuns,
+      activeTeamRunId,
+    });
+    this.activeTeamId = installed.activeTeamId;
+    this.activeTeamRunId = installed.activeTeamRunId;
   }
 
   private runtimeSupportsInteractiveChat(runtimeAgentId: AgentId): boolean {
@@ -4482,580 +2599,106 @@ export class AgentHub {
   }
 
   private restoreRuntimeState(raw: unknown): ChatRuntimeSessionState | undefined {
-    const record = asRecord(raw);
-    if (!record || !isExecutionStyle(record.executionStyle) || !isRuntimeAttachmentState(record.attachmentState)) return undefined;
-    const capabilitiesRecord = asRecord(record.capabilities);
-    const capabilities = defaultRuntimeSessionCapabilities();
-    if (capabilitiesRecord) {
-      capabilities.supportsInProcessConversationResume = asBoolean(capabilitiesRecord.supportsInProcessConversationResume);
-      capabilities.supportsResumeAfterDetach = asBoolean(capabilitiesRecord.supportsResumeAfterDetach);
-      capabilities.supportsResumeAfterAppRestart = asBoolean(capabilitiesRecord.supportsResumeAfterAppRestart);
-      capabilities.supportsTurnResume = asBoolean(capabilitiesRecord.supportsTurnResume);
-      capabilities.supportsInterrupt = asBoolean(capabilitiesRecord.supportsInterrupt);
-      capabilities.supportsContinue = asBoolean(capabilitiesRecord.supportsContinue);
-      capabilities.supportsApprovalRequests = asBoolean(capabilitiesRecord.supportsApprovalRequests);
-      capabilities.supportsUserInputRequests = asBoolean(capabilitiesRecord.supportsUserInputRequests);
-    }
-    const restored: ChatRuntimeSessionState = {
-      executionStyle: record.executionStyle,
-      attachmentState: record.attachmentState,
-      attachmentGeneration: Math.max(0, Math.floor(asNumber(record.attachmentGeneration, 0))),
-      capabilities,
-    };
-    const activeTurnId = asOptionalString(record.activeTurnId);
-    if (activeTurnId) restored.activeTurnId = activeTurnId;
-    if (typeof record.lastMeaningfulActivityAt === "number") {
-      restored.lastMeaningfulActivityAt = record.lastMeaningfulActivityAt;
-    }
-    return restored;
+    return restoreRuntimeStateValue(raw);
   }
 
   private restoreChatState(raw: unknown): ChatState | null {
-    if (!raw || typeof raw !== "object") return null;
-    const record = raw as Record<string, unknown>;
-    if ("sessionId" in record || "runtimeSession" in record) return null;
-
-    const now = Date.now();
-    const configuredAgent = this.configuredAgentOrDefault(asOptionalString(record.configuredAgentId));
-    if (!configuredAgent) return null;
-    const chat = new ChatState(
-      configuredAgent.id,
-      this.normalizeModelIdForConfiguredAgent(configuredAgent.id, asOptionalString(record.modelId) ?? configuredAgent.modelId),
-      configuredAgent.name || "New Chat",
-    );
-    const channelId = asOptionalString(record.channelId);
-    chat.channelId =
-      channelId && this.channelById(channelId)?.agentId === configuredAgent.runtimeAgentId
-        ? channelId
-        : undefined;
-    chat.modelId = this.normalizeModelIdForConfiguredAgent(
-      configuredAgent.id,
-      asOptionalString(record.modelId) ?? configuredAgent.modelId,
-      chat.channelId,
-    );
-    chat.id = asOptionalString(record.id) ?? chat.id;
-    chat.title = asOptionalString(record.title) ?? (configuredAgent.name || "New Chat");
-    chat.running = false;
-    chat.pendingAssistantMessageId = undefined;
-    chat.lastError = asOptionalString(record.lastError);
-    chat.createdAt = asNumber(record.createdAt, now);
-    chat.updatedAt = asNumber(record.updatedAt, chat.createdAt);
-    const messages = Array.isArray(record.messages)
-      ? record.messages.map((message) => this.restoreMessage(message)).filter((message): message is ChatMessage => Boolean(message))
-      : [];
-    chat.messages = this.expirePendingInteractionEvents(this.normalizeRestoredMessages(messages));
-    const restoredRuntimeState = record.runtimeState === undefined ? undefined : this.restoreRuntimeState(record.runtimeState);
-    if (record.runtimeState !== undefined && !restoredRuntimeState) return null;
-    const restoredRuntimeConversation =
-      record.runtimeConversation === undefined ? undefined : this.runtimeRouter.restorePersistedConversation(record.runtimeConversation);
-    if (record.runtimeConversation !== undefined && !restoredRuntimeConversation) return null;
-    if (restoredRuntimeState && this.runtimeSupportsInteractiveChat(configuredAgent.runtimeAgentId)) {
-      chat.runtimeState = {
-        ...cloneRuntimeState(restoredRuntimeState),
-        attachmentState: "detached",
-        attachmentGeneration: 0,
-      };
-      delete chat.runtimeState.activeTurnId;
-    }
-    chat.runtimeConversation = restoredRuntimeConversation ? this.runtimeRouter.cloneConversation(restoredRuntimeConversation) : undefined;
-    return chat;
+    return restoreChatStateValue(raw, {
+      configuredAgentOrDefault: (configuredAgentId) => this.configuredAgentOrDefault(configuredAgentId),
+      normalizeModelIdForConfiguredAgent: (configuredAgentId, modelId, channelIdOverride) =>
+        this.normalizeModelIdForConfiguredAgent(configuredAgentId, modelId, channelIdOverride),
+      channelById: (channelId) => this.channelById(channelId),
+      restoreRuntimeConversation: (payload) => this.runtimeRouter.restorePersistedConversation(payload),
+      cloneRuntimeConversation: (conversation) => this.runtimeRouter.cloneConversation(conversation),
+      runtimeSupportsInteractiveChat: (runtimeAgentId) => this.runtimeSupportsInteractiveChat(runtimeAgentId),
+      expirePendingInteractionEvents: (messages) => this.expirePendingInteractionEvents(messages),
+    });
   }
 
   private restoreTaskState(raw: unknown): TaskState | null {
-    if (!raw || typeof raw !== "object") return null;
-    const record = raw as Record<string, unknown>;
-    if ("sessionId" in record) return null;
-    if (typeof record.prompt !== "string") return null;
-
-    const configuredAgent = this.configuredAgentOrDefault(asOptionalString(record.configuredAgentId));
-    if (!configuredAgent) return null;
-    const now = Date.now();
-    const task = new TaskState(
-      record.prompt,
-      configuredAgent.id,
-      this.normalizeModelIdForConfiguredAgent(configuredAgent.id, asOptionalString(record.modelId) ?? configuredAgent.modelId),
-      asOptionalString(record.workDir) ?? this.workDir,
-    );
-    task.id = asOptionalString(record.id) ?? task.id;
-    task.title = asOptionalString(record.title) ?? titleFromPrompt(record.prompt);
-    task.progress = isTaskProgress(record.progress) ? record.progress : "todo";
-    const status = isTaskRunStatus(record.status) ? record.status : "completed";
-    task.status = status === "running" ? "failed" : status;
-    task.running = false;
-    task.pendingAssistantMessageId = undefined;
-    task.lastError = asOptionalString(record.lastError);
-    task.createdAt = asNumber(record.createdAt, now);
-    task.updatedAt = asNumber(record.updatedAt, task.createdAt);
-    const messages = Array.isArray(record.messages)
-      ? record.messages.map((message) => this.restoreMessage(message)).filter((message): message is ChatMessage => Boolean(message))
-      : [];
-    task.messages = this.normalizeRestoredMessages(messages);
-    const restoredRuntimeConversation =
-      record.runtimeConversation === undefined ? undefined : this.runtimeRouter.restorePersistedConversation(record.runtimeConversation);
-    if (record.runtimeConversation !== undefined && !restoredRuntimeConversation) return null;
-    task.runtimeConversation = restoredRuntimeConversation ? this.runtimeRouter.cloneConversation(restoredRuntimeConversation) : undefined;
-    return task;
+    return restoreTaskStateValue(raw, {
+      workDir: this.workDir,
+      configuredAgentOrDefault: (configuredAgentId) => this.configuredAgentOrDefault(configuredAgentId),
+      normalizeModelIdForConfiguredAgent: (configuredAgentId, modelId, channelIdOverride) =>
+        this.normalizeModelIdForConfiguredAgent(configuredAgentId, modelId, channelIdOverride),
+      restoreRuntimeConversation: (payload) => this.runtimeRouter.restorePersistedConversation(payload),
+      cloneRuntimeConversation: (conversation) => this.runtimeRouter.cloneConversation(conversation),
+    });
   }
 
   private restoreTeamState(raw: unknown): AgentTeamState | null {
-    if (!raw || typeof raw !== "object") return null;
-    const record = raw as Record<string, unknown>;
-    const name = asOptionalString(record.name);
-    if (!name) return null;
-    const now = Date.now();
-    const team = new AgentTeamState(
-      name,
-      isAgentTeamMode(record.mode) ? record.mode : "pipeline",
-      asOptionalString(record.sharedContext) ?? "",
-      this.normalizeTeamMembers(asArray(record.members) as AgentTeamMember[]),
-    );
-    team.id = asOptionalString(record.id) ?? team.id;
-    team.createdAt = asNumber(record.createdAt, now);
-    team.updatedAt = asNumber(record.updatedAt, team.createdAt);
-    return team;
+    return restoreTeamStateValue(raw, {
+      normalizeTeamMembers: (members) => this.normalizeTeamMembers(members),
+    });
   }
 
   private restoreTeamRunState(raw: unknown): TeamRunState | null {
-    if (!raw || typeof raw !== "object") return null;
-    const record = raw as Record<string, unknown>;
-    const teamId = asOptionalString(record.teamId);
-    const prompt = asOptionalString(record.prompt);
-    if (!teamId || !prompt) return null;
-
-    const placeholderTeam = new AgentTeamState(
-      asOptionalString(record.teamName) ?? "Agent Team",
-      isAgentTeamMode(record.mode) ? record.mode : "pipeline",
-      "",
-      [],
-    );
-    placeholderTeam.id = teamId;
-
-    const now = Date.now();
-    const run = new TeamRunState(
-      placeholderTeam,
-      prompt,
-      isAgentWorkflowTarget(record.target) ? record.target : undefined,
-      asOptionalString(record.workDir) ?? this.workDir,
-    );
-    run.id = asOptionalString(record.id) ?? run.id;
-    run.teamName = asOptionalString(record.teamName) ?? placeholderTeam.name;
-    run.title = asOptionalString(record.title) ?? titleFromPrompt(prompt);
-    run.status = isTeamRunStatus(record.status) ? record.status : "failed";
-    if (run.status === "running" || run.status === "queued") run.status = "failed";
-    run.currentStepIndex = Math.max(0, Math.floor(asNumber(record.currentStepIndex, 0)));
-    run.sharedContextSnapshot = asOptionalString(record.sharedContextSnapshot) ?? "";
-    run.lastError = asOptionalString(record.lastError);
-    run.createdAt = asNumber(record.createdAt, now);
-    run.updatedAt = asNumber(record.updatedAt, run.createdAt);
-    run.steps = asArray(record.steps).map((step) => this.restoreTeamRunStep(step)).filter((step): step is TeamRunStep => Boolean(step));
-    const restoredMembers = this.normalizeTeamMembers(asArray(record.membersSnapshot) as AgentTeamMember[]);
-    run.membersSnapshot = restoredMembers.length > 0 ? restoredMembers : this.teamMembersFromRunSteps(run.steps);
-    return run;
+    return restoreTeamRunStateValue(raw, {
+      workDir: this.workDir,
+      normalizeTeamMembers: (members) => this.normalizeTeamMembers(members),
+      teamMembersFromRunSteps: (steps) => this.teamMembersFromRunSteps(steps),
+      restoreTeamRunStep: (step) => this.restoreTeamRunStep(step),
+    });
   }
 
   private restoreTeamRunStep(raw: unknown): TeamRunStep | null {
-    if (!raw || typeof raw !== "object") return null;
-    const record = raw as Record<string, unknown>;
-    const configuredAgent = this.configuredAgentOrDefault(asOptionalString(record.configuredAgentId));
-    if (!configuredAgent) return null;
-    return {
-      id: asOptionalString(record.id) ?? randomUUID(),
-      teamMemberId: asOptionalString(record.teamMemberId) ?? randomUUID(),
-      roleName: asOptionalString(record.roleName) ?? "Agent",
-      prompt: asOptionalString(record.prompt) ?? "",
-      configuredAgentId: configuredAgent.id,
-      status:
-        isTeamRunStepStatus(record.status) && record.status !== "running" && record.status !== "queued"
-          ? record.status
-          : "failed",
-      taskId: asOptionalString(record.taskId),
-      artifact: asOptionalString(record.artifact),
-      lastError: asOptionalString(record.lastError),
-      startedAt: typeof record.startedAt === "number" ? record.startedAt : undefined,
-      completedAt: typeof record.completedAt === "number" ? record.completedAt : undefined,
-    };
+    return restoreTeamRunStepValue(raw, {
+      configuredAgentOrDefault: (configuredAgentId) => this.configuredAgentOrDefault(configuredAgentId),
+    });
   }
 
   private restoreWorkflowStore(rawStore: unknown): boolean {
-    this.workflows.clear();
-    this.workflowRuns.clear();
-    this.activeWorkflowId = undefined;
-
-    const storeRecord = asRecord(rawStore);
-    if (rawStore === undefined) return true;
-    if (!storeRecord) return false;
-    for (const item of asArray(storeRecord.workflows)) {
-      const workflow = this.restoreWorkflowDraft(item);
-      if (!workflow) return false;
-      this.workflows.set(workflow.workflowId, workflow);
-    }
-    for (const item of asArray(storeRecord.runs)) {
-      const run = this.restoreWorkflowRun(item);
-      if (!run) return false;
-      this.workflowRuns.set(run.runId, run);
-    }
-    const activeWorkflowId = asOptionalString(storeRecord.activeWorkflowId);
-    this.activeWorkflowId =
-      activeWorkflowId && this.workflows.has(activeWorkflowId)
-        ? activeWorkflowId
-        : [...this.workflows.values()].sort((left, right) => right.updatedAt - left.updatedAt)[0]?.workflowId;
-    return true;
+    const restored = restoreWorkflowStoreStateValue({
+      rawStore,
+      workflowsTarget: this.workflows,
+      workflowRunsTarget: this.workflowRuns,
+      restoreWorkflowDraft: (payload) => this.restoreWorkflowDraft(payload),
+      restoreWorkflowRun: (payload) => this.restoreWorkflowRun(payload),
+    });
+    this.activeWorkflowId = restored.activeWorkflowId;
+    return restored.ok;
   }
 
   private restoreScheduledWorkflowStore(rawStore: unknown): void {
-    this.scheduledWorkflowSchedules.clear();
-    this.scheduledWorkflowRuns.clear();
-    this.activeScheduledWorkflowId = undefined;
-    this.scheduledWorkflowRunnerConfig = { baseUrl: "" };
-    this.scheduledWorkflowRunnerStatus = { connected: false, connecting: false };
-
-    const storeRecord = asRecord(rawStore);
-    if (!storeRecord) return;
-    const configRecord = asRecord(storeRecord.runnerConfig);
-    if (configRecord) {
-      this.scheduledWorkflowRunnerConfig = this.cloneScheduledWorkflowRunnerConfig({
-        baseUrl: asOptionalString(configRecord.baseUrl) ?? "",
-        ...(asOptionalString(configRecord.tenantId) !== undefined ? { tenantId: asOptionalString(configRecord.tenantId) } : {}),
-        ...(asOptionalString(configRecord.userId) !== undefined ? { userId: asOptionalString(configRecord.userId) } : {}),
-        ...(asOptionalString(configRecord.deviceName) !== undefined ? { deviceName: asOptionalString(configRecord.deviceName) } : {}),
-        ...(asOptionalString(configRecord.deviceId) !== undefined ? { deviceId: asOptionalString(configRecord.deviceId) } : {}),
-        ...(asOptionalString(configRecord.runnerToken) !== undefined ? { runnerToken: asOptionalString(configRecord.runnerToken) } : {}),
-      });
-    }
-
-    for (const item of asArray(storeRecord.schedules)) {
-      const schedule = this.restoreScheduledWorkflowSchedule(item);
-      if (schedule) this.scheduledWorkflowSchedules.set(schedule.scheduleId, schedule);
-    }
-    for (const item of asArray(storeRecord.runs)) {
-      const run = this.restoreScheduledWorkflowRun(item);
-      if (run) this.scheduledWorkflowRuns.set(run.runId, run);
-    }
-    const activeScheduleId = asOptionalString(storeRecord.activeScheduleId);
-    this.activeScheduledWorkflowId =
-      activeScheduleId && this.scheduledWorkflowSchedules.has(activeScheduleId)
-        ? activeScheduleId
-        : [...this.scheduledWorkflowSchedules.values()].sort((left, right) => right.createdAt - left.createdAt)[0]?.scheduleId;
+    const restored = restoreScheduledWorkflowStoreStateValue({
+      rawStore,
+      schedulesTarget: this.scheduledWorkflowSchedules,
+      runsTarget: this.scheduledWorkflowRuns,
+      restoreRunnerConfig: (payload) =>
+        restoreScheduledWorkflowRunnerConfigValue(payload, (config) => this.cloneScheduledWorkflowRunnerConfig(config)),
+      restoreSchedule: (payload) => this.restoreScheduledWorkflowSchedule(payload),
+      restoreRun: (payload) => this.restoreScheduledWorkflowRun(payload),
+    });
+    this.scheduledWorkflowRunnerConfig = restored.runnerConfig;
+    this.scheduledWorkflowRunnerStatus = restored.runnerStatus;
+    this.activeScheduledWorkflowId = restored.activeScheduledWorkflowId;
   }
 
   private restoreScheduledWorkflowSchedule(raw: unknown): ScheduledWorkflowSchedule | undefined {
-    const record = asRecord(raw);
-    if (!record) return undefined;
-    const scheduleId = asOptionalString(record.scheduleId);
-    const workflowId = asOptionalString(record.workflowId);
-    if (!scheduleId || !workflowId || !this.workflows.has(workflowId)) return undefined;
-    return this.cloneScheduledWorkflowSchedule({
-      scheduleId,
-      workflowId,
-      title: asOptionalString(record.title) ?? this.workflows.get(workflowId)?.title ?? "Scheduled workflow",
-      enabled: record.enabled !== false,
-      intervalSeconds: Math.max(60, Math.floor(asNumber(record.intervalSeconds, 3600))),
-      frequency: normalizeScheduledWorkflowFrequency(record.frequency ?? record.scheduleType),
-      timeOfDay: normalizeScheduledWorkflowTimeOfDay(record.timeOfDay),
-      timezone: asOptionalString(record.timezone)?.trim() || DEFAULT_SCHEDULED_WORKFLOW_TIMEZONE,
-      ...(normalizeScheduledWorkflowWeekdays(record.weekdays) !== undefined ? { weekdays: normalizeScheduledWorkflowWeekdays(record.weekdays) } : {}),
-      ...(normalizeScheduledWorkflowDayOfMonth(record.dayOfMonth) !== undefined ? { dayOfMonth: normalizeScheduledWorkflowDayOfMonth(record.dayOfMonth) } : {}),
-      ...(typeof record.nextRunAt === "number" ? { nextRunAt: record.nextRunAt } : {}),
-      ...(typeof record.lastRunAt === "number" ? { lastRunAt: record.lastRunAt } : {}),
-      source: record.source === "local" ? "local" : "cloud",
-      createdAt: asNumber(record.createdAt, Date.now()),
-      updatedAt: asNumber(record.updatedAt, Date.now()),
+    return restoreScheduledWorkflowScheduleValue(raw, {
+      hasWorkflow: (workflowId) => this.workflows.has(workflowId),
+      workflowTitle: (workflowId) => this.workflows.get(workflowId)?.title,
+      cloneScheduledWorkflowSchedule: (schedule) => this.cloneScheduledWorkflowSchedule(schedule),
     });
   }
 
   private restoreScheduledWorkflowRun(raw: unknown): ScheduledWorkflowRun | undefined {
-    const record = asRecord(raw);
-    if (!record) return undefined;
-    const runId = asOptionalString(record.runId);
-    const scheduleId = asOptionalString(record.scheduleId);
-    const workflowId = asOptionalString(record.workflowId);
-    if (!runId || !scheduleId || !workflowId || !this.workflows.has(workflowId)) return undefined;
-    const status = isScheduledWorkflowRunStatus(record.status) ? record.status : "failed";
-    return this.cloneScheduledWorkflowRun({
-      runId,
-      scheduleId,
-      workflowId,
-      ...(asOptionalString(record.eventId) !== undefined ? { eventId: asOptionalString(record.eventId) } : {}),
-      ...(asOptionalString(record.workflowRunId) !== undefined ? { workflowRunId: asOptionalString(record.workflowRunId) } : {}),
-      title: asOptionalString(record.title) ?? this.scheduledWorkflowSchedules.get(scheduleId)?.title ?? "Scheduled workflow",
-      status: status === "running" || status === "queued" ? "failed" : status,
-      startedAt: asNumber(record.startedAt, Date.now()),
-      finishedAt: typeof record.finishedAt === "number" ? record.finishedAt : undefined,
-      ...((asOptionalString(record.message) ?? (status === "running" || status === "queued" ? "Interrupted before app restart" : undefined)) !== undefined
-        ? { message: asOptionalString(record.message) ?? "Interrupted before app restart" }
-        : {}),
+    return restoreScheduledWorkflowRunValue(raw, {
+      hasWorkflow: (workflowId) => this.workflows.has(workflowId),
+      scheduledWorkflowTitle: (scheduleId) => this.scheduledWorkflowSchedules.get(scheduleId)?.title,
+      cloneScheduledWorkflowRun: (run) => this.cloneScheduledWorkflowRun(run),
     });
   }
 
   private restoreWorkflowDraft(raw: unknown): WorkflowDraftState | undefined {
-    const record = asRecord(raw);
-    if (!record) return undefined;
-    if ("agentSessionId" in record) return undefined;
-    const graph = this.restoreWorkflowGraph(record.graph);
-    if (!graph) return undefined;
-    const finalReport = asOptionalString(record.finalReport);
-    const restoredRuntimeConversation =
-      record.runtimeConversation === undefined ? undefined : this.runtimeRouter.restorePersistedConversation(record.runtimeConversation);
-    if (record.runtimeConversation !== undefined && !restoredRuntimeConversation) return undefined;
-    return this.cloneWorkflowDraft({
-      workflowId: asOptionalString(record.workflowId) ?? `wf_${randomUUID()}`,
-      title: asOptionalString(record.title) ?? graph.title,
-      status: this.restoreWorkflowDraftStatus(record.status),
-      revision: Math.max(1, Math.floor(asNumber(record.revision, 1))),
-      configuredAgentId: asOptionalString(record.configuredAgentId) ?? "",
-      modelId: asOptionalString(record.modelId) ?? "",
-      objective: asOptionalString(record.objective) ?? graph.objective,
-      ...(asOptionalString(record.workDir) ? { workDir: asOptionalString(record.workDir) as string } : {}),
-      graph,
-      graphReady: record.graphReady === true,
-      messages: asArray(record.messages)
-        .map((message) => {
-          const messageRecord = asRecord(message);
-          if (!messageRecord || !isWorkflowGrillMessageRole(messageRecord.role)) return undefined;
-          return {
-            id: asOptionalString(messageRecord.id) ?? randomUUID(),
-            role: messageRecord.role,
-            content: asOptionalString(messageRecord.content) ?? "",
-          };
-        })
-        .filter((message): message is WorkflowDraftState["messages"][number] => Boolean(message)),
-      reply: asOptionalString(record.reply) ?? "",
-      error: asOptionalString(record.error),
-      runProgress: asArray(record.runProgress)
-        .map((item) => this.restoreWorkflowRunProgressItem(item))
-        .filter((item): item is WorkflowRunProgressItem => Boolean(item)),
-      runContextDocument: asOptionalString(record.runContextDocument) ?? "",
-      contextDocument: asOptionalString(record.contextDocument) ?? "",
-      ...(finalReport !== undefined ? { finalReport } : {}),
-      runIds: asArray(record.runIds).map((item) => asOptionalString(item)).filter((item): item is string => Boolean(item)),
-      ...(restoredRuntimeConversation ? { runtimeConversation: restoredRuntimeConversation } : {}),
-      createdAt: asNumber(record.createdAt, asNumber(record.updatedAt, Date.now())),
-      updatedAt: asNumber(record.updatedAt, Date.now()),
+    return restoreWorkflowDraftValue(raw, {
+      restoreRuntimeConversation: (payload) => this.runtimeRouter.restorePersistedConversation(payload),
+      cloneWorkflowDraft: (draft) => this.cloneWorkflowDraft(draft),
     });
   }
 
   private restoreWorkflowRun(raw: unknown): WorkflowRunState | undefined {
-    const record = asRecord(raw);
-    if (!record) return undefined;
-    const runId = asOptionalString(record.runId);
-    const workflowId = asOptionalString(record.workflowId);
-    const graphSnapshot = this.restoreWorkflowGraph(record.graphSnapshot);
-    if (!runId || !workflowId || !graphSnapshot) return undefined;
-    const finalReport = asOptionalString(record.finalReport);
-    return {
-      runId,
-      workflowId,
-      status: this.restoreWorkflowRunStatus(record.status),
-      graphSnapshot,
-      progress: asArray(record.progress)
-        .map((item) => this.restoreWorkflowRunProgressItem(item))
-        .filter((item): item is WorkflowRunProgressItem => Boolean(item)),
-      events: asArray(record.events)
-        .map((event) => this.restoreWorkflowEvent(event))
-        .filter((event): event is WorkflowEvent => Boolean(event)),
-      contextDocument: asOptionalString(record.contextDocument) ?? "",
-      ...(finalReport !== undefined ? { finalReport } : {}),
-      startedAt: asNumber(record.startedAt, Date.now()),
-      finishedAt: typeof record.finishedAt === "number" ? record.finishedAt : undefined,
-      lastError: asOptionalString(record.lastError),
-    };
-  }
-
-  private restoreWorkflowStatus(value: unknown): WorkflowStatus {
-    return value === "running" || value === "completed" || value === "failed" || value === "stopped" ? value : "draft";
-  }
-
-  private restoreWorkflowDraftStatus(value: unknown): WorkflowStatus {
-    const status = this.restoreWorkflowStatus(value);
-    return status === "running" ? "failed" : status;
-  }
-
-  private restoreWorkflowRunStatus(value: unknown): WorkflowStatus {
-    const status = this.restoreWorkflowStatus(value);
-    return status === "running" ? "failed" : status;
-  }
-
-  private restoreWorkflowGraph(raw: unknown): WorkflowGraph | undefined {
-    const record = asRecord(raw);
-    if (!record) return undefined;
-    const title = asOptionalString(record.title);
-    const objective = asOptionalString(record.objective);
-    if (!title || !objective) return undefined;
-    const nodes = asArray(record.nodes)
-      .map((node) => this.restoreWorkflowGraphNode(node))
-      .filter((node): node is WorkflowGraphNode => Boolean(node));
-    const edges = asArray(record.edges)
-      .map((edge) => this.restoreWorkflowGraphEdge(edge))
-      .filter((edge): edge is WorkflowGraphEdge => Boolean(edge));
-    if (nodes.length === 0) return undefined;
-    return { title, objective, nodes, edges };
-  }
-
-  private restoreWorkflowGraphNode(raw: unknown): WorkflowGraphNode | undefined {
-    const record = asRecord(raw);
-    if (!record || !isWorkflowGraphNodeKind(record.kind)) return undefined;
-    const id = asOptionalString(record.id);
-    const title = asOptionalString(record.title);
-    const prompt = asOptionalString(record.prompt);
-    if (!id || title === undefined || prompt === undefined) return undefined;
-    const node: WorkflowGraphNode = { id, kind: record.kind, title, prompt };
-    const position = asRecord(record.position);
-    if (position && typeof position.x === "number" && typeof position.y === "number" && Number.isFinite(position.x) && Number.isFinite(position.y)) {
-      node.position = { x: position.x, y: position.y };
-    }
-    const configuredAgentId = asOptionalString(record.configuredAgentId);
-    if (configuredAgentId) node.configuredAgentId = configuredAgentId;
-    const modelId = asOptionalString(record.modelId);
-    if (modelId) node.modelId = modelId;
-    return node;
-  }
-
-  private restoreWorkflowGraphEdge(raw: unknown): WorkflowGraphEdge | undefined {
-    const record = asRecord(raw);
-    if (!record) return undefined;
-    const fromNodeId = asOptionalString(record.fromNodeId);
-    const toNodeId = asOptionalString(record.toNodeId);
-    if (!fromNodeId || !toNodeId) return undefined;
-    return {
-      id: asOptionalString(record.id) || `${fromNodeId}->${toNodeId}`,
-      fromNodeId,
-      toNodeId,
-    };
-  }
-
-  private restoreWorkflowRunProgressItem(raw: unknown): WorkflowRunProgressItem | undefined {
-    const record = asRecord(raw);
-    if (!record) return undefined;
-    const nodeId = asOptionalString(record.nodeId);
-    const title = asOptionalString(record.title);
-    if (!nodeId || !title || !isWorkflowRunNodeStatus(record.status)) return undefined;
-    const status = record.status === "running" || record.status === "queued" ? "failed" : record.status;
-    const item: WorkflowRunProgressItem = {
-      nodeId,
-      title,
-      status,
-    };
-    const detail = asOptionalString(record.detail) ?? (status === "failed" && record.status !== "failed" ? "Interrupted before app restart" : undefined);
-    if (detail) item.detail = detail;
-    const taskId = asOptionalString(record.taskId);
-    if (taskId) item.taskId = taskId;
-    return item;
-  }
-
-  private restoreWorkflowEvent(raw: unknown): WorkflowEvent | undefined {
-    const record = asRecord(raw);
-    if (!record) return undefined;
-    const nodeId = asOptionalString(record.nodeId);
-    const type = record.type;
-    const validType =
-      type === "node_ready" ||
-      type === "node_started" ||
-      type === "node_paused" ||
-      type === "node_output" ||
-      type === "node_judged" ||
-      type === "node_failed" ||
-      type === "node_completed";
-    if (!nodeId || !validType) return undefined;
-    const event: WorkflowEvent = { type, nodeId, at: asNumber(record.at, Date.now()) };
-    if (typeof record.attempt === "number") event.attempt = record.attempt;
-    const taskId = asOptionalString(record.taskId);
-    if (taskId) event.taskId = taskId;
-    const detail = asOptionalString(record.detail);
-    if (detail) event.detail = detail;
-    if (typeof record.pass === "boolean") event.pass = record.pass;
-    const summary = asOptionalString(record.summary);
-    if (summary) event.summary = summary;
-    const artifactRefs = asArray(record.artifactRefs)
-      .map((ref) => this.restoreWorkflowArtifactReference(ref))
-      .filter((ref): ref is WorkflowArtifactReference => Boolean(ref));
-    if (artifactRefs.length > 0) event.artifactRefs = artifactRefs;
-    const error = asOptionalString(record.error);
-    if (error) event.error = error;
-    return event;
-  }
-
-  private restoreWorkflowArtifactReference(raw: unknown): WorkflowArtifactReference | undefined {
-    const record = asRecord(raw);
-    if (!record) return undefined;
-    const kind = record.kind;
-    if (kind !== "text" && kind !== "file" && kind !== "url") return undefined;
-    const title = asOptionalString(record.title);
-    if (!title) return undefined;
-    const ref: WorkflowArtifactReference = { kind, title };
-    const content = asOptionalString(record.content);
-    if (content) ref.content = content;
-    const filePath = asOptionalString(record.path);
-    if (filePath) ref.path = filePath;
-    const url = asOptionalString(record.url);
-    if (url) ref.url = url;
-    return ref;
-  }
-
-  private restoreMessage(raw: unknown): ChatMessage | null {
-    if (!raw || typeof raw !== "object") return null;
-    const record = raw as Record<string, unknown>;
-    if (!isMessageRole(record.role) || typeof record.content !== "string") return null;
-    const message: ChatMessage = {
-      id: asOptionalString(record.id) ?? randomUUID(),
-      role: record.role,
-      content: record.content,
-      timestamp: asNumber(record.timestamp, Date.now()),
-    };
-    if (record.local === true) message.local = true;
-    if (Array.isArray(record.events)) {
-      const events = record.events.map((event) => this.restoreEvent(event)).filter((event): event is ChatEvent => Boolean(event));
-      if (events.length > 0) message.events = events;
-    }
-    return message;
-  }
-
-  private restoreEvent(raw: unknown): ChatEvent | null {
-    if (!raw || typeof raw !== "object") return null;
-    const record = raw as Record<string, unknown>;
-    if (!isChatEventType(record.type) || typeof record.content !== "string") return null;
-    const event: ChatEvent = {
-      id: asOptionalString(record.id) ?? randomUUID(),
-      type: record.type,
-      content: record.content,
-      timestamp: asNumber(record.timestamp, Date.now()),
-    };
-    if (isAgentId(record.agentId)) event.agentId = record.agentId;
-    const name = asOptionalString(record.name);
-    if (name) event.name = name;
-    if (isAgentId(record.fromAgentId)) event.fromAgentId = record.fromAgentId;
-    if (isAgentId(record.toAgentId)) event.toAgentId = record.toAgentId;
-    const requestId = asOptionalString(record.requestId);
-    if (requestId) event.requestId = requestId;
-    if (isInteractionRequestState(record.requestState)) event.requestState = record.requestState;
-    if (isApprovalDecision(record.decision)) event.decision = record.decision;
-    const metadata = asRecord(record.metadata);
-    if (metadata) event.metadata = metadata;
-    return event;
-  }
-
-  private normalizeRestoredMessages(messages: ChatMessage[]): ChatMessage[] {
-    const normalized: ChatMessage[] = [];
-    for (const message of messages) {
-      if (message.role !== "meta") {
-        normalized.push(message);
-        continue;
-      }
-
-      const event: ChatEvent = {
-        id: message.id,
-        type: "meta",
-        content: message.content,
-        timestamp: message.timestamp,
-      };
-      let target = [...normalized].reverse().find((item) => item.role === "assistant");
-      if (!target) {
-        target = createAssistantMessage();
-        target.timestamp = message.timestamp;
-        normalized.push(target);
-      }
-      target.events = [...(target.events ?? []), event];
-    }
-    return normalized;
+    return restoreWorkflowRunValue(raw);
   }
 
   private schedulePersist(): void {
@@ -5068,141 +2711,23 @@ export class AgentHub {
   }
 
   private buildPersistedPayload(): PersistedAppStateV4 {
-    const sessions: PersistedChatSessionRecord[] = [];
-    const messages: PersistedChatMessageRecord[] = [];
-    const events: PersistedChatEventRecord[] = [];
-    const tasks: PersistedTaskRunRecord[] = [];
-    const taskMessages: PersistedTaskMessageRecord[] = [];
-    const taskEvents: PersistedTaskEventRecord[] = [];
-    const teams: PersistedAgentTeamRecord[] = [];
-    const teamRuns: PersistedTeamRunRecord[] = [];
-
-    for (const chat of this.chats.values()) {
-      sessions.push({
-        id: chat.id,
-        title: chat.title,
-        configuredAgentId: chat.configuredAgentId,
-        modelId: chat.modelId,
-        ...(chat.channelId ? { channelId: chat.channelId } : {}),
-        ...(chat.runtimeState ? { runtimeState: cloneRuntimeState(chat.runtimeState) } : {}),
-        ...(chat.runtimeConversation ? { runtimeConversation: this.runtimeRouter.cloneConversation(chat.runtimeConversation) } : {}),
-        lastError: chat.lastError,
-        createdAt: chat.createdAt,
-        updatedAt: chat.updatedAt,
-      });
-      for (const message of chat.messages) {
-        messages.push({
-          id: message.id,
-          chatId: chat.id,
-          role: message.role,
-          content: message.content,
-          timestamp: message.timestamp,
-          ...(message.local ? { local: true } : {}),
-        });
-        for (const event of message.events ?? []) {
-          events.push({
-            ...event,
-            chatId: chat.id,
-            messageId: message.id,
-          });
-        }
-      }
-    }
-
-    for (const task of this.tasks.values()) {
-      tasks.push({
-        id: task.id,
-        title: task.title,
-        prompt: task.prompt,
-        configuredAgentId: task.configuredAgentId,
-        modelId: task.modelId,
-        workDir: task.workDir,
-        status: task.status,
-        progress: task.progress,
-        ...(task.runtimeConversation ? { runtimeConversation: this.runtimeRouter.cloneConversation(task.runtimeConversation) } : {}),
-        lastError: task.lastError,
-        createdAt: task.createdAt,
-        updatedAt: task.updatedAt,
-      });
-      for (const message of task.messages) {
-        taskMessages.push({
-          id: message.id,
-          taskId: task.id,
-          role: message.role,
-          content: message.content,
-          timestamp: message.timestamp,
-          ...(message.local ? { local: true } : {}),
-        });
-        for (const event of message.events ?? []) {
-          taskEvents.push({
-            ...event,
-            taskId: task.id,
-            messageId: message.id,
-          });
-        }
-      }
-    }
-
-    for (const team of this.teams.values()) {
-      teams.push({
-        id: team.id,
-        name: team.name,
-        mode: team.mode,
-        sharedContext: team.sharedContext,
-        members: team.members.map((member) => cloneTeamMember(member)),
-        workflow: buildWorkflowSnapshot({ mode: team.mode, members: team.members }),
-        createdAt: team.createdAt,
-        updatedAt: team.updatedAt,
-      });
-    }
-
-    for (const run of this.teamRuns.values()) {
-      teamRuns.push({
-        id: run.id,
-        teamId: run.teamId,
-        teamName: run.teamName,
-        title: run.title,
-        prompt: run.prompt,
-        membersSnapshot: run.membersSnapshot.map((member) => cloneTeamMember(member)),
-        target: run.target ? { ...run.target } : undefined,
-        mode: run.mode,
-        status: run.status,
-        currentStepIndex: run.currentStepIndex,
-        workDir: run.workDir,
-        sharedContextSnapshot: run.sharedContextSnapshot,
-        workflow: buildWorkflowSnapshot({
-          mode: run.mode,
-          members: run.membersSnapshot,
-          steps: run.steps,
-          runStatus: run.status,
-        }),
-        steps: run.steps.map((step) => ({ ...step })),
-        lastError: run.lastError,
-        createdAt: run.createdAt,
-        updatedAt: run.updatedAt,
-      });
-    }
-
-    return {
-      version: 4,
-      activeChatId: this.activeChatId ?? null,
-      activeTaskId: this.activeTaskId ?? null,
-      activeTeamId: this.activeTeamId ?? null,
-      activeTeamRunId: this.activeTeamRunId ?? null,
+    return buildPersistedPayload({
+      activeChatId: this.activeChatId,
+      activeTaskId: this.activeTaskId,
+      activeTeamId: this.activeTeamId,
+      activeTeamRunId: this.activeTeamRunId,
       workDir: this.workDir,
-      channels: this.channels.map((channel) => cloneAgentChannel(channel)),
-      sessions,
-      messages,
-      events,
-      tasks,
-      taskMessages,
-      taskEvents,
-      teams,
-      teamRuns,
+      channels: this.channels,
+      chats: this.chats.values(),
+      tasks: this.tasks.values(),
+      teams: this.teams.values(),
+      teamRuns: this.teamRuns.values(),
       configuredAgents: this.listConfiguredAgents(),
+      artifacts: this.artifacts,
+      cloneConversation: (conversation) => this.runtimeRouter.cloneConversation(conversation),
       workflowStore: this.cloneWorkflowStore(),
       scheduledWorkflowStore: this.cloneScheduledWorkflowStore(),
-    };
+    });
   }
 
   private async persistState(): Promise<void> {
@@ -5210,30 +2735,21 @@ export class AgentHub {
     if (this.persistInFlight) await this.persistInFlight;
 
     const payload = this.buildPersistedPayload();
-    if (this.sqliteStore) {
-      this.persistInFlight = this.sqliteStore.save(payload);
-      try {
-        await this.persistInFlight;
-      } catch (error) {
-        console.warn(`Failed to persist app state to SQLite ${this.storagePath}:`, error);
-      } finally {
-        this.persistInFlight = undefined;
-      }
-      return;
-    }
-
-    const targetPath = this.storagePath;
-    const tempPath = `${targetPath}.${process.pid}.${Date.now()}.tmp`;
-    this.persistInFlight = (async () => {
-      await mkdir(path.dirname(targetPath), { recursive: true });
-      await writeFile(tempPath, `${JSON.stringify(payload, null, 2)}\n`, "utf8");
-      await rename(tempPath, targetPath);
-    })();
+    this.persistInFlight = writePersistedPayload({
+      storagePath: this.storagePath,
+      sqliteStore: this.sqliteStore,
+      payload,
+    });
 
     try {
       await this.persistInFlight;
     } catch (error) {
-      console.warn(`Failed to persist chat history to ${targetPath}:`, error);
+      console.warn(
+        this.sqliteStore
+          ? `Failed to persist app state to SQLite ${this.storagePath}:`
+          : `Failed to persist chat history to ${this.storagePath}:`,
+        error,
+      );
     } finally {
       this.persistInFlight = undefined;
     }

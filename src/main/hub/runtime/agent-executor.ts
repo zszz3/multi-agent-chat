@@ -10,34 +10,34 @@ import type {
   RuntimeConversation,
   RuntimeRequest,
   WorkflowAgentResponse,
-} from "../../shared/types";
-import { DEFAULT_MODEL_ID, runtimeModelId } from "../../shared/models";
-import { codexEnvironmentForChannel } from "../agents/codex/codex-env";
-import { claudeCliModelForChannel } from "../agents/claude/claude-env";
-import { ClaudeAgentSdkAdapter, type ClaudeAgentSdkRunInput } from "../agents/claude/claude-agent-sdk";
-import { ClaudeAgentSdkInteractive } from "../agents/claude/claude-agent-sdk-interactive";
-import { ClaudeInteractiveSession } from "../agents/claude/claude-interactive-session";
-import { CodexInteractiveSession } from "../agents/codex/codex-interactive-session";
-import { CodexRpcClient } from "../agents/codex/codex-rpc";
-import { HermesRunner } from "../agents/hermes/hermes-runner";
-import { RuntimeRouter } from "../agents/runtime/runtime-router";
+} from "../../../shared/types";
+import { DEFAULT_MODEL_ID, runtimeModelId } from "../../../shared/models";
+import { codexEnvironmentForChannel } from "../../agents/codex/codex-env";
+import { claudeCliModelForChannel } from "../../agents/claude/claude-env";
+import { ClaudeAgentSdkAdapter, type ClaudeAgentSdkRunInput } from "../../agents/claude/claude-agent-sdk";
+import { ClaudeAgentSdkInteractive } from "../../agents/claude/claude-agent-sdk-interactive";
+import { ClaudeInteractiveSession } from "../../agents/claude/claude-interactive-session";
+import { CodexInteractiveSession } from "../../agents/codex/codex-interactive-session";
+import { CodexRpcClient } from "../../agents/codex/codex-rpc";
+import { HermesRunner } from "../../agents/hermes/hermes-runner";
+import { RuntimeRouter } from "../../agents/runtime/runtime-router";
 import {
   claudeRuntimeStateCodec,
   codexRuntimeStateCodec,
   hermesRuntimeStateCodec,
-} from "../agents/runtime/runtime-state-codec";
+} from "../../agents/runtime/runtime-state-codec";
 import type {
   RuntimeChannelTestContext,
   RuntimeDriver,
   RuntimeSessionCleanupContext,
   RuntimeSurfaceSupport,
   RuntimeWorkflowRequestContext,
-} from "../agents/runtime/runtime-driver";
-import { RuntimeDriverRegistry } from "../agents/runtime/runtime-driver";
-import { execCli } from "../platform/cli-launcher";
-import { codexAppServerConfigArgs, codexHome } from "../channels/model-config";
+} from "../../agents/runtime/runtime-driver";
+import { RuntimeDriverRegistry } from "../../agents/runtime/runtime-driver";
+import { execCli } from "../../platform/cli-launcher";
+import { codexAppServerConfigArgs, codexHome } from "../../channels/model-config";
 
-export { RuntimeDriverRegistry } from "../agents/runtime/runtime-driver";
+export { RuntimeDriverRegistry } from "../../agents/runtime/runtime-driver";
 
 const HERMES_AGENT_TEST_PROMPT = "Reply with OK only.";
 const WORKFLOW_AGENT_IDLE_TIMEOUT_MS = 10 * 60_000;
