@@ -28,6 +28,7 @@ export default defineConfig({
     build: {
       outDir: resolve(repoRoot, "out/main"),
       rollupOptions: {
+        input: resolve(repoRoot, "src/main/app/index.ts"),
         external: ["electron"],
       },
     },

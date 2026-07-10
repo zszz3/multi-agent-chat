@@ -23,4 +23,13 @@
 10. [存储与恢复](/Users/pengjie.zhai/multi-agent-chat/docs/workflow-v2/storage-and-recovery.md)
 11. [MVP 范围](/Users/pengjie.zhai/multi-agent-chat/docs/workflow-v2/mvp-scope.md)
 
+如果要从这些设计文档直接进入实施规格，优先看：
+
+1. [Workflow V2 实施总纲 spec](/Users/pengjie.zhai/multi-agent-chat/docs/superpowers/specs/workflow/2026-07-10-workflow-v2-implementation-program.md)
+2. [Phase 01: Authoring Contract](/Users/pengjie.zhai/multi-agent-chat/docs/superpowers/specs/workflow/2026-07-10-workflow-v2-phase-01-authoring-contract.md)
+3. [Phase 02: Planning And Routing Contract](/Users/pengjie.zhai/multi-agent-chat/docs/superpowers/specs/workflow/2026-07-10-workflow-v2-phase-02-planning-and-routing-contract.md)
+4. [Phase 03: Execution Runtime And Dataflow](/Users/pengjie.zhai/multi-agent-chat/docs/superpowers/specs/workflow/2026-07-10-workflow-v2-phase-03-execution-runtime-and-dataflow.md)
+5. [Phase 04: Review And Human Intervention](/Users/pengjie.zhai/multi-agent-chat/docs/superpowers/specs/workflow/2026-07-10-workflow-v2-phase-04-review-and-human-intervention.md)
+6. [Phase 05: Persistence, Cache, And Recovery](/Users/pengjie.zhai/multi-agent-chat/docs/superpowers/specs/workflow/2026-07-10-workflow-v2-phase-05-persistence-cache-and-recovery.md)
+7. [Phase 06: Hooks And Extension Surface](/Users/pengjie.zhai/multi-agent-chat/docs/superpowers/specs/workflow/2026-07-10-workflow-v2-phase-06-hooks-and-extension-surface.md)
 如果后续需要补 schema、状态机、事件协议，建议继续在本目录新增独立文档，而不是回填到总纲。

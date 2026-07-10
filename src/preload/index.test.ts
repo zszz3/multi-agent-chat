@@ -74,7 +74,7 @@ describe("AgentHub runtime recovery wiring", () => {
     vi.useFakeTimers();
     vi.setSystemTime(new Date("2026-07-05T00:00:00.000Z"));
 
-    let hub: InstanceType<(typeof import("../main/agent-hub"))["AgentHub"]> | undefined;
+    let hub: InstanceType<(typeof import("../main/hub/agent-hub"))["AgentHub"]> | undefined;
 
     try {
       const dir = await mkdtemp(path.join(os.tmpdir(), "multi-agent-chat-runtime-recovery-"));
@@ -128,10 +128,10 @@ describe("AgentHub runtime recovery wiring", () => {
       );
 
       vi.resetModules();
-      vi.doMock("../main/agents/detect", () => ({
+      vi.doMock("../main/agents/runtime/detect", () => ({
         detectAgentRuntimes: vi.fn(async () => []),
       }));
-      const { AgentHub } = await import("../main/agent-hub");
+      const { AgentHub } = await import("../main/hub/agent-hub");
       hub = new AgentHub({ codex: "missing-codex-for-test", claude: "missing-claude-for-test" });
       await hub.loadPersistedState(storagePath);
 
@@ -154,7 +154,7 @@ describe("AgentHub runtime recovery wiring", () => {
         const idleSweepTimer = (hub as any).idleSweepTimer as ReturnType<typeof setInterval> | undefined;
         if (idleSweepTimer) clearInterval(idleSweepTimer);
       }
-      vi.unmock("../main/agents/detect");
+      vi.unmock("../main/agents/runtime/detect");
       vi.useRealTimers();
       vi.resetModules();
     }
