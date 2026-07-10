@@ -21,6 +21,7 @@ import type {
   InstalledSkillResult,
   InstallSkillRequest,
   LocalFilePreview,
+  ModelCatalogRefreshResult,
   AnswerWorkflowGateRequest,
   PauseWorkflowNodeRequest,
   ProviderBalanceResult,
@@ -63,6 +64,7 @@ const api = {
   testRuntimeChannel: (channelId: string): Promise<AgentTestResult> => ipcRenderer.invoke("runtime-channels:test", channelId),
   queryRuntimeChannelBalance: (channelId: string): Promise<ProviderBalanceResult> => ipcRenderer.invoke("runtime-channels:balance", channelId),
   loadCodexDefaultConfig: (): Promise<CodexDefaultConfig> => ipcRenderer.invoke("runtime-channels:load-codex-default"),
+  refreshModelCatalog: (channelId: string): Promise<ModelCatalogRefreshResult> => ipcRenderer.invoke("runtime-channels:refresh-models", channelId),
   onAgentTestEvent: (callback: (event: AgentTestEvent) => void): (() => void) => {
     const listener = (_event: Electron.IpcRendererEvent, event: AgentTestEvent) => callback(event);
     ipcRenderer.on("configured-agents:test-event", listener);

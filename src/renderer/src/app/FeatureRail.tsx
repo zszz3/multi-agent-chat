@@ -3,7 +3,7 @@ import type { Theme } from "../CommandPalette";
 import type { ActiveFeature } from "./shell";
 
 interface FeatureRailText {
-  nav: Record<"chat" | "tasks" | "workflow" | "schedules" | "skills" | "configuration" | "runtimes", string>;
+  nav: Record<"chat" | "tasks" | "workflow" | "schedules" | "skills" | "agent" | "runtimes", string>;
   chrome: {
     featureNav: string;
     lightTheme: string;
@@ -47,9 +47,9 @@ export function FeatureRail({ activeFeature, theme, text, onSelectFeature, onTog
           <Wand2 size={15} />
           <span>{text.nav.skills}</span>
         </button>
-        <button className={`feature-nav-item ${activeFeature === "configuration" ? "is-active" : ""}`} onClick={() => onSelectFeature("configuration")}>
+        <button className={`feature-nav-item ${activeFeature === "agent" ? "is-active" : ""}`} onClick={() => onSelectFeature("agent")}>
           <SlidersHorizontal size={15} />
-          <span>{text.nav.configuration}</span>
+          <span>{text.nav.agent}</span>
         </button>
         <button className={`feature-nav-item ${activeFeature === "runtimes" ? "is-active" : ""}`} onClick={() => onSelectFeature("runtimes")}>
           <Cpu size={15} />

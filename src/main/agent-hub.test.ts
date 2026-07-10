@@ -620,7 +620,7 @@ async function waitFor<T>(read: () => T, predicate: (value: T) => boolean): Prom
 }
 
 describe("AgentHub chat sessions", () => {
-  test("creates one managed default agent per runtime config and keeps its name in sync", () => {
+  test("creates default agents once without binding their later edits to runtime configs", () => {
     const hub = new AgentHub();
     (hub as any).channels = [
       {
@@ -645,10 +645,51 @@ describe("AgentHub chat sessions", () => {
       ]),
     );
 
-    const existing = hub.snapshot().configuredAgents;
+    const existing = hub.snapshot().configuredAgents.map((agent) =>
+      agent.id === "runtime-agent:codex-glm"
+        ? {
+            ...agent,
+            name: "My Reviewer",
+            channelId: "codex-openai",
+            runtimeAgentId: "codex" as const,
+            modelId: DEFAULT_MODEL_ID,
+            managed: false,
+          }
+        : agent,
+    );
     (hub as any).channels[1].label = "Codex GLM Updated";
     (hub as any).installRestoredConfiguredAgents(existing);
-    expect(hub.snapshot().configuredAgents.find((agent) => agent.id === "runtime-agent:codex-glm")?.name).toBe("Codex GLM Updated");
+    expect(hub.snapshot().configuredAgents.find((agent) => agent.id === "runtime-agent:codex-glm")).toMatchObject({
+      name: "My Reviewer",
+      channelId: "codex-openai",
+      runtimeAgentId: "codex",
+      modelId: DEFAULT_MODEL_ID,
+    });
+    expect(hub.snapshot().configuredAgents.find((agent) => agent.id === "runtime-agent:codex-glm")?.managed).toBeUndefined();
+  });
+
+  test("restores a configured agent reasoning effort supported by its model", () => {
+    const hub = new AgentHub();
+    (hub as any).channels = [{
+      id: "codex-openai",
+      agentId: "codex",
+      label: "Codex Official",
+      models: [{ id: "gpt-5.6-sol", label: "GPT-5.6-Sol", reasoningEfforts: ["low", "xhigh", "ultra"] }],
+    }];
+    (hub as any).installRestoredConfiguredAgents([{
+      id: "sol-agent",
+      name: "Sol Agent",
+      description: "",
+      runtimeAgentId: "codex",
+      channelId: "codex-openai",
+      modelId: "gpt-5.6-sol",
+      reasoningEffort: "xhigh",
+      tags: [],
+      createdAt: 1,
+      updatedAt: 1,
+    }]);
+
+    expect(hub.snapshot().configuredAgents.find((agent) => agent.id === "sol-agent")?.reasoningEffort).toBe("xhigh");
   });
 
   test("refreshes workflow agent timeout after activity", () => {
@@ -737,7 +778,26 @@ describe("AgentHub chat sessions", () => {
       version: "test",
       available: true,
     });
+    (hub as any).channels = [{
+      id: "codex-openai",
+      agentId: "codex",
+      label: "Codex Official",
+      models: [{ id: "gpt-5.6-sol", label: "GPT-5.6-Sol", reasoningEfforts: ["low", "xhigh", "ultra"] }],
+    }];
+    hub.updateConfiguredAgents([{
+      id: "sol-agent",
+      name: "Sol Agent",
+      description: "",
+      runtimeAgentId: "codex",
+      channelId: "codex-openai",
+      modelId: "gpt-5.6-sol",
+      reasoningEffort: "xhigh",
+      tags: [],
+      createdAt: 1,
+      updatedAt: 1,
+    }]);
     const chatId = hub.snapshot().activeChatId!;
+    hub.setChatAgent(chatId, "sol-agent");
 
     await hub.sendPrompt("Hello", chatId);
     await waitFor(() => hub.snapshot().chats.find((chat) => chat.id === chatId), (chat) => chat?.running === false);
@@ -745,6 +805,7 @@ describe("AgentHub chat sessions", () => {
     expect(events).toHaveLength(1);
     expect(events[0]).toMatchObject({
       runtimeId: "codex",
+      runtimeConfig: { model: "gpt-5.6-sol", reasoningEffort: "xhigh" },
       prompt: "Hello",
       runKind: "chat",
       continuationPolicy: "resume-preferred",
@@ -3596,7 +3657,11 @@ fs.writeFileSync(${JSON.stringify(argsPath)}, process.argv.slice(2).join("\\n") 
         modelProvider: "deepseek",
         baseUrl: "https://api.deepseek.com",
         wireApi: "responses",
+        apiFormat: "openai_responses",
+        isFullUrl: false,
         httpHeaders: { Authorization: "Bearer persisted-key" },
+        environment: { DEEPSEEK_REGION: "cn" },
+        requestOverrides: { headers: { "x-provider": "deepseek" }, body: { service_tier: "priority" } },
         plugins: [{ id: "github@openai-curated", enabled: true }],
         models: [
           { id: DEFAULT_MODEL_ID, label: "Default" },
@@ -3617,6 +3682,10 @@ fs.writeFileSync(${JSON.stringify(argsPath)}, process.argv.slice(2).join("\\n") 
         id: "codex-deepseek",
         providerName: "DeepSeek",
         httpHeaders: { Authorization: "Bearer persisted-key" },
+        apiFormat: "openai_responses",
+        isFullUrl: false,
+        environment: { DEEPSEEK_REGION: "cn" },
+        requestOverrides: { headers: { "x-provider": "deepseek" }, body: { service_tier: "priority" } },
         plugins: [{ id: "github@openai-curated", enabled: true }],
       }),
     ]);
@@ -3645,6 +3714,38 @@ fs.writeFileSync(${JSON.stringify(argsPath)}, process.argv.slice(2).join("\\n") 
       httpHeaders: { Authorization: "Bearer persisted-key" },
       plugins: [{ id: "github@openai-curated", enabled: true }],
     });
+  });
+
+  test("refreshes one model catalog without removing cached models", async () => {
+    const dir = await mkdtemp(path.join(os.tmpdir(), "multi-agent-chat-model-refresh-"));
+    const hub = new AgentHub({}, undefined, undefined, async () => ({
+      source: "codex_cli",
+      models: [{
+        id: "gpt-5.6-sol",
+        label: "GPT-5.6-Sol",
+        reasoningEfforts: ["low", "xhigh", "ultra"],
+        defaultReasoningEffort: "low",
+      }],
+    }));
+    await hub.loadModelChannels(path.join(dir, "model-channels.json"));
+    await hub.saveModelChannels([{
+      id: "codex-official",
+      agentId: "codex",
+      label: "Codex Official",
+      modelProvider: "openai",
+      models: [
+        { id: "default", label: "Default" },
+        { id: "private-model", label: "Private" },
+      ],
+    }]);
+
+    const result = await hub.refreshModelCatalog("codex-official");
+
+    expect(result).toMatchObject({ channelId: "codex-official", source: "codex_cli", discoveredCount: 1 });
+    expect(result.snapshot.channels[0]?.models).toEqual(expect.arrayContaining([
+      expect.objectContaining({ id: "private-model" }),
+      expect.objectContaining({ id: "gpt-5.6-sol", reasoningEfforts: ["low", "xhigh", "ultra"] }),
+    ]));
   });
 
   test("stores execution channel config in app state without rewriting the legacy channel file", async () => {

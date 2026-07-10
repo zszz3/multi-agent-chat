@@ -205,6 +205,8 @@ export function RuntimeProviderFields({ channel, language, onChange }: RuntimePr
               <option value="medium">Medium</option>
               <option value="high">High</option>
               <option value="xhigh">XHigh</option>
+              <option value="max">Max</option>
+              <option value="ultra">Ultra</option>
             </select>
           </label>
           <label className="config-field config-field-wide">

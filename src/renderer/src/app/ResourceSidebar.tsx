@@ -21,7 +21,7 @@ import type { WorkflowSidebarController } from "../pages/workflow/workflow-contr
 type MaybePromise = void | Promise<void>;
 
 interface ResourceSidebarText {
-  nav: Record<"chat" | "tasks" | "workflow" | "schedules" | "skills" | "runtimes" | "configuration", string>;
+  nav: Record<"chat" | "tasks" | "workflow" | "schedules" | "skills" | "runtimes" | "agent", string>;
   chrome: {
     search: string;
     newChat: string;
@@ -88,7 +88,7 @@ function resourceFeatureLabel(activeFeature: ActiveFeature, text: ResourceSideba
   if (activeFeature === "workflow") return text.nav.workflow;
   if (activeFeature === "schedules") return text.nav.schedules;
   if (activeFeature === "skills") return text.nav.skills;
-  if (activeFeature === "configuration") return text.nav.configuration;
+  if (activeFeature === "agent") return text.nav.agent;
   if (activeFeature === "runtimes") return text.nav.runtimes;
   return text.nav.chat;
 }
@@ -210,10 +210,10 @@ export function ResourceSidebar({
             )}
           </div>
         </section>
-      ) : activeFeature === "configuration" ? (
+      ) : activeFeature === "agent" ? (
         <section className="resource-panel settings-nav-panel">
           <div className="panel-header">
-            <span>{text.nav.configuration}</span>
+            <span>{text.nav.agent}</span>
             <SlidersHorizontal size={14} />
           </div>
           <button className="settings-nav-row is-active" type="button">

@@ -94,6 +94,12 @@ function modelFromRuntimeConfig(runtimeConfig: RuntimeRequest["runtimeConfig"]):
   return runtimeConfig.model;
 }
 
+function reasoningEffortFromRuntimeConfig(runtimeConfig: RuntimeRequest["runtimeConfig"]): string | undefined {
+  return typeof runtimeConfig.reasoningEffort === "string" && runtimeConfig.reasoningEffort.trim()
+    ? runtimeConfig.reasoningEffort.trim()
+    : undefined;
+}
+
 function codexThreadIdFromConversation(conversation?: RuntimeConversation): string | undefined {
   return codexRuntimeStateCodec.decodeConversation(conversation)?.native.threadId;
 }
@@ -396,7 +402,7 @@ async function runCodexWorkflow(
       executable,
       cwd: input.workDir,
       extraArgs: [
-        ...codexAppServerConfigArgs(channel, modelFromRuntimeConfig(input.runtimeConfig)),
+        ...codexAppServerConfigArgs(channel, modelFromRuntimeConfig(input.runtimeConfig), reasoningEffortFromRuntimeConfig(input.runtimeConfig)),
         ...(options.codexWorkflowExtraArgs?.() ?? []),
       ],
       env: codexEnvironmentForChannel(channel),
@@ -643,7 +649,7 @@ export function createRuntimeDriverRegistry(options: RuntimeAgentExecutorFactory
           client = new CodexRpcClient({
             executable: context.runtime.command || options.executables.codex,
             cwd: context.workDir,
-            extraArgs: codexAppServerConfigArgs(channel, modelFromRuntimeConfig(context.runtimeConfig)),
+            extraArgs: codexAppServerConfigArgs(channel, modelFromRuntimeConfig(context.runtimeConfig), reasoningEffortFromRuntimeConfig(context.runtimeConfig)),
             env: codexEnvironmentForChannel(channel),
             onEvent,
             onRequest: (id, method, params) => {
@@ -778,7 +784,7 @@ class CodexAgentExecutor implements AgentExecutor {
     client = new CodexRpcClient({
       executable,
       cwd: this.context.workDir,
-      extraArgs: codexAppServerConfigArgs(channel, modelFromRuntimeConfig(this.context.runtimeConfig)),
+      extraArgs: codexAppServerConfigArgs(channel, modelFromRuntimeConfig(this.context.runtimeConfig), reasoningEffortFromRuntimeConfig(this.context.runtimeConfig)),
       env: codexEnvironmentForChannel(channel),
       onEvent: this.context.emit,
       onRequest: (id, method, params) => {

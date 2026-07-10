@@ -1,13 +1,13 @@
 import type { ScheduledWorkflowDueEvent } from "../../../shared/types";
 
-export type ActiveFeature = "chat" | "tasks" | "workflow" | "schedules" | "skills" | "configuration" | "runtimes";
+export type ActiveFeature = "chat" | "tasks" | "workflow" | "schedules" | "skills" | "agent" | "runtimes";
 
 export function appShellClass(activeFeature: ActiveFeature): string {
   return activeFeature === "tasks" ||
     activeFeature === "workflow" ||
     activeFeature === "schedules" ||
     activeFeature === "skills" ||
-    activeFeature === "configuration" ||
+    activeFeature === "agent" ||
     activeFeature === "runtimes"
     ? `shell ${activeFeature}-shell`
     : "shell";
@@ -19,7 +19,7 @@ export function appContentClass(activeFeature: ActiveFeature): string {
   if (activeFeature === "workflow") return "content workflow-content";
   if (activeFeature === "schedules") return "content scheduled-content";
   if (activeFeature === "skills") return "content skills-content";
-  if (activeFeature === "configuration") return "content config-content";
+  if (activeFeature === "agent") return "content agent-content";
   if (activeFeature === "runtimes") return "content runtime-content";
   return "content chat-content";
 }

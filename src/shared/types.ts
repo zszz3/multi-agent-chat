@@ -12,6 +12,15 @@ export interface AgentRuntime {
 export interface AgentModelOption {
   id: string;
   label: string;
+  reasoningEfforts?: string[];
+  defaultReasoningEffort?: string;
+}
+
+export interface ModelCatalogRefreshResult {
+  channelId: string;
+  source: "codex_cli" | "openai_models";
+  discoveredCount: number;
+  snapshot: AppSnapshot;
 }
 
 export interface AgentPluginConfig {
@@ -66,6 +75,7 @@ export interface ConfiguredAgent {
   runtimeAgentId: AgentId;
   channelId: string;
   modelId: string;
+  reasoningEffort?: string;
   tags: string[];
   managed?: boolean;
   createdAt: number;
@@ -208,6 +218,7 @@ export type RuntimeContinuationPolicy = "fresh" | "resume-preferred" | "resume-r
 
 export interface RuntimeConfig {
   model: string;
+  reasoningEffort?: string;
   [key: string]: unknown;
 }
 

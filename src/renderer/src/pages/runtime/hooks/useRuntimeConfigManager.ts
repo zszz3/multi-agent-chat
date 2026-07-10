@@ -17,6 +17,17 @@ import type { AgentTestTranscriptItem, AgentTestUiState } from "../runtime-types
 
 const BALANCE_REFRESH_INTERVAL_MS = 5 * 60_000;
 
+export async function confirmConfigSwitch(
+  dirty: boolean,
+  confirmSave: () => boolean,
+  save: () => Promise<void>,
+): Promise<boolean> {
+  if (!dirty) return true;
+  if (!confirmSave()) return false;
+  await save();
+  return true;
+}
+
 export function codexRuntimeAvailability(runtimes: AppSnapshot["runtimes"]): {
   detected: boolean;
   available: boolean;
@@ -72,6 +83,9 @@ export interface RuntimeConfigManager {
   loadCodexPluginCatalog: () => Promise<void>;
   testRuntimeChannel: (channelId: string) => Promise<void>;
   queryRuntimeChannelBalance: (channelId: string, options?: { persistBeforeQuery?: boolean; quiet?: boolean }) => Promise<void>;
+  refreshModelCatalog: (channelId: string) => Promise<void>;
+  confirmSaveBeforeSwitch: (message: string) => Promise<boolean>;
+  selectConfigChannel: (channelId: string, message: string) => Promise<void>;
 }
 
 export function useRuntimeConfigManager({
@@ -213,6 +227,24 @@ export function useRuntimeConfigManager({
     }
   }, [persistChannelConfig]);
 
+  const confirmSaveBeforeSwitch = useCallback(async (message: string): Promise<boolean> => {
+    try {
+      return await confirmConfigSwitch(configDirtyRef.current, () => window.confirm(message), async () => {
+        await persistChannelConfig();
+        setConfigStatus("Saved");
+      });
+    } catch (error) {
+      setConfigStatus(error instanceof Error ? error.message : String(error));
+      return false;
+    }
+  }, [persistChannelConfig]);
+
+  const selectConfigChannel = useCallback(async (channelId: string, message: string): Promise<void> => {
+    if (channelId === selectedConfigChannelId) return;
+    if (!(await confirmSaveBeforeSwitch(message))) return;
+    setSelectedConfigChannelId(channelId);
+  }, [confirmSaveBeforeSwitch, selectedConfigChannelId]);
+
   const updateConfigChannel = useCallback((channelId: string, updater: (channel: AgentChannel) => AgentChannel) => {
     setBalanceResults((current) => {
       if (!(channelId in current)) return current;
@@ -286,6 +318,20 @@ export function useRuntimeConfigManager({
       setPluginCatalogStatus(error instanceof Error ? error.message : String(error));
     }
   }, [chatApi, codexRuntime.available, codexRuntime.detected, codexRuntime.message]);
+
+  const refreshModelCatalog = useCallback(async (channelId: string): Promise<void> => {
+    setConfigStatus("Refreshing model catalog...");
+    try {
+      if (configDirtyRef.current) await persistChannelConfig();
+      const result = await chatApi.refreshModelCatalog(channelId);
+      syncChannelsFromSnapshot(result.snapshot.channels);
+      setConfigDirty(false);
+      setSnapshot(result.snapshot);
+      setConfigStatus(`Loaded ${result.discoveredCount} models from ${result.source === "codex_cli" ? "Codex CLI" : "Provider API"}`);
+    } catch (error) {
+      setConfigStatus(error instanceof Error ? error.message : String(error));
+    }
+  }, [chatApi, persistChannelConfig, setSnapshot, syncChannelsFromSnapshot]);
 
   const testRuntimeChannel = useCallback(async (channelId: string): Promise<void> => {
     const channel = configChannelsRef.current.find((item) => item.id === channelId);
@@ -484,5 +530,8 @@ export function useRuntimeConfigManager({
     loadCodexPluginCatalog,
     testRuntimeChannel,
     queryRuntimeChannelBalance,
+    refreshModelCatalog,
+    confirmSaveBeforeSwitch,
+    selectConfigChannel,
   };
 }

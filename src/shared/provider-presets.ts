@@ -1,5 +1,6 @@
 import { DEFAULT_MODEL_ID, FALLBACK_MODEL_OPTIONS } from "./models";
 import type { AgentId, AgentModelOption, ClaudeApiKeyField, RuntimeProviderApiFormat } from "./types";
+import { CC_SWITCH_PROVIDER_PRESETS } from "./cc-switch-provider-presets.generated";
 
 export const CODEX_DEFAULT_PRESET_ID = "codex-default";
 
@@ -22,9 +23,15 @@ export interface AgentProviderPreset {
   configurableModelId?: boolean;
   configurableModelLabel?: string;
   configurableModelPlaceholder?: string;
+  websiteUrl?: string;
+  apiKeyUrl?: string;
+  category?: string;
+  environment?: Record<string, string>;
+  requiresOAuth?: boolean;
+  providerType?: string;
 }
 
-export const AGENT_PROVIDER_PRESETS: AgentProviderPreset[] = [
+const LEGACY_PROVIDER_PRESETS: AgentProviderPreset[] = [
   {
     id: "codex-openai",
     label: "Codex OpenAI",
@@ -542,4 +549,31 @@ export const AGENT_PROVIDER_PRESETS: AgentProviderPreset[] = [
     runtimeAgentId: "hermes",
     models: FALLBACK_MODEL_OPTIONS.hermes,
   },
+];
+
+export const AGENT_PROVIDER_PRESETS: AgentProviderPreset[] = [
+  ...CC_SWITCH_PROVIDER_PRESETS,
+  {
+    id: "custom",
+    label: "Custom",
+    runtimeAgentId: "codex",
+    providerName: "Custom",
+    modelProvider: "custom",
+    wireApi: "responses",
+    apiFormat: "openai_responses",
+    usesApiKey: true,
+    models: [{ id: DEFAULT_MODEL_ID, label: "Default" }],
+  },
+  {
+    id: "claude-code-custom",
+    label: "Custom",
+    runtimeAgentId: "claude",
+    providerName: "Custom",
+    modelProvider: "custom-anthropic",
+    apiFormat: "anthropic",
+    apiKeyField: "ANTHROPIC_AUTH_TOKEN",
+    usesApiKey: true,
+    models: [{ id: DEFAULT_MODEL_ID, label: "Default" }],
+  },
+  ...LEGACY_PROVIDER_PRESETS.filter((preset) => preset.runtimeAgentId === "api" || preset.runtimeAgentId === "hermes"),
 ];

@@ -10,7 +10,7 @@ import {
   ChatHistoryPanel,
   chatConfigLocked,
   ChatControls,
-  ConfigPage,
+  AgentPage,
   RuntimePage,
   ScheduledWorkflowPage,
   SkillsPage,
@@ -420,6 +420,7 @@ describe("ChatControls", () => {
     expect(appShellClass("tasks")).toBe("shell tasks-shell");
     expect(appShellClass("schedules")).toBe("shell schedules-shell");
     expect(appShellClass("skills")).toBe("shell skills-shell");
+    expect(appShellClass("agent")).toBe("shell agent-shell");
     expect(appShellClass("runtimes")).toBe("shell runtimes-shell");
     expect(appShellClass("chat")).toBe("shell");
   });
@@ -1013,10 +1014,15 @@ describe("Sidebar history panels", () => {
   });
 });
 
-describe("ConfigPage", () => {
+describe("AgentPage", () => {
+  test("scopes the two-column agent editor without changing runtime forms", () => {
+    expect(styles).toContain(".config-form {\n  display: grid;\n  grid-template-columns: minmax(0, 1fr);");
+    expect(styles).toContain(".agent-page .config-form {\n  grid-template-columns: minmax(210px, 260px) minmax(0, 1fr);");
+  });
+
   test("renders agent profile controls without runtime provider settings", () => {
     const html = renderToStaticMarkup(
-      <ConfigPage
+      <AgentPage
         channels={channels}
         configuredAgents={configuredAgents}
         selectedConfiguredAgentId="repo-reviewer"
@@ -1055,6 +1061,8 @@ describe("ConfigPage", () => {
     expect(html).not.toContain(">Import template<");
     expect(html).not.toContain(">导入模板<");
     expect(html).toContain("Repo Reviewer");
+    expect(html).toContain("configured-agent-browser");
+    expect(html).toContain("aria-label=\"Agent runtime\"");
     expect(html).toContain("aria-label=\"Agent execution config\"");
     expect(html).toContain("Codex OpenAI · Codex");
     expect(html).toContain("aria-label=\"Agent model\"");
@@ -1063,6 +1071,40 @@ describe("ConfigPage", () => {
     expect(html).not.toContain(">Test<");
     expect(html).toContain("configured-agent-editor-actions");
     expect(html).toContain(">Save<");
+  });
+
+  test("renders model-specific Codex reasoning efforts", () => {
+    const modelChannel: AgentChannel = {
+      ...channels[0]!,
+      models: [{
+        id: "gpt-5.6-sol",
+        label: "GPT-5.6-Sol",
+        reasoningEfforts: ["low", "medium", "high", "xhigh", "max", "ultra"],
+        defaultReasoningEffort: "low",
+      }],
+    };
+    const agent: ConfiguredAgent = {
+      ...configuredAgents[0]!,
+      modelId: "gpt-5.6-sol",
+      reasoningEffort: "xhigh",
+    };
+
+    const html = renderToStaticMarkup(
+      <AgentPage
+        channels={[modelChannel]}
+        configuredAgents={[agent]}
+        selectedConfiguredAgentId={agent.id}
+        status=""
+        onSave={async () => undefined}
+        onAddConfiguredAgent={() => undefined}
+        onSelectConfiguredAgent={() => undefined}
+        onUpdateConfiguredAgent={() => undefined}
+      />,
+    );
+
+    expect(html).toContain('aria-label="Agent reasoning effort"');
+    expect(html).toContain('<option value="xhigh" selected="">XHigh</option>');
+    expect(html).toContain('<option value="ultra">Ultra</option>');
   });
 
   test("renders runtime provider settings separately from agent profile settings", () => {
@@ -1188,6 +1230,11 @@ describe("ConfigPage", () => {
     );
 
     expect(html).toContain(">Default<");
+    expect(html).toContain('aria-label="Refresh model catalog"');
+    expect(html).toContain('aria-label="Provider presets"');
+    expect(html).toContain('class="agent-provider-catalog"');
+    expect(html).toContain('<details class="agent-provider-presets agent-provider-disclosure" open="">');
+    expect(html).not.toContain('class="agent-provider-select"');
   });
 
   test("renders runtime config status messages", () => {
@@ -1283,7 +1330,7 @@ describe("ConfigPage", () => {
       />,
     );
 
-    expect(html).toContain("value=\"sk-default\"");
+    expect(html).not.toContain('aria-label="Provider API key"');
     expect(html).not.toContain("value=\"stale-key\"");
     expect(html).toContain("value=\"Bridge\"");
     expect(html).toContain("value=\"bridge\"");
@@ -1529,12 +1576,13 @@ describe("ConfigPage", () => {
     );
 
     expect(html).toContain("Claude Code");
+    expect(html).toContain('class="agent-provider-option is-active" aria-pressed="true" title="Claude Official">Claude Official</button>');
     expect(html).toContain(">DeepSeek<");
-    expect(html).toContain(">GLM<");
+    expect(html).toContain(">Zhipu GLM<");
     expect(html).toContain(">Kimi<");
     expect(html).toContain(">SiliconFlow<");
     expect(html).toContain(">Bailian<");
-    expect(html).toContain(">Volcengine<");
+    expect(html).toContain(">DouBaoSeed<");
     expect(html).toContain(">Custom<");
   });
 
@@ -2075,7 +2123,7 @@ describe("ConfigPage", () => {
     expect(nextAgent.modelId).toBe(DEFAULT_MODEL_ID);
   });
 
-  test("offers Doubao Seed Lite in the Volcengine API and Codex presets", () => {
+  test("keeps the API catalog and follows CC Switch for the latest Codex Doubao model", () => {
     const apiPreset = AGENT_PROVIDER_PRESETS.find((preset) => preset.id === "api-volcengine");
     const codexPreset = AGENT_PROVIDER_PRESETS.find((preset) => preset.id === "codex-volcengine");
     const volcengineModels = [...(apiPreset?.models ?? []), ...(codexPreset?.models ?? [])];
@@ -2084,8 +2132,7 @@ describe("ConfigPage", () => {
     expect(codexPreset?.baseUrl).toBe("https://ark.cn-beijing.volces.com/api/v3");
     expect(apiPreset?.models).toContainEqual({ id: "doubao-seed-1-6-lite-251015", label: "Doubao Seed 1.6 Lite" });
     expect(apiPreset?.models).toContainEqual({ id: "doubao-seed-2-0-lite-260428", label: "Doubao Seed 2.0 Lite" });
-    expect(codexPreset?.models).toContainEqual({ id: "doubao-seed-1-6-lite-251015", label: "Doubao Seed 1.6 Lite" });
-    expect(codexPreset?.models).toContainEqual({ id: "doubao-seed-2-0-lite-260428", label: "Doubao Seed 2.0 Lite" });
+    expect(codexPreset?.models).toContainEqual({ id: "doubao-seed-2-1-pro-260628", label: "doubao-seed-2-1-pro-260628" });
     expect(volcengineModels.every((model) => !model.id.startsWith("ep-m-"))).toBe(true);
   });
 
@@ -2115,6 +2162,25 @@ describe("ConfigPage", () => {
       id: "ep-m-user-owned-endpoint",
       label: "ep-m-user-owned-endpoint",
     });
+  });
+
+  test("drops models from the previous provider when switching to Claude Official", () => {
+    const claudeOfficial = AGENT_PROVIDER_PRESETS.find((preset) => preset.id === "claude-code")!;
+    const qwenChannel: AgentChannel = {
+      id: "claude-code",
+      agentId: "claude",
+      label: "Claude Qwen",
+      presetId: "claude-code-bailian",
+      models: [
+        { id: DEFAULT_MODEL_ID, label: "Default" },
+        { id: "qwen3-coder-plus", label: "Qwen3 Coder Plus" },
+      ],
+    };
+
+    const officialChannel = applyProviderPresetToChannel(qwenChannel, claudeOfficial);
+
+    expect(officialChannel.models).toEqual(claudeOfficial.models);
+    expect(officialChannel.models.some((model) => model.id.includes("qwen"))).toBe(false);
   });
 
   test("remembers the current provider key before switching presets", () => {

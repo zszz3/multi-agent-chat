@@ -34,6 +34,20 @@ import {
 import { RuntimeProviderFields } from "./RuntimeProviderFields";
 
 const AGENTS: AgentId[] = ["codex", "claude", "api", "hermes"];
+const PROVIDER_CATEGORY_ORDER = ["official", "cn_official", "cloud_provider", "aggregator", "third_party", "custom"];
+
+function providerCategoryLabel(category: string, language: Language): string {
+  const labels: Record<string, [string, string]> = {
+    official: ["官方", "Official"],
+    cn_official: ["国内官方 / Coding Plan", "China official / Coding plan"],
+    cloud_provider: ["云服务商", "Cloud providers"],
+    aggregator: ["聚合服务", "Aggregators"],
+    third_party: ["第三方", "Third party"],
+    custom: ["自定义", "Custom"],
+  };
+  const label = labels[category] ?? ["其他", "Other"];
+  return language === "zh" ? label[0] : label[1];
+}
 
 const CONFIG_TEXT = {
   zh: {
@@ -53,6 +67,7 @@ const CONFIG_TEXT = {
     enabled: "启用",
     models: "模型",
     addModel: "添加模型",
+    refreshModels: "刷新模型目录",
   },
   en: {
     save: "Save config",
@@ -71,6 +86,7 @@ const CONFIG_TEXT = {
     enabled: "Enabled",
     models: "Models",
     addModel: "Add model",
+    refreshModels: "Refresh models",
   },
 } as const;
 
@@ -91,9 +107,11 @@ interface RuntimePageProps {
   onAddModel: (channelId: string) => void;
   onUpdateModel: (channelId: string, modelIndex: number, updater: (model: AgentModelOption) => AgentModelOption) => void;
   onRemoveModel: (channelId: string, modelIndex: number) => void;
+  onRefreshModels?: (channelId: string) => Promise<void>;
   onSave: () => Promise<void>;
   onLoadCodexPluginCatalog: () => Promise<void>;
-  onSelectChannel: (channelId: string) => void;
+  onSelectChannel: (channelId: string) => void | Promise<void>;
+  onBeforeProviderSwitch?: () => Promise<boolean>;
   onAddConfig: () => void;
   onOpenContextMenu: (event: MouseEvent, channelId: string) => void;
   onDeleteConfig: (channelId: string) => void;
@@ -123,9 +141,11 @@ export function RuntimePage({
   onAddModel,
   onUpdateModel,
   onRemoveModel,
+  onRefreshModels,
   onSave,
   onLoadCodexPluginCatalog,
   onSelectChannel,
+  onBeforeProviderSwitch,
   onAddConfig,
   onOpenContextMenu,
   onDeleteConfig,
@@ -164,6 +184,14 @@ export function RuntimePage({
   const availableCodexPlugins = useMemo(() => codexPluginCatalog.filter((plugin) => !configuredPluginIds.has(plugin.id)), [codexPluginCatalog, configuredPluginIds]);
   const selectedRuntime = selectedRuntimeChannelRecord?.agentId ?? "codex";
   const runtimeProviderPresets = useMemo(() => AGENT_PROVIDER_PRESETS.filter((preset) => preset.runtimeAgentId === selectedRuntime), [selectedRuntime]);
+  const runtimeProviderCategories = useMemo(() => {
+    const categories = new Set(runtimeProviderPresets.map((preset) => preset.category ?? (preset.id.includes("custom") ? "custom" : "third_party")));
+    return [...categories].sort((left, right) => {
+      const leftIndex = PROVIDER_CATEGORY_ORDER.indexOf(left);
+      const rightIndex = PROVIDER_CATEGORY_ORDER.indexOf(right);
+      return (leftIndex < 0 ? 999 : leftIndex) - (rightIndex < 0 ? 999 : rightIndex);
+    });
+  }, [runtimeProviderPresets]);
   const updateSelectedRuntimeChannel = (updater: (channel: AgentChannel) => AgentChannel): void => {
     if (!selectedRuntimeChannelRecord) return;
     onUpdateChannel(selectedRuntimeChannelRecord.id, updater);
@@ -191,22 +219,15 @@ export function RuntimePage({
 
   const applyRuntimePreset = async (preset: AgentProviderPreset): Promise<void> => {
     if (!selectedRuntimeChannelRecord) return;
+    if (preset.id !== selectedRuntimePresetId && onBeforeProviderSwitch && !(await onBeforeProviderSwitch())) return;
     if (preset.id === CODEX_DEFAULT_PRESET_ID) {
-      try {
-        onStatusChange?.("");
-        const config = onLoadCodexDefaultConfig
-          ? await onLoadCodexDefaultConfig()
-          : await loadCodexDefaultConfigFromRuntimeApi(window.multiAgentChat);
-        if (config.apiKey !== null) onUpdateProviderKey(CODEX_DEFAULT_PRESET_ID, config.apiKey);
-        else onUpdateProviderKey(CODEX_DEFAULT_PRESET_ID, "");
-        const nextChannel = applyCodexDefaultConfigToChannel(selectedRuntimeChannelRecord, config);
-        if (onReplaceChannelAndPersist) {
-          await onReplaceChannelAndPersist(selectedRuntimeChannelRecord.id, nextChannel);
-        } else {
-          updateSelectedRuntimeChannel(() => nextChannel);
-        }
-      } catch (error) {
-        onStatusChange?.(error instanceof Error ? error.message : String(error));
+      onStatusChange?.("");
+      onUpdateProviderKey(CODEX_DEFAULT_PRESET_ID, "");
+      const nextChannel = applyProviderPresetToChannel(selectedRuntimeChannelRecord, preset);
+      if (onReplaceChannelAndPersist) {
+        await onReplaceChannelAndPersist(selectedRuntimeChannelRecord.id, nextChannel);
+      } else {
+        updateSelectedRuntimeChannel(() => nextChannel);
       }
       return;
     }
@@ -220,7 +241,7 @@ export function RuntimePage({
   };
   const selectRuntime = (runtimeAgentId: AgentId): void => {
     const nextChannel = visibleRuntimeChannels.find((channel) => channel.agentId === runtimeAgentId);
-    if (nextChannel) onSelectChannel(nextChannel.id);
+    if (nextChannel) void onSelectChannel(nextChannel.id);
   };
   const updateSelectedProviderKey = (value: string): void => {
     if (!selectedRuntimePreset) return;
@@ -280,7 +301,7 @@ export function RuntimePage({
                   key={channel.id}
                   className={`runtime-channel-row ${channel.id === selectedRuntimeChannelId ? "is-active" : ""}`}
                   type="button"
-                  onClick={() => onSelectChannel(channel.id)}
+                  onClick={() => void onSelectChannel(channel.id)}
                   onContextMenu={(event) => onOpenContextMenu(event, channel.id)}
                 >
                   <span className={`agent-badge mini ${agentAccent(channel.agentId)}`}>{agentLabel(channel.agentId)}</span>
@@ -437,21 +458,32 @@ export function RuntimePage({
                 </div>
               </section>
 
-              <section className="agent-provider-presets">
-                <div className="agent-provider-presets-head">
+              <details className="agent-provider-presets agent-provider-disclosure" open>
+                <summary className="agent-provider-presets-head">
                   <h3>Provider</h3>
-                  <span>{`${configText.providerHelp} ${agentLabel(selectedRuntime)}.`}</span>
-                </div>
-                <div className="agent-provider-preset-list">
-                  {runtimeProviderPresets.map((preset) => (
-                    <button
-                      type="button"
-                      key={preset.id}
-                      className={`agent-provider-preset ${selectedRuntimePresetId === preset.id ? "is-active" : ""}`}
-                      onClick={() => void applyRuntimePreset(preset)}
-                    >
-                      <strong>{preset.label}</strong>
-                    </button>
+                  <span>{selectedRuntimePreset?.label ?? agentLabel(selectedRuntime)}</span>
+                </summary>
+                <div className="agent-provider-catalog" aria-label="Provider presets">
+                  {runtimeProviderCategories.map((category) => (
+                    <section className="agent-provider-category" key={category}>
+                      <span className="agent-provider-category-label">{providerCategoryLabel(category, language)}</span>
+                      <div className="agent-provider-option-grid">
+                        {runtimeProviderPresets
+                          .filter((preset) => (preset.category ?? (preset.id.includes("custom") ? "custom" : "third_party")) === category)
+                          .map((preset) => (
+                            <button
+                              key={preset.id}
+                              type="button"
+                              className={`agent-provider-option ${selectedRuntimePresetId === preset.id ? "is-active" : ""}`}
+                              aria-pressed={selectedRuntimePresetId === preset.id}
+                              title={preset.label}
+                              onClick={() => void applyRuntimePreset(preset)}
+                            >
+                              {preset.label}
+                            </button>
+                          ))}
+                      </div>
+                    </section>
                   ))}
                 </div>
                 {selectedRuntimePreset?.usesApiKey ? (
@@ -477,7 +509,7 @@ export function RuntimePage({
                     />
                   </label>
                 ) : null}
-              </section>
+              </details>
 
               <details className="agent-advanced-panel">
                 <summary>{configText.advancedProvider}</summary>
@@ -580,10 +612,22 @@ export function RuntimePage({
               <section className="agent-channel-models">
                 <div className="config-models-header">
                   <h3>{configText.models}</h3>
-                  <button className="control-btn compact secondary" onClick={() => onAddModel(selectedRuntimeChannelRecord.id)}>
-                    <Plus size={13} />
-                    <span>{configText.addModel}</span>
-                  </button>
+                  <div className="config-plugin-actions">
+                    <button
+                      className="icon-btn"
+                      type="button"
+                      aria-label="Refresh model catalog"
+                      title={configText.refreshModels}
+                      disabled={!onRefreshModels}
+                      onClick={() => void onRefreshModels?.(selectedRuntimeChannelRecord.id)}
+                    >
+                      <RefreshCw size={13} />
+                    </button>
+                    <button className="control-btn compact secondary" onClick={() => onAddModel(selectedRuntimeChannelRecord.id)}>
+                      <Plus size={13} />
+                      <span>{configText.addModel}</span>
+                    </button>
+                  </div>
                 </div>
                 <div className="config-model-list">
                   {selectedRuntimeChannelRecord.models.map((model, index) => (

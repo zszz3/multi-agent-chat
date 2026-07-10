@@ -8,8 +8,7 @@ export const UI_TEXT = {
       schedules: "定时任务",
       skills: "技能",
       runtimes: "配置",
-      configs: "Agent 组装",
-      configuration: "Agent",
+      agent: "Agent",
     },
     chrome: {
       featureNav: "功能导航",
@@ -25,7 +24,7 @@ export const UI_TEXT = {
       lightTheme: "浅色主题",
       toggleTheme: "切换主题",
     },
-    config: {
+    agent: {
       title: "Agent",
       description: "组装 Agent 的名称、描述、执行配置和标签。",
       save: "保存",
@@ -96,8 +95,7 @@ export const UI_TEXT = {
       schedules: "Schedules",
       skills: "Skills",
       runtimes: "Config",
-      configs: "Agent Assembly",
-      configuration: "Agent",
+      agent: "Agent",
     },
     chrome: {
       featureNav: "Feature navigation",
@@ -113,7 +111,7 @@ export const UI_TEXT = {
       lightTheme: "Light theme",
       toggleTheme: "Toggle theme",
     },
-    config: {
+    agent: {
       title: "Agent",
       description: "Assemble agent profiles, execution config, and tags.",
       save: "Save",

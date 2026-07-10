@@ -47,8 +47,8 @@ import {
   skillDisplayDescription,
   skillDisplayName,
 } from "./pages/skills/find-skill";
-import { ConfigPage } from "./pages/config/ConfigPage";
-import { useConfiguredAgentsManager } from "./pages/config/hooks/useConfiguredAgentsManager";
+import { AgentPage } from "./pages/agent/AgentPage";
+import { useConfiguredAgentsManager } from "./pages/agent/hooks/useConfiguredAgentsManager";
 import { ChatPage } from "./pages/chat/ChatPage";
 import { chatConfigLocked, SlashCommandSuggestions, slashCommandSuggestionsFor } from "./pages/chat/chat-utils";
 export { chatConfigLocked, SlashCommandSuggestions, slashCommandSuggestionsFor } from "./pages/chat/chat-utils";
@@ -137,7 +137,7 @@ export type { ActiveFeature } from "./app/shell";
 export { loadStoredTheme } from "./app/storage";
 export { shouldSendComposerKey } from "./app/composer";
 export { resolveConfiguredAgentChannel, resolveFindSkillConfiguredAgentId } from "./app/agents";
-export { ConfigPage } from "./pages/config/ConfigPage";
+export { AgentPage } from "./pages/agent/AgentPage";
 export { ChatPage } from "./pages/chat/ChatPage";
 export { ChatControls } from "./pages/chat/ChatControls";
 export { ChatHistoryPanel } from "./pages/chat/ChatHistoryPanel";
@@ -247,6 +247,9 @@ export function AppShell() {
     loadCodexPluginCatalog,
     testRuntimeChannel,
     queryRuntimeChannelBalance,
+    refreshModelCatalog,
+    confirmSaveBeforeSwitch,
+    selectConfigChannel,
   } = useRuntimeConfigManager({
     chatApi,
     snapshot,
@@ -909,19 +912,26 @@ export function AppShell() {
             onRemoveModel={removeConfigModel}
             onSave={saveChannelConfig}
             onLoadCodexPluginCatalog={loadCodexPluginCatalog}
-            onSelectChannel={setSelectedConfigChannelId}
+            onSelectChannel={(channelId) => selectConfigChannel(
+              channelId,
+              language === "zh" ? "当前 Runtime 配置尚未保存，切换前保存吗？" : "This Runtime config has unsaved changes. Save before switching?",
+            )}
+            onBeforeProviderSwitch={() => confirmSaveBeforeSwitch(
+              language === "zh" ? "当前 Runtime 配置尚未保存，切换 Provider 前保存吗？" : "This Runtime config has unsaved changes. Save before switching providers?",
+            )}
             onAddConfig={addConfigChannel}
             onOpenContextMenu={openRuntimeConfigContextMenu}
             onDeleteConfig={deleteConfigChannel}
             onTestChannel={testRuntimeChannel}
             onQueryBalance={queryRuntimeChannelBalance}
+            onRefreshModels={refreshModelCatalog}
             onUpdateProviderKey={updateProviderKey}
             onLoadCodexDefaultConfig={() => window.multiAgentChat.loadCodexDefaultConfig()}
             onReplaceChannelAndPersist={replaceConfigChannelAndPersist}
             onStatusChange={setConfigStatus}
           />
-        ) : activeFeature === "configuration" ? (
-          <ConfigPage
+        ) : activeFeature === "agent" ? (
+          <AgentPage
             language={language}
             channels={snapshot.channels}
             configuredAgents={snapshot.configuredAgents}

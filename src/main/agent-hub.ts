@@ -42,6 +42,7 @@ import type {
   RegisterArtifactRequest,
   GeneratedConfigFile,
   ImportedCodexConfig,
+  ModelCatalogRefreshResult,
   CodexDefaultConfig,
   PatchWorkflowDraftRequest,
   PauseWorkflowNodeRequest,
@@ -49,6 +50,7 @@ import type {
   RunWorkflowGraphRequest,
   RunAgentTeamRequest,
   RuntimeContinuationPolicy,
+  RuntimeConfig,
   RuntimeInteractionCapabilities,
   RuntimeConversation,
   RuntimeExecutionMode,
@@ -108,6 +110,13 @@ import { RuntimeRouter } from "./agents/runtime-router";
 import { createRuntimeDriverRegistry, RuntimeAgentExecutorFactory, type AgentExecutorFactory } from "./agent-executor";
 import { execCli, spawnCli } from "./cli-launcher";
 import { queryProviderBalance, type ProviderBalanceQueryOptions } from "./provider-balance";
+import {
+  discoverChannelModels,
+  mergeModelCatalog,
+  ModelCatalogUnsupportedError,
+  type ModelCatalogDiscoverer,
+  type ModelCatalogSource,
+} from "./model-catalog";
 import {
   codexAppServerConfigArgs,
   codexHome,
@@ -801,7 +810,10 @@ function cloneAgentChannel(channel: AgentChannel): AgentChannel {
     id: channel.id,
     agentId: channel.agentId,
     label: channel.label,
-    models: channel.models.map((model) => ({ ...model })),
+    models: channel.models.map((model) => ({
+      ...model,
+      ...(model.reasoningEfforts ? { reasoningEfforts: [...model.reasoningEfforts] } : {}),
+    })),
   };
   if (channel.profileName !== undefined) cloned.profileName = channel.profileName;
   if (channel.presetId !== undefined) cloned.presetId = channel.presetId;
@@ -809,6 +821,17 @@ function cloneAgentChannel(channel: AgentChannel): AgentChannel {
   if (channel.providerName !== undefined) cloned.providerName = channel.providerName;
   if (channel.baseUrl !== undefined) cloned.baseUrl = channel.baseUrl;
   if (channel.wireApi !== undefined) cloned.wireApi = channel.wireApi;
+  if (channel.apiFormat !== undefined) cloned.apiFormat = channel.apiFormat;
+  if (channel.apiKeyField !== undefined) cloned.apiKeyField = channel.apiKeyField;
+  if (channel.isFullUrl !== undefined) cloned.isFullUrl = channel.isFullUrl;
+  if (channel.customUserAgent !== undefined) cloned.customUserAgent = channel.customUserAgent;
+  if (channel.environment !== undefined) cloned.environment = { ...channel.environment };
+  if (channel.requestOverrides !== undefined) {
+    cloned.requestOverrides = {
+      ...(channel.requestOverrides.headers ? { headers: { ...channel.requestOverrides.headers } } : {}),
+      ...(channel.requestOverrides.body ? { body: structuredClone(channel.requestOverrides.body) } : {}),
+    };
+  }
   if (channel.modelCatalogJson !== undefined) cloned.modelCatalogJson = channel.modelCatalogJson;
   if (channel.modelReasoningEffort !== undefined) cloned.modelReasoningEffort = channel.modelReasoningEffort;
   if (channel.httpHeaders !== undefined) cloned.httpHeaders = { ...channel.httpHeaders };
@@ -1120,6 +1143,7 @@ interface ResolvedConfiguredAgent {
   runtimeAgentId: AgentId;
   channel: AgentChannel;
   modelId: string;
+  reasoningEffort?: string;
   runtime: AgentRuntime | undefined;
 }
 type Listener = (snapshot: AppSnapshot) => void;
@@ -1182,11 +1206,13 @@ export class AgentHub {
   private readonly workflowRuntime: WorkflowRuntime;
   private readonly workflowStore: WorkflowStore;
   private readonly claudeSdkAdapter: Pick<ClaudeAgentSdkAdapter, "runOneShot">;
+  private readonly modelCatalogDiscoverer: ModelCatalogDiscoverer;
 
   constructor(
     executables: Partial<Record<AgentId, string>> = {},
     executorFactory?: AgentExecutorFactory,
     runtimeDrivers?: RuntimeDriverRegistry,
+    modelCatalogDiscoverer: ModelCatalogDiscoverer = discoverChannelModels,
   ) {
     this.executables = {
       codex: executables.codex ?? process.env.CODEX_PATH ?? "codex",
@@ -1195,6 +1221,7 @@ export class AgentHub {
       hermes: executables.hermes ?? process.env.HERMES_PATH ?? "hermes",
     };
     this.claudeSdkAdapter = new ClaudeAgentSdkAdapter();
+    this.modelCatalogDiscoverer = modelCatalogDiscoverer;
     this.runtimeDrivers =
       runtimeDrivers ??
       createRuntimeDriverRegistry({
@@ -1351,6 +1378,36 @@ export class AgentHub {
     });
   }
 
+  async refreshModelCatalog(channelId: string): Promise<ModelCatalogRefreshResult> {
+    const channel = this.channelOrThrow(channelId);
+    const discovered = await this.modelCatalogDiscoverer(cloneAgentChannel(channel), {
+      codexCommand: this.executables.codex,
+    });
+    channel.models = mergeModelCatalog(channel.models, discovered.models);
+    this.installRestoredConfiguredAgents(this.listConfiguredAgents());
+    this.normalizeRunSelections();
+    this.emit();
+    await this.flushPersistence();
+    return {
+      channelId,
+      source: discovered.source,
+      discoveredCount: discovered.models.length,
+      snapshot: this.snapshot(),
+    };
+  }
+
+  async refreshDiscoverableModelCatalogs(): Promise<void> {
+    await Promise.all(this.channels.map(async (channel) => {
+      try {
+        await this.refreshModelCatalog(channel.id);
+      } catch (error) {
+        if (!(error instanceof ModelCatalogUnsupportedError)) {
+          console.warn(`Failed to refresh model catalog for ${channel.id}:`, error instanceof Error ? error.message : String(error));
+        }
+      }
+    }));
+  }
+
   updateConfiguredAgents(agents: ConfiguredAgent[]): AppSnapshot {
     this.installRestoredConfiguredAgents(agents);
     this.normalizeRunSelections();
@@ -1406,12 +1463,22 @@ export class AgentHub {
         : isModelForChannel(runtimeAgentId, channel.id, agent.modelId, this.channels)
           ? agent.modelId
           : defaultModelForAgent(runtimeAgentId);
+    const model = channel.models.find((item) => item.id === modelId);
+    const reasoningEffort = agent.reasoningEffort?.trim();
     return {
       agent,
       runtimeAgentId,
       channel,
       modelId,
+      ...(reasoningEffort && model?.reasoningEfforts?.includes(reasoningEffort) ? { reasoningEffort } : {}),
       runtime: this.runtimes.get(runtimeAgentId),
+    };
+  }
+
+  private runtimeConfigForResolved(resolved: ResolvedConfiguredAgent): RuntimeConfig {
+    return {
+      model: resolved.modelId,
+      ...(resolved.reasoningEffort ? { reasoningEffort: resolved.reasoningEffort } : {}),
     };
   }
 
@@ -2287,7 +2354,7 @@ export class AgentHub {
       runtimeId: resolved.runtimeAgentId,
       executionMode,
       continuationPolicy,
-      runtimeConfig: { model: resolved.modelId },
+      runtimeConfig: this.runtimeConfigForResolved(resolved),
       ...(runtimeConversation ? { runtimeConversation } : {}),
       runtime: resolved.runtime as AgentRuntime,
       channelId: resolved.channel.id,
@@ -2530,7 +2597,7 @@ export class AgentHub {
     const client = new CodexRpcClient({
       executable,
       cwd: this.workDir,
-      extraArgs: codexAppServerConfigArgs(channel, resolved.modelId),
+      extraArgs: codexAppServerConfigArgs(channel, resolved.modelId, resolved.reasoningEffort),
       env: codexEnvironmentForChannel(channel),
       onEvent: () => undefined,
       onRequest: (id, method, params) => {
@@ -2794,7 +2861,7 @@ export class AgentHub {
       runtimeId: input.runtimeId,
       executionMode: input.executionMode,
       continuationPolicy: input.continuationPolicy,
-      runtimeConfig: input.runtimeConfig,
+      runtimeConfig: { ...input.runtimeConfig, ...this.runtimeConfigForResolved(resolved) },
       ...(runtimeConversation ? { runtimeConversation } : {}),
       prompt,
       runtime,
@@ -3759,7 +3826,7 @@ export class AgentHub {
       runtimeId: resolved.runtimeAgentId,
       executionMode,
       continuationPolicy,
-      runtimeConfig: { model: resolved.modelId },
+      runtimeConfig: this.runtimeConfigForResolved(resolved),
       ...(runtimeConversation ? { runtimeConversation } : {}),
       runtime,
       channelId: resolved.channel.id,
@@ -4299,15 +4366,11 @@ export class AgentHub {
     const now = Date.now();
     for (const rawAgent of rawAgents) {
       const agent = this.restoreConfiguredAgent(rawAgent, now);
-      if (agent && agent.managed !== true && agent.id !== "default-agent" && !agent.id.startsWith("runtime-agent:")) {
-        this.configuredAgents.set(agent.id, agent);
-      }
+      if (agent) this.configuredAgents.set(agent.id, agent);
     }
     for (const channel of this.channels) {
       const id = managedRuntimeAgentId(channel);
-      const previous = rawAgents
-        .map((rawAgent) => this.restoreConfiguredAgent(rawAgent, now))
-        .find((agent) => agent?.id === id || (agent?.managed === true && agent.channelId === channel.id));
+      if (this.configuredAgents.has(id)) continue;
       this.configuredAgents.set(id, {
         id,
         name: channel.label,
@@ -4317,7 +4380,7 @@ export class AgentHub {
         modelId: defaultModelForAgent(channel.agentId),
         tags: [],
         managed: true,
-        createdAt: previous?.createdAt ?? now,
+        createdAt: now,
         updatedAt: now,
       });
     }
@@ -4338,13 +4401,19 @@ export class AgentHub {
     const channelId = asOptionalString(record.channelId);
     const normalizedChannelId = channelId && this.channelById(channelId)?.agentId === runtimeAgentId ? channelId : fallbackChannelId;
     const modelId = asOptionalString(record.modelId);
+    const normalizedModelId = modelId && isModelForChannel(runtimeAgentId, normalizedChannelId, modelId, this.channels)
+      ? modelId
+      : defaultModelForAgent(runtimeAgentId);
+    const model = this.channelById(normalizedChannelId)?.models.find((item) => item.id === normalizedModelId);
+    const reasoningEffort = asOptionalString(record.reasoningEffort);
     return {
       id,
       name,
       description: asOptionalString(record.description) ?? "",
       runtimeAgentId,
       channelId: normalizedChannelId,
-      modelId: modelId && isModelForChannel(runtimeAgentId, normalizedChannelId, modelId, this.channels) ? modelId : defaultModelForAgent(runtimeAgentId),
+      modelId: normalizedModelId,
+      ...(reasoningEffort && model?.reasoningEfforts?.includes(reasoningEffort) ? { reasoningEffort } : {}),
       tags: asArray(record.tags).map((tag) => asOptionalString(tag)).filter((tag): tag is string => Boolean(tag)),
       ...(record.managed === true ? { managed: true } : {}),
       createdAt: asNumber(record.createdAt, now),

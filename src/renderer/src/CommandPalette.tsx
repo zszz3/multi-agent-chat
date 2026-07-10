@@ -32,7 +32,7 @@ export function filterPaletteCommands(commands: PaletteCommand[], query: string)
 
 export type Theme = "light" | "dark";
 export type PaletteLanguage = "zh" | "en";
-export type PaletteFeature = "chat" | "tasks" | "workflow" | "skills" | "configuration" | "runtimes";
+export type PaletteFeature = "chat" | "tasks" | "workflow" | "skills" | "agent" | "runtimes";
 
 export interface PaletteContext {
   chats: Array<{ id: string; title: string; agentId: string }>;
@@ -56,7 +56,7 @@ function labelsFor(language: PaletteLanguage) {
       tasks: "任务",
       workflow: "Workflow",
       skills: "技能",
-      configuration: "Agent",
+      agent: "Agent",
       runtimes: "运行配置",
       newChat: "新建对话",
       lightTheme: "切换到浅色主题",
@@ -82,7 +82,7 @@ function labelsFor(language: PaletteLanguage) {
     tasks: "Tasks",
     workflow: "Workflow",
     skills: "Skills",
-    configuration: "Agent",
+    agent: "Agent",
     runtimes: "Runtime Config",
     newChat: "New chat",
     lightTheme: "Switch to light theme",
@@ -109,11 +109,11 @@ export function buildPaletteCommands(context: PaletteContext): PaletteCommand[] 
     { id: "nav-workflow", section: label.jump, label: label.workflow, hint: "G F", icon: <GitBranch size={14} />, run: () => context.onNavigate("workflow") },
     { id: "nav-skills", section: label.jump, label: label.skills, icon: <Wand2 size={14} />, run: () => context.onNavigate("skills") },
     {
-      id: "nav-configuration",
+      id: "nav-agent",
       section: label.jump,
-      label: label.configuration,
+      label: label.agent,
       icon: <SlidersHorizontal size={14} />,
-      run: () => context.onNavigate("configuration"),
+      run: () => context.onNavigate("agent"),
     },
     { id: "nav-runtimes", section: label.jump, label: label.runtimes, hint: "G R", icon: <Cpu size={14} />, run: () => context.onNavigate("runtimes") },
   ];
