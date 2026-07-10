@@ -106,6 +106,7 @@ export function projectNodeStates(
     const item: WorkflowRunProgressItem = { nodeId, title, status };
     const detail = workflowEventDefaultDetail(latest, status);
     if (detail) item.detail = detail;
+    if (status === "paused" && latest.intervention) item.intervention = structuredClone(latest.intervention);
     if (status === "running" || status === "paused") {
       const taskId = latest.taskId ?? latestStartByNodeId.get(nodeId)?.taskId;
       if (taskId) item.taskId = taskId;

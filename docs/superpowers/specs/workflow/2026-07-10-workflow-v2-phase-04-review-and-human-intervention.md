@@ -4,7 +4,7 @@
 
 ### Status
 
-Draft on 2026-07-10.
+Implementation complete on 2026-07-10. Layered validation, real independent reviewer TaskRuns, lease supervision, recoverable hard/probe timeouts, and one durable intervention action surface are implemented. Repository-wide typecheck is still affected by pre-existing legacy runtime wrapper imports outside Workflow V2; focused Workflow/AgentHub/preload/renderer checks and tests pass.
 
 ### This File Is Self-Contained
 
@@ -187,6 +187,18 @@ The control plane should request a checkpoint before interruption when possible.
 - steering-capable runtimes may probe the active conversation directly
 - runtimes without steering must stop the old task only after capturing available output and recovery context
 - persistent checkpoint storage and restart recovery are implemented in Phase 05
+
+#### 12. Intervention Resolution Must Be One Cross-Layer Contract
+
+`continue`, `skip`, `escalate`, `replan`, and `increase_review_strength` must use the same typed request from renderer through Electron IPC to the durable runtime.
+
+- `continue` resumes from the available checkpoint and runtime conversation
+- `skip` records a skipped output packet so downstream dependency inputs remain explicit
+- `escalate` reruns with the expert model-profile contract and mandatory independent review
+- `increase_review_strength` reruns with mandatory independent review without changing the frozen graph
+- `replan` keeps the current run stopped and records that a new graph revision is required; it does not mutate the frozen plan in place
+
+Every accepted resolution must be appended to the durable event log and stored in node control state before execution continues.
 
 ### Phase Failure Conditions
 

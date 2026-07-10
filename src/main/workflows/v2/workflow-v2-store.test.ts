@@ -49,6 +49,11 @@ describe("workflow-v2 file store", () => {
     temporaryDirectories.push(root);
     const store = new WorkflowV2FileStore(root);
     const state = await persistedState();
+    state.nodeControl["node-1"]!.interventionResolution = {
+      action: "continue",
+      reason: "Approved by the operator.",
+      resolvedAt: 1_900,
+    };
 
     await store.persistRunState(state);
 

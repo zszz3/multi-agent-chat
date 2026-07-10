@@ -80,7 +80,7 @@ export function isWorkflowV2HumanIntervention(value: unknown): value is Workflow
   if (typeof value.nodeId !== "string" || !value.nodeId.trim()) return false;
   if (!isInterventionSource(value.source)) return false;
   if (typeof value.reason !== "string" || !value.reason.trim()) return false;
-  if (!Array.isArray(value.allowedActions) || !value.allowedActions.every(isInterventionAction)) return false;
+  if (!Array.isArray(value.allowedActions) || !value.allowedActions.every(isWorkflowV2InterventionAction)) return false;
   if (typeof value.requestedAt !== "number" || !Number.isFinite(value.requestedAt) || value.requestedAt < 0) return false;
   if (value.reviewVerdict !== undefined && !isWorkflowV2ReviewVerdict(value.reviewVerdict)) return false;
   if (value.progressReport !== undefined && !isWorkflowV2ProgressReport(value.progressReport)) return false;
@@ -96,7 +96,7 @@ function isInterventionSource(value: unknown): value is WorkflowV2HumanIntervent
     || value === "supervision_escalation";
 }
 
-function isInterventionAction(value: unknown): value is WorkflowV2InterventionAction {
+export function isWorkflowV2InterventionAction(value: unknown): value is WorkflowV2InterventionAction {
   return value === "continue"
     || value === "skip"
     || value === "escalate"

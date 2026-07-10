@@ -37,6 +37,7 @@ import type {
   CodexDefaultConfig,
   PatchWorkflowDraftRequest,
   PauseWorkflowNodeRequest,
+  ResolveWorkflowV2InterventionRequest,
   ProviderBalanceResult,
   RunWorkflowGraphRequest,
   RunAgentTeamRequest,
@@ -1284,6 +1285,10 @@ export class AgentHub {
 
   pauseWorkflowNode(input: PauseWorkflowNodeRequest): Promise<WorkflowOperationResult> {
     return this.workflowRuntime.pauseWorkflowNode(input);
+  }
+
+  resolveWorkflowV2Intervention(input: ResolveWorkflowV2InterventionRequest): Promise<WorkflowOperationResult> {
+    return this.workflowRuntime.resolveWorkflowV2Intervention(input);
   }
 
   startWorkflowNode(input: StartWorkflowNodeRequest): Promise<WorkflowOperationResult> {

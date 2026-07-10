@@ -233,12 +233,14 @@ export function reconcileWorkflowV2RunFromDurableState(input: {
   const outputByNodeId = new Map(input.persisted.workerOutputs.map((output) => [output.nodeId, output]));
   const progress = input.persisted.runState.nodeOrder.map((nodeId): WorkflowRunProgressItem => {
     const node = input.persisted.runState.nodes[nodeId]!;
-    return {
+    const progressItem: WorkflowRunProgressItem = {
       nodeId,
       title: node.title,
       status: publicWorkflowV2NodeStatus(node),
       detail: publicWorkflowV2NodeDetail(node, outputByNodeId.get(nodeId)?.summary),
     };
+    if (node.intervention) progressItem.intervention = structuredClone(node.intervention);
+    return progressItem;
   });
   const events = [...input.run.events];
   for (const nodeId of input.persisted.runState.nodeOrder) {

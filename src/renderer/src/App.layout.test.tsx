@@ -3968,6 +3968,57 @@ workflowGraph.upsert({
     expect(html).toContain("Running...");
   });
 
+  test("renders all allowed Workflow V2 intervention actions from one paused surface", () => {
+    const html = renderToStaticMarkup(
+      <WorkflowPage
+        graph={graph}
+        graphReady
+        objective="Review payment release"
+        messages={[{ id: "m-1", role: "assistant", content: "Workflow paused." }]}
+        reply=""
+        error={undefined}
+        configuredAgentId="repo-reviewer"
+        runtimes={runtimes}
+        channels={channels}
+        workDir="/tmp/workspace"
+        running={false}
+        activeRunId="run-v2"
+        runProgress={[{
+          nodeId: "review",
+          title: "Review",
+          status: "paused",
+          detail: "Human decision required",
+          intervention: {
+            nodeId: "review",
+            source: "review_escalation",
+            reason: "The reviewer found an unresolved release risk.",
+            allowedActions: ["continue", "skip", "escalate", "replan", "increase_review_strength"],
+            requestedAt: 1_000,
+          },
+        }]}
+        onObjectiveChange={() => undefined}
+        onPauseNode={() => undefined}
+        onResolveIntervention={() => undefined}
+        onSelectConfiguredAgent={() => undefined}
+        onDraftGraph={() => undefined}
+        onReplyChange={() => undefined}
+        onSendReply={() => undefined}
+        onUpdateNode={() => undefined}
+        onRunGraph={async () => undefined}
+        onResetSession={() => undefined}
+      />,
+    );
+
+    expect(html).toContain("workflow-intervention-panel");
+    expect(html).toContain("The reviewer found an unresolved release risk.");
+    expect(html).toContain(">Continue<");
+    expect(html).toContain(">Skip<");
+    expect(html).toContain(">Escalate<");
+    expect(html).toContain(">Replan<");
+    expect(html).toContain(">Strengthen review<");
+    expect(styles).toContain(".workflow-intervention-actions {");
+  });
+
   test("renders the main agent final report after workflow execution", () => {
     const html = renderToStaticMarkup(
       <WorkflowPage

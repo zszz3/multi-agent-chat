@@ -69,6 +69,20 @@ export function useWorkflowFeatureController({
           setSnapshot(next);
         }
       },
+      onResolveIntervention: async (nodeId, action, reason) => {
+        if (!draft.workflowId || !activeRunId) return;
+        const result = await workflows.resolveIntervention({
+          workflowId: draft.workflowId,
+          runId: activeRunId,
+          nodeId,
+          action,
+          ...(reason?.trim() ? { reason: reason.trim() } : {}),
+        });
+        if (!result.ok && result.error) {
+          const next = await workflows.patchDraft({ workflowId: draft.workflowId, error: result.error });
+          setSnapshot(next);
+        }
+      },
       onStartNode: async (nodeId: string) => {
         if (!draft.workflowId || !activeRunId) return;
         const result = await workflows.startNode({ workflowId: draft.workflowId, runId: activeRunId, nodeId });

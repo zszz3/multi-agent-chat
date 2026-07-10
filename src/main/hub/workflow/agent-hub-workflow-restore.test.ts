@@ -139,7 +139,12 @@ describe("Workflow V2 AgentHub durable restore", () => {
       lastError: undefined,
       progress: [
         { nodeId: "draft", status: "completed", detail: "Draft persisted" },
-        { nodeId: "verify", status: "paused", detail: "Checkpoint captured before restart." },
+        {
+          nodeId: "verify",
+          status: "paused",
+          detail: "Checkpoint captured before restart.",
+          intervention: expect.objectContaining({ allowedActions: ["continue", "skip"] }),
+        },
       ],
       events: [expect.objectContaining({ type: "node_paused", nodeId: "verify" })],
     });

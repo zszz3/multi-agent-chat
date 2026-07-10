@@ -1,7 +1,8 @@
 import type { WorkflowV2WorkerOutput } from "./packets";
 import type { WorkflowV2Plan } from "./planning";
 import type { WorkflowV2ReviewVerdict } from "./review";
-import { isWorkflowV2ReviewVerdict } from "./review";
+import type { WorkflowV2InterventionAction } from "./review";
+import { isWorkflowV2InterventionAction, isWorkflowV2ReviewVerdict } from "./review";
 import type { WorkflowV2RunState } from "./state";
 import type { WorkflowV2ExecutionLeaseState, WorkflowV2ProgressReport } from "./supervision";
 import { isWorkflowV2ProgressReport } from "./supervision";
@@ -46,6 +47,13 @@ export interface WorkflowV2DurableNodeControlState {
   checkpoint?: string;
   extensionCount: number;
   stopReason?: string;
+  interventionResolution?: WorkflowV2InterventionResolutionRecord;
+}
+
+export interface WorkflowV2InterventionResolutionRecord {
+  action: WorkflowV2InterventionAction;
+  reason: string;
+  resolvedAt: number;
 }
 
 export interface WorkflowV2PersistedRunState {
@@ -195,7 +203,13 @@ function isDurableNodeControlState(value: unknown): value is WorkflowV2DurableNo
   if (value.stopReason !== undefined && !isNonEmptyString(value.stopReason)) return false;
   if (value.progressReport !== undefined && !isWorkflowV2ProgressReport(value.progressReport)) return false;
   if (value.lease !== undefined && !isExecutionLeaseState(value.lease)) return false;
+  if (value.interventionResolution !== undefined && !isInterventionResolutionRecord(value.interventionResolution)) return false;
   return true;
+}
+
+function isInterventionResolutionRecord(value: unknown): value is WorkflowV2InterventionResolutionRecord {
+  if (!isRecord(value) || !isWorkflowV2InterventionAction(value.action)) return false;
+  return isNonEmptyString(value.reason) && isNonNegativeFinite(value.resolvedAt);
 }
 
 function isExecutionLeaseState(value: unknown): value is WorkflowV2ExecutionLeaseState {

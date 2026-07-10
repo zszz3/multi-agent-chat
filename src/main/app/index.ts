@@ -34,6 +34,7 @@ import type {
   PatchWorkflowDraftRequest,
   AnswerWorkflowGateRequest,
   PauseWorkflowNodeRequest,
+  ResolveWorkflowV2InterventionRequest,
   RunAgentTeamRequest,
   RunWorkflowGraphRequest,
   RunTaskRequest,
@@ -404,6 +405,9 @@ function registerIpcHandlers(): void {
   ipcMain.handle("workflow:delete", (_event, workflowId: string) => hub.deleteWorkflow(workflowId));
   ipcMain.handle("workflow-run:run-graph", (_event, request: RunWorkflowGraphRequest) => hub.runWorkflowGraph(request));
   ipcMain.handle("workflow-run:pause-node", (_event, request: PauseWorkflowNodeRequest) => hub.pauseWorkflowNode(request));
+  ipcMain.handle("workflow-v2:intervention:resolve", (_event, request: ResolveWorkflowV2InterventionRequest) =>
+    hub.resolveWorkflowV2Intervention(request),
+  );
   ipcMain.handle("workflow-run:start-node", (_event, request: StartWorkflowNodeRequest) => hub.startWorkflowNode(request));
   ipcMain.handle("workflow-run:answer-gate", (_event, request: AnswerWorkflowGateRequest) => hub.answerWorkflowGate(request));
   ipcMain.handle("workflow-run:start", (_event, request: StartWorkflowRunRequest) => {

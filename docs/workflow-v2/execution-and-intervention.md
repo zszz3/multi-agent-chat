@@ -69,6 +69,27 @@ Level 4: [end]
 
 统一的人机介入状态应为 `paused`，避免不同机制各自发明半暂停状态。
 
+产品使用统一的 `ResolveWorkflowV2InterventionRequest`，从页面、preload、IPC 到 durable runtime 只维护一套 action union：
+
+```typescript
+type WorkflowV2InterventionAction =
+  | "continue"
+  | "skip"
+  | "escalate"
+  | "replan"
+  | "increase_review_strength";
+```
+
+动作语义：
+
+- `continue`：优先续接已保存的 checkpoint 与 runtime conversation
+- `skip`：写入显式 skipped output，让下游知道上游被人工跳过，而不是伪装成缺失输出
+- `escalate`：以 `expert` model profile 重跑，并强制独立语义审查
+- `increase_review_strength`：保留原执行 profile，但强制独立语义审查
+- `replan`：保持当前 run 为 `stopped`，记录需要新 graph revision；不得原地修改冻结计划
+
+介入决定先追加 durable event 并写入 node control state，再恢复执行。页面直接根据持久化 intervention 的 `allowedActions` 渲染按钮，避免 UI 与 runtime 支持范围漂移。
+
 ## 租约式执行与超时监督
 
 节点不能只依赖一个固定超时被动等待。每次节点尝试都持有一个有界执行租约，并同时受三类时间边界约束：

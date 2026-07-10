@@ -1,7 +1,18 @@
 import { describe, expect, test } from "vitest";
-import { isWorkflowV2HumanIntervention, isWorkflowV2ReviewVerdict } from "./review";
+import {
+  isWorkflowV2HumanIntervention,
+  isWorkflowV2InterventionAction,
+  isWorkflowV2ReviewVerdict,
+} from "./review";
 
 describe("workflow-v2 review contracts", () => {
+  test("validates the five unified intervention actions", () => {
+    expect(["continue", "skip", "escalate", "replan", "increase_review_strength"].every(
+      isWorkflowV2InterventionAction,
+    )).toBe(true);
+    expect(isWorkflowV2InterventionAction("retry")).toBe(false);
+  });
+
   test("validates a durable supervision intervention with a resume conversation", () => {
     expect(isWorkflowV2HumanIntervention({
       nodeId: "implement",

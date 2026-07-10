@@ -10,6 +10,7 @@ import type {
   WorkflowGrillMessage,
   WorkflowRunProgressItem,
   WorkflowStatus,
+  WorkflowV2InterventionAction,
 } from "../../../../shared/types";
 import type { Language } from "../../app/language";
 
@@ -68,6 +69,7 @@ export interface WorkflowController {
   finalReport?: string;
   onObjectiveChange: (value: string) => void;
   onPauseNode?: (nodeId: string) => MaybePromise;
+  onResolveIntervention?: (nodeId: string, action: WorkflowV2InterventionAction, reason?: string) => MaybePromise;
   onStartNode?: (nodeId: string) => MaybePromise;
   onAnswerGate?: (nodeId: string, answer: string) => MaybePromise;
   onSelectConfiguredAgent: (configuredAgentId: string) => void;

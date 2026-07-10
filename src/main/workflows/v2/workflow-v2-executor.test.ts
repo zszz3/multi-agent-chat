@@ -1198,4 +1198,44 @@ describe("workflow-v2 executor", () => {
       },
     })).rejects.toThrow("identity does not match");
   });
+
+  test("forces independent review for a node without authored judge dimensions", async () => {
+    const reviewDefinition = definition();
+    reviewDefinition.nodes = [reviewDefinition.nodes[0]!];
+    reviewDefinition.edges = [];
+    const plan = await buildWorkflowV2Plan({ definition: reviewDefinition, approvedBy: "tester", now: 6_300 });
+    let reviewCalls = 0;
+
+    const result = await executeWorkflowV2Plan({
+      plan,
+      forceIndependentReviewNodeIds: new Set(["draft"]),
+      runLlmNode: async ({ node }) => ({
+        nodeId: node.id,
+        summary: "Draft requiring strengthened review",
+        outputs: { draft: "const strengthened = true;" },
+        evidence: ["test evidence"],
+        proposals: [],
+      }),
+      executeScript: async () => {
+        throw new Error("script should not be called");
+      },
+      reviewNodeOutput: async (input) => {
+        reviewCalls += 1;
+        expect(input.executorNodeId).toBe("draft");
+        return {
+          reviewerNodeId: "reviewer:draft",
+          verdict: {
+            decision: "accept",
+            reasons: ["Strengthened review passed."],
+            riskLevel: "low",
+            confidence: "high",
+          },
+        };
+      },
+    });
+
+    expect(reviewCalls).toBe(1);
+    expect(result.runState.status).toBe("completed");
+    expect(result.runState.nodes.draft?.reviewVerdict?.decision).toBe("accept");
+  });
 });

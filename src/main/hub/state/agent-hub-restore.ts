@@ -104,6 +104,9 @@ export function restoreWorkflowRunProgressItem(raw: unknown): WorkflowRunProgres
   if (detail) item.detail = detail;
   const taskId = asOptionalString(record.taskId);
   if (taskId) item.taskId = taskId;
+  if (record.intervention !== undefined && isWorkflowV2HumanIntervention(record.intervention)) {
+    item.intervention = structuredClone(record.intervention);
+  }
   return item;
 }
 

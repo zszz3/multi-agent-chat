@@ -47,11 +47,11 @@ type ValidationOutcome = "pass" | "retry" | "fail" | "ask_human";
 - Modify: `src/shared/types.ts`
 - Modify: `src/renderer/src/pages/workflow/WorkflowPage.tsx`
 
-- [ ] **Step 1: Add one unified paused/intervention contract**
+- [x] **Step 1: Add one unified paused/intervention contract**
 
-- [ ] **Step 2: Support continue, skip, escalate, replan, and review-strength changes from one surface**
+- [x] **Step 2: Support continue, skip, escalate, replan, and review-strength changes from one surface**
 
-- [ ] **Step 3: Remove fragmented half-paused workflow states where possible**
+- [x] **Step 3: Remove fragmented half-paused workflow states where possible**
 
 ### Task 4: Add Execution Lease Contracts
 
@@ -84,14 +84,14 @@ type ValidationOutcome = "pass" | "retry" | "fail" | "ask_human";
 
 - [x] **Step 4: Bound extensions by per-node hard timeout and run budgets**
 
-- [ ] **Step 5: On missing response or hard timeout, abort the active task and retain available recovery context**
+- [x] **Step 5: On missing response or hard timeout, abort the active task and retain available recovery context**
 
 ### Task 6: Verification
 
 **Files:**
 - Modify: tests only as needed
 
-- [ ] **Step 1: Run focused review/intervention tests**
+- [x] **Step 1: Run focused review/intervention tests**
 
 Run:
 
@@ -101,7 +101,11 @@ npx vitest run src/main/workflows/v2/workflow-v2-validation.test.ts src/main/wor
 
 Expected: all pass
 
+Latest cross-layer Workflow V2 verification: 456 tests passed across shared contracts, executor/runtime, AgentHub, preload, and renderer layout.
+
 - [ ] **Step 2: Run typecheck**
 
 Run: `npm run typecheck`
 Expected: exit code `0`
+
+Workflow V2, AgentHub, preload, and renderer paths report no type errors. Repository-wide typecheck remains blocked by pre-existing legacy runtime wrapper imports outside Workflow V2.

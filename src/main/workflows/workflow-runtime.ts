@@ -3,6 +3,7 @@ import type {
   AppSnapshot,
   FinishWorkflowRunRequest,
   PauseWorkflowNodeRequest,
+  ResolveWorkflowV2InterventionRequest,
   RunTaskRequest,
   RunWorkflowGraphRequest,
   StartWorkflowNodeRequest,
@@ -12,12 +13,14 @@ import type {
   WorkflowGraphNode,
   WorkflowOperationResult,
   RuntimeConversation,
+  WorkflowV2InterventionAction,
   WorkflowRunState,
   WorkflowRunProgressItem,
 } from "../../shared/types";
 import type {
   WorkflowV2ContextBudget,
   WorkflowV2LLMNode,
+  WorkflowV2ModelProfile,
   WorkflowV2ScriptNode,
 } from "../../shared/workflow-v2/definition";
 import type { WorkflowV2WorkerOutput, WorkflowV2WorkProposal } from "../../shared/workflow-v2/packets";
@@ -70,6 +73,7 @@ import type {
   WorkflowV2ProgressReport,
 } from "../../shared/workflow-v2/supervision";
 import type { WorkflowV2ReviewerInput, WorkflowV2ReviewerResponse } from "../../shared/workflow-v2/review";
+import { isWorkflowV2InterventionAction } from "../../shared/workflow-v2/review";
 import {
   createWorkflowV2ExecutionLease,
   inspectWorkflowV2ExecutionLease,
@@ -103,6 +107,7 @@ import {
   createWorkflowV2NodeCacheFingerprint,
   materializeWorkflowV2Recovery,
 } from "./v2/workflow-v2-recovery";
+import { transitionWorkflowV2NodeState } from "./v2/workflow-v2-scheduler";
 
 export interface WorkflowRunStateUpdate {
   workflowId: string;
@@ -153,7 +158,6 @@ export interface WorkflowV2StorePort {
 }
 
 const WORKFLOW_V2_MAX_PARALLEL_NODES = 4;
-const WORKFLOW_V2_INTERVENTION_PHASE04_ERROR = "Workflow V2 intervention requires Phase 04.";
 const MAX_NODE_TIMER_DELAY_MS = 2_147_483_647;
 
 function delay(ms: number): Promise<void> {
@@ -182,13 +186,30 @@ function workflowV2ExecutionEnvironment(input: {
   };
 }
 
-function workflowV2ReviewerPolicy(node: WorkflowV2LLMNode | WorkflowV2ScriptNode): Record<string, unknown> {
+function workflowV2ReviewerPolicy(
+  node: WorkflowV2LLMNode | WorkflowV2ScriptNode,
+  forceIndependentReview = false,
+): Record<string, unknown> {
   return {
     judgeDimensions: node.execModel === "llm" ? node.judgeDimensions ?? [] : [],
     requiresIndependentReview: node.execModel === "llm"
       && node.role !== "reviewer"
-      && (node.judgeDimensions?.length ?? 0) > 0,
+      && (forceIndependentReview || (node.judgeDimensions?.length ?? 0) > 0),
+    forceIndependentReview,
   };
+}
+
+function workflowV2InterventionResolutionReason(
+  action: WorkflowV2InterventionAction,
+  nodeTitle: string,
+  reason: string | undefined,
+): string {
+  if (reason?.trim()) return reason.trim();
+  if (action === "continue") return `Continue ${nodeTitle} from durable recovery state.`;
+  if (action === "skip") return `Skip ${nodeTitle} and continue eligible downstream work.`;
+  if (action === "escalate") return `Escalate ${nodeTitle} to expert execution with mandatory independent review.`;
+  if (action === "replan") return `Keep the run stopped and create a new graph revision for ${nodeTitle}.`;
+  return `Rerun ${nodeTitle} with mandatory independent review.`;
 }
 
 function workflowV2PlanValidationError(workflow: WorkflowDraftState, plan: WorkflowV2Plan): string | undefined {
@@ -496,6 +517,14 @@ interface ActiveWorkflowRun {
   pausedTaskIds: Set<string>;
   gatedNodeIds: Set<string>;
   taskIdByNodeId: Map<string, string>;
+  manualPauseReasonByNodeId?: Map<string, string>;
+  abortControllerByNodeId?: Map<string, AbortController>;
+}
+
+interface WorkflowV2RecoveryOverride {
+  modelProfile?: WorkflowV2ModelProfile;
+  forceIndependentReview: boolean;
+  instruction: string;
 }
 
 export class WorkflowRuntime {
@@ -536,6 +565,8 @@ export class WorkflowRuntime {
         pausedTaskIds: new Set(),
         gatedNodeIds: new Set(),
         taskIdByNodeId: new Map(),
+        manualPauseReasonByNodeId: new Map(),
+        abortControllerByNodeId: new Map(),
       });
       void this.executeWorkflowV2Run({
         workflow,
@@ -608,12 +639,7 @@ export class WorkflowRuntime {
     const run = snapshot.workflowStore.runs.find((item) => item.runId === input.runId && item.workflowId === input.workflowId);
     if (!run) return { ok: false, error: `Workflow run ${input.runId} was not found.` };
     if (run.workflowV2Plan) {
-      return {
-        ok: false,
-        workflowId: input.workflowId,
-        runId: input.runId,
-        error: WORKFLOW_V2_INTERVENTION_PHASE04_ERROR,
-      };
+      return this.pauseWorkflowV2Node({ run, nodeId: input.nodeId });
     }
     if (run.status !== "running") return { ok: false, workflowId: input.workflowId, runId: input.runId, error: "Workflow run is not running." };
     const progressItem = run.progress.find((item) => item.nodeId === input.nodeId);
@@ -673,6 +699,54 @@ export class WorkflowRuntime {
     return { ok: true, workflowId: input.workflowId, runId: input.runId };
   }
 
+  private async pauseWorkflowV2Node(input: {
+    run: WorkflowRunState;
+    nodeId: string;
+  }): Promise<WorkflowOperationResult> {
+    if (input.run.status !== "running") {
+      return {
+        ok: false,
+        workflowId: input.run.workflowId,
+        runId: input.run.runId,
+        error: "Workflow run is not running.",
+      };
+    }
+    const progressItem = input.run.progress.find((item) => item.nodeId === input.nodeId);
+    if (!progressItem) {
+      return {
+        ok: false,
+        workflowId: input.run.workflowId,
+        runId: input.run.runId,
+        error: `Workflow V2 node ${input.nodeId} was not found in this run.`,
+      };
+    }
+    if (progressItem.status !== "running") {
+      return {
+        ok: false,
+        workflowId: input.run.workflowId,
+        runId: input.run.runId,
+        error: `Workflow V2 node ${progressItem.title} is not running.`,
+      };
+    }
+    const activeRun = this.activeRuns.get(input.run.runId);
+    if (!activeRun) {
+      return {
+        ok: false,
+        workflowId: input.run.workflowId,
+        runId: input.run.runId,
+        error: "Workflow V2 run is not active in this process.",
+      };
+    }
+
+    const reason = "Paused by user through the unified Workflow V2 intervention boundary.";
+    activeRun.manualPauseReasonByNodeId ??= new Map();
+    activeRun.manualPauseReasonByNodeId.set(input.nodeId, reason);
+    const taskId = activeRun.taskIdByNodeId.get(input.nodeId) ?? progressItem.taskId;
+    if (taskId) await this.deps.stopTask(taskId);
+    activeRun.abortControllerByNodeId?.get(input.nodeId)?.abort(new Error(reason));
+    return { ok: true, workflowId: input.run.workflowId, runId: input.run.runId };
+  }
+
   async startWorkflowNode(input: StartWorkflowNodeRequest): Promise<WorkflowOperationResult> {
     const snapshot = this.deps.snapshot();
     const workflow = snapshot.workflowStore.workflows.find((item) => item.workflowId === input.workflowId);
@@ -680,7 +754,7 @@ export class WorkflowRuntime {
     if (!workflow) return { ok: false, error: `Workflow ${input.workflowId} was not found.` };
     if (!run) return { ok: false, workflowId: input.workflowId, error: `Workflow run ${input.runId} was not found.` };
     if (run.workflowV2Plan) {
-      return this.resumeWorkflowV2Node({ workflow, run, nodeId: input.nodeId });
+      return this.resumeWorkflowV2Node({ workflow, run, nodeId: input.nodeId, action: "continue" });
     }
     if (run.status !== "running" && run.status !== "stopped") {
       return { ok: false, workflowId: input.workflowId, runId: input.runId, error: "Workflow run is not resumable." };
@@ -753,10 +827,43 @@ export class WorkflowRuntime {
     return { ok: true, workflowId: input.workflowId, runId: input.runId };
   }
 
+  async resolveWorkflowV2Intervention(
+    input: ResolveWorkflowV2InterventionRequest,
+  ): Promise<WorkflowOperationResult> {
+    if (!isWorkflowV2InterventionAction(input.action)) {
+      return { ok: false, workflowId: input.workflowId, runId: input.runId, error: "Workflow V2 intervention action is invalid." };
+    }
+    if (input.reason !== undefined && (typeof input.reason !== "string" || input.reason.trim().length > 2_000)) {
+      return { ok: false, workflowId: input.workflowId, runId: input.runId, error: "Workflow V2 intervention reason is invalid." };
+    }
+    const snapshot = this.deps.snapshot();
+    const workflow = snapshot.workflowStore.workflows.find((item) => item.workflowId === input.workflowId);
+    const run = snapshot.workflowStore.runs.find((item) => item.runId === input.runId && item.workflowId === input.workflowId);
+    if (!workflow) return { ok: false, error: `Workflow ${input.workflowId} was not found.` };
+    if (!run) return { ok: false, workflowId: input.workflowId, error: `Workflow run ${input.runId} was not found.` };
+    if (!run.workflowV2Plan) {
+      return {
+        ok: false,
+        workflowId: input.workflowId,
+        runId: input.runId,
+        error: "Unified intervention actions are available only for Workflow V2 runs.",
+      };
+    }
+    return this.resumeWorkflowV2Node({
+      workflow,
+      run,
+      nodeId: input.nodeId,
+      action: input.action,
+      ...(input.reason?.trim() ? { reason: input.reason.trim() } : {}),
+    });
+  }
+
   private async resumeWorkflowV2Node(input: {
     workflow: WorkflowDraftState;
     run: WorkflowRunState;
     nodeId: string;
+    action: WorkflowV2InterventionAction;
+    reason?: string;
   }): Promise<WorkflowOperationResult> {
     if (input.run.status !== "stopped" && input.run.status !== "failed") {
       return {
@@ -804,13 +911,93 @@ export class WorkflowRuntime {
     if (!plan) {
       return { ok: false, workflowId: input.workflow.workflowId, runId: input.run.runId, error: "Workflow V2 plan was not found." };
     }
-    if (!plan.definition.nodes.some((node) => node.id === input.nodeId)) {
+    const targetNode = plan.definition.nodes.find((node) => node.id === input.nodeId);
+    if (!targetNode) {
       return {
         ok: false,
         workflowId: input.workflow.workflowId,
         runId: input.run.runId,
         error: `Workflow V2 node ${input.nodeId} was not found.`,
       };
+    }
+    const persistedNode = persisted.runState.nodes[input.nodeId];
+    const intervention = persistedNode?.intervention;
+    if (input.action !== "continue" && !intervention) {
+      return {
+        ok: false,
+        workflowId: input.workflow.workflowId,
+        runId: input.run.runId,
+        error: `Workflow V2 node ${input.nodeId} has no pending human intervention.`,
+      };
+    }
+    if (intervention && !intervention.allowedActions.includes(input.action)) {
+      return {
+        ok: false,
+        workflowId: input.workflow.workflowId,
+        runId: input.run.runId,
+        error: `Workflow V2 intervention does not allow action ${input.action}.`,
+      };
+    }
+    if ((input.action === "escalate" || input.action === "increase_review_strength") && targetNode.execModel !== "llm") {
+      return {
+        ok: false,
+        workflowId: input.workflow.workflowId,
+        runId: input.run.runId,
+        error: `Workflow V2 action ${input.action} requires an llm node.`,
+      };
+    }
+    const resolvedAt = Date.now();
+    const resolutionReason = workflowV2InterventionResolutionReason(input.action, targetNode.title, input.reason);
+    const initialNodeControl = structuredClone(persisted.nodeControl);
+    initialNodeControl[input.nodeId] = {
+      ...(initialNodeControl[input.nodeId] ?? { extensionCount: 0 }),
+      interventionResolution: {
+        action: input.action,
+        reason: resolutionReason,
+        resolvedAt,
+      },
+    };
+    const resolutionEvent: WorkflowV2DurableEvent = {
+      sequence: persisted.eventCount,
+      workflowId: input.workflow.workflowId,
+      runId: input.run.runId,
+      nodeId: input.nodeId,
+      type: `intervention_${input.action}`,
+      at: resolvedAt,
+      detail: resolutionReason,
+    };
+    const initialDurableEventCount = persisted.eventCount + 1;
+
+    if (input.action === "replan") {
+      await store.appendEvents({
+        workflowId: input.workflow.workflowId,
+        runId: input.run.runId,
+        events: [resolutionEvent],
+      });
+      await store.persistRunState({
+        ...structuredClone(persisted),
+        savedAt: resolvedAt,
+        eventCount: initialDurableEventCount,
+        nodeControl: initialNodeControl,
+      });
+      const progress = input.run.progress.map((item) => item.nodeId === input.nodeId
+        ? { ...item, status: "paused" as const, detail: resolutionReason }
+        : item);
+      this.deps.finishWorkflowRun({
+        workflowId: input.workflow.workflowId,
+        runId: input.run.runId,
+        status: "stopped",
+        progress,
+        appendEvents: [{
+          type: "node_paused",
+          nodeId: input.nodeId,
+          at: resolvedAt,
+          detail: resolutionReason,
+          ...(intervention ? { intervention: structuredClone(intervention) } : {}),
+        }],
+        contextDocument: input.run.contextDocument,
+      });
+      return { ok: true, workflowId: input.workflow.workflowId, runId: input.run.runId };
     }
 
     const snapshot = this.deps.snapshot();
@@ -864,11 +1051,45 @@ export class WorkflowRuntime {
         error: `Workflow V2 node ${input.nodeId} does not require recovery.`,
       };
     }
+    await store.appendEvents({
+      workflowId: input.workflow.workflowId,
+      runId: input.run.runId,
+      events: [resolutionEvent],
+    });
     const materialized = materializeWorkflowV2Recovery({
       persisted,
       targetDefinition: plan.definition,
       recovery,
     });
+    if (input.action === "skip") {
+      materialized.checkpoint.runState = transitionWorkflowV2NodeState(materialized.checkpoint.runState, {
+        nodeId: input.nodeId,
+        status: "skipped",
+        now: resolvedAt,
+      });
+      materialized.checkpoint.workerOutputs.push({
+        nodeId: input.nodeId,
+        summary: `Skipped by human intervention: ${resolutionReason}`,
+        outputs: {},
+        risks: [resolutionReason],
+        proposals: [],
+      });
+      materialized.recoveryCheckpoints.delete(input.nodeId);
+      materialized.resumeConversations.delete(input.nodeId);
+    }
+    const recoveryOverrides = new Map<string, WorkflowV2RecoveryOverride>();
+    if (input.action === "escalate") {
+      recoveryOverrides.set(input.nodeId, {
+        modelProfile: "expert",
+        forceIndependentReview: true,
+        instruction: resolutionReason,
+      });
+    } else if (input.action === "increase_review_strength") {
+      recoveryOverrides.set(input.nodeId, {
+        forceIndependentReview: true,
+        instruction: resolutionReason,
+      });
+    }
 
     this.activeRuns.set(input.run.runId, {
       workflowId: input.workflow.workflowId,
@@ -877,6 +1098,8 @@ export class WorkflowRuntime {
       pausedTaskIds: new Set(),
       gatedNodeIds: new Set(),
       taskIdByNodeId: new Map(),
+      manualPauseReasonByNodeId: new Map(),
+      abortControllerByNodeId: new Map(),
     });
     this.deps.updateWorkflowRunState({
       workflowId: input.workflow.workflowId,
@@ -892,9 +1115,11 @@ export class WorkflowRuntime {
       baseWorkflowContextDocument: input.run.contextDocument,
       storagePlanDocument: workflowStoragePlanDocument(storagePlan),
       initialCheckpoint: materialized.checkpoint,
-      initialNodeControl: persisted.nodeControl,
+      initialNodeControl,
+      initialDurableEventCount,
       recoveryCheckpoints: materialized.recoveryCheckpoints,
       resumeConversations: materialized.resumeConversations,
+      recoveryOverrides,
     }).finally(() => {
       this.activeRuns.delete(input.run.runId);
     });
@@ -908,12 +1133,15 @@ export class WorkflowRuntime {
     if (!workflow) return { ok: false, error: `Workflow ${input.workflowId} was not found.` };
     if (!run) return { ok: false, workflowId: input.workflowId, error: `Workflow run ${input.runId} was not found.` };
     if (run.workflowV2Plan) {
-      return {
-        ok: false,
+      const answer = input.answer.trim();
+      if (!answer) return { ok: false, workflowId: input.workflowId, runId: input.runId, error: "A gate answer is required." };
+      return this.resolveWorkflowV2Intervention({
         workflowId: input.workflowId,
         runId: input.runId,
-        error: WORKFLOW_V2_INTERVENTION_PHASE04_ERROR,
-      };
+        nodeId: input.nodeId,
+        action: "continue",
+        reason: answer,
+      });
     }
     if (run.status !== "running" && run.status !== "stopped") {
       return { ok: false, workflowId: input.workflowId, runId: input.runId, error: "Workflow run is not resumable." };
@@ -987,8 +1215,10 @@ export class WorkflowRuntime {
     storagePlanDocument: string;
     initialCheckpoint?: ExecuteWorkflowV2Checkpoint;
     initialNodeControl?: Record<string, WorkflowV2DurableNodeControlState>;
+    initialDurableEventCount?: number;
     recoveryCheckpoints?: ReadonlyMap<string, string>;
     resumeConversations?: ReadonlyMap<string, RuntimeConversation>;
+    recoveryOverrides?: ReadonlyMap<string, WorkflowV2RecoveryOverride>;
   }): Promise<void> {
     const { workflow, plan, runId, baseWorkflowContextDocument, storagePlanDocument } = input;
     const executionStartedAt = Date.now();
@@ -996,9 +1226,11 @@ export class WorkflowRuntime {
     const maxModelCalls = plan.budget.cost?.maxModelCalls;
     let startedModelCalls = 0;
     const durableStore = this.deps.createWorkflowV2Store?.();
-    let durableEventCount = 0;
+    let durableEventCount = input.initialDurableEventCount ?? 0;
     let latestExecutorCheckpoint: ExecuteWorkflowV2Checkpoint | undefined;
-    let previousDurableRunState: ExecuteWorkflowV2Checkpoint["runState"] | undefined;
+    let previousDurableRunState: ExecuteWorkflowV2Checkpoint["runState"] | undefined = input.initialCheckpoint
+      ? structuredClone(input.initialCheckpoint.runState)
+      : undefined;
     const persistedCacheNodeIds = new Set<string>();
     const durableNodeControl: Record<string, WorkflowV2DurableNodeControlState> = input.initialNodeControl
       ? structuredClone(input.initialNodeControl)
@@ -1067,6 +1299,10 @@ export class WorkflowRuntime {
           const node = plan.definition.nodes.find((item) => item.id === output.nodeId);
           const planNode = plan.nodes.find((item) => item.nodeId === output.nodeId);
           if (!node || !planNode || checkpoint.runState.nodes[output.nodeId]?.status !== "completed") continue;
+          const recoveryOverride = input.recoveryOverrides?.get(output.nodeId);
+          const effectivePlanNode = recoveryOverride?.modelProfile
+            ? { ...planNode, modelProfile: recoveryOverride.modelProfile }
+            : planNode;
           const upstreamOutputs = plan.definition.edges
             .filter((edge) => edge.toNodeId === output.nodeId)
             .map((edge) => outputByNodeId.get(edge.fromNodeId))
@@ -1079,7 +1315,7 @@ export class WorkflowRuntime {
             fingerprint: createWorkflowV2NodeCacheFingerprint({
               graphVersion: plan.graphVersion,
               node,
-              planNode,
+              planNode: effectivePlanNode,
               upstreamOutputs,
               executionEnvironment: workflowV2ExecutionEnvironment({
                 node,
@@ -1087,7 +1323,7 @@ export class WorkflowRuntime {
                 configuredAgentId,
                 modelId,
               }),
-              reviewerPolicy: workflowV2ReviewerPolicy(node),
+              reviewerPolicy: workflowV2ReviewerPolicy(node, recoveryOverride?.forceIndependentReview === true),
             }),
             output: structuredClone(output),
             savedAt: Date.now(),
@@ -1166,6 +1402,45 @@ export class WorkflowRuntime {
       return fallbackTask;
     };
 
+    const throwIfWorkflowV2ManuallyPaused = async (nodeId: string, task?: TaskRun): Promise<void> => {
+      const activeRun = this.activeRuns.get(runId);
+      const reason = activeRun?.manualPauseReasonByNodeId?.get(nodeId);
+      if (!reason) return;
+      activeRun?.manualPauseReasonByNodeId?.delete(nodeId);
+      const node = plan.definition.nodes.find((item) => item.id === nodeId);
+      const attempt = latestExecutorCheckpoint?.runState.nodes[nodeId]?.attempt ?? 1;
+      const checkpoint = durableNodeControl[nodeId]?.checkpoint;
+      const partialArtifact = task ? truncateWorkflowContext(taskArtifact(task), 500) : "";
+      const report: WorkflowV2ProgressReport = {
+        nodeId,
+        attempt: Math.max(1, attempt),
+        phase: "manual intervention",
+        completedItems: [],
+        remainingItems: [node?.title ?? nodeId],
+        blockers: [reason],
+        evidence: partialArtifact ? [partialArtifact] : [],
+        ...(checkpoint ? { checkpoint } : {}),
+        safeToInterrupt: true,
+        requestedAction: "need_input",
+        reportedAt: Date.now(),
+      };
+      durableNodeControl[nodeId] = {
+        ...(durableNodeControl[nodeId] ?? { extensionCount: 0 }),
+        progressReport: structuredClone(report),
+        stopReason: reason,
+      };
+      await persistLatestControlState(nodeId, "manual_pause", reason);
+      throw new WorkflowV2SupervisionSignal({
+        report,
+        resolution: {
+          action: "pause",
+          question: `Choose how to continue Workflow V2 node ${node?.title ?? nodeId}.`,
+          reason,
+        },
+        ...(task?.runtimeConversation ? { resumeConversation: task.runtimeConversation } : {}),
+      });
+    };
+
     const waitForTask = async (taskId: string, nodeId: string, timeoutMs = WORKFLOW_TASK_TIMEOUT_MS): Promise<TaskRun> => {
       const startedAt = Date.now();
       while (true) {
@@ -1175,6 +1450,7 @@ export class WorkflowRuntime {
         latestSnapshot = this.deps.snapshot();
         const task = latestSnapshot.tasks.find((item) => item.id === taskId);
         if (!task) throw new Error(`Workflow V2 task ${taskId} was deleted before completion.`);
+        await throwIfWorkflowV2ManuallyPaused(nodeId, task);
         if (task.status === "completed") return task;
         if (task.status === "failed" || task.status === "stopped") {
           throw new Error(task.lastError || `Workflow V2 task ${task.title} ${task.status}.`);
@@ -1189,7 +1465,9 @@ export class WorkflowRuntime {
 
     const startModelTask = async (nodeId: string, request: RunTaskRequest): Promise<TaskRun> => {
       consumeModelCallBudget(nodeId);
-      return startWorkflowTask(request);
+      const task = await startWorkflowTask(request);
+      this.activeRuns.get(runId)?.taskIdByNodeId.set(nodeId, task.id);
+      return task;
     };
 
     const cleanupSupervisedTasks = async (
@@ -1269,6 +1547,7 @@ export class WorkflowRuntime {
         const task = latestSnapshot.tasks.find((item) => item.id === currentTask.id);
         if (!task) throw new Error(`Workflow V2 task ${currentTask.id} was deleted before completion.`);
         currentTask = task;
+        await throwIfWorkflowV2ManuallyPaused(input.node.id, task);
         if (task.status === "completed") return task;
         if (task.status === "failed" || task.status === "stopped") {
           throw new Error(task.lastError || `Workflow V2 task ${task.title} ${task.status}.`);
@@ -1299,14 +1578,31 @@ export class WorkflowRuntime {
         }
         if (inspection === "hard_timeout") {
           await this.deps.stopTask(task.id);
+          const report: WorkflowV2ProgressReport = {
+            ...unavailableProgressReport(input.node, input.attempt, taskArtifact(task), lease),
+            phase: "hard execution timeout",
+            blockers: ["The node reached its absolute hard execution timeout."],
+            ...(durableNodeControl[input.node.id]?.checkpoint
+              ? { checkpoint: durableNodeControl[input.node.id]!.checkpoint }
+              : {}),
+          };
           durableNodeControl[input.node.id] = {
             ...durableNodeControl[input.node.id],
             lease: structuredClone(lease),
+            progressReport: structuredClone(report),
             extensionCount: lease.extensionCount,
             stopReason: "Hard execution timeout reached.",
           };
           await persistLatestControlState(input.node.id, "lease_hard_timeout", "Hard execution timeout reached.");
-          throw new Error(`Workflow V2 node ${input.node.id} reached its hard execution timeout.`);
+          throw new WorkflowV2SupervisionSignal({
+            report,
+            resolution: {
+              action: "pause",
+              question: `Node ${input.node.title} reached its hard timeout. Choose whether to retry, skip, escalate, or replan.`,
+              reason: "Hard execution timeout reached.",
+            },
+            ...(task.runtimeConversation ? { resumeConversation: task.runtimeConversation } : {}),
+          });
         }
 
         await this.deps.stopTask(task.id);
@@ -1356,7 +1652,27 @@ export class WorkflowRuntime {
           completedProgressTask = await waitForTask(progressTask.id, input.node.id, boundedProbeTimeoutMs());
         } catch (error) {
           await this.deps.stopTask(progressTask.id);
-          throw error;
+          const reason = error instanceof Error ? error.message : String(error);
+          const report = unavailableProgressReport(input.node, input.attempt, partialArtifact, lease);
+          report.phase = "progress probe failed";
+          report.blockers = [reason];
+          durableNodeControl[input.node.id] = {
+            ...durableNodeControl[input.node.id],
+            lease: structuredClone(lease),
+            progressReport: structuredClone(report),
+            extensionCount: lease.extensionCount,
+            stopReason: reason,
+          };
+          await persistLatestControlState(input.node.id, "progress_probe_failed", reason);
+          throw new WorkflowV2SupervisionSignal({
+            report,
+            resolution: {
+              action: "pause",
+              question: `The progress probe for ${input.node.title} did not complete. Choose the next recovery action.`,
+              reason,
+            },
+            ...(stoppedTask.runtimeConversation ? { resumeConversation: stoppedTask.runtimeConversation } : {}),
+          });
         }
         const report = parseWorkflowV2ProgressReport(taskArtifact(completedProgressTask));
         durableNodeControl[input.node.id] = {
@@ -1387,7 +1703,27 @@ export class WorkflowRuntime {
           completedSupervisorTask = await waitForTask(supervisorTask.id, input.node.id, boundedProbeTimeoutMs());
         } catch (error) {
           await this.deps.stopTask(supervisorTask.id);
-          throw error;
+          const reason = error instanceof Error ? error.message : String(error);
+          durableNodeControl[input.node.id] = {
+            ...durableNodeControl[input.node.id],
+            lease: structuredClone(lease),
+            progressReport: structuredClone(report),
+            ...(report.checkpoint ? { checkpoint: report.checkpoint } : {}),
+            extensionCount: lease.extensionCount,
+            stopReason: reason,
+          };
+          await persistLatestControlState(input.node.id, "supervisor_response_failed", reason);
+          throw new WorkflowV2SupervisionSignal({
+            report,
+            resolution: {
+              action: "pause",
+              question: `The supervisor decision for ${input.node.title} did not complete. Choose the next recovery action.`,
+              reason,
+            },
+            ...(completedProgressTask.runtimeConversation
+              ? { resumeConversation: completedProgressTask.runtimeConversation }
+              : {}),
+          });
         }
         const decision = parseWorkflowV2SupervisorDecision(taskArtifact(completedSupervisorTask));
         const resolution = resolveWorkflowV2SupervisorDecision({
@@ -1452,9 +1788,13 @@ export class WorkflowRuntime {
       upstreamOutputs: readonly WorkflowV2ResultPacket[];
     }): Promise<WorkflowV2WorkerOutput> => {
       assertWallClockBudget(request.node.id);
+      const recoveryOverride = input.recoveryOverrides?.get(request.node.id);
+      const effectiveTaskPacket = recoveryOverride?.modelProfile
+        ? { ...request.taskPacket, modelProfile: recoveryOverride.modelProfile }
+        : request.taskPacket;
       const prompt = workflowV2LlmNodePrompt({
         node: request.node,
-        taskPacket: request.taskPacket,
+        taskPacket: effectiveTaskPacket,
         upstreamOutputs: request.upstreamOutputs,
         baseWorkflowContextDocument,
         storagePlanDocument,
@@ -1465,15 +1805,26 @@ export class WorkflowRuntime {
       const recoveryConversation = consumedRecoveryNodeIds.has(request.node.id)
         ? undefined
         : input.resumeConversations?.get(request.node.id);
-      const effectivePrompt = recoveryCheckpoint
-        ? [
-            prompt,
-            "",
-            "# Recovery checkpoint",
-            "Resume the interrupted node attempt from this checkpoint. It is control context, not a completed result:",
-            recoveryCheckpoint,
-          ].join("\n")
-        : prompt;
+      const effectivePrompt = [
+        prompt,
+        ...(recoveryCheckpoint
+          ? [
+              "",
+              "# Recovery checkpoint",
+              "Resume the interrupted node attempt from this checkpoint. It is control context, not a completed result:",
+              recoveryCheckpoint,
+            ]
+          : []),
+        ...(recoveryOverride
+          ? [
+              "",
+              "# Human intervention resolution",
+              recoveryOverride.instruction,
+              ...(recoveryOverride.modelProfile ? [`Effective model profile: ${recoveryOverride.modelProfile}`] : []),
+              ...(recoveryOverride.forceIndependentReview ? ["This attempt requires independent semantic review."] : []),
+            ]
+          : []),
+      ].join("\n");
       const attempt = (runtimeAttemptByNodeId.get(request.node.id) ?? 0) + 1;
       runtimeAttemptByNodeId.set(request.node.id, attempt);
       const task = await startModelTask(request.node.id, {
@@ -1543,6 +1894,7 @@ export class WorkflowRuntime {
         MAX_NODE_TIMER_DELAY_MS,
       );
       const controller = new AbortController();
+      this.activeRuns.get(runId)?.abortControllerByNodeId?.set(request.node.id, controller);
       let timeoutHandle: ReturnType<typeof setTimeout> | undefined;
       const deadline = new Promise<never>((_resolve, reject) => {
         timeoutHandle = setTimeout(() => {
@@ -1562,8 +1914,12 @@ export class WorkflowRuntime {
           timeoutMs,
         });
         output = await Promise.race([execution, deadline]);
+      } catch (error) {
+        await throwIfWorkflowV2ManuallyPaused(request.node.id);
+        throw error;
       } finally {
         if (timeoutHandle !== undefined) clearTimeout(timeoutHandle);
+        this.activeRuns.get(runId)?.abortControllerByNodeId?.delete(request.node.id);
       }
       updateNode(request.node.id, { status: "running", detail: output.summary }, {
         type: "node_output",
@@ -1609,6 +1965,11 @@ export class WorkflowRuntime {
         runLlmNode,
         executeScript: runScriptNode,
         reviewNodeOutput,
+        forceIndependentReviewNodeIds: new Set(
+          [...(input.recoveryOverrides?.entries() ?? [])]
+            .filter(([, override]) => override.forceIndependentReview)
+            .map(([nodeId]) => nodeId),
+        ),
         onRunCheckpoint: persistExecutorCheckpoint,
         onNodeStateTransition: (transition) => {
           if (transition.status === "running") {
@@ -1627,7 +1988,11 @@ export class WorkflowRuntime {
           } else if (transition.status === "paused") {
             const activeRun = this.activeRuns.get(runId);
             activeRun?.pausedNodeIds.add(transition.nodeId);
-            updateNode(transition.nodeId, { status: "paused", detail: transition.intervention.reason }, {
+            updateNode(transition.nodeId, {
+              status: "paused",
+              detail: transition.intervention.reason,
+              intervention: structuredClone(transition.intervention),
+            }, {
               type: "node_paused",
               nodeId: transition.nodeId,
               detail: transition.intervention.reason,
@@ -1655,7 +2020,17 @@ export class WorkflowRuntime {
         });
         return;
       }
-      if (result.runState.status === "paused") return;
+      if (result.runState.status === "paused") {
+        this.deps.finishWorkflowRun({
+          workflowId: workflow.workflowId,
+          runId,
+          status: "stopped",
+          progress: latestProgress,
+          contextDocument: baseWorkflowContextDocument,
+          finalReport,
+        });
+        return;
+      }
 
       const lastError = result.runState.nodeOrder
         .map((nodeId) => result.runState.nodes[nodeId])

@@ -55,6 +55,7 @@ export interface ExecuteWorkflowV2PlanInput {
     output: WorkflowV2WorkerOutput;
   }) => boolean;
   reviewNodeOutput?: (input: WorkflowV2ReviewerInput) => Promise<WorkflowV2ReviewerResponse>;
+  forceIndependentReviewNodeIds?: ReadonlySet<string>;
   onNodeStateTransition?: (input: WorkflowV2NodeStateTransitionEvent) => void;
   onRunCheckpoint?: (input: ExecuteWorkflowV2Checkpoint) => Promise<void>;
   now?: () => number;
@@ -267,7 +268,7 @@ export async function executeWorkflowV2Plan(input: ExecuteWorkflowV2PlanInput): 
           continue;
         }
 
-        if (requiresSemanticReview(node)) {
+        if (requiresSemanticReview(node, input.forceIndependentReviewNodeIds?.has(nodeId) === true)) {
           runState = transitionWorkflowV2NodeState(runState, { nodeId, status: "awaiting_review", now: now() });
           if (!input.reviewNodeOutput) {
             const intervention = createIntervention(
@@ -287,11 +288,43 @@ export async function executeWorkflowV2Plan(input: ExecuteWorkflowV2PlanInput): 
             continue;
           }
 
-          const reviewerResponse = await input.reviewNodeOutput(createWorkflowV2ReviewerInput({
-            node,
-            objective: input.plan.objective,
-            output: authoritativeWorkerOutput,
-          }));
+          let reviewerResponse: WorkflowV2ReviewerResponse;
+          try {
+            reviewerResponse = await input.reviewNodeOutput(createWorkflowV2ReviewerInput({
+              node,
+              objective: input.plan.objective,
+              output: authoritativeWorkerOutput,
+            }));
+          } catch (error) {
+            if (
+              error instanceof WorkflowV2SupervisionSignal
+              && (error.resolution.action === "pause" || error.resolution.action === "escalate")
+            ) {
+              const source = error.resolution.action === "escalate" ? "supervision_escalation" : "supervision_pause";
+              const intervention = createIntervention(
+                nodeId,
+                source,
+                error.resolution.reason,
+                now(),
+                undefined,
+                {
+                  report: error.report,
+                  decision: error.resolution,
+                  ...(error.resumeConversation ? { resumeConversation: error.resumeConversation } : {}),
+                },
+              );
+              runState = transitionWorkflowV2NodeState(runState, {
+                nodeId,
+                status: "paused",
+                now: now(),
+                error: error.resolution.reason,
+                intervention,
+              });
+              input.onNodeStateTransition?.({ nodeId, status: "paused", intervention });
+              continue;
+            }
+            throw error;
+          }
           assertIndependentWorkflowV2Reviewer(nodeId, reviewerResponse);
           const resolution = resolveWorkflowV2ReviewVerdict(reviewerResponse.verdict, reviewRetryPolicyFor(node, attempt));
           runState = transitionWorkflowV2NodeState(runState, {
@@ -389,8 +422,8 @@ function assertWorkflowV2InitialCheckpoint(
     if (outputNodeIds.has(output.nodeId)) throw new Error(`Workflow V2 initial checkpoint duplicates output ${output.nodeId}.`);
     outputNodeIds.add(output.nodeId);
     const nodeState = runState.nodes[output.nodeId];
-    if (!nodeState || nodeState.status !== "completed") {
-      throw new Error(`Workflow V2 initial checkpoint output ${output.nodeId} is not completed.`);
+    if (!nodeState || (nodeState.status !== "completed" && nodeState.status !== "skipped")) {
+      throw new Error(`Workflow V2 initial checkpoint output ${output.nodeId} is neither completed nor skipped.`);
     }
     cloneWorkflowV2WorkerOutput(output);
   }
@@ -529,10 +562,10 @@ function isNodeOutputSuccessful(
     .every((field) => Object.hasOwn(output.outputs, field.key));
 }
 
-function requiresSemanticReview(node: WorkflowV2Node): boolean {
+function requiresSemanticReview(node: WorkflowV2Node, forced = false): boolean {
   return node.execModel === "llm"
     && node.role !== "reviewer"
-    && (node.judgeDimensions?.length ?? 0) > 0;
+    && (forced || (node.judgeDimensions?.length ?? 0) > 0);
 }
 
 function exhaustedPolicyFor(node: WorkflowV2Node): "fail" | "skip" | "ask_human" {

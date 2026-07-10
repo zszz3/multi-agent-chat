@@ -11,7 +11,7 @@ import type {
   WorkflowV2NodeRole,
   WorkflowV2ValidationResult,
 } from "./workflow-v2/definition";
-import type { WorkflowV2HumanIntervention } from "./workflow-v2/review";
+import type { WorkflowV2HumanIntervention, WorkflowV2InterventionAction } from "./workflow-v2/review";
 import type { RuntimeId } from "./runtime-catalog";
 
 export type AgentId = RuntimeId;
@@ -577,6 +577,7 @@ export interface WorkflowRunProgressItem {
   status: WorkflowRunNodeStatus;
   detail?: string;
   taskId?: string;
+  intervention?: WorkflowV2HumanIntervention;
 }
 
 export type WorkflowEventType =
@@ -958,6 +959,11 @@ export interface PauseWorkflowNodeRequest {
 
 export interface StartWorkflowNodeRequest extends PauseWorkflowNodeRequest {}
 
+export interface ResolveWorkflowV2InterventionRequest extends PauseWorkflowNodeRequest {
+  action: WorkflowV2InterventionAction;
+  reason?: string;
+}
+
 export interface AnswerWorkflowGateRequest {
   workflowId: string;
   runId: string;
@@ -1043,6 +1049,11 @@ export type {
   WorkflowV2WorkProposal,
   WorkflowV2WorkerOutput,
 } from "./workflow-v2/packets";
+export type {
+  WorkflowV2InterventionAction,
+  WorkflowV2HumanIntervention,
+  WorkflowV2ReviewVerdict,
+} from "./workflow-v2/review";
 export type {
   WorkflowV2NodeExecutionState,
   WorkflowV2RunExecutionStatus,

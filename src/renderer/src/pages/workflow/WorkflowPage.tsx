@@ -15,6 +15,7 @@ import type {
   WorkflowGrillMessage,
   WorkflowRunProgressItem,
   WorkflowStatus,
+  WorkflowV2InterventionAction,
 } from "../../../../shared/types";
 import {
   agentAccent,
@@ -63,6 +64,7 @@ const WORKFLOW_TEXT = {
     startNode: "开始节点",
     gateAnswerPlaceholder: "输入你的决定...",
     gateSubmit: "提交决定",
+    interventionReasonPlaceholder: "可选：说明本次处理原因...",
     finalReport: "主 Agent 总结",
     completed: "工作流已完成",
     registeredArtifacts: "Agent 登记的产出",
@@ -103,6 +105,7 @@ const WORKFLOW_TEXT = {
     startNode: "Start node",
     gateAnswerPlaceholder: "Enter your decision...",
     gateSubmit: "Submit decision",
+    interventionReasonPlaceholder: "Optional: explain this intervention decision...",
     finalReport: "Main agent summary",
     completed: "Workflow completed",
     registeredArtifacts: "Agent-published artifacts",
@@ -127,6 +130,23 @@ const WORKFLOW_TEXT = {
     taskPlaceholder: "Describe the workflow task...",
   },
 } as const;
+
+const WORKFLOW_INTERVENTION_ACTION_TEXT: Record<Language, Record<WorkflowV2InterventionAction, string>> = {
+  zh: {
+    continue: "继续",
+    skip: "跳过",
+    escalate: "升级处理",
+    replan: "重新规划",
+    increase_review_strength: "加强审查",
+  },
+  en: {
+    continue: "Continue",
+    skip: "Skip",
+    escalate: "Escalate",
+    replan: "Replan",
+    increase_review_strength: "Strengthen review",
+  },
+};
 
 interface WorkflowPageLegacyProps {
   workflowId?: string;
@@ -154,6 +174,7 @@ interface WorkflowPageLegacyProps {
   finalReport?: string;
   onObjectiveChange: (value: string) => void;
   onPauseNode?: (nodeId: string) => MaybePromise;
+  onResolveIntervention?: (nodeId: string, action: WorkflowV2InterventionAction, reason?: string) => MaybePromise;
   onStartNode?: (nodeId: string) => MaybePromise;
   onAnswerGate?: (nodeId: string, answer: string) => MaybePromise;
   onSelectConfiguredAgent: (configuredAgentId: string) => void;
@@ -204,6 +225,7 @@ export function WorkflowPage(props: WorkflowPageProps) {
   const finalReport = source.finalReport ?? "";
   const onObjectiveChange = source.onObjectiveChange;
   const onPauseNode = source.onPauseNode;
+  const onResolveIntervention = source.onResolveIntervention;
   const onStartNode = source.onStartNode;
   const onAnswerGate = source.onAnswerGate;
   const onSelectConfiguredAgent = source.onSelectConfiguredAgent;
@@ -254,6 +276,8 @@ export function WorkflowPage(props: WorkflowPageProps) {
   const composerLocked = workflowStarted || running;
   const [graphExpanded, setGraphExpanded] = useState(defaultGraphExpanded);
   const [gateAnswers, setGateAnswers] = useState<Record<string, string>>({});
+  const [interventionReasons, setInterventionReasons] = useState<Record<string, string>>({});
+  const [interventionPendingNodeId, setInterventionPendingNodeId] = useState<string | undefined>(undefined);
   const [outputFiles, setOutputFiles] = useState<Array<{ name: string; path: string }>>([]);
   const [editingWorkflowNodeId, setEditingWorkflowNodeId] = useState<string | undefined>(undefined);
   const [filePreview, setFilePreview] = useState<LocalFilePreview | undefined>(undefined);
@@ -599,7 +623,10 @@ export function WorkflowPage(props: WorkflowPageProps) {
                   {runProgress.map((item) => {
                     const controllable = Boolean(activeRunId) && item.nodeId !== WORKFLOW_FINAL_REVIEW_NODE_ID;
                     const canPause = controllable && item.status === "running" && typeof onPauseNode === "function";
-                    const canStart = controllable && (item.status === "paused" || item.status === "failed") && typeof onStartNode === "function";
+                    const canStart = controllable
+                      && (item.status === "paused" || item.status === "failed")
+                      && !item.intervention
+                      && typeof onStartNode === "function";
                     return (
                       <div key={item.nodeId} className={`workflow-run-progress-item is-${item.status}`}>
                         <span>{workflowRunStatusLabel(item.status)}</span>
@@ -631,6 +658,53 @@ export function WorkflowPage(props: WorkflowPageProps) {
                     );
                   })}
                 </div>
+                {runProgress
+                  .filter((item) => item.status === "paused" && item.intervention && typeof onResolveIntervention === "function")
+                  .map((item) => {
+                    const intervention = item.intervention!;
+                    const reason = interventionReasons[item.nodeId] ?? "";
+                    const resolve = async (action: WorkflowV2InterventionAction): Promise<void> => {
+                      setInterventionPendingNodeId(item.nodeId);
+                      try {
+                        await onResolveIntervention?.(item.nodeId, action, reason);
+                        setInterventionReasons((current) => ({ ...current, [item.nodeId]: "" }));
+                      } finally {
+                        setInterventionPendingNodeId(undefined);
+                      }
+                    };
+                    return (
+                      <div key={`intervention-${item.nodeId}`} className="workflow-intervention-panel">
+                        <div className="workflow-gate-panel-head">
+                          <span className="workflow-gate-panel-badge">{workflowRunStatusLabel("paused")}</span>
+                          <strong>{item.title}</strong>
+                        </div>
+                        <p className="workflow-gate-panel-question">{intervention.reason}</p>
+                        <textarea
+                          className="workflow-gate-panel-input"
+                          value={reason}
+                          placeholder={workflowText.interventionReasonPlaceholder}
+                          rows={2}
+                          onChange={(event) => setInterventionReasons((current) => ({
+                            ...current,
+                            [item.nodeId]: event.target.value,
+                          }))}
+                        />
+                        <div className="workflow-intervention-actions">
+                          {intervention.allowedActions.map((action) => (
+                            <button
+                              key={action}
+                              type="button"
+                              className="workflow-node-gate-submit"
+                              disabled={interventionPendingNodeId === item.nodeId}
+                              onClick={() => void resolve(action)}
+                            >
+                              {WORKFLOW_INTERVENTION_ACTION_TEXT[language][action]}
+                            </button>
+                          ))}
+                        </div>
+                      </div>
+                    );
+                  })}
                 {runProgress
                   .filter((item) => item.status === "awaiting_input" && item.nodeId !== WORKFLOW_FINAL_REVIEW_NODE_ID && typeof onAnswerGate === "function")
                   .map((item) => {

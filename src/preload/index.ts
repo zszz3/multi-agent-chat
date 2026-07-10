@@ -28,6 +28,7 @@ import type {
   ModelCatalogRefreshResult,
   AnswerWorkflowGateRequest,
   PauseWorkflowNodeRequest,
+  ResolveWorkflowV2InterventionRequest,
   ProviderBalanceResult,
   RunWorkflowGraphRequest,
   RunAgentTeamRequest,
@@ -110,6 +111,8 @@ const api = {
   deleteWorkflow: (workflowId: string): Promise<AppSnapshot> => ipcRenderer.invoke("workflow:delete", workflowId),
   runWorkflowGraph: (request: RunWorkflowGraphRequest): Promise<WorkflowOperationResult> => ipcRenderer.invoke("workflow-run:run-graph", request),
   pauseWorkflowNode: (request: PauseWorkflowNodeRequest): Promise<WorkflowOperationResult> => ipcRenderer.invoke("workflow-run:pause-node", request),
+  resolveWorkflowV2Intervention: (request: ResolveWorkflowV2InterventionRequest): Promise<WorkflowOperationResult> =>
+    ipcRenderer.invoke("workflow-v2:intervention:resolve", request),
   startWorkflowNode: (request: StartWorkflowNodeRequest): Promise<WorkflowOperationResult> => ipcRenderer.invoke("workflow-run:start-node", request),
   answerWorkflowGate: (request: AnswerWorkflowGateRequest): Promise<WorkflowOperationResult> => ipcRenderer.invoke("workflow-run:answer-gate", request),
   startWorkflowRun: (request: StartWorkflowRunRequest): Promise<AppSnapshot> => ipcRenderer.invoke("workflow-run:start", request),
