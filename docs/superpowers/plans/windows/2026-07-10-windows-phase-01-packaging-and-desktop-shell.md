@@ -29,6 +29,8 @@ Add as needed:
 - `build/icons/icon.ico`
 - `src/main/app/window-options.ts`
 - `src/main/app/window-options.test.ts`
+- `src/main/platform/app-resource-locator.ts`
+- `src/main/platform/app-resource-locator.test.ts`
 - `.github/workflows/windows-package-smoke.yml` only if Phase 05 has not yet created the final workflow
 
 ## Step 1: Add Packaging Dependencies And Scripts
@@ -86,7 +88,7 @@ Add unit tests that snapshot only platform-specific window option fragments, not
 
 ## Step 4: Make Bundle Paths Packaging-Aware
 
-Extend `src/main/app/app-paths.ts` with pure resolvers for:
+Introduce a platform-neutral `AppResourceLocator` and keep `src/main/app/app-paths.ts` as its Electron-facing construction boundary. The locator exposes pure resolvers for:
 
 - Preload bundle;
 - Renderer HTML;
@@ -103,7 +105,9 @@ Inputs should include:
 
 Development paths may use the repository layout. Packaged paths must never depend on `process.cwd()`.
 
-Update `src/main/app/index.ts` to consume those resolvers. Keep Electron calls at the application boundary so path tests run without Electron.
+Update `src/main/app/index.ts` to construct the locator once and inject it into resource consumers. Keep Electron calls at the application boundary so path tests run without Electron.
+
+The public locator contract must not contain `win32`-specific method names. Phase 02 includes it in `PlatformServices`, and Phase 03 reuses it for the MCP sidecar.
 
 ## Step 5: Verify Application-Owned Storage
 

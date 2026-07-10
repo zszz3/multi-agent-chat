@@ -82,11 +82,14 @@ RuntimeRouter + RuntimeDriverRegistry
 Runtime-local driver/session/runner
         |
         v
-Platform adapters
-  - CLI discovery and invocation
-  - process-tree lifecycle
-  - filesystem and resource paths
-  - packaged MCP launch
+PlatformServices (composed once at app bootstrap)
+  - ExecutableLocator
+  - ProcessLauncher
+  - ProcessTreeController
+  - PlatformPathPolicy
+  - AppResourceLocator
+        |
+        +--> PackagedSidecarLauncher
         |
         v
 Windows OS / installed Agent CLI
@@ -101,6 +104,34 @@ Windows OS / installed Agent CLI
 5. A Runtime surface is available on Windows only when its official native entrypoint and project integration both pass Phase 04.
 6. Unsupported native Runtimes must return an explicit compatibility message, not a generic connection failure.
 7. Installed production execution must not depend on the repository root, source TypeScript, development dependencies, or a globally available `node` executable.
+8. The application selects platform strategies once in the composition root; consumers receive interfaces and do not repeatedly inspect `process.platform`.
+9. Adding a future platform or architecture must not require changes to `AgentHub`, Chat, Task, Workflow, or existing Runtime protocol logic.
+
+## Platform Services Extension Contract
+
+The final platform boundary exposes small, independently testable services rather than one Windows-specific utility object:
+
+```ts
+interface PlatformServices {
+  executableLocator: ExecutableLocator;
+  processLauncher: ProcessLauncher;
+  processTreeController: ProcessTreeController;
+  pathPolicy: PlatformPathPolicy;
+  resourceLocator: AppResourceLocator;
+}
+```
+
+`createPlatformServices(platform, dependencies)` is called once during Main-process bootstrap. It composes Windows, macOS, or Linux strategies and injects the resulting interfaces into Runtime infrastructure and packaged sidecar launchers.
+
+Extension rules:
+
+- prefer focused strategies over a large `WindowsPlatformService` class;
+- executable discovery uses an ordered `ExecutableResolver[]` chain so package-manager and Runtime-specific locations can be added without rewriting the locator;
+- process launch and process-tree termination are separate contracts because a portable spawn implementation does not imply portable tree cleanup;
+- `AppResourceLocator` is platform-neutral and distinguishes development, packaged read-only, and mutable user-data roots;
+- `PackagedSidecarLauncher` consumes `PlatformServices`; Workflow code does not own OS-specific sidecar behavior;
+- strategy selection is unit-tested through injected platform/dependency values instead of mutating global process state;
+- no platform implementation may widen a Runtime capability beyond its declared support.
 
 ## Packaging Decision
 
@@ -179,6 +210,35 @@ Each Runtime receives one matrix row covering:
 
 Certification is evidence-based. A Runtime that lacks a supported native Windows entrypoint is marked unsupported or WSL-only; it is not forced through another Runtime's template.
 
+Platform compatibility and local availability are separate typed concepts:
+
+```ts
+type RuntimePlatformSupport =
+  | "native"
+  | "native_with_prerequisite"
+  | "unsupported"
+  | "wsl_only";
+
+type RuntimeAvailabilityReason =
+  | "ready"
+  | "missing_executable"
+  | "missing_prerequisite"
+  | "unsupported_platform"
+  | "version_check_failed"
+  | "execution_denied"
+  | "uncertified";
+```
+
+The Runtime catalog declares static platform support. Detection reports dynamic machine availability and a typed reason. UI text maps from those types; business logic must not parse human-readable error strings.
+
+A contract test must prove that:
+
+- every catalog Runtime has an explicit platform support declaration;
+- every native-supported Runtime has a driver and detection path;
+- unsupported Runtimes cannot be reported ready;
+- driver surfaces remain independent from platform availability;
+- configuration UI ordering and status derive from catalog/availability data instead of a second platform list.
+
 ## Security And Reliability Requirements
 
 - Do not log API keys, Gateway tokens, prompts containing secrets, or complete inherited environments.
@@ -227,6 +287,7 @@ Windows adaptation is complete only when:
 - Windows CI builds and tests on every pull request;
 - the release installer is signed and its checksum is published;
 - macOS behavior and existing Runtime tests remain green.
+- introducing a new platform strategy can be demonstrated without modifying `AgentHub`, Chat, Task, Workflow, or Runtime protocol implementations.
 
 ## Change Management
 

@@ -21,8 +21,11 @@ General executable, process, and path behavior uses Phase 02 platform adapters. 
 Shared:
 
 - `src/shared/runtime-catalog.ts`
+- `src/shared/runtime-platform-support.ts`
+- `src/shared/runtime-platform-support.test.ts`
 - `src/main/agents/runtime/detect.ts`
 - `src/main/agents/runtime/detect.test.ts`
+- `src/main/hub/runtime/executor/runtime-platform-contract.test.ts`
 - Runtime availability/configuration renderer components
 - `docs/agent-integration-guide.md`
 
@@ -154,7 +157,39 @@ Verify:
 
 OpenClaw remains without exact durable-session cleanup unless upstream introduces a proven equivalent.
 
-## Step 8: Update Capability And UX Truth
+## Step 8: Separate Platform Support From Machine Availability
+
+Define static support independently from a detection result:
+
+```ts
+type RuntimePlatformSupport =
+  | "native"
+  | "native_with_prerequisite"
+  | "unsupported"
+  | "wsl_only";
+
+type RuntimeAvailabilityReason =
+  | "ready"
+  | "missing_executable"
+  | "missing_prerequisite"
+  | "unsupported_platform"
+  | "version_check_failed"
+  | "execution_denied"
+  | "uncertified";
+```
+
+The Runtime catalog owns static `win32`/`darwin`/`linux` support. Detection owns the current machine's resolved executable, version, availability, and reason.
+
+Required invariants:
+
+- an unsupported Runtime cannot become available merely because a same-named command exists;
+- a native Runtime with a missing executable reports `missing_executable`, not `unsupported_platform`;
+- prerequisites such as a Gateway remain distinct from the executable itself;
+- UI text and remediation map from typed reasons;
+- persisted channel/agent configuration remains readable even when the Runtime is unsupported on the current platform;
+- Runtime surface declarations remain protocol truth and are not mutated by platform detection.
+
+## Step 9: Update Capability And UX Truth
 
 For each Runtime, update only evidence-backed fields:
 
@@ -165,17 +200,22 @@ For each Runtime, update only evidence-backed fields:
 - error/remediation text;
 - Agent documentation with Windows limitations and tested versions.
 
-Possible statuses:
+Do not overload `available: false` with all meanings. Use the static support and dynamic availability types from Step 8 rather than parsing human-readable error strings.
 
-- `supported-native`;
-- `supported-native-with-prerequisite`;
-- `unsupported-windows`;
-- `wsl-only-not-integrated`;
-- `uncertified`.
+## Step 10: Add Runtime Platform Contract Tests
 
-Do not overload `available: false` with all meanings if the UI needs distinct remediation. Add a typed compatibility reason rather than parsing human-readable error strings.
+Add data-driven tests that iterate the Runtime catalog and registry:
 
-## Step 9: Run Regression Suites
+- every Runtime declares support for each product platform;
+- every Runtime declared native has a registered driver and detection strategy;
+- every unsupported Runtime resolves to an unavailable typed reason before spawn;
+- Runtime config ordering derives from the catalog, not a Windows-only list;
+- the renderer receives enough structured data to render status without string parsing;
+- adding a fixture Runtime or platform strategy does not require changes to upper-layer orchestration.
+
+Keep these tests independent of real installed CLIs. Phase 04 smoke evidence remains the separate proof of actual native operation.
+
+## Step 11: Run Regression Suites
 
 Run focused suites after each Runtime and the full suite after the matrix is complete:
 
@@ -204,6 +244,8 @@ Fill this table with evidence links before Phase 05:
 ## Exit Criteria
 
 - every Runtime has a completed evidence row;
+- static platform support and dynamic machine availability remain separate typed values;
+- catalog, registry, detection, and UI consistency contract tests pass;
 - every UI capability matches certified behavior;
 - unsupported Runtimes fail before spawn with actionable status;
 - installed Chat, Task, Workflow, and channel-test scenarios pass for every supported Runtime;
@@ -214,4 +256,4 @@ Fill this table with evidence links before Phase 05:
 
 ## Handoff
 
-Phase 05 treats only `supported-native` or approved prerequisite rows as release-blocking. Uncertified Runtimes cannot be advertised as supported in release notes.
+Phase 05 treats only `native` or approved `native_with_prerequisite` rows as release-blocking. Uncertified Runtimes cannot be advertised as supported in release notes.

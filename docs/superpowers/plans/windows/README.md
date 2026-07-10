@@ -14,6 +14,8 @@ Execute them in order. A phase may start only after the preceding phase satisfie
 ## Program Rule
 
 - Windows-specific behavior belongs in platform adapters, packaging configuration, or runtime-local integration code.
+- platform strategies are composed once behind `PlatformServices`; consumers do not scatter `process.platform` checks.
 - `AgentHub`, Chat, Task, and Workflow must remain platform-agnostic.
 - Do not declare a Runtime supported on Windows until Phase 04 evidence exists.
+- platform support and local executable availability are separate typed states enforced by contract tests.
 - Do not accept a phase based only on macOS-hosted unit tests.

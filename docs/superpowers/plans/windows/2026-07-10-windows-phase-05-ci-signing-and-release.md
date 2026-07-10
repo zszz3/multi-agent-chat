@@ -43,7 +43,9 @@ Required pull-request jobs on `windows-latest`:
 7. package-manifest smoke test;
 8. CLI launcher `.cmd` fixture;
 9. process-tree termination fixture;
-10. artifact upload for failed smoke diagnosis when safe.
+10. Runtime platform-support contract tests;
+11. construction of Windows, macOS, and Linux platform strategies from injected fixtures;
+12. artifact upload for failed smoke diagnosis when safe.
 
 Cache npm download data, not `node_modules`. Use concurrency cancellation for superseded branch builds.
 
@@ -165,6 +167,8 @@ If a release regression appears:
 - install, upgrade, restart, and uninstall pass on a clean Windows 11 x64 machine;
 - Windows 10 result matches the Phase 00 policy;
 - release notes state supported and unsupported behavior accurately;
+- cross-platform contract tests prove platform support and local availability are not conflated;
+- a test-only platform strategy can be added without changing upper-layer business or Runtime protocol code;
 - macOS CI remains green.
 
 ## Program Completion

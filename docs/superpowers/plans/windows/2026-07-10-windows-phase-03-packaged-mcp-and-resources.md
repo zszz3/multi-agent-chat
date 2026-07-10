@@ -39,6 +39,8 @@ Add as needed:
 - `src/main/hub/runtime/executor/workflow/workflow-mcp-launch.test.ts`
 - `src/main/platform/node-sidecar.ts`
 - `src/main/platform/node-sidecar.test.ts`
+- `src/main/platform/packaged-sidecar-launcher.ts`
+- `src/main/platform/packaged-sidecar-launcher.test.ts`
 - packaging manifest assertions for `resources/mcp/server.cjs`
 
 ## Step 1: Build MCP As A Dedicated Artifact
@@ -93,7 +95,7 @@ env:
   MULTI_AGENT_CHAT_MCP_BRIDGE=<discovery path>
 ```
 
-Wrap this in `node-sidecar.ts` so Runtime workflow code does not know Electron or Windows launch details.
+Wrap this in a platform-neutral `PackagedSidecarLauncher` that consumes `PlatformServices`. A focused `node-sidecar.ts` may implement the Electron-as-Node protocol, but Runtime and Workflow code only receive the launcher interface and never know Electron or Windows launch details.
 
 Before locking this choice, prove on the installed Windows artifact that:
 
@@ -125,7 +127,7 @@ Behavior:
 - development: use the built MCP output first; source/tsx fallback may remain for developer convenience;
 - missing packaged bundle: throw a startup/configuration error instead of silently returning no MCP configuration.
 
-The launch config must use the Phase 02 structured invocation API.
+The launch config must use the Phase 02 structured invocation API and the Phase 01 `AppResourceLocator`. It must not perform a second platform switch or reconstruct packaged paths independently.
 
 ## Step 5: Align Discovery Paths
 

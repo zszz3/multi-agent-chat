@@ -25,14 +25,44 @@ Modify:
 
 Add:
 
+- `src/main/platform/platform-services.ts`
+- `src/main/platform/platform-services.test.ts`
 - `src/main/platform/cli-locator.ts`
 - `src/main/platform/cli-locator.test.ts`
+- `src/main/platform/executable-resolver.ts`
 - `src/main/platform/process-tree.ts`
 - `src/main/platform/process-tree.test.ts`
 - `src/main/platform/platform-paths.ts`
 - `src/main/platform/platform-paths.test.ts`
 
-## Step 1: Separate Discovery From Invocation
+## Step 1: Define The PlatformServices Composition Boundary
+
+Create the small service contracts before implementing Windows behavior:
+
+```ts
+interface PlatformServices {
+  executableLocator: ExecutableLocator;
+  processLauncher: ProcessLauncher;
+  processTreeController: ProcessTreeController;
+  pathPolicy: PlatformPathPolicy;
+  resourceLocator: AppResourceLocator;
+}
+```
+
+Add `createPlatformServices(platform, dependencies)` as the only platform strategy selector. Construct it once in Main-process bootstrap and inject it into Runtime infrastructure.
+
+Rules:
+
+- do not introduce a large `WindowsPlatformService` with unrelated methods;
+- each field is independently mockable and testable;
+- consumers must not call `process.platform` after receiving a platform service;
+- macOS and Linux adapters preserve current behavior rather than sharing Windows assumptions;
+- resource lookup uses the Phase 01 `AppResourceLocator`;
+- Phase 03 builds `PackagedSidecarLauncher` on top of these services instead of adding it to Workflow business logic.
+
+The platform-services contract test must construct `win32`, `darwin`, and `linux` service sets from injected values and prove selection does not depend on the host running the test.
+
+## Step 2: Separate Discovery From Invocation
 
 Create a CLI locator that returns a structured result:
 
@@ -44,6 +74,16 @@ interface ResolvedExecutable {
   kind: "exe" | "cmd" | "bat" | "script";
 }
 ```
+
+Executable discovery is an ordered provider chain:
+
+```ts
+interface ExecutableResolver {
+  resolve(request: ExecutableResolutionRequest): Promise<ResolvedExecutable | undefined>;
+}
+```
+
+The default locator composes explicit-path, environment, PATH, and approved-known-location resolvers. A future package manager or Runtime adds one resolver without editing the resolution algorithm.
 
 Resolution order:
 
@@ -61,7 +101,7 @@ Rules:
 - return the resolved path in connection diagnostics, but never dump the entire environment;
 - cache only for a bounded period and invalidate on explicit refresh.
 
-## Step 2: Replace Hand-Written Shell Quoting
+## Step 3: Replace Hand-Written Shell Quoting
 
 The current `cmd.exe` command-string builder needs stronger proof. Prefer a mature spawn adapter such as `cross-spawn` for `.cmd` and `.bat` handling instead of expanding the custom quoting algorithm.
 
@@ -97,7 +137,7 @@ Add tests for:
 - `.exe`, `.cmd`, `.bat`, and bare command names;
 - missing `%COMSPEC%` fallback.
 
-## Step 3: Add Process-Tree Lifecycle Management
+## Step 4: Add Process-Tree Lifecycle Management
 
 Create `process-tree.ts` with an explicit two-stage termination contract:
 
@@ -109,6 +149,8 @@ Create `process-tree.ts` with an explicit two-stage termination contract:
 6. close streams and resolve exactly once.
 
 On Windows, a signal sent to the `cmd.exe` wrapper is insufficient. Use a proven tree-termination mechanism. The implementation may use Windows Job Objects through a maintained dependency or a carefully wrapped `taskkill.exe /PID <pid> /T` fallback. Do not assemble the PID from untrusted text.
+
+Expose a platform-neutral `ProcessTreeController` and provide separate Windows and POSIX strategies. Runtime code calls the interface; it must not know whether cleanup uses Job Objects, `taskkill`, process groups, or signals.
 
 The API must distinguish:
 
@@ -127,7 +169,7 @@ Update these callers to use the shared lifecycle rather than direct `.kill(...)`
 
 Add fake process-tree tests and a Windows integration fixture that spawns a parent plus child and proves both disappear.
 
-## Step 4: Normalize Output And Error Handling
+## Step 5: Normalize Output And Error Handling
 
 - normalize CRLF to logical lines without mutating JSON string contents;
 - keep byte-buffer limits for exec-style calls;
@@ -138,7 +180,7 @@ Add fake process-tree tests and a Windows integration fixture that spawns a pare
 
 If an upstream CLI can emit a legacy Windows code page, configure its documented UTF-8 mode where possible. Do not guess-decode arbitrary bytes silently; report a classified encoding failure with remediation.
 
-## Step 5: Harden Windows Paths
+## Step 6: Harden Windows Paths
 
 Create pure helpers for:
 
@@ -167,7 +209,7 @@ Test:
 - a different drive;
 - `~\Documents`.
 
-## Step 6: Verify Skill Junction Ownership
+## Step 7: Verify Skill Junction Ownership
 
 The existing installer uses Windows directory junctions. Add Windows tests proving:
 
@@ -180,7 +222,7 @@ The existing installer uses Windows directory junctions. Add Windows tests provi
 
 If Node reports junction metadata differently from symbolic links, update ownership checks through one platform helper rather than weakening the safety rule.
 
-## Step 7: Integrate Detection And Configuration UX
+## Step 8: Integrate Detection And Configuration UX
 
 Runtime detection consumes `ResolvedExecutable` and reports classified states:
 
@@ -190,6 +232,8 @@ Runtime detection consumes `ResolvedExecutable` and reports classified states:
 - unsupported on Windows;
 - execution denied;
 - version command failed.
+
+These are dynamic availability reasons. They must not replace the static Runtime platform-support declaration introduced in Phase 04.
 
 Provide a file-picker route for selecting an executable manually. Persist only the selected path; do not copy third-party executables into application storage.
 
@@ -212,6 +256,8 @@ Windows integration tests must run on `windows-latest` and include a `.cmd` fixt
 - file authorization resists junction and traversal escape;
 - skill junction install/uninstall works without elevated privileges;
 - errors are classified and actionable;
+- all platform strategy selection occurs through `createPlatformServices(...)`;
+- adding a test-only platform strategy requires no changes to `AgentHub`, Chat, Task, Workflow, or Runtime protocol implementations;
 - existing macOS Runtime tests stay green.
 
 ## Handoff
