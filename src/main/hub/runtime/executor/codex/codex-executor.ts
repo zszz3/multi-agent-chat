@@ -9,7 +9,7 @@ import type {
   AgentExecutor,
   RuntimeAgentExecutorFactoryOptions,
 } from "../agent-executor-types";
-import { modelFromRuntimeConfig, reasoningEffortFromRuntimeConfig } from "../agent-executor-types";
+import { modelFromRuntimeConfig, processServicesFor, reasoningEffortFromRuntimeConfig } from "../agent-executor-types";
 import { respondToCodexRuntimeServerRequest } from "./codex-server-request";
 
 export class CodexAgentExecutor implements AgentExecutor {
@@ -35,7 +35,7 @@ export class CodexAgentExecutor implements AgentExecutor {
         reasoningEffortFromRuntimeConfig(this.context.runtimeConfig),
       ),
       env: codexEnvironmentForChannel(channel),
-      ...(this.options.platformServices ? { processServices: this.options.platformServices } : {}),
+      processServices: processServicesFor(this.options),
       onEvent: this.context.emit,
       onRequest: (id, method, params) => {
         respondToCodexRuntimeServerRequest(this.options, client, id, method, params);

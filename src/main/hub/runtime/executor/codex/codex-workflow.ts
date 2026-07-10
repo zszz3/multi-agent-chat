@@ -13,6 +13,7 @@ import {
   createWorkflowAgentTimeout,
   modelFromRuntimeConfig,
   type RuntimeWorkflowExecutionOptions,
+  workflowProcessServices,
   WORKFLOW_AGENT_IDLE_TIMEOUT_MS,
   WORKFLOW_DEVELOPER_INSTRUCTIONS,
 } from "../workflow/agent-executor-workflow-shared";
@@ -59,7 +60,7 @@ export async function runCodexWorkflow(
         ...codexWorkflowMcpArgs(options.workflowHost?.mcpBridgeDiscoveryPath()),
       ],
       env: codexEnvironmentForChannel(channel),
-      ...(options.platformServices ? { processServices: options.platformServices } : {}),
+      processServices: workflowProcessServices(options),
       onEvent: (event) => {
         timeout?.refresh();
         if (event.type === "delta") {

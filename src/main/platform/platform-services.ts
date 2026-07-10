@@ -83,3 +83,30 @@ export function createPlatformServices(
     resourceLocator: dependencies.resourceLocator,
   };
 }
+
+let hostProcessServices: PlatformProcessServices | undefined;
+
+/**
+ * Compatibility composition for non-Electron construction sites such as unit tests.
+ * The packaged application always injects the services composed in Main bootstrap.
+ */
+export function createHostPlatformProcessServices(): PlatformProcessServices {
+  if (hostProcessServices) return hostProcessServices;
+  const unavailableResource = (): never => {
+    throw new Error("Application resources are unavailable in process-only platform composition.");
+  };
+  const services = createPlatformServices(process.platform, {
+    resourceLocator: {
+      preloadBundlePath: unavailableResource,
+      rendererHtmlPath: unavailableResource,
+      bundledSkillsRoot: unavailableResource,
+      bundledWorkflowsRoot: unavailableResource,
+      mcpServerBundlePath: unavailableResource,
+    },
+  });
+  hostProcessServices = {
+    processLauncher: services.processLauncher,
+    processTreeController: services.processTreeController,
+  };
+  return hostProcessServices;
+}

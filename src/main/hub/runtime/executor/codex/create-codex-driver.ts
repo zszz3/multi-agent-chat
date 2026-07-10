@@ -7,6 +7,7 @@ import { codexAppServerConfigArgs } from "../../../../channels/model-config";
 import { createInteractiveRuntimeDriver } from "../agent-executor-driver-factories";
 import {
   modelFromRuntimeConfig,
+  processServicesFor,
   reasoningEffortFromRuntimeConfig,
   type RuntimeAgentExecutorFactoryOptions,
 } from "../agent-executor-types";
@@ -53,7 +54,7 @@ export function createCodexDriver(options: RuntimeAgentExecutorFactoryOptions): 
                 : []),
             ],
             env: codexEnvironmentForChannel(channel),
-            ...(options.platformServices ? { processServices: options.platformServices } : {}),
+            processServices: processServicesFor(options),
             onEvent,
             onRequest: (id, method, params) => {
               respondToCodexRuntimeServerRequest(options, client, id, method, params, {

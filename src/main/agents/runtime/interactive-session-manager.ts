@@ -85,6 +85,18 @@ export class InteractiveSessionManager {
     await run;
   }
 
+  async disposeAll(reason: "app_shutdown" | "error"): Promise<void> {
+    const chatIds = [...this.sessions.keys()];
+    const results = await Promise.allSettled(chatIds.map((chatId) => this.dispose(chatId, reason)));
+    const failures = results.filter((result) => result.status === "rejected");
+    if (failures.length > 0) {
+      throw new AggregateError(
+        failures.map((failure) => failure.reason),
+        `Failed to detach ${failures.length} interactive session${failures.length === 1 ? "" : "s"}.`,
+      );
+    }
+  }
+
   async sweepExpiredSessions(now = this.options.now()): Promise<void> {
     for (const [chatId, managed] of this.sessions) {
       const snapshot = managed.session.snapshot().runtimeState;

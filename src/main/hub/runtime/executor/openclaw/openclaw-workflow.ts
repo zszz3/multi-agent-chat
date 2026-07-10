@@ -2,7 +2,7 @@ import type { AgentRuntime, WorkflowAgentResponse } from "../../../../../shared/
 import { runtimeModelId } from "../../../../../shared/models";
 import { OpenClawRunner } from "../../../../agents/openclaw/openclaw-runner";
 import type { RuntimeChannelTestContext, RuntimeWorkflowRequestContext } from "../../../../agents/runtime/runtime-driver";
-import { modelFromRuntimeConfig, type RuntimeWorkflowExecutionOptions } from "../workflow/agent-executor-workflow-shared";
+import { modelFromRuntimeConfig, workflowProcessServices, type RuntimeWorkflowExecutionOptions } from "../workflow/agent-executor-workflow-shared";
 
 const OPENCLAW_AGENT_TEST_PROMPT = "Reply with OK only.";
 
@@ -20,7 +20,7 @@ export async function runOpenClawWorkflow(
     prompt: input.prompt,
     sessionKey: `multi-agent-chat-${input.requestId}`,
     modelId: modelFromRuntimeConfig(input.runtimeConfig),
-    ...(options.platformServices ? { processServices: options.platformServices } : {}),
+    processServices: workflowProcessServices(options),
     onEvent: (event) => {
       if (event.type === "completed") {
         content = event.content ?? content;

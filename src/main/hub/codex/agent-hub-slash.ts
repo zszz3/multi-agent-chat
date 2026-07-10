@@ -14,7 +14,7 @@ import {
 } from "./agent-hub-codex-app";
 import { asOptionalString, asRecord } from "../persisted/agent-hub-persistence";
 import type { ChatState } from "../state/agent-hub-state";
-import type { PlatformProcessServices } from "../../platform/platform-services";
+import { createHostPlatformProcessServices, type PlatformProcessServices } from "../../platform/platform-services";
 
 export interface ResolvedConfiguredAgentForSlash {
   runtimeAgentId: AgentId;
@@ -77,7 +77,7 @@ export async function withCodexAppServer<T>(input: {
       input.resolved.reasoningEffort,
     ),
     env: codexEnvironmentForChannel(input.resolved.channel),
-    ...(input.processServices ? { processServices: input.processServices } : {}),
+    processServices: input.processServices ?? createHostPlatformProcessServices(),
     onEvent: () => undefined,
     onRequest: (id, method, params) => {
       respondToCodexServerRequest(client, id, method, params);

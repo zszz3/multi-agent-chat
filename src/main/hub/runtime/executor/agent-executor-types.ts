@@ -16,6 +16,7 @@ import type {
   RuntimeWorkflowRequestContext,
 } from "../../../agents/runtime/runtime-driver";
 import type { PlatformServices } from "../../../platform/platform-services";
+import { createHostPlatformProcessServices, type PlatformProcessServices } from "../../../platform/platform-services";
 
 export interface AgentExecutionContext extends RuntimeRequest {
   runId: string;
@@ -55,6 +56,12 @@ export interface RuntimeAgentExecutorFactoryOptions {
   askWorkflowByRuntime?: Partial<Record<AgentId, (input: RuntimeWorkflowRequestContext) => Promise<WorkflowAgentResponse>>>;
   testChannelByRuntime?: Partial<Record<AgentId, (input: RuntimeChannelTestContext) => Promise<string>>>;
   deleteSessionArtifactsByRuntime?: Partial<Record<AgentId, (input: RuntimeSessionCleanupContext) => Promise<void>>>;
+}
+
+export function processServicesFor(
+  options: Pick<RuntimeAgentExecutorFactoryOptions, "platformServices">,
+): PlatformProcessServices {
+  return options.platformServices ?? createHostPlatformProcessServices();
 }
 
 export function modelFromRuntimeConfig(runtimeConfig: RuntimeRequest["runtimeConfig"]): string {

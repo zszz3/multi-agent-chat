@@ -4,6 +4,7 @@ import path from "node:path";
 import { describe, expect, test } from "vitest";
 import type { AgentEvent } from "../../../shared/types";
 import { writeNodeCliLauncher } from "../../platform/test-cli-fixtures";
+import { createHostPlatformProcessServices } from "../../platform/platform-services";
 import { HermesRunner } from "./hermes-runner";
 
 describe("HermesRunner", () => {
@@ -24,6 +25,7 @@ process.stdout.write("Hello from Hermes\\n");
       cwd: dir,
       prompt: "hello",
       modelId: "nous/hermes-4",
+      processServices: createHostPlatformProcessServices(),
       onEvent: (event) => emitted.push(event),
       onExit: () => undefined,
     });
@@ -54,6 +56,7 @@ process.exit(7);
       executable,
       cwd: dir,
       prompt: "hello",
+      processServices: createHostPlatformProcessServices(),
       onEvent: (event) => emitted.push(event),
       onExit: (code) => {
         exitCode = code;

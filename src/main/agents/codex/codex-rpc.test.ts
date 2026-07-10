@@ -3,7 +3,10 @@ import os from "node:os";
 import path from "node:path";
 import { describe, expect, test, vi } from "vitest";
 import { writeNodeCliLauncher } from "../../platform/test-cli-fixtures";
+import { createHostPlatformProcessServices } from "../../platform/platform-services";
 import { CodexRpcClient } from "./codex-rpc";
+
+const processServices = createHostPlatformProcessServices();
 
 describe("CodexRpcClient", () => {
   test("includes stderr when Codex exits while an RPC is pending", async () => {
@@ -17,6 +20,7 @@ describe("CodexRpcClient", () => {
     const client = new CodexRpcClient({
       executable,
       cwd: dir,
+      processServices,
       onEvent: () => undefined,
     });
 
@@ -27,6 +31,7 @@ describe("CodexRpcClient", () => {
     const client = new CodexRpcClient({
       executable: "codex",
       cwd: process.cwd(),
+      processServices,
       onEvent: () => undefined,
     });
     const request = vi.spyOn(client, "request").mockResolvedValue({});
@@ -42,6 +47,7 @@ describe("CodexRpcClient", () => {
     const client = new CodexRpcClient({
       executable: "codex",
       cwd: process.cwd(),
+      processServices,
       onEvent: () => undefined,
     });
     const request = vi.spyOn(client, "request").mockResolvedValue({});
@@ -57,6 +63,7 @@ describe("CodexRpcClient", () => {
     const client = new CodexRpcClient({
       executable: "codex",
       cwd: process.cwd(),
+      processServices,
       onEvent: () => undefined,
     });
     const request = vi.spyOn(client, "request").mockRejectedValue(new Error("cancel failed"));

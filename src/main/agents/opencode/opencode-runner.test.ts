@@ -4,6 +4,7 @@ import path from "node:path";
 import { describe, expect, test } from "vitest";
 import type { AgentEvent } from "../../../shared/types";
 import { writeNodeCliLauncher } from "../../platform/test-cli-fixtures";
+import { createHostPlatformProcessServices } from "../../platform/platform-services";
 import { OpenCodeRunner, agentEventsFromOpenCodeJson } from "./opencode-runner";
 
 describe("OpenCodeRunner", () => {
@@ -26,6 +27,7 @@ send({ type: "step_finish", sessionID: "ses_1", part: { type: "step-finish", rea
       cwd: dir,
       prompt: "hello world",
       modelId: "openai/gpt-5",
+      processServices: createHostPlatformProcessServices(),
       onEvent: (event) => emitted.push(event),
       onExit: () => undefined,
     });
@@ -74,6 +76,7 @@ send({ type: "step_finish", sessionID: "ses_1", part: { type: "step-finish", rea
       executable,
       cwd: dir,
       prompt: "hello",
+      processServices: createHostPlatformProcessServices(),
       onEvent: (event) => emitted.push(event),
       onExit: () => undefined,
     });

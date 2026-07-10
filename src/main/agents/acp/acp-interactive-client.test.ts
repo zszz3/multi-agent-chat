@@ -6,6 +6,7 @@ import type { AgentEvent } from "../../../shared/types";
 import { execCli, spawnCli } from "../../platform/cli-launcher";
 import type { ProcessTreeTerminationRequest } from "../../platform/process-tree";
 import { writeNodeCliLauncher } from "../../platform/test-cli-fixtures";
+import { createHostPlatformProcessServices } from "../../platform/platform-services";
 import { AcpInteractiveClient, agentEventsFromAcpUpdate } from "./acp-interactive-client";
 
 async function createFakeAcpRuntime(dir: string): Promise<{ executable: string; callsPath: string }> {
@@ -104,6 +105,7 @@ describe("AcpInteractiveClient", () => {
       executable: fake.executable,
       args: ["acp"],
       cwd: dir,
+      processServices: createHostPlatformProcessServices(),
       onEvent: vi.fn(),
     });
 

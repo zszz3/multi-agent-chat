@@ -5,7 +5,6 @@ import * as acp from "@agentclientprotocol/sdk";
 import type {
   AgentEvent,
 } from "../../../shared/types";
-import { spawnCli } from "../../platform/cli-launcher";
 import type { PlatformProcessServices } from "../../platform/platform-services";
 
 const ACP_ATTACH_TIMEOUT_MS = 20_000;
@@ -18,7 +17,7 @@ export interface AcpInteractiveClientOptions {
   cwd: string;
   env?: NodeJS.ProcessEnv;
   modelId?: string;
-  processServices?: PlatformProcessServices;
+  processServices: PlatformProcessServices;
   onEvent: (event: AgentEvent) => void;
   onExit?: (error?: Error) => void;
 }
@@ -117,8 +116,7 @@ export class AcpInteractiveClient {
 
   async attach(resumeSessionId?: string): Promise<string> {
     if (this.isAttached()) return this.currentSessionId!;
-    const launch = this.options.processServices?.processLauncher.spawn ?? spawnCli;
-    const proc = launch({
+    const proc = this.options.processServices.processLauncher.spawn({
       executable: this.options.executable,
       args: this.options.args,
       cwd: this.options.cwd,
@@ -238,14 +236,10 @@ export class AcpInteractiveClient {
     this.connection?.close();
     this.clearConnection();
     if (!proc || proc.killed) return;
-    if (this.options.processServices) {
-      await this.options.processServices.processTreeController.terminate({
-        process: proc,
-        reason: "app-shutdown",
-      });
-      return;
-    }
-    proc.kill("SIGTERM");
+    await this.options.processServices.processTreeController.terminate({
+      process: proc,
+      reason: "app-shutdown",
+    });
   }
 
   private handlePermissionRequest(

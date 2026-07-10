@@ -4,6 +4,7 @@ import path from "node:path";
 import { describe, expect, test } from "vitest";
 import type { AgentEvent } from "../../../shared/types";
 import { writeNodeCliLauncher } from "../../platform/test-cli-fixtures";
+import { createHostPlatformProcessServices } from "../../platform/platform-services";
 import { OpenClawRunner, errorFromOpenClawResponse, textFromOpenClawResponse } from "./openclaw-runner";
 
 describe("OpenClawRunner", () => {
@@ -23,6 +24,7 @@ process.stdout.write(JSON.stringify({ status: "ok", payloads: [{ text: "Hello fr
       prompt: "hello world",
       sessionKey: "multi-agent-chat-run-1",
       modelId: "openai/gpt-5.4",
+      processServices: createHostPlatformProcessServices(),
       onEvent: (event) => emitted.push(event),
       onExit: () => undefined,
     });
@@ -56,6 +58,7 @@ process.stdout.write(JSON.stringify({ status: "ok", payloads: [{ text: "Hello fr
       cwd: dir,
       prompt: "hello",
       sessionKey: "run-2",
+      processServices: createHostPlatformProcessServices(),
       onEvent: (event) => emitted.push(event),
       onExit: () => undefined,
     });

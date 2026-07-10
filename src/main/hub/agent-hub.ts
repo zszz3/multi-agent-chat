@@ -389,6 +389,7 @@ export class AgentHub {
   private persistTimer: ReturnType<typeof setTimeout> | undefined = undefined;
   private idleSweepTimer: ReturnType<typeof setInterval> | undefined = undefined;
   private persistInFlight: Promise<void> | undefined = undefined;
+  private shutdownInFlight: Promise<void> | undefined = undefined;
   private readonly executorFactory: AgentExecutorFactory;
   private readonly runtimeDrivers: RuntimeDriverRegistry;
   private readonly runtimeRouter: RuntimeRouter;
@@ -744,6 +745,28 @@ export class AgentHub {
       this.persistTimer = undefined;
     }
     await this.persistState();
+  }
+
+  shutdown(): Promise<void> {
+    if (this.shutdownInFlight) return this.shutdownInFlight;
+    this.shutdownInFlight = (async () => {
+      if (this.idleSweepTimer) {
+        clearInterval(this.idleSweepTimer);
+        this.idleSweepTimer = undefined;
+      }
+      const stops = [...this.activeStops.values()];
+      this.activeStops.clear();
+      const results = await Promise.allSettled([
+        ...stops.map((stop) => Promise.resolve().then(stop)),
+        this.interactiveSessions.disposeAll("app_shutdown"),
+      ]);
+      const failures = results.filter((result) => result.status === "rejected");
+      if (failures.length > 0) {
+        console.warn(`Application shutdown encountered ${failures.length} Runtime cleanup failure(s).`);
+      }
+      await this.flushPersistence();
+    })();
+    return this.shutdownInFlight;
   }
 
   async refreshAgents(): Promise<AppSnapshot> {

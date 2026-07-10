@@ -169,4 +169,44 @@ describe("InteractiveSessionManager", () => {
       reason: "idle_timeout",
     });
   });
+
+  test("disposes every session on application shutdown", async () => {
+    const detach = vi.fn(async () => undefined);
+    const manager = new InteractiveSessionManager({
+      createSession: () => ({
+        reconfigure: vi.fn(),
+        ensureAttached: vi.fn(async () => undefined),
+        sendPrompt: vi.fn(async () => undefined),
+        interrupt: vi.fn(async () => undefined),
+        detach,
+        detachIfStillExpired: vi.fn(async () => undefined),
+        snapshot: () => ({
+          runtimeState: {
+            executionStyle: "interactive" as const,
+            attachmentState: "idle" as const,
+            attachmentGeneration: 1,
+            capabilities: {
+              supportsInProcessConversationResume: true,
+              supportsResumeAfterDetach: false,
+              supportsResumeAfterAppRestart: false,
+              supportsTurnResume: false,
+              supportsInterrupt: true,
+              supportsContinue: true,
+              supportsApprovalRequests: false,
+              supportsUserInputRequests: false,
+            },
+          },
+        }),
+      }),
+      now: () => 1000,
+    });
+    manager.getOrCreate("chat-1", {} as never);
+    manager.getOrCreate("chat-2", {} as never);
+
+    await manager.disposeAll("app_shutdown");
+
+    expect(detach).toHaveBeenCalledTimes(2);
+    expect(detach).toHaveBeenNthCalledWith(1, "app_shutdown");
+    expect(detach).toHaveBeenNthCalledWith(2, "app_shutdown");
+  });
 });

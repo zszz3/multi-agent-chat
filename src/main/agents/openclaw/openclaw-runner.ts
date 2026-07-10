@@ -1,6 +1,5 @@
 import type { ChildProcess } from "node:child_process";
 import type { AgentEvent } from "../../../shared/types";
-import { spawnCli } from "../../platform/cli-launcher";
 import type { PlatformProcessServices } from "../../platform/platform-services";
 
 const MAX_STDERR_CHARS = 8_000;
@@ -12,7 +11,7 @@ export interface OpenClawRunOptions {
   prompt: string;
   sessionKey: string;
   modelId?: string;
-  processServices?: PlatformProcessServices;
+  processServices: PlatformProcessServices;
   onEvent: (event: AgentEvent) => void;
   onStderr?: (text: string) => void;
   onExit: (code: number | null) => void;
@@ -69,8 +68,7 @@ export class OpenClawRunner {
       "--json",
     ];
     if (this.options.modelId && this.options.modelId !== "default") args.push("--model", this.options.modelId);
-    const launch = this.options.processServices?.processLauncher.spawn ?? spawnCli;
-    const proc = launch({
+    const proc = this.options.processServices.processLauncher.spawn({
       executable: this.options.executable,
       args,
       cwd: this.options.cwd,
@@ -143,13 +141,9 @@ export class OpenClawRunner {
     this.stopping = true;
     const proc = this.proc;
     if (!proc || proc.killed) return;
-    if (this.options.processServices) {
-      await this.options.processServices.processTreeController.terminate({
-        process: proc,
-        reason: "user-cancel",
-      });
-      return;
-    }
-    proc.kill("SIGINT");
+    await this.options.processServices.processTreeController.terminate({
+      process: proc,
+      reason: "user-cancel",
+    });
   }
 }

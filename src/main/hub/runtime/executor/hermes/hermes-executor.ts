@@ -4,7 +4,7 @@ import type {
   AgentExecutor,
   RuntimeAgentExecutorFactoryOptions,
 } from "../agent-executor-types";
-import { modelFromRuntimeConfig } from "../agent-executor-types";
+import { modelFromRuntimeConfig, processServicesFor } from "../agent-executor-types";
 
 export class HermesAgentExecutor implements AgentExecutor {
   private runner: HermesRunner | undefined;
@@ -20,7 +20,7 @@ export class HermesAgentExecutor implements AgentExecutor {
       cwd: this.context.workDir,
       prompt: this.context.prompt,
       modelId: modelFromRuntimeConfig(this.context.runtimeConfig),
-      ...(this.options.platformServices ? { processServices: this.options.platformServices } : {}),
+      processServices: processServicesFor(this.options),
       onEvent: this.context.emit,
       onExit: (code) => {
         this.context.onExit(code);

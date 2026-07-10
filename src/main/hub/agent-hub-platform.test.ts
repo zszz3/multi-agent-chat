@@ -65,4 +65,24 @@ describe("AgentHub platform discovery", () => {
       commandSource: "path",
     });
   });
+
+  test("deduplicates application shutdown while awaiting active Runtime cleanup", async () => {
+    const platformServices = createPlatformServices("darwin", {
+      resourceLocator,
+      processLauncher: {
+        spawn: () => {
+          throw new Error("spawn is not used");
+        },
+        exec: vi.fn(async () => ({ stdout: "runtime 1.2.3", stderr: "" })),
+      },
+      environment: {},
+    });
+    const hub = new AgentHub({}, undefined, undefined, undefined, platformServices);
+    const stop = vi.fn(async () => undefined);
+    (hub as unknown as { activeStops: Map<string, () => Promise<void>> }).activeStops.set("run-1", stop);
+
+    await Promise.all([hub.shutdown(), hub.shutdown()]);
+
+    expect(stop).toHaveBeenCalledTimes(1);
+  });
 });

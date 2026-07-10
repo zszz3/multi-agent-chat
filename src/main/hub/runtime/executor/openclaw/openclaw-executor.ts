@@ -1,6 +1,6 @@
 import { OpenClawRunner } from "../../../../agents/openclaw/openclaw-runner";
 import type { AgentExecutionContext, AgentExecutor, RuntimeAgentExecutorFactoryOptions } from "../agent-executor-types";
-import { modelFromRuntimeConfig } from "../agent-executor-types";
+import { modelFromRuntimeConfig, processServicesFor } from "../agent-executor-types";
 
 export class OpenClawAgentExecutor implements AgentExecutor {
   private runner: OpenClawRunner | undefined;
@@ -16,7 +16,7 @@ export class OpenClawAgentExecutor implements AgentExecutor {
       prompt: this.context.prompt,
       sessionKey: `multi-agent-chat-${this.context.runId}`,
       modelId: modelFromRuntimeConfig(this.context.runtimeConfig),
-      ...(this.options.platformServices ? { processServices: this.options.platformServices } : {}),
+      processServices: processServicesFor(this.options),
       onEvent: this.context.emit,
       onExit: this.context.onExit,
     });

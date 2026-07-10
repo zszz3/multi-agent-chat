@@ -2,7 +2,7 @@ import { AcpInteractiveClient } from "../../../../agents/acp/acp-interactive-cli
 import type { RuntimeDriver } from "../../../../agents/runtime/runtime-driver";
 import { openClawRuntimeStateCodec } from "../../../../agents/openclaw/openclaw-runtime-state-codec";
 import { createInteractiveRuntimeDriver } from "../agent-executor-driver-factories";
-import type { RuntimeAgentExecutorFactoryOptions } from "../agent-executor-types";
+import { processServicesFor, type RuntimeAgentExecutorFactoryOptions } from "../agent-executor-types";
 import {
   getOpenClawCapabilities,
   openClawInteractiveSessionCapabilities,
@@ -27,7 +27,7 @@ export function createOpenClawDriver(options: RuntimeAgentExecutorFactoryOptions
             executable: interactiveContext.runtime.command || options.executables.openclaw,
             args: ["acp"],
             cwd: interactiveContext.workDir,
-            ...(options.platformServices ? { processServices: options.platformServices } : {}),
+            processServices: processServicesFor(options),
             onEvent,
             onExit,
           }),

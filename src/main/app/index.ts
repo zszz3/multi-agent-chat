@@ -84,6 +84,8 @@ let ipcRegistered = false;
 let mcpBridge: McpBridgeServer | undefined;
 let codexChatRouter: CodexChatRouterServer | undefined;
 let keepAwakeBlockerId: number | undefined;
+let shutdownStarted = false;
+let shutdownComplete = false;
 const scheduledWorkflowCloudClient = new ScheduledWorkflowCloudClient();
 let scheduledWorkflowEventConnection: ScheduledWorkflowCloudEventConnection | undefined;
 
@@ -577,14 +579,29 @@ function registerIpcHandlers(): void {
 
 void bootstrap();
 
-app.on("before-quit", () => {
+async function shutdownApplication(): Promise<void> {
   setKeepAwake(false);
-  void hub.flushPersistence();
   scheduledWorkflowEventConnection?.close();
-  void codexChatRouter?.stop();
-  void mcpBridge?.stop();
+  await Promise.allSettled([
+    hub.shutdown(),
+    codexChatRouter?.stop() ?? Promise.resolve(),
+    mcpBridge?.stop() ?? Promise.resolve(),
+  ]);
   officialCatalog.close();
   userSkillStore.close();
+}
+
+app.on("before-quit", (event) => {
+  if (shutdownComplete) return;
+  event.preventDefault();
+  if (shutdownStarted) return;
+  shutdownStarted = true;
+  void shutdownApplication()
+    .catch((error) => console.error("Application shutdown failed.", error))
+    .finally(() => {
+      shutdownComplete = true;
+      app.quit();
+    });
 });
 
 app.on("window-all-closed", () => {

@@ -11,6 +11,7 @@ import type {
 import {
   modelFromRuntimeConfig,
   type RuntimeWorkflowExecutionOptions,
+  workflowProcessServices,
 } from "../workflow/agent-executor-workflow-shared";
 
 const HERMES_AGENT_TEST_PROMPT = "Reply with OK only.";
@@ -29,7 +30,7 @@ export async function runHermesWorkflow(
     cwd: input.workDir,
     prompt: input.prompt,
     modelId: modelFromRuntimeConfig(input.runtimeConfig),
-    ...(options.platformServices ? { processServices: options.platformServices } : {}),
+    processServices: workflowProcessServices(options),
     onEvent: (event) => {
       if (event.type === "completed") {
         content = typeof event.content === "string" ? event.content : content;

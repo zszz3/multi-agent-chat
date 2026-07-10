@@ -5,7 +5,7 @@ import { codexAppServerConfigArgs, codexHome } from "../../../../channels/model-
 import { execCli } from "../../../../platform/cli-launcher";
 import type { RuntimeChannelTestContext } from "../../../../agents/runtime/runtime-driver";
 import { runStreamingCommand } from "../../testing/agent-hub-cli";
-import type { RuntimeAgentExecutorFactoryOptions } from "../agent-executor-types";
+import { processServicesFor, type RuntimeAgentExecutorFactoryOptions } from "../agent-executor-types";
 import { RUNTIME_CHANNEL_TEST_PROMPT, RUNTIME_CHANNEL_TEST_TIMEOUT_MS } from "../runtime-test-constants";
 import { deleteCodexSessionFiles } from "./codex-cleanup";
 
@@ -132,7 +132,7 @@ export async function runCodexChannelTest(
     cwd: input.workDir,
     env: codexEnvironmentForChannel(channel),
     timeoutMs: RUNTIME_CHANNEL_TEST_TIMEOUT_MS,
-    ...(options.platformServices ? { processServices: options.platformServices } : {}),
+    processServices: processServicesFor(options),
     onStdoutLine: (line) => {
       const sessionId = extractCodexSessionId(line);
       if (sessionId) sessionIds.add(sessionId);

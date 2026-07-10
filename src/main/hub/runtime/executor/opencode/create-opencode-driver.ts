@@ -2,7 +2,7 @@ import { AcpInteractiveClient } from "../../../../agents/acp/acp-interactive-cli
 import type { RuntimeDriver } from "../../../../agents/runtime/runtime-driver";
 import { openCodeRuntimeStateCodec } from "../../../../agents/opencode/opencode-runtime-state-codec";
 import { createInteractiveRuntimeDriver } from "../agent-executor-driver-factories";
-import type { RuntimeAgentExecutorFactoryOptions } from "../agent-executor-types";
+import { processServicesFor, type RuntimeAgentExecutorFactoryOptions } from "../agent-executor-types";
 import {
   getOpenCodeCapabilities,
   openCodeInteractiveSessionCapabilities,
@@ -30,7 +30,7 @@ export function createOpenCodeDriver(options: RuntimeAgentExecutorFactoryOptions
             args: ["acp", "--cwd", interactiveContext.workDir],
             cwd: interactiveContext.workDir,
             modelId: interactiveContext.runtimeConfig.model,
-            ...(options.platformServices ? { processServices: options.platformServices } : {}),
+            processServices: processServicesFor(options),
             onEvent,
             onExit,
           }),
