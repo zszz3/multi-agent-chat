@@ -2,7 +2,11 @@ import path from "node:path";
 import type { AppResourceLocator } from "./app-resource-locator";
 import { createExecutableLocator, type ExecutableLocator } from "./cli-locator";
 import { createProcessLauncher, type ProcessLauncher } from "./cli-launcher";
-import type { ProcessTreeController } from "./process-tree";
+import {
+  createPosixProcessTreeController,
+  createWindowsProcessTreeController,
+  type ProcessTreeController,
+} from "./process-tree";
 
 export type PlatformPathApi = Pick<
   typeof path.win32,
@@ -24,7 +28,7 @@ export interface PlatformServices {
 
 export interface PlatformServiceDependencies {
   resourceLocator: AppResourceLocator;
-  processTreeController: ProcessTreeController;
+  processTreeController?: ProcessTreeController;
   executableLocator?: ExecutableLocator;
   processLauncher?: ProcessLauncher;
   environment?: Record<string, string | undefined>;
@@ -63,11 +67,16 @@ export function createPlatformServices(
     ...(dependencies.cwd !== undefined ? { cwd: dependencies.cwd } : {}),
     ...(dependencies.fileExists ? { fileExists: dependencies.fileExists } : {}),
   });
+  const processTreeController = dependencies.processTreeController ?? (
+    platform === "win32"
+      ? createWindowsProcessTreeController(processLauncher.exec)
+      : createPosixProcessTreeController(processLauncher.exec)
+  );
 
   return {
     executableLocator,
     processLauncher,
-    processTreeController: dependencies.processTreeController,
+    processTreeController,
     pathPolicy,
     resourceLocator: dependencies.resourceLocator,
   };

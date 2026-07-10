@@ -136,6 +136,7 @@ import type { PersistedAppStateV4 } from "./persisted/agent-hub-persistence";
 import { runAgentExecution as runAgentExecutionValue } from "./runtime/run/agent-hub-runner";
 import { runRuntimeChannelTest as runRuntimeChannelTestValue } from "./runtime/testing/agent-hub-runtime-test";
 import { RUNTIME_CHANNEL_TEST_PROMPT } from "./runtime/executor/runtime-test-constants";
+import type { PlatformServices } from "../platform/platform-services";
 import {
   dispatchTaskPromptExecution as dispatchTaskPromptExecutionValue,
   resolveTaskPromptExecution as resolveTaskPromptExecutionValue,
@@ -390,19 +391,23 @@ export class AgentHub {
   private readonly workflowRuntime: WorkflowRuntime;
   private readonly workflowStore: WorkflowStore;
   private readonly modelCatalogDiscoverer: ModelCatalogDiscoverer;
+  private readonly platformServices: PlatformServices | undefined;
 
   constructor(
     executables: Partial<Record<AgentId, string>> = {},
     executorFactory?: AgentExecutorFactory,
     runtimeDrivers?: RuntimeDriverRegistry,
     modelCatalogDiscoverer: ModelCatalogDiscoverer = discoverChannelModels,
+    platformServices?: PlatformServices,
   ) {
     this.executables = resolveRuntimeExecutables(executables);
     this.modelCatalogDiscoverer = modelCatalogDiscoverer;
+    this.platformServices = platformServices;
     this.runtimeDrivers =
       runtimeDrivers ??
       createRuntimeDriverRegistry({
         executables: this.executables,
+        ...(platformServices ? { platformServices } : {}),
         channelById: (channelId) => this.channelById(channelId),
         workflowHost: {
           mcpBridgeDiscoveryPath: () => this.mcpBridgeDiscoveryPath,
@@ -444,7 +449,7 @@ export class AgentHub {
   }
 
   async initialize(): Promise<void> {
-    const runtimes = await detectAgentRuntimes(this.executables);
+    const runtimes = await this.detectConfiguredRuntimes();
     for (const runtime of runtimes) {
       this.runtimes.set(runtime.id, {
         ...runtime,
@@ -731,12 +736,20 @@ export class AgentHub {
   }
 
   async refreshAgents(): Promise<AppSnapshot> {
-    const runtimes = await detectAgentRuntimes(this.executables);
+    const runtimes = await this.detectConfiguredRuntimes();
     for (const runtime of runtimes) {
       this.runtimes.set(runtime.id, runtime);
     }
     this.emit();
     return this.snapshot();
+  }
+
+  private detectConfiguredRuntimes(): Promise<AgentRuntime[]> {
+    if (!this.platformServices) return detectAgentRuntimes(this.executables);
+    return detectAgentRuntimes(this.executables, {
+      executableLocator: this.platformServices.executableLocator,
+      execute: this.platformServices.processLauncher.exec,
+    });
   }
 
   createChat(configuredAgentId = this.defaultConfiguredAgentId()): ChatSession {

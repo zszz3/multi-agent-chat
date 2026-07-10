@@ -13,7 +13,13 @@ const resourceLocator: AppResourceLocator = {
 };
 
 const processTreeController: ProcessTreeController = {
-  async terminate() {},
+  async terminate(request) {
+    return {
+      reason: request.reason,
+      stage: "already-exited",
+      protocolCancellation: "not-requested",
+    };
+  },
 };
 
 function fakeProcessLauncher(stdout = ""): ProcessLauncher & { exec: ReturnType<typeof vi.fn> } {

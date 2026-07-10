@@ -4,7 +4,7 @@
 
 ### Status
 
-In progress. Executable discovery and the `PlatformServices` composition contract were implemented on 2026-07-10. Main-process injection, process-tree control, filesystem hardening, and Windows-hosted validation remain pending.
+In progress. Executable discovery, Main-process `PlatformServices` composition, and the shared process-tree controller were implemented on 2026-07-10. Runtime lifecycle migration, filesystem hardening, and Windows-hosted validation remain pending.
 
 ## Goal
 
@@ -25,12 +25,18 @@ Completed:
 - introduced focused `PlatformServices`, `ProcessLauncher`, `ProcessTreeController`, and path-policy contracts;
 - added `createPlatformServices(...)` as the explicit win32/darwin/linux strategy selector, with unsupported desktop platforms rejected rather than silently inheriting host behavior;
 - bound the existing launcher to an injected platform without breaking current `spawnCli(...)` and `execCli(...)` callers;
-- added host-independent composition contract tests for win32, darwin, and linux.
+- added host-independent composition contract tests for win32, darwin, and linux;
+- constructed `PlatformServices` once in Main-process bootstrap and injected it into Runtime detection and registry options;
+- added a staged process-tree contract with protocol cancellation, bounded graceful termination, forced termination, deduplicated concurrent cleanup, stream closure, and classified force failures;
+- implemented Windows tree termination through structured `taskkill.exe /PID <pid> /T` invocation with `/F` escalation;
+- implemented POSIX descendant discovery through structured `ps` output and deepest-child-first `SIGTERM`/`SIGKILL` delivery;
+- added unit coverage for protocol exit, escalation, force failure, invalid PID, descendant order, and platform strategy selection.
 
 Pending:
 
-- construct `PlatformServices` once in Main-process bootstrap and inject it into Runtime infrastructure and packaged sidecar launchers;
-- implement the concrete Windows and POSIX process-tree strategies required before bootstrap composition can be complete;
+- migrate ACP, Codex RPC, Hermes, OpenCode, OpenClaw, and generic channel-test lifecycle code from direct `.kill(...)` calls to the shared controller;
+- pass the platform launcher/controller through Runtime builders that start long-running processes and future packaged sidecars;
+- add Windows parent/child integration fixtures proving both processes disappear after cancellation and app shutdown;
 - preserve environment overrides as a separately classified `environment` resolution source instead of only preselecting them in `resolveRuntimeExecutables(...)`;
 - add bounded locator caching, ambiguity handling, and classified remediation for unresolved executables;
 - replace the remaining hand-written Windows command quoting with the selected mature spawn adapter and complete metacharacter/Unicode fixtures;

@@ -15,6 +15,7 @@ import type {
   RuntimeSessionCleanupContext,
   RuntimeWorkflowRequestContext,
 } from "../../../agents/runtime/runtime-driver";
+import type { PlatformServices } from "../../../platform/platform-services";
 
 export interface AgentExecutionContext extends RuntimeRequest {
   runId: string;
@@ -48,6 +49,7 @@ export interface RuntimeWorkflowHost {
 
 export interface RuntimeAgentExecutorFactoryOptions {
   executables: Record<AgentId, string>;
+  platformServices?: PlatformServices;
   channelById: (channelId: string) => AgentChannel | undefined;
   workflowHost?: RuntimeWorkflowHost;
   askWorkflowByRuntime?: Partial<Record<AgentId, (input: RuntimeWorkflowRequestContext) => Promise<WorkflowAgentResponse>>>;

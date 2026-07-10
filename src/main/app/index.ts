@@ -6,6 +6,7 @@ import { fileURLToPath } from "node:url";
 import { AgentHub } from "../hub/agent-hub";
 import { setCodexChatRouterBaseUrl, startCodexChatRouter, type CodexChatRouterServer } from "../bridges/codex-chat-router";
 import { createLocalTextFilePreviewUnderRoots } from "../platform/local-file-preview";
+import { createPlatformServices } from "../platform/platform-services";
 import { startMcpBridge, type McpBridgeServer } from "../bridges/mcp-bridge";
 import { ScheduledWorkflowCloudClient, type ScheduledWorkflowCloudEventConnection } from "../workflows/scheduled-workflow-cloud";
 import { deleteImportedSkillFromLibrary, importOnlineSkillToLibrary, installBundledSkill, uninstallBundledSkill } from "../skills/skill-installer";
@@ -66,7 +67,8 @@ const appResources = createMainAppResourceLocator({
   isPackaged: app.isPackaged,
   resourcesPath: process.resourcesPath,
 });
-const hub = new AgentHub();
+const platformServices = createPlatformServices(process.platform, { resourceLocator: appResources });
+const hub = new AgentHub({}, undefined, undefined, undefined, platformServices);
 const officialCatalog = new OfficialCatalogStore(path.join(app.getPath("userData"), OFFICIAL_CATALOG_DATABASE_FILE));
 const userSkillStore = new UserSkillStore(path.join(app.getPath("userData"), APP_DATABASE_FILE));
 
