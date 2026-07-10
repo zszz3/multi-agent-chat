@@ -52,6 +52,7 @@ This phase must enforce all of the following:
 - cache metadata and fingerprint contract
 - recovery algorithm
 - resume and partial replay policy
+- durable checkpoint payloads produced by Phase 04 timeout supervision
 
 ### Out Of Scope
 
@@ -84,6 +85,8 @@ Persisted run state must capture enough information to restore:
 - completion boundaries
 
 without replaying the entire workflow from scratch.
+
+For an interrupted or retried node, state must also retain any Phase 04 checkpoint reference, the last accepted progress report, lease-extension count, and the reason the prior attempt stopped.
 
 #### 3. Recovery Must Be Node-Granular
 

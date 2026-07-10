@@ -8,6 +8,13 @@ import type {
   WorkflowV2PlanNode,
   WorkflowV2ResultPacket,
 } from "../../../shared/workflow-v2/planning";
+import type {
+  WorkflowV2HumanIntervention,
+  WorkflowV2ReviewVerdict,
+  WorkflowV2ReviewerInput,
+  WorkflowV2ReviewerResponse,
+  WorkflowV2ReviewRetryPolicy,
+} from "../../../shared/workflow-v2/review";
 import { createWorkflowV2RunState, type WorkflowV2RunState } from "../../../shared/workflow-v2/state";
 import {
   isValidWorkflowV2ContextBudget,
@@ -17,6 +24,12 @@ import { assembleWorkflowV2LeaderNavigation, type WorkflowV2LeaderNavigation } f
 import { runWorkflowV2LlmNode } from "./workflow-v2-llm-runner";
 import { listWorkflowV2RunnableNodeIds, transitionWorkflowV2NodeState } from "./workflow-v2-scheduler";
 import { runWorkflowV2ScriptNode } from "./workflow-v2-script-runner";
+import {
+  assertIndependentWorkflowV2Reviewer,
+  createWorkflowV2ReviewerInput,
+  resolveWorkflowV2ReviewVerdict,
+} from "./workflow-v2-reviewer";
+import { validateWorkflowV2NodeOutput } from "./workflow-v2-validation";
 
 export interface ExecuteWorkflowV2PlanInput {
   plan: WorkflowV2Plan;
@@ -39,6 +52,7 @@ export interface ExecuteWorkflowV2PlanInput {
     planNode: WorkflowV2PlanNode;
     output: WorkflowV2WorkerOutput;
   }) => boolean;
+  reviewNodeOutput?: (input: WorkflowV2ReviewerInput) => Promise<WorkflowV2ReviewerResponse>;
   onNodeStateTransition?: (input: WorkflowV2NodeStateTransitionEvent) => void;
   now?: () => number;
 }
@@ -46,6 +60,7 @@ export interface ExecuteWorkflowV2PlanInput {
 export type WorkflowV2NodeStateTransitionEvent =
   | { nodeId: string; status: "running" }
   | { nodeId: string; status: "completed"; output: WorkflowV2WorkerOutput }
+  | { nodeId: string; status: "paused"; intervention: WorkflowV2HumanIntervention }
   | { nodeId: string; status: "failed"; error: string };
 
 export interface ExecuteWorkflowV2PlanResult {
@@ -134,36 +149,126 @@ export async function executeWorkflowV2Plan(input: ExecuteWorkflowV2PlanInput): 
       }
 
       try {
-        const workerOutput = settledNode.value;
-        if (workerOutput.nodeId !== nodeId) {
-          throw new Error(`Workflow V2 node ${nodeId} received an output packet for ${workerOutput.nodeId}.`);
-        }
-        const authoritativeWorkerOutput = cloneWorkflowV2WorkerOutput(workerOutput);
-        workerOutputs.push(authoritativeWorkerOutput);
-
-        if (!isNodeOutputSuccessful(node, planNode, authoritativeWorkerOutput, input.isNodeOutputSuccessful)) {
-          const error = `Workflow V2 node ${nodeId} reported an unsuccessful output.`;
-          runState = transitionWorkflowV2NodeState(runState, {
-            nodeId,
-            status: "failed",
-            now: now(),
-            error,
-          });
-          input.onNodeStateTransition?.({ nodeId, status: "failed", error });
-          continue;
-        }
-        workerOutputsByNodeId.set(nodeId, authoritativeWorkerOutput);
-
+        const authoritativeWorkerOutput = cloneWorkflowV2WorkerOutput(settledNode.value);
+        const attempt = runState.nodes[nodeId]!.attempt;
+        const validation = validateWorkflowV2NodeOutput({ node, output: authoritativeWorkerOutput, attempt });
         runState = transitionWorkflowV2NodeState(runState, {
           nodeId,
-          status: "completed",
+          status: "validating",
           now: now(),
+          validation,
         });
-        input.onNodeStateTransition?.({
-          nodeId,
-          status: "completed",
-          output: cloneWorkflowV2WorkerOutput(authoritativeWorkerOutput),
-        });
+
+        if (validation.outcome !== "pass") {
+          const validationReason = validation.reasons.join(" ");
+          if (validation.outcome === "retry") {
+            runState = transitionWorkflowV2NodeState(runState, {
+              nodeId,
+              status: "ready",
+              now: now(),
+              error: validationReason,
+            });
+            continue;
+          }
+          if (validation.outcome === "ask_human") {
+            const intervention = createIntervention(nodeId, "validation", validationReason, now());
+            runState = transitionWorkflowV2NodeState(runState, {
+              nodeId,
+              status: "paused",
+              now: now(),
+              error: validationReason,
+              intervention,
+            });
+            input.onNodeStateTransition?.({ nodeId, status: "paused", intervention });
+            continue;
+          }
+          if (exhaustedPolicyFor(node) === "skip") {
+            const skippedOutput = createSkippedOutput(nodeId, validationReason);
+            workerOutputsByNodeId.set(nodeId, skippedOutput);
+            runState = transitionWorkflowV2NodeState(runState, { nodeId, status: "skipped", now: now() });
+            continue;
+          }
+          failNode(validationReason || `Workflow V2 node ${nodeId} failed mechanical validation.`);
+          continue;
+        }
+
+        if (!isNodeOutputSuccessful(node, planNode, authoritativeWorkerOutput, input.isNodeOutputSuccessful)) {
+          failNode(`Workflow V2 node ${nodeId} reported an unsuccessful output.`);
+          continue;
+        }
+
+        if (requiresSemanticReview(node)) {
+          runState = transitionWorkflowV2NodeState(runState, { nodeId, status: "awaiting_review", now: now() });
+          if (!input.reviewNodeOutput) {
+            const intervention = createIntervention(
+              nodeId,
+              "review_escalation",
+              `Workflow V2 node ${nodeId} requires an independent semantic reviewer.`,
+              now(),
+            );
+            runState = transitionWorkflowV2NodeState(runState, {
+              nodeId,
+              status: "paused",
+              now: now(),
+              error: intervention.reason,
+              intervention,
+            });
+            input.onNodeStateTransition?.({ nodeId, status: "paused", intervention });
+            continue;
+          }
+
+          const reviewerResponse = await input.reviewNodeOutput(createWorkflowV2ReviewerInput({
+            node,
+            objective: input.plan.objective,
+            output: authoritativeWorkerOutput,
+          }));
+          assertIndependentWorkflowV2Reviewer(nodeId, reviewerResponse);
+          const resolution = resolveWorkflowV2ReviewVerdict(reviewerResponse.verdict, reviewRetryPolicyFor(node, attempt));
+          runState = transitionWorkflowV2NodeState(runState, {
+            nodeId,
+            status: "awaiting_review",
+            now: now(),
+            reviewVerdict: resolution.verdict,
+          });
+
+          if (resolution.action === "retry") {
+            runState = transitionWorkflowV2NodeState(runState, {
+              nodeId,
+              status: "ready",
+              now: now(),
+              error: resolution.reason,
+            });
+            continue;
+          }
+          if (resolution.action === "skip") {
+            workerOutputsByNodeId.set(nodeId, createSkippedOutput(nodeId, resolution.reason));
+            runState = transitionWorkflowV2NodeState(runState, { nodeId, status: "skipped", now: now() });
+            continue;
+          }
+          if (resolution.action === "pause" || resolution.action === "escalate") {
+            const source = resolution.action === "escalate" ? "review_escalation" : "review_rejection";
+            const intervention = createIntervention(nodeId, source, resolution.reason, now(), resolution.verdict);
+            runState = transitionWorkflowV2NodeState(runState, {
+              nodeId,
+              status: "paused",
+              now: now(),
+              error: resolution.reason,
+              reviewVerdict: resolution.verdict,
+              intervention,
+            });
+            input.onNodeStateTransition?.({ nodeId, status: "paused", intervention });
+            continue;
+          }
+          if (resolution.action === "fail") {
+            failNode(resolution.reason);
+            continue;
+          }
+        }
+
+        workerOutputs.push(authoritativeWorkerOutput);
+        workerOutputsByNodeId.set(nodeId, authoritativeWorkerOutput);
+        runState = transitionWorkflowV2NodeState(runState, { nodeId, status: "completed", now: now() });
+        input.onNodeStateTransition?.({ nodeId, status: "completed", output: cloneWorkflowV2WorkerOutput(authoritativeWorkerOutput) });
       } catch (error) {
         const failureMessage = error instanceof Error ? error.message : String(error);
         runState = transitionWorkflowV2NodeState(runState, {
@@ -173,6 +278,11 @@ export async function executeWorkflowV2Plan(input: ExecuteWorkflowV2PlanInput): 
           error: failureMessage,
         });
         input.onNodeStateTransition?.({ nodeId, status: "failed", error: failureMessage });
+      }
+
+      function failNode(error: string): void {
+        runState = transitionWorkflowV2NodeState(runState, { nodeId, status: "failed", now: now(), error });
+        input.onNodeStateTransition?.({ nodeId, status: "failed", error });
       }
     }
   }
@@ -318,4 +428,49 @@ function isNodeOutputSuccessful(
   return node.outputFields
     .filter((field) => field.required !== false)
     .every((field) => Object.hasOwn(output.outputs, field.key));
+}
+
+function requiresSemanticReview(node: WorkflowV2Node): boolean {
+  return node.execModel === "llm"
+    && node.role !== "reviewer"
+    && (node.judgeDimensions?.length ?? 0) > 0;
+}
+
+function exhaustedPolicyFor(node: WorkflowV2Node): "fail" | "skip" | "ask_human" {
+  return node.execModel === "llm" ? node.onExhausted ?? "fail" : node.onError ?? "fail";
+}
+
+function reviewRetryPolicyFor(node: WorkflowV2Node, attempt: number): WorkflowV2ReviewRetryPolicy {
+  return {
+    attempt,
+    maxRetry: node.execModel === "llm" ? node.maxRetry ?? 0 : 0,
+    onExhausted: exhaustedPolicyFor(node),
+  };
+}
+
+function createIntervention(
+  nodeId: string,
+  source: WorkflowV2HumanIntervention["source"],
+  reason: string,
+  requestedAt: number,
+  reviewVerdict?: WorkflowV2ReviewVerdict,
+): WorkflowV2HumanIntervention {
+  return {
+    nodeId,
+    source,
+    reason,
+    allowedActions: ["continue", "skip", "escalate", "replan", "increase_review_strength"],
+    requestedAt,
+    ...(reviewVerdict ? { reviewVerdict: structuredClone(reviewVerdict) } : {}),
+  };
+}
+
+function createSkippedOutput(nodeId: string, reason: string): WorkflowV2WorkerOutput {
+  return {
+    nodeId,
+    summary: `Skipped: ${reason}`,
+    outputs: {},
+    risks: [reason],
+    proposals: [],
+  };
 }

@@ -68,3 +68,62 @@ Level 4: [end]
 - 是否提高审查强度
 
 统一的人机介入状态应为 `paused`，避免不同机制各自发明半暂停状态。
+
+## 租约式执行与超时监督
+
+节点不能只依赖一个固定超时被动等待。每次节点尝试都持有一个有界执行租约，并同时受三类时间边界约束：
+
+- `inactivityTimeoutMs`：长时间没有 heartbeat、消息或工具活动
+- `softTimeoutMs`：触发进度探测，但不立即终止任务
+- `hardTimeoutMs`：不可突破的最终执行上限
+
+软超时后的控制流必须是：
+
+```text
+running
+  -> lease_expiring
+  -> orchestrator 请求结构化进度报告
+  -> continue / retry / escalate / pause / cancel
+  -> hard timeout 仍未响应时强制终止
+```
+
+普通图上游节点不能执行超时控制。进度探测、续租和中断属于 scheduler、leader 或 orchestrator 的控制面职责。
+
+### WorkflowProgressReport
+
+进度报告必须是结构化数据，不能只依赖自由文本或主观百分比：
+
+```typescript
+interface WorkflowProgressReport {
+  nodeId: string;
+  attempt: number;
+  phase: string;
+  completedItems: string[];
+  remainingItems: string[];
+  blockers: string[];
+  evidence: string[];
+  checkpoint?: string;
+  estimatedRemainingMs?: number;
+  safeToInterrupt: boolean;
+  requestedAction: "continue" | "need_input" | "escalate";
+}
+```
+
+进度报告只用于决定运行导航，不能代替最终 `WorkerOutput`，也不能直接把节点标记为 `completed`。
+
+### SupervisorDecision
+
+orchestrator 必须输出结构化决策：
+
+```typescript
+type SupervisorDecision =
+  | { action: "continue"; extensionMs: number; reason: string }
+  | { action: "retry"; fromCheckpoint?: string; reason: string }
+  | { action: "escalate"; modelProfile: "expert"; reason: string }
+  | { action: "pause"; question: string; reason: string }
+  | { action: "cancel"; reason: string };
+```
+
+续租次数、单次续租时长和总 wall-clock budget 都必须有硬上限。没有新证据、重复相同进度或探测无响应时，不应继续无限续租。
+
+真正中断前应优先请求 checkpoint。只有底层 runtime 支持 steering 时，才向同一运行会话发送进度探测；不支持时必须保存可恢复上下文，再停止旧 task 并创建新 attempt。

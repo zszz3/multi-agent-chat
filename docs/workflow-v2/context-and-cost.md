@@ -44,3 +44,26 @@ interface ContextBudget {
 ## 长日志处理
 
 原始长日志可以保留在事件流或附件中，但不默认进入主上下文窗口。
+
+## 时间预算与执行租约
+
+`maxWallClockMs` 是 run 级硬预算，不应被节点续租绕过。节点级租约需要额外声明：
+
+```typescript
+interface ExecutionLeasePolicy {
+  inactivityTimeoutMs: number;
+  softTimeoutMs: number;
+  hardTimeoutMs: number;
+  progressProbeTimeoutMs: number;
+  maxExtensions: number;
+  maxExtensionMs: number;
+}
+```
+
+约束：
+
+- `softTimeoutMs < hardTimeoutMs`
+- progress probe 和 supervisor 决策本身也计入 run 级模型调用与 wall-clock budget
+- 每次续租不得超过 `maxExtensionMs`
+- 所有续租累计后仍不得突破节点 `hardTimeoutMs` 或 run `maxWallClockMs`
+- heartbeat 只能证明任务仍活跃，不能证明任务输出合格

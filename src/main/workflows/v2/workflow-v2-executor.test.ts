@@ -757,14 +757,13 @@ describe("workflow-v2 executor", () => {
 
     expect(result.runState.status).toBe("failed");
     expect(result.runState.nodes.draft?.status).toBe("failed");
-    expect(result.runState.nodes.draft?.lastError).toBe("Workflow V2 node draft reported an unsuccessful output.");
+    expect(result.runState.nodes.draft?.lastError).toBe("Missing required output fields: draft.");
     expect(result.runState.nodes.verify?.status).toBe("blocked");
-    expect(result.workerOutputs).toHaveLength(1);
-    expect(result.workerOutputs[0]?.nodeId).toBe("draft");
+    expect(result.workerOutputs).toHaveLength(0);
     expect(result.leaderNavigation).toEqual({
       nextNodeIds: [],
       priorityNodeIds: [],
-      escalationHints: ["Need help fixing the draft."],
+      escalationHints: [],
       planHealth: "blocked",
     });
   });
@@ -832,10 +831,168 @@ describe("workflow-v2 executor", () => {
     });
 
     expect(result.runState.status).toBe("failed");
-    expect(result.runState.nodes.draft?.lastError).toBe("Workflow V2 node draft received an output packet for verify.");
+    expect(result.runState.nodes.draft?.lastError).toBe("Output packet belongs to verify, not draft.");
     expect(result.runState.nodes.verify?.status).toBe("blocked");
     expect(result.workerOutputs).toEqual([]);
     expect(result.leaderNavigation.escalationHints).toEqual([]);
     expect(outputPredicateCalls).toBe(0);
+  });
+
+  test("retries mechanical validation before accepting the authoritative output", async () => {
+    const retryDefinition = definition();
+    retryDefinition.nodes = [{
+      ...retryDefinition.nodes[0]!,
+      maxRetry: 1,
+    }];
+    retryDefinition.edges = [];
+    const plan = await buildWorkflowV2Plan({ definition: retryDefinition, approvedBy: "tester", now: 5_000 });
+    let attempts = 0;
+
+    const result = await executeWorkflowV2Plan({
+      plan,
+      runLlmNode: async ({ node }) => {
+        attempts += 1;
+        return {
+          nodeId: node.id,
+          summary: `attempt ${attempts}`,
+          outputs: attempts === 1 ? {} : { draft: "accepted" },
+          proposals: [],
+        };
+      },
+      executeScript: async () => {
+        throw new Error("script runner should not be called");
+      },
+    });
+
+    expect(attempts).toBe(2);
+    expect(result.runState.status).toBe("completed");
+    expect(result.runState.nodes.draft?.attempt).toBe(2);
+    expect(result.workerOutputs).toEqual([{
+      nodeId: "draft",
+      summary: "attempt 2",
+      outputs: { draft: "accepted" },
+      proposals: [],
+    }]);
+  });
+
+  test("pauses through one intervention contract when validation requires a human", async () => {
+    const pausedDefinition = definition();
+    pausedDefinition.nodes = [{
+      ...pausedDefinition.nodes[0]!,
+      maxRetry: 0,
+      onExhausted: "ask_human",
+    }];
+    pausedDefinition.edges = [];
+    const plan = await buildWorkflowV2Plan({ definition: pausedDefinition, approvedBy: "tester", now: 5_100 });
+
+    const result = await executeWorkflowV2Plan({
+      plan,
+      runLlmNode: async ({ node }) => ({
+        nodeId: node.id,
+        summary: "incomplete",
+        outputs: {},
+        proposals: [],
+      }),
+      executeScript: async () => {
+        throw new Error("script runner should not be called");
+      },
+    });
+
+    expect(result.runState.status).toBe("paused");
+    expect(result.runState.nodes.draft?.status).toBe("paused");
+    expect(result.runState.nodes.draft?.intervention).toMatchObject({
+      nodeId: "draft",
+      source: "validation",
+      allowedActions: ["continue", "skip", "escalate", "replan", "increase_review_strength"],
+    });
+    expect(result.workerOutputs).toEqual([]);
+  });
+
+  test("requires an independent structured reviewer for semantic judge dimensions", async () => {
+    const reviewedDefinition = definition();
+    reviewedDefinition.nodes = [{
+      ...reviewedDefinition.nodes[0]!,
+      judgeDimensions: [{ key: "quality", passThreshold: "must" }],
+    }];
+    reviewedDefinition.edges = [];
+    const plan = await buildWorkflowV2Plan({ definition: reviewedDefinition, approvedBy: "tester", now: 5_200 });
+    const reviewerInputs: string[] = [];
+
+    const result = await executeWorkflowV2Plan({
+      plan,
+      runLlmNode: async ({ node }) => ({
+        nodeId: node.id,
+        summary: "ready for review",
+        outputs: { draft: "review me" },
+        proposals: [{ kind: "continue", reason: "executor self-assessment" }],
+      }),
+      executeScript: async () => {
+        throw new Error("script runner should not be called");
+      },
+      reviewNodeOutput: async (reviewInput) => {
+        reviewerInputs.push(JSON.stringify(reviewInput));
+        return {
+          reviewerNodeId: "independent-reviewer",
+          verdict: {
+            decision: "accept",
+            reasons: ["Quality evidence is sufficient."],
+            riskLevel: "low",
+            confidence: "high",
+          },
+        };
+      },
+    });
+
+    expect(result.runState.status).toBe("completed");
+    expect(result.runState.nodes.draft?.reviewVerdict?.decision).toBe("accept");
+    expect(reviewerInputs).toHaveLength(1);
+    expect(reviewerInputs[0]).not.toContain("executor self-assessment");
+  });
+
+  test("requeues a reviewer rejection and accepts a later corrected attempt", async () => {
+    const reviewedDefinition = definition();
+    reviewedDefinition.nodes = [{
+      ...reviewedDefinition.nodes[0]!,
+      judgeDimensions: [{ key: "quality", passThreshold: "must" }],
+      maxRetry: 1,
+    }];
+    reviewedDefinition.edges = [];
+    const plan = await buildWorkflowV2Plan({ definition: reviewedDefinition, approvedBy: "tester", now: 5_300 });
+    let runnerAttempts = 0;
+    let reviewAttempts = 0;
+
+    const result = await executeWorkflowV2Plan({
+      plan,
+      runLlmNode: async ({ node }) => {
+        runnerAttempts += 1;
+        return {
+          nodeId: node.id,
+          summary: `draft ${runnerAttempts}`,
+          outputs: { draft: `revision ${runnerAttempts}` },
+          proposals: [],
+        };
+      },
+      executeScript: async () => {
+        throw new Error("script runner should not be called");
+      },
+      reviewNodeOutput: async () => {
+        reviewAttempts += 1;
+        return {
+          reviewerNodeId: "independent-reviewer",
+          verdict: {
+            decision: reviewAttempts === 1 ? "reject" : "accept",
+            reasons: [reviewAttempts === 1 ? "Needs correction." : "Corrected."],
+            requiredFixes: reviewAttempts === 1 ? ["Correct the draft."] : [],
+            riskLevel: "medium",
+            confidence: "high",
+          },
+        };
+      },
+    });
+
+    expect(runnerAttempts).toBe(2);
+    expect(reviewAttempts).toBe(2);
+    expect(result.runState.status).toBe("completed");
+    expect(result.workerOutputs[0]?.outputs).toEqual({ draft: "revision 2" });
   });
 });

@@ -44,6 +44,7 @@ export type WorkflowV2InterventionAction = "continue" | "skip" | "escalate" | "r
 
 export interface WorkflowV2HumanIntervention {
   nodeId: string;
+  source: "validation" | "review_rejection" | "review_escalation";
   reason: string;
   allowedActions: WorkflowV2InterventionAction[];
   requestedAt: number;

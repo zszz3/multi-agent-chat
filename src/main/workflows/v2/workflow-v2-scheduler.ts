@@ -3,12 +3,20 @@ import type {
   WorkflowV2RunNodeState,
   WorkflowV2RunState,
 } from "../../../shared/workflow-v2/state";
+import type { WorkflowV2NodeValidationResult } from "../../../shared/workflow-v2/definition";
+import type { WorkflowV2HumanIntervention, WorkflowV2ReviewVerdict } from "../../../shared/workflow-v2/review";
 
 export interface WorkflowV2NodeStateTransition {
   nodeId: string;
-  status: Extract<WorkflowV2NodeExecutionState, "running" | "completed" | "failed">;
+  status: Extract<
+    WorkflowV2NodeExecutionState,
+    "ready" | "running" | "validating" | "awaiting_review" | "paused" | "skipped" | "completed" | "failed"
+  >;
   now?: number;
   error?: string;
+  validation?: WorkflowV2NodeValidationResult;
+  reviewVerdict?: WorkflowV2ReviewVerdict;
+  intervention?: WorkflowV2HumanIntervention;
 }
 
 export function listWorkflowV2RunnableNodeIds(runState: WorkflowV2RunState): string[] {
@@ -43,14 +51,33 @@ export function transitionWorkflowV2NodeState(
   const nextTarget = nextNodes[transition.nodeId]!;
   const now = transition.now ?? Date.now();
 
-  if (transition.status === "running") {
+  if (transition.status === "ready") {
+    nextTarget.status = "ready";
+    delete nextTarget.finishedAt;
+    nextTarget.lastError = transition.error;
+  } else if (transition.status === "running") {
     nextTarget.status = "running";
     nextTarget.attempt += 1;
     nextTarget.startedAt = now;
     delete nextTarget.finishedAt;
     delete nextTarget.lastError;
-  } else if (transition.status === "completed") {
-    nextTarget.status = "completed";
+    delete nextTarget.validation;
+    delete nextTarget.reviewVerdict;
+    delete nextTarget.intervention;
+  } else if (transition.status === "validating") {
+    nextTarget.status = "validating";
+    nextTarget.validation = transition.validation;
+  } else if (transition.status === "awaiting_review") {
+    nextTarget.status = "awaiting_review";
+    nextTarget.reviewVerdict = transition.reviewVerdict;
+  } else if (transition.status === "paused") {
+    nextTarget.status = "paused";
+    nextTarget.finishedAt = now;
+    nextTarget.intervention = transition.intervention;
+    nextTarget.reviewVerdict = transition.reviewVerdict;
+    nextTarget.lastError = transition.error;
+  } else if (transition.status === "completed" || transition.status === "skipped") {
+    nextTarget.status = transition.status;
     nextTarget.finishedAt = now;
     nextTarget.blockedBy = [];
     delete nextTarget.lastError;
@@ -63,9 +90,9 @@ export function transitionWorkflowV2NodeState(
   for (const nodeId of runState.nodeOrder) {
     if (nodeId === transition.nodeId) continue;
     const node = nextNodes[nodeId]!;
-    if (node.status === "running" || node.status === "completed" || node.status === "failed") continue;
+    if (!isWaitingNodeState(node.status)) continue;
 
-    const blockedBy = node.dependsOn.filter((dependencyNodeId) => nextNodes[dependencyNodeId]!.status !== "completed");
+    const blockedBy = node.dependsOn.filter((dependencyNodeId) => !isDependencySatisfied(nextNodes[dependencyNodeId]!.status));
     node.blockedBy = blockedBy;
     node.status = blockedBy.length === 0 ? "ready" : "blocked";
   }
@@ -80,8 +107,17 @@ export function transitionWorkflowV2NodeState(
 function deriveWorkflowV2RunStatus(nodes: Record<string, WorkflowV2RunNodeState>): WorkflowV2RunState["status"] {
   const nodeStates = Object.values(nodes).map((node) => node.status);
   if (nodeStates.some((status) => status === "failed")) return "failed";
-  if (nodeStates.every((status) => status === "completed")) return "completed";
+  if (nodeStates.some((status) => status === "paused")) return "paused";
+  if (nodeStates.every(isDependencySatisfied)) return "completed";
   return "running";
+}
+
+function isWaitingNodeState(status: WorkflowV2NodeExecutionState): boolean {
+  return status === "blocked" || status === "ready";
+}
+
+function isDependencySatisfied(status: WorkflowV2NodeExecutionState): boolean {
+  return status === "completed" || status === "skipped";
 }
 
 function orderedNodes(runState: WorkflowV2RunState): WorkflowV2RunNodeState[] {
@@ -98,6 +134,15 @@ function cloneNodes(nodes: Record<string, WorkflowV2RunNodeState>): Record<strin
         dependents: [...node.dependents],
         blockedBy: [...node.blockedBy],
         resourceLocks: [...node.resourceLocks],
+        ...(node.validation ? {
+          validation: {
+            ...node.validation,
+            reasons: [...node.validation.reasons],
+            missingOutputFields: [...node.validation.missingOutputFields],
+          },
+        } : {}),
+        ...(node.reviewVerdict ? { reviewVerdict: structuredClone(node.reviewVerdict) } : {}),
+        ...(node.intervention ? { intervention: structuredClone(node.intervention) } : {}),
       } satisfies WorkflowV2RunNodeState,
     ]),
   );

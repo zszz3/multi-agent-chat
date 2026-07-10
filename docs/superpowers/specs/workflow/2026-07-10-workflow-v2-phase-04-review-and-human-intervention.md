@@ -53,12 +53,15 @@ This phase must enforce all of the following:
 - retry and exhaustion policy
 - reject and escalate loops
 - unified pause and human-decision surface
+- lease-based timeout supervision
+- structured progress probes and supervisor decisions
 
 ### Out Of Scope
 
 - persistence file layout
 - cache fingerprinting
 - hook execution framework
+- durable checkpoint storage and restart recovery, which belong to Phase 05
 
 ### Required End State
 
@@ -127,6 +130,64 @@ This phase may introduce review states and reviewer nodes, but must not introduc
 
 Those behaviors belong to runtime state transitions.
 
+#### 7. Timeout Supervision Must Be Lease-Based
+
+Each running attempt must have explicit inactivity, soft, and hard time boundaries.
+
+- inactivity timeout detects loss of meaningful activity
+- soft timeout requests progress without immediately terminating the task
+- hard timeout is an absolute cancellation boundary
+
+Soft timeout must not be treated as node failure by itself. The scheduler or orchestrator must first request a structured progress report when the underlying runtime can still be steered.
+
+#### 8. Progress Reports Must Be Structured And Evidence-Based
+
+The progress-report contract must include, at minimum:
+
+- node and attempt identity
+- current phase
+- completed and remaining items
+- blockers
+- evidence produced since the previous report
+- optional checkpoint reference
+- estimated remaining time
+- whether interruption is safe
+- requested control action
+
+A progress report must never count as final node output and must never bypass mechanical validation or semantic review.
+
+#### 9. Supervisor Decisions Must Be Explicit
+
+After a progress probe, the control plane must choose one structured action:
+
+- `continue` with a bounded lease extension
+- `retry`, optionally from a checkpoint
+- `escalate` to the orchestrator or a stronger model route
+- `pause` through the unified human-intervention boundary
+- `cancel`
+
+Ordinary dependency parents must not own this decision. Timeout supervision belongs to scheduler, leader, or orchestrator control state and must not be encoded in edges.
+
+#### 10. Extensions Must Stay Inside Hard Budgets
+
+The runtime must enforce:
+
+- a maximum extension count
+- a maximum duration per extension
+- progress-probe timeout
+- node hard timeout
+- run wall-clock and model-call budgets
+
+Repeated identical reports, reports with no new evidence, or missing probe responses must not renew the lease indefinitely.
+
+#### 11. Interruption Must Preserve Recoverability
+
+The control plane should request a checkpoint before interruption when possible.
+
+- steering-capable runtimes may probe the active conversation directly
+- runtimes without steering must stop the old task only after capturing available output and recovery context
+- persistent checkpoint storage and restart recovery are implemented in Phase 05
+
 ### Phase Failure Conditions
 
 This phase is incomplete if any of the following remain true:
@@ -135,6 +196,9 @@ This phase is incomplete if any of the following remain true:
 - review outcomes are only free-form text
 - pause behavior is fragmented across multiple incompatible states
 - review logic is encoded through graph edges
+- soft timeout always kills work without a progress probe opportunity
+- lease extensions can exceed hard node or run budgets
+- free-form progress prose directly marks a node complete
 
 ### Definition Of Done
 
@@ -144,3 +208,4 @@ This phase is complete only when:
 - reviewer verdicts are structured and actionable
 - retry, reject, escalate, and pause transitions are explicit
 - human intervention is unified through one runtime pause contract
+- overdue work is supervised through bounded leases, structured progress reports, and explicit control decisions

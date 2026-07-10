@@ -1,7 +1,18 @@
 import type { WorkflowV2Definition } from "./definition";
+import type { WorkflowV2NodeValidationResult } from "./definition";
+import type { WorkflowV2HumanIntervention, WorkflowV2ReviewVerdict } from "./review";
 
-export type WorkflowV2NodeExecutionState = "blocked" | "ready" | "running" | "completed" | "failed";
-export type WorkflowV2RunExecutionStatus = "running" | "completed" | "failed";
+export type WorkflowV2NodeExecutionState =
+  | "blocked"
+  | "ready"
+  | "running"
+  | "validating"
+  | "awaiting_review"
+  | "paused"
+  | "skipped"
+  | "completed"
+  | "failed";
+export type WorkflowV2RunExecutionStatus = "running" | "paused" | "completed" | "failed";
 
 export interface WorkflowV2RunNodeState {
   nodeId: string;
@@ -15,6 +26,9 @@ export interface WorkflowV2RunNodeState {
   startedAt?: number;
   finishedAt?: number;
   lastError?: string;
+  validation?: WorkflowV2NodeValidationResult;
+  reviewVerdict?: WorkflowV2ReviewVerdict;
+  intervention?: WorkflowV2HumanIntervention;
 }
 
 export interface WorkflowV2RunState {
