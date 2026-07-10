@@ -29,6 +29,18 @@ export interface ClaudeRuntimeConversationPayload {
   extensions?: Record<string, unknown>;
 }
 
+export interface HermesRuntimeConversationPayload {
+  native: {
+    sessionId: string;
+  };
+  appContext?: {
+    cwd?: string;
+    modelId?: string;
+    transport?: "acp";
+  };
+  extensions?: Record<string, unknown>;
+}
+
 export interface RuntimeStateCodec<TState> {
   runtimeId: AgentId;
   restorePersistedConversation(raw: unknown): RuntimeConversation | undefined;
@@ -169,6 +181,41 @@ function decodeClaudePayload(raw: unknown): ClaudeRuntimeConversationPayload | u
   };
 }
 
+function decodeHermesPayload(raw: unknown): HermesRuntimeConversationPayload | undefined {
+  const record = asRecord(raw);
+  const native = asRecord(record?.native);
+  const sessionId = asString(native?.sessionId);
+  if (!sessionId) return undefined;
+  const appContext = asRecord(record?.appContext);
+  const extensions = asRecord(record?.extensions);
+  if (record?.appContext !== undefined && !appContext) return undefined;
+  if (record?.extensions !== undefined && !extensions) return undefined;
+  if (
+    appContext
+    && ((Object.prototype.hasOwnProperty.call(appContext, "cwd") && typeof appContext.cwd !== "string")
+      || (Object.prototype.hasOwnProperty.call(appContext, "modelId") && typeof appContext.modelId !== "string")
+      || (Object.prototype.hasOwnProperty.call(appContext, "transport") && appContext.transport !== "acp"))
+  ) {
+    return undefined;
+  }
+  const cwd = asString(appContext?.cwd);
+  const modelId = asString(appContext?.modelId);
+  const transport = appContext?.transport === "acp" ? "acp" as const : undefined;
+  return {
+    native: { sessionId },
+    ...(appContext
+      ? {
+          appContext: {
+            ...(cwd !== undefined ? { cwd } : {}),
+            ...(modelId !== undefined ? { modelId } : {}),
+            ...(transport !== undefined ? { transport } : {}),
+          },
+        }
+      : {}),
+    ...(extensions ? { extensions: cloneValue(extensions) } : {}),
+  };
+}
+
 function createRuntimeStateCodec<TState>(input: {
   runtimeId: AgentId;
   decodePayload: (raw: unknown) => TState | undefined;
@@ -203,4 +250,9 @@ export const codexRuntimeStateCodec = createRuntimeStateCodec<CodexRuntimeConver
 export const claudeRuntimeStateCodec = createRuntimeStateCodec<ClaudeRuntimeConversationPayload>({
   runtimeId: "claude",
   decodePayload: decodeClaudePayload,
+});
+
+export const hermesRuntimeStateCodec = createRuntimeStateCodec<HermesRuntimeConversationPayload>({
+  runtimeId: "hermes",
+  decodePayload: decodeHermesPayload,
 });

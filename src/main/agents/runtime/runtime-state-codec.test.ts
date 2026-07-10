@@ -1,6 +1,6 @@
 import { describe, expect, test } from "vitest";
 import type { RuntimeConversation } from "../../../shared/types";
-import { claudeRuntimeStateCodec, codexRuntimeStateCodec } from "./runtime-state-codec";
+import { claudeRuntimeStateCodec, codexRuntimeStateCodec, hermesRuntimeStateCodec } from "./runtime-state-codec";
 
 function runtimeConversation(runtimeId: RuntimeConversation["runtimeId"], payload: Record<string, unknown>): RuntimeConversation {
   return {
@@ -70,6 +70,27 @@ describe("runtime state codecs", () => {
       claudeRuntimeStateCodec.cloneConversation(
         runtimeConversation("claude", {
           native: { projectKey: "missing-session-id" },
+        }),
+      ),
+    ).toBeUndefined();
+  });
+
+  test("hermes codec persists ACP session identity and rejects unsupported transports", () => {
+    const raw = runtimeConversation("hermes", {
+      native: { sessionId: "hermes-session-1" },
+      appContext: { cwd: "/repo", modelId: "default", transport: "acp" },
+    });
+
+    expect(hermesRuntimeStateCodec.restorePersistedConversation(raw)).toEqual(raw);
+    expect(hermesRuntimeStateCodec.decodeConversation(raw)).toEqual({
+      native: { sessionId: "hermes-session-1" },
+      appContext: { cwd: "/repo", modelId: "default", transport: "acp" },
+    });
+    expect(
+      hermesRuntimeStateCodec.restorePersistedConversation(
+        runtimeConversation("hermes", {
+          native: { sessionId: "hermes-session-1" },
+          appContext: { transport: "gateway" },
         }),
       ),
     ).toBeUndefined();

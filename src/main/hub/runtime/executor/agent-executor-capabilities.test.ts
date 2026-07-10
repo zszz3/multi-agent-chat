@@ -141,24 +141,25 @@ describe("runtime capability declarations", () => {
 
     expect(registry.driverFor("hermes").surfaceSupport).toEqual(hermesSurfaceSupport);
     expect(registry.driverFor("hermes").surfaceSupport).toEqual([
-      { surface: "chat", executionModes: ["oneshot"], continuationPolicies: ["fresh"] },
+      { surface: "chat", executionModes: ["interactive"], continuationPolicies: ["fresh", "resume-preferred"] },
       { surface: "task", executionModes: ["oneshot"], continuationPolicies: ["fresh"] },
       { surface: "workflow", executionModes: ["oneshot"], continuationPolicies: ["fresh"] },
       { surface: "channel-test", executionModes: ["oneshot"], continuationPolicies: ["fresh"] },
+      { surface: "cleanup", executionModes: ["oneshot"], continuationPolicies: ["fresh", "resume-preferred"] },
     ]);
     expect(registry.driverFor("hermes").getCapabilities(runtime("hermes"))).toMatchObject({
-      chatStyle: "oneshot",
+      chatStyle: "interactive",
       taskStyle: "oneshot",
       workflowStyle: "oneshot",
       testStyle: "oneshot",
-      supportsInterrupt: false,
-      supportsContinue: false,
-      supportsApprovalRequests: false,
+      supportsInterrupt: true,
+      supportsContinue: true,
+      supportsApprovalRequests: true,
       supportsUserInputRequests: false,
       resume: {
-        supportsInProcessConversationResume: false,
-        supportsResumeAfterDetach: false,
-        supportsResumeAfterAppRestart: false,
+        supportsInProcessConversationResume: true,
+        supportsResumeAfterDetach: true,
+        supportsResumeAfterAppRestart: true,
         supportsTurnResume: false,
       },
     });

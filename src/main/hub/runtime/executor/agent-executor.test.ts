@@ -163,8 +163,8 @@ describe("createRuntimeDriverRegistry", () => {
     for (const driver of [codex, claude, api, hermes]) {
       expect(driver.surfaceSupport.length).toBeGreaterThan(0);
     }
-    expect(hermes.runtimeStateCodec).toBeUndefined();
-    expect(hermes.createInteractiveSession).toBeUndefined();
-    expect(hermes.deleteSessionArtifacts).toBeUndefined();
+    expect(hermes.runtimeStateCodec).toBeDefined();
+    expect(hermes.createInteractiveSession).toBeTypeOf("function");
+    expect(hermes.deleteSessionArtifacts).toBeTypeOf("function");
   });
 });
