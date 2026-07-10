@@ -17,11 +17,11 @@
 - Create: `src/shared/workflow-v2/storage.test.ts`
 - Modify: `src/shared/workflow-run.ts` only if common helpers are worth reusing
 
-- [ ] **Step 1: Define workflow/run directory layout and state-file contracts**
+- [x] **Step 1: Define workflow/run directory layout and state-file contracts**
 
-- [ ] **Step 2: Add `NodeCacheFingerprint` and cache metadata contracts**
+- [x] **Step 2: Add `NodeCacheFingerprint` and cache metadata contracts**
 
-- [ ] **Step 3: Keep graph-version-aware resume semantics explicit in the shared contract**
+- [x] **Step 3: Keep graph-version-aware resume semantics explicit in the shared contract**
 
 ### Task 2: Implement Durable State Writing
 
@@ -30,11 +30,11 @@
 - Create: `src/main/workflows/v2/workflow-v2-store.test.ts`
 - Modify: `src/main/workflows/workflow-runtime.ts`
 
-- [ ] **Step 1: Add atomic write helpers for authoritative state files**
+- [x] **Step 1: Add atomic write helpers for authoritative state files**
 
-- [ ] **Step 2: Persist run state, event log, and cache metadata separately**
+- [x] **Step 2: Persist run state, event log, and cache metadata separately**
 
-- [ ] **Step 3: Keep long raw logs out of control-plane state payloads**
+- [x] **Step 3: Keep long raw logs out of control-plane state payloads**
 
 ### Task 3: Add Recovery And Resume
 
@@ -45,9 +45,9 @@
 
 - [ ] **Step 1: Reconstruct run state from persisted files**
 
-- [ ] **Step 2: Determine which nodes can resume, rerun, or reuse cache**
+- [x] **Step 2: Determine which nodes can resume, rerun, or reuse cache**
 
-- [ ] **Step 3: Re-evaluate unfinished nodes when `graphVersion` changes**
+- [x] **Step 3: Re-evaluate unfinished nodes when `graphVersion` changes**
 
 ### Task 4: Verification
 

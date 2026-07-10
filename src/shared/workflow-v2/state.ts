@@ -44,6 +44,10 @@ export function createWorkflowV2RunState(input: {
   definition: WorkflowV2Definition;
   maxParallelNodes?: number;
 }): WorkflowV2RunState {
+  const requestedMaxParallelNodes = input.maxParallelNodes ?? Number.MAX_SAFE_INTEGER;
+  const maxParallelNodes = Number.isFinite(requestedMaxParallelNodes)
+    ? Math.max(1, Math.floor(requestedMaxParallelNodes))
+    : Number.MAX_SAFE_INTEGER;
   const dependsOnByNodeId = new Map<string, string[]>();
   const dependentsByNodeId = new Map<string, string[]>();
 
@@ -81,7 +85,7 @@ export function createWorkflowV2RunState(input: {
     workflowId: input.definition.workflowId,
     graphVersion: input.definition.graphVersion,
     status: "running",
-    maxParallelNodes: Math.max(1, Math.floor(input.maxParallelNodes ?? Number.POSITIVE_INFINITY)),
+    maxParallelNodes,
     nodeOrder: input.definition.nodes.map((node) => node.id),
     nodes,
   };
