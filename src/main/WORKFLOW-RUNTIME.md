@@ -4,6 +4,15 @@
 （`src/main/workflow-runtime.ts`）；本设计在此基础上加入 node 级状态机、事件日志
 和结构化的节点间交接。
 
+## 主进程职责
+
+- `WorkflowStore`（`src/main/workflow-store.ts`）持有 Workflow 草稿、Workflow Run
+  和当前选择，并负责同步状态转换、revision、校验及运行状态镜像。
+- `WorkflowRuntime`（`src/main/workflow-runtime.ts`）负责 DAG 调度、Task 执行、
+  Judge、Gate、暂停和恢复，不直接拥有持久 Workflow 集合。
+- `AgentHub` 保留 IPC/MCP 兼容入口和异步 Agent 协调，将 Workflow 状态操作委托给
+  `WorkflowStore`，并继续生成应用级 `AppSnapshot`。
+
 ## 目标与非目标
 
 设计目标：
