@@ -29,6 +29,7 @@ export async function runHermesWorkflow(
     cwd: input.workDir,
     prompt: input.prompt,
     modelId: modelFromRuntimeConfig(input.runtimeConfig),
+    ...(options.platformServices ? { processServices: options.platformServices } : {}),
     onEvent: (event) => {
       if (event.type === "completed") {
         content = typeof event.content === "string" ? event.content : content;

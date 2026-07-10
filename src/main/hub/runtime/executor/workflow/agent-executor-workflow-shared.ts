@@ -1,5 +1,6 @@
 import type { AgentChannel, AgentId, RuntimeRequest } from "../../../../../shared/types";
 import type { RuntimeWorkflowHost } from "../agent-executor-types";
+import type { PlatformServices } from "../../../../platform/platform-services";
 
 export const WORKFLOW_AGENT_IDLE_TIMEOUT_MS = 10 * 60_000;
 export const WORKFLOW_DEVELOPER_INSTRUCTIONS =
@@ -7,6 +8,7 @@ export const WORKFLOW_DEVELOPER_INSTRUCTIONS =
 
 export interface RuntimeWorkflowExecutionOptions {
   executables: Record<AgentId, string>;
+  platformServices?: PlatformServices;
   channelById: (channelId: string) => AgentChannel | undefined;
   workflowHost?: RuntimeWorkflowHost;
 }

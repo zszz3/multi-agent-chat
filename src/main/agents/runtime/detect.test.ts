@@ -1,5 +1,20 @@
 import { afterEach, describe, expect, test, vi } from "vitest";
-import { parseCliVersion } from "./detect";
+import type { ExecutableLocator } from "../../platform/cli-locator";
+import { parseCliVersion, resolveRuntimeExecutableConfiguration } from "./detect";
+
+function identityExecutableLocator(): ExecutableLocator {
+  return {
+    async resolve({ executable, sourceHint }) {
+      return {
+        requested: executable,
+        resolvedPath: executable,
+        source: sourceHint ?? "path",
+        kind: executable.toLowerCase().endsWith(".cmd") ? "cmd" : "script",
+      };
+    },
+    invalidate() {},
+  };
+}
 
 afterEach(() => {
   vi.restoreAllMocks();
@@ -19,6 +34,22 @@ describe("parseCliVersion", () => {
 });
 
 describe("detectAgentRuntimes", () => {
+  test("preserves explicit and environment executable sources with override precedence", () => {
+    const configuration = resolveRuntimeExecutableConfiguration(
+      { codex: "C:\\configured\\codex.exe" },
+      {
+        CODEX_PATH: "C:\\environment\\codex.cmd",
+        HERMES_PATH: "C:\\environment\\hermes.cmd",
+      },
+    );
+
+    expect(configuration.executables.codex).toBe("C:\\configured\\codex.exe");
+    expect(configuration.sources.codex).toBe("explicit");
+    expect(configuration.executables.hermes).toBe("C:\\environment\\hermes.cmd");
+    expect(configuration.sources.hermes).toBe("environment");
+    expect(configuration.sources.claude).toBeUndefined();
+  });
+
   test("treats Windows codex.cmd overrides as available when exec succeeds through the launcher adapter", async () => {
     vi.resetModules();
     vi.stubEnv("CODEX_PATH", "C:\\Users\\demo\\AppData\\Roaming\\npm\\codex.cmd");
@@ -33,7 +64,10 @@ describe("detectAgentRuntimes", () => {
     vi.doMock("../../platform/cli-launcher", () => ({ execCli }));
     const { detectAgentRuntimes } = await import("./detect");
 
-    const runtimes = await detectAgentRuntimes();
+    const runtimes = await detectAgentRuntimes(undefined, {
+      execute: execCli,
+      executableLocator: identityExecutableLocator(),
+    });
     const codex = runtimes.find((runtime) => runtime.id === "codex");
 
     expect(codex).toMatchObject({
@@ -41,6 +75,7 @@ describe("detectAgentRuntimes", () => {
       command: "C:\\Users\\demo\\AppData\\Roaming\\npm\\codex.cmd",
       available: true,
       version: "0.136.0",
+      commandSource: "environment",
     });
     expect(execCli).toHaveBeenCalledWith(
       expect.objectContaining({
@@ -64,7 +99,10 @@ describe("detectAgentRuntimes", () => {
     vi.doMock("../../platform/cli-launcher", () => ({ execCli }));
     const { detectAgentRuntimes } = await import("./detect");
 
-    const runtimes = await detectAgentRuntimes();
+    const runtimes = await detectAgentRuntimes(undefined, {
+      execute: execCli,
+      executableLocator: identityExecutableLocator(),
+    });
     expect(runtimes.find((runtime) => runtime.id === "hermes")).toMatchObject({
       id: "hermes",
       command: "C:\\Users\\demo\\AppData\\Local\\Programs\\Hermes\\hermes.cmd",
@@ -82,7 +120,10 @@ describe("detectAgentRuntimes", () => {
     });
     vi.doMock("../../platform/cli-launcher", () => ({ execCli }));
     const { detectAgentRuntimes } = await import("./detect");
-    const runtimes = await detectAgentRuntimes();
+    const runtimes = await detectAgentRuntimes(undefined, {
+      execute: execCli,
+      executableLocator: identityExecutableLocator(),
+    });
     expect(runtimes.find((runtime) => runtime.id === "opencode")).toMatchObject({
       id: "opencode",
       command: "C:\\Users\\demo\\AppData\\Roaming\\npm\\opencode.cmd",
@@ -100,7 +141,10 @@ describe("detectAgentRuntimes", () => {
     });
     vi.doMock("../../platform/cli-launcher", () => ({ execCli }));
     const { detectAgentRuntimes } = await import("./detect");
-    const runtimes = await detectAgentRuntimes();
+    const runtimes = await detectAgentRuntimes(undefined, {
+      execute: execCli,
+      executableLocator: identityExecutableLocator(),
+    });
     expect(runtimes.find((runtime) => runtime.id === "openclaw")).toMatchObject({
       id: "openclaw",
       command: "C:\\Users\\demo\\AppData\\Roaming\\npm\\openclaw.cmd",

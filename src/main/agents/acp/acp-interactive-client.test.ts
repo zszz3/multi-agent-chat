@@ -3,6 +3,8 @@ import os from "node:os";
 import path from "node:path";
 import { describe, expect, test, vi } from "vitest";
 import type { AgentEvent } from "../../../shared/types";
+import { execCli, spawnCli } from "../../platform/cli-launcher";
+import type { ProcessTreeTerminationRequest } from "../../platform/process-tree";
 import { writeNodeCliLauncher } from "../../platform/test-cli-fixtures";
 import { AcpInteractiveClient, agentEventsFromAcpUpdate } from "./acp-interactive-client";
 
@@ -46,11 +48,24 @@ describe("AcpInteractiveClient", () => {
     const dir = await mkdtemp(path.join(os.tmpdir(), "multi-agent-chat-acp-client-"));
     const fake = await createFakeAcpRuntime(dir);
     const events: AgentEvent[] = [];
+    const spawn = vi.fn(spawnCli);
+    const terminate = vi.fn(async (request: ProcessTreeTerminationRequest) => {
+      request.process.kill("SIGTERM");
+      return {
+        reason: request.reason,
+        stage: "terminated" as const,
+        protocolCancellation: "not-requested" as const,
+      };
+    });
     const client = new AcpInteractiveClient({
       executable: fake.executable,
       args: ["acp"],
       cwd: dir,
       modelId: "custom-model",
+      processServices: {
+        processLauncher: { spawn, exec: execCli },
+        processTreeController: { terminate },
+      },
       onEvent: (event) => events.push(event),
     });
 
@@ -75,6 +90,8 @@ describe("AcpInteractiveClient", () => {
     expect(calls.some((call) => call.method === "session/set_model" && call.params.modelId === "custom-model")).toBe(true);
     expect(calls.some((call) => call.method === "session/prompt" && call.params.prompt[0].text === "hello")).toBe(true);
     expect(calls.some((call) => call.method === "session/cancel")).toBe(true);
+    expect(spawn).toHaveBeenCalledWith(expect.objectContaining({ executable: fake.executable, args: ["acp"] }));
+    expect(terminate).toHaveBeenCalledWith(expect.objectContaining({ reason: "app-shutdown" }));
     expect(calls.find((call) => call.id === 900)?.result).toEqual({
       outcome: { outcome: "selected", optionId: "allow-once" },
     });

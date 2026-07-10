@@ -1,68 +1,95 @@
-import { readFile, stat } from "node:fs/promises";
+import { readFile, realpath, stat } from "node:fs/promises";
 import path from "node:path";
 import type { LocalFilePreview } from "../../shared/types";
+import { createPlatformPathPolicy, type PlatformPathPolicy } from "./platform-paths";
 
 export const MAX_LOCAL_FILE_PREVIEW_BYTES = 512 * 1024;
 
-/**
- * Resolve a possibly-relative file path against the work directory (expanding a
- * leading `~/`), reject paths that escape it, and confirm it is a regular file.
- * Shared by the file preview and by artifact registration validation.
- */
-export async function resolveWorkDirFile(filePath: string, workDir: string, homeDir: string): Promise<string> {
-  if (typeof filePath !== "string" || !filePath.trim()) throw new Error("File path is required.");
-  const absoluteWorkDir = path.resolve(workDir);
-  const expandedPath = filePath.startsWith("~/") ? path.join(homeDir, filePath.slice(2)) : filePath;
-  const absolutePath = path.resolve(absoluteWorkDir, expandedPath);
-  const relativePath = path.relative(absoluteWorkDir, absolutePath);
-  if (relativePath.startsWith("..") || path.isAbsolute(relativePath)) {
-    throw new Error("Only files under the current work directory can be used.");
+const hostPathPolicy = createPlatformPathPolicy({
+  pathApi: path,
+  caseSensitive: path.sep !== "\\",
+});
+
+async function resolveExistingFileUnderRoot(
+  filePath: string,
+  rawRoot: string,
+  homeDir: string,
+  pathPolicy: PlatformPathPolicy,
+): Promise<string | undefined> {
+  const root = pathPolicy.pathApi.resolve(rawRoot);
+  const expandedPath = pathPolicy.expandHome(filePath, homeDir);
+  const candidate = pathPolicy.pathApi.resolve(root, expandedPath);
+  if (!pathPolicy.isWithin(root, candidate)) return undefined;
+
+  try {
+    const [realRoot, realCandidate] = await Promise.all([realpath(root), realpath(candidate)]);
+    if (!pathPolicy.isWithin(realRoot, realCandidate)) return undefined;
+    const info = await stat(realCandidate);
+    return info.isFile() ? realCandidate : undefined;
+  } catch {
+    return undefined;
   }
-  const info = await stat(absolutePath);
-  if (!info.isFile()) throw new Error("Only regular files are supported.");
-  return absolutePath;
 }
 
-/**
- * Resolve a file that must live under at least one of the allowed roots (the
- * global work dir plus each workflow's own dir). Returns the first match.
- */
-async function resolveFileUnderRoots(filePath: string, roots: string[], homeDir: string): Promise<string> {
+/** Resolve an existing regular file whose real path remains under the work directory. */
+export async function resolveWorkDirFile(
+  filePath: string,
+  workDir: string,
+  homeDir: string,
+  pathPolicy: PlatformPathPolicy = hostPathPolicy,
+): Promise<string> {
   if (typeof filePath !== "string" || !filePath.trim()) throw new Error("File path is required.");
-  const expandedPath = filePath.startsWith("~/") ? path.join(homeDir, filePath.slice(2)) : filePath;
+  const resolved = await resolveExistingFileUnderRoot(filePath, workDir, homeDir, pathPolicy);
+  if (!resolved) throw new Error("Only files under the current work directory can be used.");
+  return resolved;
+}
+
+async function resolveFileUnderRoots(
+  filePath: string,
+  roots: string[],
+  homeDir: string,
+  pathPolicy: PlatformPathPolicy,
+): Promise<string> {
+  if (typeof filePath !== "string" || !filePath.trim()) throw new Error("File path is required.");
   for (const rawRoot of roots) {
     if (!rawRoot) continue;
-    const root = path.resolve(rawRoot);
-    const absolutePath = path.resolve(root, expandedPath);
-    const relativePath = path.relative(root, absolutePath);
-    if (relativePath.startsWith("..") || path.isAbsolute(relativePath)) continue;
-    try {
-      const info = await stat(absolutePath);
-      if (info.isFile()) return absolutePath;
-    } catch {
-      // Not under this root / not present; try the next one.
-    }
+    const resolved = await resolveExistingFileUnderRoot(filePath, rawRoot, homeDir, pathPolicy);
+    if (resolved) return resolved;
   }
   throw new Error("Only files under the work directory or a workflow directory can be used.");
 }
 
-function readPreviewFromBuffer(absolutePath: string, buffer: Buffer): LocalFilePreview {
+function readPreviewFromBuffer(
+  absolutePath: string,
+  buffer: Buffer,
+  pathPolicy: PlatformPathPolicy,
+): LocalFilePreview {
   const truncated = buffer.byteLength > MAX_LOCAL_FILE_PREVIEW_BYTES;
   const contentBuffer = truncated ? buffer.subarray(0, MAX_LOCAL_FILE_PREVIEW_BYTES) : buffer;
   return {
     path: absolutePath,
-    title: path.basename(absolutePath),
+    title: pathPolicy.pathApi.basename(absolutePath),
     content: contentBuffer.toString("utf8"),
     truncated,
   };
 }
 
-export async function createLocalTextFilePreview(filePath: string, workDir: string, homeDir: string): Promise<LocalFilePreview> {
-  const absolutePath = await resolveWorkDirFile(filePath, workDir, homeDir);
-  return readPreviewFromBuffer(absolutePath, await readFile(absolutePath));
+export async function createLocalTextFilePreview(
+  filePath: string,
+  workDir: string,
+  homeDir: string,
+  pathPolicy: PlatformPathPolicy,
+): Promise<LocalFilePreview> {
+  const absolutePath = await resolveWorkDirFile(filePath, workDir, homeDir, pathPolicy);
+  return readPreviewFromBuffer(absolutePath, await readFile(absolutePath), pathPolicy);
 }
 
-export async function createLocalTextFilePreviewUnderRoots(filePath: string, roots: string[], homeDir: string): Promise<LocalFilePreview> {
-  const absolutePath = await resolveFileUnderRoots(filePath, roots, homeDir);
-  return readPreviewFromBuffer(absolutePath, await readFile(absolutePath));
+export async function createLocalTextFilePreviewUnderRoots(
+  filePath: string,
+  roots: string[],
+  homeDir: string,
+  pathPolicy: PlatformPathPolicy,
+): Promise<LocalFilePreview> {
+  const absolutePath = await resolveFileUnderRoots(filePath, roots, homeDir, pathPolicy);
+  return readPreviewFromBuffer(absolutePath, await readFile(absolutePath), pathPolicy);
 }

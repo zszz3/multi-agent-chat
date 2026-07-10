@@ -53,6 +53,7 @@ export function createCodexDriver(options: RuntimeAgentExecutorFactoryOptions): 
                 : []),
             ],
             env: codexEnvironmentForChannel(channel),
+            ...(options.platformServices ? { processServices: options.platformServices } : {}),
             onEvent,
             onRequest: (id, method, params) => {
               respondToCodexRuntimeServerRequest(options, client, id, method, params, {

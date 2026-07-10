@@ -6,6 +6,7 @@ import { fileURLToPath } from "node:url";
 import { AgentHub } from "../hub/agent-hub";
 import { setCodexChatRouterBaseUrl, startCodexChatRouter, type CodexChatRouterServer } from "../bridges/codex-chat-router";
 import { createLocalTextFilePreviewUnderRoots } from "../platform/local-file-preview";
+import { createPlatformServices } from "../platform/platform-services";
 import { startMcpBridge, type McpBridgeServer } from "../bridges/mcp-bridge";
 import { ScheduledWorkflowCloudClient, type ScheduledWorkflowCloudEventConnection } from "../workflows/scheduled-workflow-cloud";
 import { deleteImportedSkillFromLibrary, importOnlineSkillToLibrary, installBundledSkill, uninstallBundledSkill } from "../skills/skill-installer";
@@ -14,7 +15,8 @@ import { OfficialCatalogStore } from "../official-catalog-store";
 import { UserSkillStore } from "../user-skill-store";
 import { SkillCategoryStore } from "../skill-category-store";
 import { centeredWindowBounds } from "../platform/window-bounds";
-import { resolvePreloadBundlePath } from "./app-paths";
+import { createMainAppResourceLocator } from "./app-paths";
+import { windowPresentationOptions } from "./window-options";
 import { fetchOnlineSkills, ONLINE_SKILL_SOURCES } from "../../shared/online-skills";
 import { SKILL_TEMPLATES } from "../../shared/skill-templates";
 import { DEFAULT_SCHEDULED_WORKFLOW_CLOUD_BASE_URL } from "../../shared/types";
@@ -62,7 +64,13 @@ const DEFAULT_WINDOW_WIDTH = 1360;
 const DEFAULT_WINDOW_HEIGHT = 860;
 const MIN_WINDOW_WIDTH = 980;
 const MIN_WINDOW_HEIGHT = 680;
-const hub = new AgentHub();
+const appResources = createMainAppResourceLocator({
+  mainBundleDir: __dirname,
+  isPackaged: app.isPackaged,
+  resourcesPath: process.resourcesPath,
+});
+const platformServices = createPlatformServices(process.platform, { resourceLocator: appResources });
+const hub = new AgentHub({}, undefined, undefined, undefined, platformServices);
 const officialCatalog = new OfficialCatalogStore(path.join(app.getPath("userData"), OFFICIAL_CATALOG_DATABASE_FILE));
 const userSkillStore = new UserSkillStore(path.join(app.getPath("userData"), APP_DATABASE_FILE));
 const skillCategoryStore = new SkillCategoryStore(path.join(app.getPath("userData"), APP_DATABASE_FILE));
@@ -76,7 +84,6 @@ const scheduledWorkflowCloudClient = new ScheduledWorkflowCloudClient();
 let scheduledWorkflowEventConnection: ScheduledWorkflowCloudEventConnection | undefined;
 
 function createWindow(): BrowserWindow {
-  const preloadPath = resolvePreloadBundlePath(__dirname);
   const bounds = preferredWindowBounds();
   const window = new BrowserWindow({
     ...bounds,
@@ -85,10 +92,9 @@ function createWindow(): BrowserWindow {
     title: PRODUCT_NAME,
     backgroundColor: "#ffffff",
     show: false,
-    titleBarStyle: "hiddenInset",
-    trafficLightPosition: { x: 12, y: 14 },
+    ...windowPresentationOptions(process.platform),
     webPreferences: {
-      preload: preloadPath,
+      preload: appResources.preloadBundlePath(),
       contextIsolation: true,
       sandbox: false,
       nodeIntegration: false,
@@ -103,7 +109,7 @@ function createWindow(): BrowserWindow {
   if (process.env.ELECTRON_RENDERER_URL) {
     void window.loadURL(process.env.ELECTRON_RENDERER_URL);
   } else {
-    void window.loadFile(path.join(__dirname, "../renderer/index.html"));
+    void window.loadFile(appResources.rendererHtmlPath());
   }
 
   return window;
@@ -259,7 +265,7 @@ async function bootstrap(): Promise<void> {
   await app.whenReady();
   await hub.loadModelChannels(path.join(app.getPath("userData"), MODEL_CHANNELS_FILE));
   await hub.loadPersistedState(path.join(app.getPath("userData"), APP_DATABASE_FILE));
-  const bundledWorkflows = await loadBundledWorkflows(path.join(__dirname, "../../shared/bundled-workflows"));
+  const bundledWorkflows = await loadBundledWorkflows(appResources.bundledWorkflowsRoot());
   await officialCatalog.rebuild(bundledWorkflows, SKILL_TEMPLATES);
   hub.ensureBundledWorkflows(await officialCatalog.listWorkflows());
   codexChatRouter = await startCodexChatRouter({ channels: () => hub.snapshot().channels });
@@ -351,7 +357,12 @@ function registerIpcHandlers(): void {
   });
   ipcMain.handle("workflow:outputs:list", (_event, workflowId: string) => hub.listWorkflowOutputs(workflowId));
   ipcMain.handle("file:read-text", async (_event, filePath: string) =>
-    createLocalTextFilePreviewUnderRoots(filePath, hub.allowedFileRoots(), app.getPath("home")),
+    createLocalTextFilePreviewUnderRoots(
+      filePath,
+      hub.allowedFileRoots(),
+      app.getPath("home"),
+      platformServices.pathPolicy,
+    ),
   );
   ipcMain.handle("file:reveal", async (_event, filePath: string) => {
     const targetPath = String(filePath ?? "").trim();
@@ -389,10 +400,20 @@ function registerIpcHandlers(): void {
     return { templateId, removed };
   });
   ipcMain.handle("skills:install", async (_event, request: InstallSkillRequest) =>
-    installBundledSkill(request, app.getPath("home"), path.join(app.getPath("userData"), "bundled-skills")),
+    installBundledSkill(
+      request,
+      app.getPath("home"),
+      platformServices.managedDirectoryLinks,
+      path.join(app.getPath("userData"), "bundled-skills"),
+    ),
   );
   ipcMain.handle("skills:uninstall", async (_event, request: UninstallSkillRequest) =>
-    uninstallBundledSkill(request, app.getPath("home"), path.join(app.getPath("userData"), "bundled-skills")),
+    uninstallBundledSkill(
+      request,
+      app.getPath("home"),
+      platformServices.managedDirectoryLinks,
+      path.join(app.getPath("userData"), "bundled-skills"),
+    ),
   );
   ipcMain.handle("run:send", (_event, prompt: string, chatId?: string) => {
     void hub.sendPrompt(prompt, chatId);

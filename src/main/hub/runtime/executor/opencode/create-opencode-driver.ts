@@ -30,6 +30,7 @@ export function createOpenCodeDriver(options: RuntimeAgentExecutorFactoryOptions
             args: ["acp", "--cwd", interactiveContext.workDir],
             cwd: interactiveContext.workDir,
             modelId: interactiveContext.runtimeConfig.model,
+            ...(options.platformServices ? { processServices: options.platformServices } : {}),
             onEvent,
             onExit,
           }),

@@ -30,6 +30,7 @@ export function createHermesDriver(options: RuntimeAgentExecutorFactoryOptions):
             args: ["acp"],
             cwd: interactiveContext.workDir,
             modelId: interactiveContext.runtimeConfig.model,
+            ...(options.platformServices ? { processServices: options.platformServices } : {}),
             onEvent,
             onExit,
           }),

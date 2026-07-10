@@ -35,6 +35,7 @@ export class CodexAgentExecutor implements AgentExecutor {
         reasoningEffortFromRuntimeConfig(this.context.runtimeConfig),
       ),
       env: codexEnvironmentForChannel(channel),
+      ...(this.options.platformServices ? { processServices: this.options.platformServices } : {}),
       onEvent: this.context.emit,
       onRequest: (id, method, params) => {
         respondToCodexRuntimeServerRequest(this.options, client, id, method, params);

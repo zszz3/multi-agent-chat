@@ -20,6 +20,7 @@ export async function runOpenClawWorkflow(
     prompt: input.prompt,
     sessionKey: `multi-agent-chat-${input.requestId}`,
     modelId: modelFromRuntimeConfig(input.runtimeConfig),
+    ...(options.platformServices ? { processServices: options.platformServices } : {}),
     onEvent: (event) => {
       if (event.type === "completed") {
         content = event.content ?? content;

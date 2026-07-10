@@ -1,4 +1,5 @@
 import { spawnCli } from "../../../platform/cli-launcher";
+import type { PlatformProcessServices } from "../../../platform/platform-services";
 
 export async function runStreamingCommand(input: {
   executable: string;
@@ -6,11 +7,13 @@ export async function runStreamingCommand(input: {
   cwd: string;
   env: NodeJS.ProcessEnv;
   timeoutMs: number;
+  processServices?: PlatformProcessServices;
   onStdoutLine: (line: string) => void;
   onStderr: (text: string) => void;
 }): Promise<{ code: number | null; signal: NodeJS.Signals | null; stdout: string; stderr: string; timedOut: boolean }> {
   return new Promise((resolve, reject) => {
-    const proc = spawnCli({
+    const launch = input.processServices?.processLauncher.spawn ?? spawnCli;
+    const proc = launch({
       executable: input.executable,
       args: input.args,
       cwd: input.cwd,
@@ -24,6 +27,13 @@ export async function runStreamingCommand(input: {
     let timedOut = false;
     const timer = setTimeout(() => {
       timedOut = true;
+      if (input.processServices) {
+        void input.processServices.processTreeController.terminate({
+          process: proc,
+          reason: "timeout",
+        }).catch((error: unknown) => settle(() => reject(error)));
+        return;
+      }
       proc.kill("SIGTERM");
     }, input.timeoutMs);
 

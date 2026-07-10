@@ -16,6 +16,7 @@ export class OpenClawAgentExecutor implements AgentExecutor {
       prompt: this.context.prompt,
       sessionKey: `multi-agent-chat-${this.context.runId}`,
       modelId: modelFromRuntimeConfig(this.context.runtimeConfig),
+      ...(this.options.platformServices ? { processServices: this.options.platformServices } : {}),
       onEvent: this.context.emit,
       onExit: this.context.onExit,
     });
