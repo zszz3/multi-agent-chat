@@ -461,7 +461,7 @@ export class AgentHub {
       updateWorkflowRunState: (input) => this.updateWorkflowRunState(input),
       runTask: (input) => this.runTask(input),
       stopTask: (taskId) => this.stopTask(taskId),
-      deleteTask: (taskId) => this.deleteTask(taskId),
+      deleteTask: (taskId, options) => this.deleteTask(taskId, options),
       executeWorkflowV2Script: (input) => executeWorkflowV2ScriptWithPolicy(input),
     });
     this.installRestoredConfiguredAgents([]);
@@ -1695,7 +1695,7 @@ export class AgentHub {
     return this.snapshot();
   }
 
-  async deleteTask(taskId: string): Promise<AppSnapshot> {
+  async deleteTask(taskId: string, options?: { preserveRuntimeConversation?: boolean }): Promise<AppSnapshot> {
     const task = this.tasks.get(taskId);
     if (!task) return this.snapshot();
 
@@ -1715,7 +1715,7 @@ export class AgentHub {
         // The task is already gone from app state; deletion should still succeed.
       }
     }
-    await this.deleteAgentSession(task);
+    if (!options?.preserveRuntimeConversation) await this.deleteAgentSession(task);
 
     return this.snapshot();
   }

@@ -74,6 +74,18 @@ export function isWorkflowV2ProgressReport(value: unknown): value is WorkflowV2P
   return isNonNegativeFinite(value.reportedAt);
 }
 
+export function isWorkflowV2SupervisorDecision(value: unknown): value is WorkflowV2SupervisorDecision {
+  if (!isRecord(value) || typeof value.reason !== "string" || !value.reason.trim()) return false;
+  if (value.action === "continue") return isPositiveInteger(value.extensionMs);
+  if (value.action === "retry") {
+    return value.fromCheckpoint === undefined
+      || (typeof value.fromCheckpoint === "string" && value.fromCheckpoint.trim().length > 0);
+  }
+  if (value.action === "escalate") return value.modelProfile === "expert";
+  if (value.action === "pause") return typeof value.question === "string" && value.question.trim().length > 0;
+  return value.action === "cancel";
+}
+
 export function assertWorkflowV2ProgressReportIdentity(
   lease: WorkflowV2ExecutionLeaseState,
   report: WorkflowV2ProgressReport,
@@ -156,16 +168,7 @@ function assertLeasePolicy(policy: WorkflowV2ExecutionLeasePolicy): void {
 }
 
 function assertSupervisorDecision(decision: WorkflowV2SupervisorDecision): void {
-  if (!decision.reason.trim()) throw new Error("Workflow V2 supervisor decision requires a reason.");
-  if (decision.action === "continue" && !isPositiveInteger(decision.extensionMs)) {
-    throw new Error("Workflow V2 continue decision requires a positive extension.");
-  }
-  if (decision.action === "pause" && !decision.question.trim()) {
-    throw new Error("Workflow V2 pause decision requires a question.");
-  }
-  if (decision.action === "retry" && decision.fromCheckpoint !== undefined && !decision.fromCheckpoint.trim()) {
-    throw new Error("Workflow V2 retry checkpoint cannot be empty.");
-  }
+  if (!isWorkflowV2SupervisorDecision(decision)) throw new Error("Workflow V2 supervisor decision is malformed.");
 }
 
 function isRecord(value: unknown): value is Record<string, unknown> {

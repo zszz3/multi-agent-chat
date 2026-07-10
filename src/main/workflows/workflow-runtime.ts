@@ -91,7 +91,7 @@ interface WorkflowRuntimeDependencies {
   updateWorkflowRunState: (input: WorkflowRunStateUpdate) => void;
   runTask: (input: RunTaskRequest) => Promise<AppSnapshot>;
   stopTask: (taskId: string) => Promise<void>;
-  deleteTask: (taskId: string) => Promise<AppSnapshot>;
+  deleteTask: (taskId: string, options?: { preserveRuntimeConversation?: boolean }) => Promise<AppSnapshot>;
   executeWorkflowV2Script: (input: ExecuteWorkflowV2ScriptRequest) => Promise<WorkflowV2WorkerOutput>;
 }
 

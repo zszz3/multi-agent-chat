@@ -5146,6 +5146,25 @@ fs.writeFileSync(${JSON.stringify(argsPath)}, process.argv.slice(2).join("\\n") 
 
     expect(await readFile(argsPath, "utf8")).toBe("archive\n019e9143-2451-7612-a62d-e65389574d7d\n");
   });
+
+  test("can delete an internal workflow task without archiving a conversation needed for resume", async () => {
+    const hub = new AgentHub();
+    const task = (hub as any).createTaskState({
+      prompt: "Progress probe source task",
+      configuredAgentId: "default-agent",
+      workDir: "/tmp/project",
+    });
+    task.runtimeConversation = runtimeConversation("codex", {
+      native: { threadId: "workflow-resume-thread" },
+    });
+    (hub as any).tasks.set(task.id, task);
+    const deleteAgentSession = vi.spyOn(hub as any, "deleteAgentSession");
+
+    const snapshot = await hub.deleteTask(task.id, { preserveRuntimeConversation: true });
+
+    expect(snapshot.tasks.some((item) => item.id === task.id)).toBe(false);
+    expect(deleteAgentSession).not.toHaveBeenCalled();
+  });
 });
 
 describe("AgentHub agent teams", () => {
