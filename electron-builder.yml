@@ -1,0 +1,36 @@
+appId: com.zszz3.multiagentchat
+productName: Multi Agent Chat
+
+directories:
+  output: dist
+
+files:
+  - out/main/**/*
+  - out/preload/**/*
+  - out/renderer/**/*
+  - package.json
+  - "!node_modules/**/*"
+
+extraResources:
+  - from: out/shared
+    to: shared
+
+asar: true
+
+win:
+  executableName: MultiAgentChat
+  requestedExecutionLevel: asInvoker
+  target:
+    - target: nsis
+      arch:
+        - x64
+  artifactName: "${productName}-${version}-${arch}-setup.${ext}"
+
+nsis:
+  oneClick: false
+  perMachine: false
+  allowToChangeInstallationDirectory: true
+  createDesktopShortcut: true
+  createStartMenuShortcut: true
+  shortcutName: Multi Agent Chat
+  deleteAppDataOnUninstall: false

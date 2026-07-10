@@ -12,6 +12,11 @@
   "scripts": {
     "dev": "electron-vite dev",
     "build": "npm run typecheck && electron-vite build",
+    "verify:package-inputs": "node scripts/verify-package-inputs.mjs",
+    "verify:win-unpacked": "node scripts/verify-win-unpacked.mjs",
+    "verify:win-installer": "node scripts/verify-win-installer.mjs",
+    "dist:win:dir": "npm run build && npm run verify:package-inputs && electron-builder --win --x64 --dir && npm run verify:win-unpacked",
+    "dist:win": "npm run build && npm run verify:package-inputs && electron-builder --win nsis --x64 && npm run verify:win-installer",
     "mcp": "tsx src/mcp/server.ts",
     "typecheck": "tsc --noEmit",
     "test": "vitest run",
@@ -24,7 +29,6 @@
     "@fontsource-variable/geist": "^5.2.9",
     "@fontsource-variable/geist-mono": "^5.2.8",
     "@xyflow/react": "^12.11.0",
-    "electron": "^42.3.0",
     "lucide-react": "^0.468.0",
     "react": "^19.0.0",
     "react-dom": "^19.0.0"
@@ -34,6 +38,8 @@
     "@types/react": "^19.0.2",
     "@types/react-dom": "^19.0.2",
     "@vitejs/plugin-react": "^4.3.4",
+    "electron": "^42.6.1",
+    "electron-builder": "^26.15.3",
     "electron-vite": "^2.3.0",
     "tsx": "^4.22.4",
     "typescript": "^5.7.2",

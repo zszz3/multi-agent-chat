@@ -4,7 +4,7 @@
 
 ### Status
 
-In progress. The cross-platform window presentation and application resource locator slice was implemented on 2026-07-10. Installer configuration and Windows-hosted packaging validation remain pending.
+In progress. Cross-platform window/resources and the first Windows packaging configuration were implemented on 2026-07-10. Windows-hosted installation, upgrade, and uninstall validation remain pending.
 
 ## Goal
 
@@ -25,13 +25,15 @@ Completed:
 - removed bundled-workflow lookup from the repository-relative application bootstrap path;
 - added POSIX development and `path.win32` packaged-path tests;
 - passed focused tests, TypeScript checks, production build, and an isolated Electron startup smoke.
+- moved Electron to development dependencies and added `electron-builder`;
+- added an ASAR allowlist, `out/shared` extra resources, and NSIS x64 per-user configuration;
+- added package-input, `win-unpacked`, and NSIS installer verification scripts;
+- produced and verified a cross-built Windows x64 unpacked artifact and NSIS installer from macOS.
 
 Pending:
 
-- `electron-builder` dependency, configuration, and scripts;
-- Windows icon and installer metadata;
-- packaged `extraResources` wiring for shared assets;
-- Windows-hosted unpacked and NSIS build;
+- product icon and final installer metadata;
+- Windows-hosted unpacked and NSIS build confirmation;
 - install, upgrade, restart, and uninstall smoke tests.
 
 ## Target Files
