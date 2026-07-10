@@ -51,7 +51,13 @@ Completed:
 - exposed the successful command source in Runtime diagnostics without logging environment contents;
 - added a 30-second locator cache that deduplicates concurrent lookup and expires by injected time;
 - made explicit Agent refresh invalidate the shared locator cache before redetection;
-- added source-precedence, environment-source, TTL-expiry, explicit-invalidation, and Agent-refresh tests.
+- added source-precedence, environment-source, TTL-expiry, explicit-invalidation, and Agent-refresh tests;
+- declared `cross-spawn` as a direct runtime dependency instead of relying on a transitive package;
+- removed the hand-written `cmd.exe` command-string builder and delegated `.cmd`/`.bat` escaping to `cross-spawn`;
+- kept executable and arguments as separate values through the shared launcher and prohibited `shell` and caller-supplied `windowsVerbatimArguments` at type and runtime boundaries;
+- implemented structured exec collection with bounded buffers, timeout termination, UTF-8 output, and classified spawn/command failures;
+- added adapter contract coverage for `.exe`, `.cmd`, `.bat`, bare commands, spaces, quotes, trailing backslashes, shell metacharacters, CRLF, and Unicode;
+- added a Windows-only integration fixture using the real npm `tsx.cmd` shim with a missing COMSPEC fallback.
 
 Pending:
 
@@ -59,7 +65,7 @@ Pending:
 - pass the platform launcher/controller through future packaged sidecars;
 - add Windows parent/child integration fixtures proving both processes disappear after cancellation and app shutdown;
 - add ambiguity handling and classified remediation for unresolved or non-runnable executables;
-- replace the remaining hand-written Windows command quoting with the selected mature spawn adapter and complete metacharacter/Unicode fixtures;
+- execute the real `.cmd` metacharacter/Unicode fixture on `windows-latest`;
 - run the managed-junction suite on Windows without Developer Mode or administrator privileges;
 - add configuration file-picking and actionable detection states;
 - run the integration suite from the Phase 01 installed artifact on Windows.

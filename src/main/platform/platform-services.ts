@@ -53,10 +53,8 @@ export function createPlatformServices(
 ): PlatformServices {
   const pathPolicy = platformPathPolicy(platform);
   const environment = dependencies.environment ?? process.env;
-  const comspec = environment.comspec ?? environment.ComSpec;
   const processLauncher = dependencies.processLauncher ?? createProcessLauncher({
     platform,
-    ...(comspec ? { comspec } : {}),
   });
   const executableLocator = dependencies.executableLocator ?? createExecutableLocator({
     platform,
