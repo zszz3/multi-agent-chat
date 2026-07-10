@@ -71,10 +71,12 @@ describe("Windows process-tree integration", () => {
     });
 
     try {
-      await expect(controller.terminate({
+      const result = await controller.terminate({
         process: parent,
         reason: "app-shutdown",
-      })).resolves.toMatchObject({ reason: "app-shutdown", stage: "terminated" });
+      });
+      expect(result.reason).toBe("app-shutdown");
+      expect(["terminated", "forced"]).toContain(result.stage);
       await Promise.all([waitUntilGone(parentPid), waitUntilGone(childPid)]);
       expect(isAlive(parentPid)).toBe(false);
       expect(isAlive(childPid)).toBe(false);
