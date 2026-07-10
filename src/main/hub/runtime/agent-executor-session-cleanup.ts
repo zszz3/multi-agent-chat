@@ -3,17 +3,9 @@ import { readdir, rm } from "node:fs/promises";
 import os from "node:os";
 import path from "node:path";
 import type { RuntimeConversation } from "../../../shared/types";
-import { claudeRuntimeStateCodec, codexRuntimeStateCodec } from "../../agents/runtime/runtime-state-codec";
 import { execCli } from "../../platform/cli-launcher";
 import { codexHome } from "../../channels/model-config";
-
-function codexThreadIdFromConversation(conversation?: RuntimeConversation): string | undefined {
-  return codexRuntimeStateCodec.decodeConversation(conversation)?.native.threadId;
-}
-
-function claudeSessionIdFromConversation(conversation?: RuntimeConversation): string | undefined {
-  return claudeRuntimeStateCodec.decodeConversation(conversation)?.native.sessionId;
-}
+import { claudeSessionIdFromConversation, codexThreadIdFromConversation } from "./agent-executor-conversation";
 
 function claudeProjectStoragePath(workDir: string, sessionId: string): string {
   const slug = workDir.replace(/[:\\/]/g, "-");
