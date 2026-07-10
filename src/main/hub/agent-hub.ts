@@ -241,6 +241,11 @@ import {
   scheduledWorkflowEventTarget as scheduledWorkflowEventTargetValue,
 } from "./workflow/agent-hub-workflow-execution";
 import {
+  contextAppendLimitError as contextAppendLimitErrorValue,
+  formatWorkflowContextAppend as formatWorkflowContextAppendValue,
+  workflowLimitError as workflowLimitErrorValue,
+} from "./workflow/agent-hub-workflow-inputs";
+import {
   finishWorkflowRunState as finishWorkflowRunStateValue,
   startWorkflowRunState as startWorkflowRunStateValue,
   updateWorkflowRunState as updateWorkflowRunStateValue,
@@ -1941,42 +1946,29 @@ export class AgentHub {
   }
 
   private workflowLimitError(graph: WorkflowGraph, title: string, objective: string): string | undefined {
-    if (title.length > MAX_WORKFLOW_TITLE_CHARS) return `Workflow title exceeds ${MAX_WORKFLOW_TITLE_CHARS} characters.`;
-    if (objective.length > MAX_WORKFLOW_OBJECTIVE_CHARS) return `Workflow objective exceeds ${MAX_WORKFLOW_OBJECTIVE_CHARS} characters.`;
-    if (graph.nodes.length > MAX_WORKFLOW_NODE_COUNT) return `Workflow graph exceeds ${MAX_WORKFLOW_NODE_COUNT} nodes.`;
-    if (graph.edges.length > MAX_WORKFLOW_EDGE_COUNT) return `Workflow graph exceeds ${MAX_WORKFLOW_EDGE_COUNT} edges.`;
-    const oversizedNode = graph.nodes.find((node) => node.prompt.length > MAX_WORKFLOW_NODE_PROMPT_CHARS);
-    if (oversizedNode) return `Workflow node ${oversizedNode.id} prompt exceeds ${MAX_WORKFLOW_NODE_PROMPT_CHARS} characters.`;
-    return undefined;
+    return workflowLimitErrorValue({
+      graph,
+      title,
+      objective,
+      maxTitleChars: MAX_WORKFLOW_TITLE_CHARS,
+      maxObjectiveChars: MAX_WORKFLOW_OBJECTIVE_CHARS,
+      maxNodeCount: MAX_WORKFLOW_NODE_COUNT,
+      maxEdgeCount: MAX_WORKFLOW_EDGE_COUNT,
+      maxNodePromptChars: MAX_WORKFLOW_NODE_PROMPT_CHARS,
+    });
   }
 
   private contextAppendLimitError(input: AppendWorkflowContextRequest): string | undefined {
-    if (input.report.length + input.handoff.length > MAX_WORKFLOW_CONTEXT_APPEND_CHARS) {
-      return `Workflow context append exceeds ${MAX_WORKFLOW_CONTEXT_APPEND_CHARS} characters.`;
-    }
-    const artifacts = input.artifacts ?? [];
-    if (artifacts.length > MAX_WORKFLOW_ARTIFACTS_PER_APPEND) return `Workflow context append exceeds ${MAX_WORKFLOW_ARTIFACTS_PER_APPEND} artifacts.`;
-    const oversizedArtifact = artifacts.find((artifact) => artifact.kind === "text" && (artifact.content ?? "").length > MAX_WORKFLOW_TEXT_ARTIFACT_CHARS);
-    if (oversizedArtifact) return `Workflow text artifact ${oversizedArtifact.title} exceeds ${MAX_WORKFLOW_TEXT_ARTIFACT_CHARS} characters.`;
-    return undefined;
+    return contextAppendLimitErrorValue({
+      request: input,
+      maxContextAppendChars: MAX_WORKFLOW_CONTEXT_APPEND_CHARS,
+      maxArtifactsPerAppend: MAX_WORKFLOW_ARTIFACTS_PER_APPEND,
+      maxTextArtifactChars: MAX_WORKFLOW_TEXT_ARTIFACT_CHARS,
+    });
   }
 
   private formatWorkflowContextAppend(report: string, handoff: string, artifacts: WorkflowArtifactReference[] = [], nodeId?: string): string {
-    const sections = [`## ${nodeId ? `Node ${nodeId}` : "Workflow"} Context Update`];
-    const trimmedReport = report.trim();
-    if (trimmedReport) sections.push("### Work Completion Report", trimmedReport);
-    const trimmedHandoff = handoff.trim();
-    if (trimmedHandoff) sections.push("### Handoff", trimmedHandoff);
-    const artifactLines = artifacts
-      .slice(0, 20)
-      .map((artifact) => {
-        if (artifact.kind === "text") return `- ${artifact.title}: ${artifact.content ?? ""}`.trim();
-        if (artifact.kind === "file") return `- ${artifact.title}: ${path.basename(artifact.path ?? "")}`;
-        return `- ${artifact.title}: ${artifact.url ?? ""}`;
-      })
-      .filter((line) => line.length > 2);
-    if (artifactLines.length > 0) sections.push("### Artifacts", artifactLines.join("\n"));
-    return sections.join("\n").trim();
+    return formatWorkflowContextAppendValue(report, handoff, artifacts, nodeId);
   }
 
   private channelById(channelId: string): AgentChannel | undefined {
