@@ -1,5 +1,6 @@
 import { afterEach, describe, expect, test, vi } from "vitest";
 import type { ExecutableLocator } from "../../platform/cli-locator";
+import { CliExecutionError } from "../../platform/cli-launcher";
 import { parseCliVersion, resolveRuntimeExecutableConfiguration } from "./detect";
 
 function identityExecutableLocator(): ExecutableLocator {
@@ -34,6 +35,34 @@ describe("parseCliVersion", () => {
 });
 
 describe("detectAgentRuntimes", () => {
+  test.each([
+    ["not-found", undefined, "not-installed"],
+    ["not-found", "explicit", "not-discoverable"],
+    ["access-denied", "explicit", "execution-denied"],
+    ["command-failed", "environment", "version-command-failed"],
+  ] as const)("maps %s with %s source to %s", async (failure, sourceHint, availabilityReason) => {
+    const { detectAgentRuntimes } = await import("./detect");
+    const configuration = resolveRuntimeExecutableConfiguration(
+      sourceHint === "explicit" ? { codex: "C:\\Tools\\codex.exe" } : {},
+      sourceHint === "environment" ? { CODEX_PATH: "C:\\Tools\\codex.cmd" } : {},
+    );
+    const runtimes = await detectAgentRuntimes(configuration.executables, {
+      executableSources: configuration.sources,
+      executableLocator: identityExecutableLocator(),
+      execute: async (request) => {
+        if (request.executable === configuration.executables.codex) {
+          throw new CliExecutionError(failure, request.executable, `codex failed (${failure}).`);
+        }
+        return { stdout: "tool 1.0.0", stderr: "" };
+      },
+    });
+
+    expect(runtimes.find((runtime) => runtime.id === "codex")).toMatchObject({
+      available: false,
+      availabilityReason,
+    });
+  });
+
   test("preserves explicit and environment executable sources with override precedence", () => {
     const configuration = resolveRuntimeExecutableConfiguration(
       { codex: "C:\\configured\\codex.exe" },

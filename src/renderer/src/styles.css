@@ -5847,6 +5847,45 @@ textarea:focus-visible {
   font-size: 11px;
 }
 
+.runtime-executable-status {
+  display: grid;
+  gap: 8px;
+  margin-top: 12px;
+  padding: 12px;
+  border: 1px solid var(--line);
+  border-radius: 10px;
+  background: var(--panel-soft);
+}
+
+.runtime-executable-status.is-ready {
+  border-color: color-mix(in srgb, var(--ok) 35%, var(--line));
+}
+
+.runtime-executable-status.is-unavailable {
+  border-color: color-mix(in srgb, var(--danger) 35%, var(--line));
+}
+
+.runtime-executable-status > div:first-child,
+.runtime-executable-actions {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 10px;
+}
+
+.runtime-executable-status span,
+.runtime-executable-status p {
+  min-width: 0;
+  margin: 0;
+  color: var(--muted);
+  overflow-wrap: anywhere;
+}
+
+.runtime-executable-actions {
+  justify-content: flex-start;
+  flex-wrap: wrap;
+}
+
 .agent-provider-disclosure > summary {
   cursor: pointer;
   list-style: none;

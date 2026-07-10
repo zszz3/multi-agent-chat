@@ -1,5 +1,5 @@
 import { useMemo, type MouseEvent } from "react";
-import { CheckCircle2, Cpu, Plus, RefreshCw, Save, Trash2 } from "lucide-react";
+import { CheckCircle2, Cpu, FolderOpen, Plus, RefreshCw, RotateCcw, Save, Trash2 } from "lucide-react";
 import { configChannelForSelection, selectConfigChannelsForDisplay } from "../../../../shared/config-channels";
 import { DEFAULT_MODEL_ID } from "../../../../shared/models";
 import { AGENT_PROVIDER_PRESETS, CODEX_DEFAULT_PRESET_ID, type AgentProviderPreset } from "../../../../shared/provider-presets";
@@ -8,6 +8,7 @@ import type {
   AgentChannel,
   AgentId,
   AgentModelOption,
+  AgentRuntime,
   CodexDefaultConfig,
   CodexPluginCatalogItem,
   ProviderBalanceResult,
@@ -94,6 +95,7 @@ const CONFIG_TEXT = {
 interface RuntimePageProps {
   language?: Language;
   channels: AgentChannel[];
+  runtimes?: AgentRuntime[];
   selectedChannelId: string;
   providerKeys: Record<string, string>;
   codexPluginCatalog: CodexPluginCatalogItem[];
@@ -116,6 +118,8 @@ interface RuntimePageProps {
   onOpenContextMenu: (event: MouseEvent, channelId: string) => void;
   onDeleteConfig: (channelId: string) => void;
   onTestChannel: (channelId: string) => Promise<void>;
+  onChooseRuntimeExecutable?: (runtimeId: AgentId) => Promise<void>;
+  onResetRuntimeExecutable?: (runtimeId: AgentId) => Promise<void>;
   onQueryBalance?: (channelId: string) => Promise<void>;
   onUpdateProviderKey: (presetId: string, value: string) => void;
   onLoadCodexDefaultConfig?: () => Promise<CodexDefaultConfig>;
@@ -127,6 +131,7 @@ interface RuntimePageProps {
 export function RuntimePage({
   language = "en",
   channels,
+  runtimes = [],
   selectedChannelId,
   providerKeys,
   codexPluginCatalog,
@@ -149,6 +154,8 @@ export function RuntimePage({
   onOpenContextMenu,
   onDeleteConfig,
   onTestChannel,
+  onChooseRuntimeExecutable,
+  onResetRuntimeExecutable,
   onQueryBalance,
   onUpdateProviderKey,
   onLoadCodexDefaultConfig,
@@ -182,6 +189,7 @@ export function RuntimePage({
   const configuredPluginIds = useMemo(() => new Set((selectedRuntimeChannelRecord?.plugins ?? []).map((plugin) => plugin.id)), [selectedRuntimeChannelRecord]);
   const availableCodexPlugins = useMemo(() => codexPluginCatalog.filter((plugin) => !configuredPluginIds.has(plugin.id)), [codexPluginCatalog, configuredPluginIds]);
   const selectedRuntime = selectedRuntimeChannelRecord?.agentId ?? "codex";
+  const selectedRuntimeDetection = runtimes.find((runtime) => runtime.id === selectedRuntime);
   const runtimeProviderPresets = useMemo(() => AGENT_PROVIDER_PRESETS.filter((preset) => preset.runtimeAgentId === selectedRuntime), [selectedRuntime]);
   const runtimeProviderCategories = useMemo(() => {
     const categories = new Set(runtimeProviderPresets.map((preset) => preset.category ?? (preset.id.includes("custom") ? "custom" : "third_party")));
@@ -457,6 +465,41 @@ export function RuntimePage({
                     </button>
                   ))}
                 </div>
+                {selectedRuntimeDetection ? (
+                  <div className={`runtime-executable-status ${selectedRuntimeDetection.available ? "is-ready" : "is-unavailable"}`}>
+                    <div>
+                      <strong>{selectedRuntimeDetection.available
+                        ? (language === "zh" ? "已检测" : "Detected")
+                        : (language === "zh" ? "不可用" : "Unavailable")}</strong>
+                      <span>{selectedRuntimeDetection.command}</span>
+                    </div>
+                    <p>{selectedRuntimeDetection.available
+                      ? `${selectedRuntimeDetection.version ?? ""}${selectedRuntimeDetection.commandSource ? ` · ${selectedRuntimeDetection.commandSource}` : ""}`
+                      : selectedRuntimeDetection.error}</p>
+                    {selectedRuntime !== "api" ? (
+                      <div className="runtime-executable-actions">
+                        <button
+                          type="button"
+                          className="control-btn compact secondary"
+                          onClick={() => void onChooseRuntimeExecutable?.(selectedRuntime)}
+                          disabled={!onChooseRuntimeExecutable}
+                        >
+                          <FolderOpen size={13} />
+                          <span>{language === "zh" ? "选择可执行文件" : "Choose executable"}</span>
+                        </button>
+                        <button
+                          type="button"
+                          className="control-btn compact secondary"
+                          onClick={() => void onResetRuntimeExecutable?.(selectedRuntime)}
+                          disabled={!onResetRuntimeExecutable || selectedRuntimeDetection.commandSource !== "explicit"}
+                        >
+                          <RotateCcw size={13} />
+                          <span>{language === "zh" ? "恢复自动检测" : "Use auto-detection"}</span>
+                        </button>
+                      </div>
+                    ) : null}
+                  </div>
+                ) : null}
               </section>
 
               <details className="agent-provider-presets agent-provider-disclosure" open>

@@ -915,6 +915,7 @@ export function AppShell() {
           <RuntimePage
             language={language}
             channels={configChannels}
+            runtimes={snapshot.runtimes}
             selectedChannelId={selectedConfigChannelId}
             providerKeys={providerKeys}
             codexPluginCatalog={codexPluginCatalog}
@@ -937,6 +938,12 @@ export function AppShell() {
             onOpenContextMenu={openRuntimeConfigContextMenu}
             onDeleteConfig={deleteConfigChannel}
             onTestChannel={testRuntimeChannel}
+            onChooseRuntimeExecutable={async (runtimeId) => {
+              setSnapshot(await chatApi.chooseRuntimeExecutable(runtimeId));
+            }}
+            onResetRuntimeExecutable={async (runtimeId) => {
+              setSnapshot(await chatApi.resetRuntimeExecutable(runtimeId));
+            }}
             onQueryBalance={queryRuntimeChannelBalance}
             onRefreshModels={refreshModelCatalog}
             onUpdateProviderKey={updateProviderKey}

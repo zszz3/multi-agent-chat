@@ -4,6 +4,10 @@ import { hostname, platform, userInfo } from "node:os";
 import path from "node:path";
 import { fileURLToPath } from "node:url";
 import { AgentHub } from "../hub/agent-hub";
+import {
+  loadRuntimeExecutableOverrides,
+  saveRuntimeExecutableOverrides,
+} from "../agents/runtime/executable-config-store";
 import { setCodexChatRouterBaseUrl, startCodexChatRouter, type CodexChatRouterServer } from "../bridges/codex-chat-router";
 import { createLocalTextFilePreviewUnderRoots } from "../platform/local-file-preview";
 import { createPlatformServices } from "../platform/platform-services";
@@ -19,7 +23,9 @@ import { windowPresentationOptions } from "./window-options";
 import { fetchOnlineSkills, ONLINE_SKILL_SOURCES } from "../../shared/online-skills";
 import { SKILL_TEMPLATES } from "../../shared/skill-templates";
 import { DEFAULT_SCHEDULED_WORKFLOW_CLOUD_BASE_URL } from "../../shared/types";
+import { isRuntimeId } from "../../shared/runtime-catalog";
 import type {
+  AgentId,
   AgentChannel,
   AckScheduledWorkflowEventRequest,
   AppSnapshot,
@@ -57,6 +63,7 @@ const PRODUCT_NAME = "Multi Agent Chat";
 const APP_DATABASE_FILE = "app.db";
 const OFFICIAL_CATALOG_DATABASE_FILE = "official-catalog.db";
 const MODEL_CHANNELS_FILE = "model-channels.json";
+const RUNTIME_EXECUTABLES_FILE = "runtime-executables.json";
 const MCP_BRIDGE_FILE = "mcp-bridge.json";
 const DEFAULT_WINDOW_WIDTH = 1360;
 const DEFAULT_WINDOW_HEIGHT = 860;
@@ -260,6 +267,12 @@ function disconnectScheduledWorkflowRunner(): AppSnapshot {
 
 async function bootstrap(): Promise<void> {
   await app.whenReady();
+  const runtimeExecutablesPath = path.join(app.getPath("userData"), RUNTIME_EXECUTABLES_FILE);
+  try {
+    hub.replaceRuntimeExecutableOverrides(await loadRuntimeExecutableOverrides(runtimeExecutablesPath));
+  } catch (error) {
+    console.warn("Failed to load Runtime executable overrides.", error);
+  }
   await hub.loadModelChannels(path.join(app.getPath("userData"), MODEL_CHANNELS_FILE));
   await hub.loadPersistedState(path.join(app.getPath("userData"), APP_DATABASE_FILE));
   const bundledWorkflows = await loadBundledWorkflows(appResources.bundledWorkflowsRoot());
@@ -290,6 +303,31 @@ function registerIpcHandlers(): void {
   ipcRegistered = true;
   ipcMain.handle("snapshot:get", () => hub.snapshot());
   ipcMain.handle("agents:refresh", async () => hub.refreshAgents());
+  ipcMain.handle("runtime-executable:choose", async (_event, runtimeId: AgentId) => {
+    if (!isRuntimeId(runtimeId)) throw new Error("Unknown Runtime executable selection.");
+    const current = hub.snapshot().runtimes.find((runtime) => runtime.id === runtimeId)?.command;
+    const options: OpenDialogOptions = {
+      title: `Choose ${runtimeId} executable`,
+      ...(current && path.isAbsolute(current) ? { defaultPath: current } : {}),
+      properties: ["openFile"],
+    };
+    const result = mainWindow ? await dialog.showOpenDialog(mainWindow, options) : await dialog.showOpenDialog(options);
+    const executable = result.canceled ? undefined : result.filePaths[0];
+    if (!executable) return hub.snapshot();
+
+    const overrides = { ...hub.getRuntimeExecutableOverrides(), [runtimeId]: executable };
+    await saveRuntimeExecutableOverrides(path.join(app.getPath("userData"), RUNTIME_EXECUTABLES_FILE), overrides);
+    hub.replaceRuntimeExecutableOverrides(overrides);
+    return hub.refreshAgents();
+  });
+  ipcMain.handle("runtime-executable:reset", async (_event, runtimeId: AgentId) => {
+    if (!isRuntimeId(runtimeId)) throw new Error("Unknown Runtime executable reset.");
+    const overrides = hub.getRuntimeExecutableOverrides();
+    delete overrides[runtimeId];
+    await saveRuntimeExecutableOverrides(path.join(app.getPath("userData"), RUNTIME_EXECUTABLES_FILE), overrides);
+    hub.replaceRuntimeExecutableOverrides(overrides);
+    return hub.refreshAgents();
+  });
   ipcMain.handle("chat:create", (_event, configuredAgentId?: string) => {
     hub.createChat(configuredAgentId);
     return hub.snapshot();

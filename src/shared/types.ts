@@ -2,6 +2,12 @@ import type { RuntimeId } from "./runtime-catalog";
 
 export type AgentId = RuntimeId;
 export type AgentExecutableSource = "explicit" | "environment" | "path" | "known-location";
+export type AgentRuntimeAvailabilityReason =
+  | "not-installed"
+  | "not-discoverable"
+  | "unsupported-platform"
+  | "execution-denied"
+  | "version-command-failed";
 
 export interface AgentRuntime {
   id: AgentId;
@@ -10,6 +16,7 @@ export interface AgentRuntime {
   version: string | null;
   available: boolean;
   commandSource?: AgentExecutableSource;
+  availabilityReason?: AgentRuntimeAvailabilityReason;
   error?: string;
 }
 

@@ -2,6 +2,7 @@ import { contextBridge, ipcRenderer } from "electron";
 import type { OnlineSkillResult } from "../shared/online-skills";
 import type {
   AgentChannel,
+  AgentId,
   AgentTestEvent,
   AgentTestResult,
   AckScheduledWorkflowEventRequest,
@@ -52,6 +53,8 @@ import type {
 const api = {
   getSnapshot: (): Promise<AppSnapshot> => ipcRenderer.invoke("snapshot:get"),
   refreshAgents: (): Promise<AppSnapshot> => ipcRenderer.invoke("agents:refresh"),
+  chooseRuntimeExecutable: (runtimeId: AgentId): Promise<AppSnapshot> => ipcRenderer.invoke("runtime-executable:choose", runtimeId),
+  resetRuntimeExecutable: (runtimeId: AgentId): Promise<AppSnapshot> => ipcRenderer.invoke("runtime-executable:reset", runtimeId),
   createChat: (configuredAgentId?: string): Promise<AppSnapshot> => ipcRenderer.invoke("chat:create", configuredAgentId),
   selectChat: (chatId: string): Promise<AppSnapshot> => ipcRenderer.invoke("chat:select", chatId),
   deleteChat: (chatId: string): Promise<AppSnapshot> => ipcRenderer.invoke("chat:delete", chatId),

@@ -74,12 +74,14 @@ import type {
 } from "../../shared/types";
 import { normalizeConfigChannelsForStorage } from "../../shared/config-channels";
 import { DEFAULT_MODEL_ID, defaultChannelForAgent, defaultModelForAgent, isModelForChannel } from "../../shared/models";
+import { RUNTIME_IDS } from "../../shared/runtime-catalog";
 import { createWorkflowGraphFromObjective, validateWorkflowGraph } from "../../shared/workflow-graph";
 import { defaultWorkflowWorkDirSuffix } from "../../shared/workflow-run";
 import {
   detectAgentRuntimes,
   resolveRuntimeExecutableConfiguration,
 } from "../agents/runtime/detect";
+import type { RuntimeExecutableOverrides } from "../agents/runtime/executable-config-store";
 import type { ExecutableResolutionSourceHint } from "../platform/executable-resolver";
 import { InteractiveSessionManager } from "../agents/runtime/interactive-session-manager";
 import type { CodexRpcClient } from "../agents/codex/codex-rpc";
@@ -393,6 +395,7 @@ export class AgentHub {
   private readonly interactiveSessions: InteractiveSessionManager;
   private readonly executables: Record<AgentId, string>;
   private readonly executableSources: Partial<Record<AgentId, ExecutableResolutionSourceHint>>;
+  private runtimeExecutableOverrides: RuntimeExecutableOverrides;
   private readonly workflowRuntime: WorkflowRuntime;
   private readonly workflowStore: WorkflowStore;
   private readonly modelCatalogDiscoverer: ModelCatalogDiscoverer;
@@ -406,6 +409,7 @@ export class AgentHub {
     platformServices?: PlatformServices,
   ) {
     const executableConfiguration = resolveRuntimeExecutableConfiguration(executables);
+    this.runtimeExecutableOverrides = { ...executables };
     this.executables = executableConfiguration.executables;
     this.executableSources = executableConfiguration.sources;
     this.modelCatalogDiscoverer = modelCatalogDiscoverer;
@@ -750,6 +754,24 @@ export class AgentHub {
     }
     this.emit();
     return this.snapshot();
+  }
+
+  getRuntimeExecutableOverrides(): RuntimeExecutableOverrides {
+    return { ...this.runtimeExecutableOverrides };
+  }
+
+  replaceRuntimeExecutableOverrides(overrides: RuntimeExecutableOverrides): void {
+    const normalizedOverrides = Object.fromEntries(
+      Object.entries(overrides).filter((entry): entry is [AgentId, string] => Boolean(entry[1]?.trim())),
+    ) as RuntimeExecutableOverrides;
+    const configuration = resolveRuntimeExecutableConfiguration(normalizedOverrides);
+    this.runtimeExecutableOverrides = normalizedOverrides;
+    for (const runtimeId of RUNTIME_IDS) {
+      this.executables[runtimeId] = configuration.executables[runtimeId];
+      const source = configuration.sources[runtimeId];
+      if (source) this.executableSources[runtimeId] = source;
+      else delete this.executableSources[runtimeId];
+    }
   }
 
   private detectConfiguredRuntimes(): Promise<AgentRuntime[]> {

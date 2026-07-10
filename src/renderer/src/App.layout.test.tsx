@@ -1139,6 +1139,7 @@ describe("AgentPage", () => {
       <RuntimePage
         language="en"
         channels={savedKeyChannels}
+        runtimes={runtimes}
         selectedChannelId="codex-openai"
         providerKeys={{}}
         codexPluginCatalog={codexPluginCatalog}
@@ -1164,6 +1165,9 @@ describe("AgentPage", () => {
     expect(html).toContain("runtime-page");
     expect(html).toContain("Config");
     expect(html).toContain("CLI");
+    expect(html).toContain("Detected");
+    expect(html).toContain("Choose executable");
+    expect(html).toContain("Use auto-detection");
     expect(html).toContain("Provider");
     expect(html).toContain("aria-label=\"Provider API key\"");
     expect(html).toContain("value=\"saved-key\"");

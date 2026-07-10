@@ -1,8 +1,8 @@
 import { RUNTIME_DEFINITIONS, runtimeDefinition } from "../../../shared/runtime-catalog";
-import type { AgentId, AgentRuntime } from "../../../shared/types";
+import type { AgentId, AgentRuntime, AgentRuntimeAvailabilityReason } from "../../../shared/types";
 import type { ExecutableResolutionSourceHint } from "../../platform/executable-resolver";
 import { createExecutableLocator, type ExecutableLocator } from "../../platform/cli-locator";
-import { execCli, type ExecCli } from "../../platform/cli-launcher";
+import { execCli, type CliExecutionError, type CliExecutionFailure, type ExecCli } from "../../platform/cli-launcher";
 
 export interface RuntimeExecutableConfiguration {
   executables: Record<AgentId, string>;
@@ -52,6 +52,52 @@ interface RuntimeDetectionDependencies {
   executableSources: Partial<Record<AgentId, ExecutableResolutionSourceHint>>;
 }
 
+const CLI_EXECUTION_FAILURES = new Set<CliExecutionFailure>([
+  "not-found",
+  "access-denied",
+  "invalid-cwd",
+  "timeout",
+  "aborted",
+  "max-buffer",
+  "command-failed",
+  "spawn-failed",
+]);
+
+function isCliExecutionError(error: unknown): error is CliExecutionError {
+  if (!(error instanceof Error) || error.name !== "CliExecutionError" || !("failure" in error)) return false;
+  return CLI_EXECUTION_FAILURES.has(error.failure as CliExecutionFailure);
+}
+
+function availabilityFailure(
+  error: unknown,
+  sourceHint: ExecutableResolutionSourceHint | undefined,
+): { reason: AgentRuntimeAvailabilityReason; message: string } {
+  if (isCliExecutionError(error)) {
+    if (error.failure === "not-found") {
+      return sourceHint
+        ? {
+            reason: "not-discoverable",
+            message: `${error.message} Choose the installed executable or reset the configured path.`,
+          }
+        : {
+            reason: "not-installed",
+            message: `${error.message} Install the CLI, then refresh Runtime detection.`,
+          };
+    }
+    if (error.failure === "access-denied") {
+      return {
+        reason: "execution-denied",
+        message: `${error.message} Check file permissions and endpoint security policy.`,
+      };
+    }
+  }
+  const message = error instanceof Error ? error.message : String(error);
+  return {
+    reason: "version-command-failed",
+    message: `${message} Verify that this CLI supports --version, then refresh detection.`,
+  };
+}
+
 async function detectOne(
   id: AgentId,
   executables: Record<AgentId, string>,
@@ -91,6 +137,7 @@ async function detectOne(
       commandSource: executable.source,
     };
   } catch (error) {
+    const failure = availabilityFailure(error, dependencies.executableSources[id]);
     return {
       id,
       label: definition.label,
@@ -100,7 +147,8 @@ async function detectOne(
       ...(dependencies.executableSources[id]
         ? { commandSource: dependencies.executableSources[id] }
         : {}),
-      error: error instanceof Error ? error.message : String(error),
+      availabilityReason: failure.reason,
+      error: failure.message,
     };
   }
 }
