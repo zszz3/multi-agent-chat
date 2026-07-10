@@ -10,6 +10,7 @@ import type {
   WorkflowV2TemplateNodeDraft,
   WorkflowV2TemplateParamValue,
 } from "./definition";
+import { composeWorkflowV2NodeHooks } from "./hooks";
 
 export class WorkflowV2TemplateCompileError extends Error {
   constructor(message: string) {
@@ -70,7 +71,10 @@ export function compileWorkflowV2Node(
   const kind = overrides.kind ?? template.kind;
   const role = overrides.role ?? template.role;
   const outputFields = overrides.outputFields ?? template.outputFields;
-  const hooks = overrides.hooks ?? template.hooks;
+  const hooks = composeWorkflowV2NodeHooks({
+    ...(template.hooks ? { template: template.hooks } : {}),
+    ...(overrides.hooks ? { user: overrides.hooks } : {}),
+  });
   const resourceLocks = overrides.resourceLocks ?? template.resourceLocks;
   const executionLease = overrides.executionLease ?? template.executionLease;
 

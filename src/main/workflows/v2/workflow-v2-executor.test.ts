@@ -4,6 +4,7 @@ import type { WorkflowV2WorkerOutput } from "../../../shared/workflow-v2/packets
 import { createWorkflowV2RunState } from "../../../shared/workflow-v2/state";
 import { buildWorkflowV2Plan } from "./workflow-v2-planner";
 import { executeWorkflowV2Plan } from "./workflow-v2-executor";
+import { WorkflowV2HookSignal } from "./workflow-v2-hooks";
 import { WorkflowV2SupervisionSignal } from "./workflow-v2-supervision-signal";
 import { transitionWorkflowV2NodeState } from "./workflow-v2-scheduler";
 
@@ -1237,5 +1238,107 @@ describe("workflow-v2 executor", () => {
     expect(reviewCalls).toBe(1);
     expect(result.runState.status).toBe("completed");
     expect(result.runState.nodes.draft?.reviewVerdict?.decision).toBe("accept");
+  });
+
+  test("runs node hooks at explicit lifecycle boundaries", async () => {
+    const hookDefinition = definition();
+    hookDefinition.nodes = [hookDefinition.nodes[0]!];
+    hookDefinition.edges = [];
+    const plan = await buildWorkflowV2Plan({ definition: hookDefinition, approvedBy: "tester", now: 6_400 });
+    const lifecycleOrder: string[] = [];
+
+    const result = await executeWorkflowV2Plan({
+      plan,
+      runLlmNode: async ({ node }) => {
+        lifecycleOrder.push("execute");
+        return {
+          nodeId: node.id,
+          summary: "Hooked output",
+          outputs: { draft: "const hooked = true;" },
+          proposals: [],
+        };
+      },
+      executeScript: async () => {
+        throw new Error("script should not be called");
+      },
+      runNodeHooks: async ({ lifecycle, output }) => {
+        lifecycleOrder.push(lifecycle);
+        if (lifecycle !== "beforeExecute") expect(output?.nodeId).toBe("draft");
+      },
+    });
+
+    expect(lifecycleOrder).toEqual(["beforeExecute", "execute", "afterOutput", "afterComplete"]);
+    expect(result.runState.status).toBe("completed");
+  });
+
+  test("turns a hook skip signal into an explicit downstream-compatible output", async () => {
+    const plan = await buildWorkflowV2Plan({ definition: definition(), approvedBy: "tester", now: 6_500 });
+    let llmCalls = 0;
+    let scriptCalls = 0;
+
+    const result = await executeWorkflowV2Plan({
+      plan,
+      runLlmNode: async () => {
+        llmCalls += 1;
+        throw new Error("skipped node must not execute");
+      },
+      executeScript: async ({ node, upstreamOutputs }) => {
+        scriptCalls += 1;
+        expect(upstreamOutputs[0]).toMatchObject({
+          nodeId: "draft",
+          summary: "Skipped: Optional draft omitted.",
+          outputs: {},
+        });
+        return {
+          nodeId: node.id,
+          summary: "Verified after hook skip",
+          outputs: { verification: true },
+          proposals: [],
+        };
+      },
+      runNodeHooks: async ({ lifecycle, node }) => {
+        if (node.id === "draft" && lifecycle === "beforeExecute") {
+          throw new WorkflowV2HookSignal("skip", lifecycle, "Optional draft omitted.");
+        }
+      },
+    });
+
+    expect(llmCalls).toBe(0);
+    expect(scriptCalls).toBe(1);
+    expect(result.runState.status).toBe("completed");
+    expect(result.runState.nodes.draft?.status).toBe("skipped");
+    expect(result.workerOutputs[0]).toMatchObject({
+      nodeId: "draft",
+      summary: "Skipped: Optional draft omitted.",
+      outputs: {},
+    });
+  });
+
+  test("pauses the run at the unified intervention boundary when a hook requests pause", async () => {
+    const hookDefinition = definition();
+    hookDefinition.nodes = [hookDefinition.nodes[0]!];
+    hookDefinition.edges = [];
+    const plan = await buildWorkflowV2Plan({ definition: hookDefinition, approvedBy: "tester", now: 6_600 });
+
+    const result = await executeWorkflowV2Plan({
+      plan,
+      runLlmNode: async () => {
+        throw new Error("paused node must not execute");
+      },
+      executeScript: async () => {
+        throw new Error("script should not be called");
+      },
+      runNodeHooks: async ({ lifecycle }) => {
+        if (lifecycle === "beforeExecute") {
+          throw new WorkflowV2HookSignal("pause", lifecycle, "Approval required by hook.");
+        }
+      },
+    });
+
+    expect(result.runState.status).toBe("paused");
+    expect(result.runState.nodes.draft?.intervention).toMatchObject({
+      source: "hook_pause",
+      reason: "Approval required by hook.",
+    });
   });
 });

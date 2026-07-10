@@ -1,4 +1,13 @@
 import type { WorkflowV2ExecutionLeasePolicy } from "./supervision";
+import type { WorkflowV2HookActionDef, WorkflowV2NodeHooks } from "./hooks";
+export type {
+  WorkflowV2HookActionDef,
+  WorkflowV2HookActionKind,
+  WorkflowV2HookFailurePolicy,
+  WorkflowV2HookLifecycle,
+  WorkflowV2HookSource,
+  WorkflowV2NodeHooks,
+} from "./hooks";
 
 export type WorkflowV2NodeRole = "orchestrator" | "executor" | "reviewer";
 export type WorkflowV2ExecModel = "llm" | "script";
@@ -33,17 +42,6 @@ export interface WorkflowV2ContextBudget {
   maxEvidenceItems?: number;
   maxUpstreamNodes?: number;
   summaryFallbackPolicy?: "truncate" | "summarize" | "ask_human";
-}
-
-export interface WorkflowV2HookActionDef {
-  kind: string;
-  config?: Record<string, unknown>;
-}
-
-export interface WorkflowV2NodeHooks {
-  beforeExecute?: WorkflowV2HookActionDef[];
-  afterOutput?: WorkflowV2HookActionDef[];
-  afterComplete?: WorkflowV2HookActionDef[];
 }
 
 export interface WorkflowV2Edge {

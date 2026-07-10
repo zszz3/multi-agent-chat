@@ -6,6 +6,7 @@ import { isWorkflowV2InterventionAction, isWorkflowV2ReviewVerdict } from "./rev
 import type { WorkflowV2RunState } from "./state";
 import type { WorkflowV2ExecutionLeaseState, WorkflowV2ProgressReport } from "./supervision";
 import { isWorkflowV2ProgressReport } from "./supervision";
+import { isWorkflowV2HookJsonValue } from "./hooks";
 
 export const WORKFLOW_V2_STORAGE_SCHEMA_VERSION = 1;
 
@@ -48,6 +49,7 @@ export interface WorkflowV2DurableNodeControlState {
   extensionCount: number;
   stopReason?: string;
   interventionResolution?: WorkflowV2InterventionResolutionRecord;
+  hookVariables?: Record<string, unknown>;
 }
 
 export interface WorkflowV2InterventionResolutionRecord {
@@ -204,6 +206,7 @@ function isDurableNodeControlState(value: unknown): value is WorkflowV2DurableNo
   if (value.progressReport !== undefined && !isWorkflowV2ProgressReport(value.progressReport)) return false;
   if (value.lease !== undefined && !isExecutionLeaseState(value.lease)) return false;
   if (value.interventionResolution !== undefined && !isInterventionResolutionRecord(value.interventionResolution)) return false;
+  if (value.hookVariables !== undefined && (!isRecord(value.hookVariables) || !isWorkflowV2HookJsonValue(value.hookVariables))) return false;
   return true;
 }
 

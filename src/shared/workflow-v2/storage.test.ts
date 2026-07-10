@@ -7,6 +7,8 @@ import {
   WORKFLOW_V2_STORAGE_SCHEMA_VERSION,
   type WorkflowV2NodeCacheFingerprint,
 } from "./storage";
+import type { WorkflowV2Definition } from "./definition";
+import { createWorkflowV2RunState } from "./state";
 
 function fingerprint(): WorkflowV2NodeCacheFingerprint {
   return {
@@ -62,6 +64,53 @@ describe("workflow-v2 storage contracts", () => {
       fingerprint: fingerprint(),
       output: { nodeId: "other-node", summary: "done", outputs: {}, proposals: [] },
       savedAt: 1_000,
+    })).toBe(false);
+  });
+
+  test("accepts finite hook variables and rejects non-finite durable hook state", () => {
+    const definition: WorkflowV2Definition = {
+      workflowId: "workflow-1",
+      graphVersion: 3,
+      objective: "Persist hook state",
+      nodes: [{
+        id: "node-1",
+        kind: "worker",
+        title: "Worker",
+        execModel: "llm",
+        prompt: "Run",
+        outputFields: [{ key: "result", required: true }],
+      }],
+      edges: [],
+    };
+    const plan = {
+      workflowId: definition.workflowId,
+      graphVersion: definition.graphVersion,
+      objective: definition.objective,
+      definition,
+      nodes: [],
+      acceptanceCriteria: [],
+      roleDefaults: {},
+      budget: { context: { maxContextTokens: 1 } },
+      approvedBy: "tester",
+      frozenAt: 1,
+    };
+    const persisted = {
+      schemaVersion: WORKFLOW_V2_STORAGE_SCHEMA_VERSION,
+      workflowId: definition.workflowId,
+      runId: "run-1",
+      graphVersion: definition.graphVersion,
+      savedAt: 1,
+      eventCount: 0,
+      plan,
+      runState: createWorkflowV2RunState({ definition }),
+      workerOutputs: [],
+      nodeControl: { "node-1": { extensionCount: 0, hookVariables: { risk: ["low", 1] } } },
+    };
+
+    expect(isWorkflowV2PersistedRunState(persisted)).toBe(true);
+    expect(isWorkflowV2PersistedRunState({
+      ...persisted,
+      nodeControl: { "node-1": { extensionCount: 0, hookVariables: { risk: Number.NaN } } },
     })).toBe(false);
   });
 });

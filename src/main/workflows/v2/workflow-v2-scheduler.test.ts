@@ -125,6 +125,17 @@ describe("workflow-v2 scheduler", () => {
     expect(completedImplement.nodes.review!.blockedBy).toEqual(["docs"]);
   });
 
+  test("treats a skipped node as a satisfied dependency", () => {
+    const initial = createWorkflowV2RunState({ definition: definition(), maxParallelNodes: 2 });
+    const runningPlan = transitionWorkflowV2NodeState(initial, { nodeId: "plan", status: "running", now: 100 });
+    const skippedPlan = transitionWorkflowV2NodeState(runningPlan, { nodeId: "plan", status: "skipped", now: 120 });
+
+    expect(skippedPlan.nodes.plan?.status).toBe("skipped");
+    expect(skippedPlan.nodes.implement?.status).toBe("ready");
+    expect(skippedPlan.nodes.docs?.status).toBe("ready");
+    expect(listWorkflowV2RunnableNodeIds(skippedPlan)).toEqual(["implement"]);
+  });
+
   test("marks the run failed and leaves downstream nodes blocked when a dependency fails", () => {
     const failedState = transitionWorkflowV2NodeState(
       transitionWorkflowV2NodeState(

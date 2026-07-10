@@ -4,7 +4,7 @@
 
 ### Status
 
-Draft on 2026-07-10.
+Implemented and verified on 2026-07-10.
 
 ### This File Is Self-Contained
 
@@ -141,3 +141,27 @@ This phase is complete only when:
 - hook actions and safety boundaries are defined
 - hook source precedence is predictable
 - hooks extend the lifecycle without widening graph semantics
+
+### Implemented Contract
+
+- Lifecycle points are exactly `beforeExecute`, `afterOutput`, and `afterComplete`.
+- Hook sources compose in the stable order `template -> node -> user`; the compiled action records its source.
+- Supported actions are `pause`, `skip`, `injectContext`, `setVariable`, `readMemory`, `writeMemory`, `writeFile`, and `llmHook`.
+- Hook failure policy is explicit per action: `fail_node` (default), `pause_run`, or `skip_hook`.
+- `pause` and `skip` are allowed before execution and after raw output, but not after completion.
+- `llmHook` requires `readOnly=true`, `modelProfile=fast`, a bounded prompt, and a JSON output variable. It runs as a separate TaskRun in the main process, receives bounded context, has no tool surface, and remains subject to the workflow model-call budget.
+- Only finite JSON variables are accepted and persisted. Injected context is capped at 12,000 characters.
+- Hook definitions and handler results reject routing/review fields. Hooks cannot return edges, target nodes, graph versions, review decisions, or any handler field outside variables, injected context, and pause/skip control.
+- `writeFile` accepts only a safe relative path and the runtime enforces containment within the workflow work directory.
+- Hook pause uses the same durable intervention boundary as validation, review, and supervision; hook skip emits an explicit result packet so downstream nodes can continue.
+
+### Verification Evidence
+
+The Phase 06 focused suite covers shared contracts, definition validation, template composition, durable state, hook runtime, scheduler propagation, executor lifecycle/control, and the real WorkflowRuntime bridge:
+
+```text
+8 test files passed
+143 tests passed
+```
+
+The full `npm run typecheck` passes. Compatibility imports left behind by the synchronized `origin/main` directory refactor were corrected to point at the moved Claude, Codex, Hermes, platform, and executor modules.

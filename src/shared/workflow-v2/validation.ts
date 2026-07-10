@@ -15,6 +15,7 @@ import type {
 import { isWorkflowV2ExecutionLeasePolicy } from "./supervision";
 import type { WorkflowV2TemplateRegistry } from "./templates";
 import { compileWorkflowV2Definition, WorkflowV2TemplateCompileError } from "./templates";
+import { workflowV2NodeHookValidationErrors } from "./hooks";
 
 const VALID_SANDBOX_MODES: ReadonlySet<WorkflowV2ScriptSandboxMode> = new Set(["sandbox", "workspace", "full"]);
 const VALID_SCRIPT_LANGUAGES = new Set(["python", "typescript", "bash"]);
@@ -114,6 +115,9 @@ function appendNodeValidationErrors(node: WorkflowV2Node, errors: string[]): voi
   if (node.executionLease !== undefined && !isWorkflowV2ExecutionLeasePolicy(node.executionLease)) {
     errors.push(`Workflow V2 node ${node.id} has an invalid execution lease policy.`);
   }
+  errors.push(...workflowV2NodeHookValidationErrors(node.hooks).map(
+    (error) => `Workflow V2 node ${node.id} ${error}`,
+  ));
 
   if (!Array.isArray(node.outputFields) || node.outputFields.length === 0) {
     errors.push(`Workflow V2 node ${node.id} must declare at least one output field.`);

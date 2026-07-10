@@ -99,4 +99,37 @@ describe("workflow-v2 templates", () => {
       sandboxMode: "workspace",
     });
   });
+
+  test("composes template hooks before user override hooks without replacing either source", () => {
+    const templates: WorkflowV2NodeTemplate[] = [{
+      id: "hooked",
+      kind: "worker",
+      execModel: "llm",
+      prompt: "Run {{params.topic}}.",
+      outputFields: [{ key: "result", required: true }],
+      hooks: {
+        beforeExecute: [{ kind: "setVariable", config: { key: "template", value: true } }],
+      },
+    }];
+
+    const compiled = compileWorkflowV2Definition({
+      workflowId: "wf-v2-hooks",
+      graphVersion: 1,
+      objective: "Compile hooks",
+      nodes: [{
+        id: "n1",
+        templateId: "hooked",
+        params: { topic: "hooks" },
+        overrides: {
+          hooks: { beforeExecute: [{ kind: "injectContext", config: { text: "user context" } }] },
+        },
+      }],
+      edges: [],
+    }, createWorkflowV2TemplateRegistry(templates));
+
+    expect(compiled.nodes[0]?.hooks?.beforeExecute).toEqual([
+      expect.objectContaining({ kind: "setVariable", source: "template" }),
+      expect.objectContaining({ kind: "injectContext", source: "user" }),
+    ]);
+  });
 });

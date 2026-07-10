@@ -31,6 +31,8 @@ import {
 } from "./workflow-v2-reviewer";
 import { validateWorkflowV2NodeOutput } from "./workflow-v2-validation";
 import { WorkflowV2SupervisionSignal } from "./workflow-v2-supervision-signal";
+import type { WorkflowV2HookLifecycle } from "../../../shared/workflow-v2/hooks";
+import { WorkflowV2HookSignal } from "./workflow-v2-hooks";
 
 export interface ExecuteWorkflowV2PlanInput {
   plan: WorkflowV2Plan;
@@ -56,6 +58,11 @@ export interface ExecuteWorkflowV2PlanInput {
   }) => boolean;
   reviewNodeOutput?: (input: WorkflowV2ReviewerInput) => Promise<WorkflowV2ReviewerResponse>;
   forceIndependentReviewNodeIds?: ReadonlySet<string>;
+  runNodeHooks?: (input: {
+    lifecycle: WorkflowV2HookLifecycle;
+    node: WorkflowV2Node;
+    output?: WorkflowV2WorkerOutput;
+  }) => Promise<void>;
   onNodeStateTransition?: (input: WorkflowV2NodeStateTransitionEvent) => void;
   onRunCheckpoint?: (input: ExecuteWorkflowV2Checkpoint) => Promise<void>;
   now?: () => number;
@@ -69,6 +76,7 @@ export interface ExecuteWorkflowV2Checkpoint {
 export type WorkflowV2NodeStateTransitionEvent =
   | { nodeId: string; status: "running" }
   | { nodeId: string; status: "completed"; output: WorkflowV2WorkerOutput }
+  | { nodeId: string; status: "skipped"; output: WorkflowV2WorkerOutput }
   | { nodeId: string; status: "paused"; intervention: WorkflowV2HumanIntervention }
   | { nodeId: string; status: "failed"; error: string };
 
@@ -155,6 +163,7 @@ export async function executeWorkflowV2Plan(input: ExecuteWorkflowV2PlanInput): 
         upstreamOutputs,
         runLlmNode: input.runLlmNode,
         executeScript: input.executeScript,
+        runNodeHooks: input.runNodeHooks,
       })),
     );
 
@@ -162,6 +171,22 @@ export async function executeWorkflowV2Plan(input: ExecuteWorkflowV2PlanInput): 
       const settledNode = settledBatch[index]!;
 
       if (settledNode.status === "rejected") {
+        if (settledNode.reason instanceof WorkflowV2HookSignal) {
+          if (settledNode.reason.action === "skip") {
+            recordSkippedOutput(settledNode.reason.reason);
+            continue;
+          }
+          const intervention = createIntervention(nodeId, "hook_pause", settledNode.reason.reason, now());
+          runState = transitionWorkflowV2NodeState(runState, {
+            nodeId,
+            status: "paused",
+            now: now(),
+            error: settledNode.reason.reason,
+            intervention,
+          });
+          input.onNodeStateTransition?.({ nodeId, status: "paused", intervention });
+          continue;
+        }
         if (settledNode.reason instanceof WorkflowV2SupervisionSignal) {
           const signal = settledNode.reason;
           const attempt = runState.nodes[nodeId]!.attempt;
@@ -175,8 +200,7 @@ export async function executeWorkflowV2Plan(input: ExecuteWorkflowV2PlanInput): 
             continue;
           }
           if (signal.resolution.action === "retry" && exhaustedPolicyFor(node) === "skip") {
-            workerOutputsByNodeId.set(nodeId, createSkippedOutput(nodeId, signal.resolution.reason));
-            runState = transitionWorkflowV2NodeState(runState, { nodeId, status: "skipped", now: now() });
+            recordSkippedOutput(signal.resolution.reason);
             continue;
           }
           if (
@@ -254,9 +278,7 @@ export async function executeWorkflowV2Plan(input: ExecuteWorkflowV2PlanInput): 
             continue;
           }
           if (exhaustedPolicyFor(node) === "skip") {
-            const skippedOutput = createSkippedOutput(nodeId, validationReason);
-            workerOutputsByNodeId.set(nodeId, skippedOutput);
-            runState = transitionWorkflowV2NodeState(runState, { nodeId, status: "skipped", now: now() });
+            recordSkippedOutput(validationReason);
             continue;
           }
           failNode(validationReason || `Workflow V2 node ${nodeId} failed mechanical validation.`);
@@ -344,8 +366,7 @@ export async function executeWorkflowV2Plan(input: ExecuteWorkflowV2PlanInput): 
             continue;
           }
           if (resolution.action === "skip") {
-            workerOutputsByNodeId.set(nodeId, createSkippedOutput(nodeId, resolution.reason));
-            runState = transitionWorkflowV2NodeState(runState, { nodeId, status: "skipped", now: now() });
+            recordSkippedOutput(resolution.reason);
             continue;
           }
           if (resolution.action === "pause" || resolution.action === "escalate") {
@@ -368,11 +389,32 @@ export async function executeWorkflowV2Plan(input: ExecuteWorkflowV2PlanInput): 
           }
         }
 
+        await input.runNodeHooks?.({
+          lifecycle: "afterComplete",
+          node,
+          output: cloneWorkflowV2WorkerOutput(authoritativeWorkerOutput),
+        });
         workerOutputs.push(authoritativeWorkerOutput);
         workerOutputsByNodeId.set(nodeId, authoritativeWorkerOutput);
         runState = transitionWorkflowV2NodeState(runState, { nodeId, status: "completed", now: now() });
         input.onNodeStateTransition?.({ nodeId, status: "completed", output: cloneWorkflowV2WorkerOutput(authoritativeWorkerOutput) });
       } catch (error) {
+        if (error instanceof WorkflowV2HookSignal) {
+          if (error.action === "skip") {
+            recordSkippedOutput(error.reason);
+            continue;
+          }
+          const intervention = createIntervention(nodeId, "hook_pause", error.reason, now());
+          runState = transitionWorkflowV2NodeState(runState, {
+            nodeId,
+            status: "paused",
+            now: now(),
+            error: error.reason,
+            intervention,
+          });
+          input.onNodeStateTransition?.({ nodeId, status: "paused", intervention });
+          continue;
+        }
         const failureMessage = error instanceof Error ? error.message : String(error);
         runState = transitionWorkflowV2NodeState(runState, {
           nodeId,
@@ -386,6 +428,14 @@ export async function executeWorkflowV2Plan(input: ExecuteWorkflowV2PlanInput): 
       function failNode(error: string): void {
         runState = transitionWorkflowV2NodeState(runState, { nodeId, status: "failed", now: now(), error });
         input.onNodeStateTransition?.({ nodeId, status: "failed", error });
+      }
+
+      function recordSkippedOutput(reason: string): void {
+        const skippedOutput = createSkippedOutput(nodeId, reason);
+        workerOutputs.push(skippedOutput);
+        workerOutputsByNodeId.set(nodeId, skippedOutput);
+        runState = transitionWorkflowV2NodeState(runState, { nodeId, status: "skipped", now: now() });
+        input.onNodeStateTransition?.({ nodeId, status: "skipped", output: cloneWorkflowV2WorkerOutput(skippedOutput) });
       }
     }
     if (input.onRunCheckpoint) await checkpoint();
@@ -462,24 +512,29 @@ async function executeWorkflowV2Node(input: {
   upstreamOutputs: readonly WorkflowV2ResultPacket[];
   runLlmNode: ExecuteWorkflowV2PlanInput["runLlmNode"];
   executeScript: ExecuteWorkflowV2PlanInput["executeScript"];
+  runNodeHooks: ExecuteWorkflowV2PlanInput["runNodeHooks"];
 }): Promise<WorkflowV2WorkerOutput> {
+  await input.runNodeHooks?.({ lifecycle: "beforeExecute", node: input.node });
+  let output: WorkflowV2WorkerOutput;
   if (input.node.execModel === "llm") {
-    return runWorkflowV2LlmNode({
+    output = await runWorkflowV2LlmNode({
       node: input.node,
       planNode: input.planNode,
       taskPacket: input.planNode.taskPacket,
       upstreamOutputs: input.upstreamOutputs,
       runLlmNode: input.runLlmNode,
     });
+  } else {
+    output = await runWorkflowV2ScriptNode({
+      node: input.node,
+      planNode: input.planNode,
+      taskPacket: input.planNode.taskPacket,
+      upstreamOutputs: input.upstreamOutputs,
+      executeScript: input.executeScript,
+    });
   }
-
-  return runWorkflowV2ScriptNode({
-    node: input.node,
-    planNode: input.planNode,
-    taskPacket: input.planNode.taskPacket,
-    upstreamOutputs: input.upstreamOutputs,
-    executeScript: input.executeScript,
-  });
+  await input.runNodeHooks?.({ lifecycle: "afterOutput", node: input.node, output: cloneWorkflowV2WorkerOutput(output) });
+  return output;
 }
 
 function collectDirectUpstreamOutputs(

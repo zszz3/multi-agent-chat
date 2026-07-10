@@ -17,11 +17,11 @@
 - Create: `src/shared/workflow-v2/hooks.test.ts`
 - Modify: `src/shared/workflow-v2/definition.ts`
 
-- [ ] **Step 1: Define hook lifecycle points and action taxonomy**
+- [x] **Step 1: Define hook lifecycle points and action taxonomy**
 
-- [ ] **Step 2: Add source precedence for node-defined, template-defined, and user-added hooks**
+- [x] **Step 2: Add source precedence for node-defined, template-defined, and user-added hooks**
 
-- [ ] **Step 3: Keep `llmHook` read-only and low-cost by default**
+- [x] **Step 3: Keep `llmHook` read-only and low-cost by default**
 
 ### Task 2: Implement Hook Runtime
 
@@ -30,11 +30,11 @@
 - Create: `src/main/workflows/v2/workflow-v2-hooks.test.ts`
 - Modify: `src/main/workflows/v2/workflow-v2-scheduler.ts`
 
-- [ ] **Step 1: Run hooks at explicit lifecycle boundaries**
+- [x] **Step 1: Run hooks at explicit lifecycle boundaries**
 
-- [ ] **Step 2: Accumulate hook context variables predictably**
+- [x] **Step 2: Accumulate hook context variables predictably**
 
-- [ ] **Step 3: Define hook failure policy explicitly**
+- [x] **Step 3: Define hook failure policy explicitly**
 
 ```ts
 type HookFailurePolicy = "fail_node" | "pause_run" | "skip_hook";
@@ -47,28 +47,29 @@ type HookFailurePolicy = "fail_node" | "pause_run" | "skip_hook";
 - Modify: `src/main/workflows/v2/workflow-v2-planner.ts`
 - Modify: `src/main/workflows/workflow-runtime.test.ts`
 
-- [ ] **Step 1: Ensure hooks cannot inject hidden edge semantics or bypass review/routing boundaries**
+- [x] **Step 1: Ensure hooks cannot inject hidden edge semantics or bypass review/routing boundaries**
 
-- [ ] **Step 2: Keep hook execution outside agent and script executors**
+- [x] **Step 2: Keep hook execution outside agent and script executors**
 
-- [ ] **Step 3: Add regression coverage for forbidden side-effect patterns**
+- [x] **Step 3: Add regression coverage for forbidden side-effect patterns**
 
 ### Task 4: Verification
 
 **Files:**
 - Modify: tests only as needed
 
-- [ ] **Step 1: Run focused hook tests**
+- [x] **Step 1: Run focused hook tests**
 
 Run:
 
 ```bash
-npx vitest run src/shared/workflow-v2/hooks.test.ts src/main/workflows/v2/workflow-v2-hooks.test.ts
+npm test -- --run src/shared/workflow-v2/hooks.test.ts src/main/workflows/v2/workflow-v2-hooks.test.ts src/main/workflows/v2/workflow-v2-executor.test.ts src/main/workflows/v2/workflow-v2-scheduler.test.ts src/main/workflows/workflow-runtime.test.ts src/shared/workflow-v2/templates.test.ts src/shared/workflow-v2/storage.test.ts src/shared/workflow-v2/validation.test.ts
 ```
 
-Expected: all pass
+Result: 8 files and 143 tests pass.
 
-- [ ] **Step 2: Run typecheck**
+- [x] **Step 2: Run typecheck**
 
 Run: `npm run typecheck`
-Expected: exit code `0`
+
+Result on 2026-07-10: exit code `0`. Compatibility imports left behind by the synchronized `origin/main` directory refactor were corrected before verification.

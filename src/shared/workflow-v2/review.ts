@@ -51,7 +51,8 @@ export interface WorkflowV2HumanIntervention {
     | "review_rejection"
     | "review_escalation"
     | "supervision_pause"
-    | "supervision_escalation";
+    | "supervision_escalation"
+    | "hook_pause";
   reason: string;
   allowedActions: WorkflowV2InterventionAction[];
   requestedAt: number;
@@ -93,7 +94,8 @@ function isInterventionSource(value: unknown): value is WorkflowV2HumanIntervent
     || value === "review_rejection"
     || value === "review_escalation"
     || value === "supervision_pause"
-    || value === "supervision_escalation";
+    || value === "supervision_escalation"
+    || value === "hook_pause";
 }
 
 export function isWorkflowV2InterventionAction(value: unknown): value is WorkflowV2InterventionAction {

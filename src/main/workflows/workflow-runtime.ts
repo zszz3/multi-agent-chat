@@ -29,7 +29,7 @@ import type {
   WorkflowV2ResultPacket,
   WorkflowV2TaskPacket,
 } from "../../shared/workflow-v2/planning";
-import { mkdir } from "node:fs/promises";
+import { mkdir, writeFile } from "node:fs/promises";
 import path from "node:path";
 import { isDeepStrictEqual } from "node:util";
 import { DEFAULT_MODEL_ID } from "../../shared/models";
@@ -108,6 +108,13 @@ import {
   materializeWorkflowV2Recovery,
 } from "./v2/workflow-v2-recovery";
 import { transitionWorkflowV2NodeState } from "./v2/workflow-v2-scheduler";
+import { isWorkflowV2HookJsonValue } from "../../shared/workflow-v2/hooks";
+import {
+  createWorkflowV2HookRegistry,
+  runWorkflowV2HookChain,
+  WorkflowV2HookSignal,
+  type WorkflowV2HookChainResult,
+} from "./v2/workflow-v2-hooks";
 
 export interface WorkflowRunStateUpdate {
   workflowId: string;
@@ -435,6 +442,20 @@ export function parseWorkflowV2WorkerArtifact(node: WorkflowV2LLMNode, artifact:
 function unwrapJsonFence(content: string): string {
   const fenced = content.match(/^```(?:json)?\s*\n([\s\S]*?)\n```$/i);
   return fenced?.[1]?.trim() ?? content;
+}
+
+function parseWorkflowV2HookLlmValue(content: string): unknown {
+  const normalized = content.trim();
+  if (!normalized) throw new Error("Workflow V2 llmHook returned an empty response.");
+  let parsed: unknown;
+  try {
+    parsed = JSON.parse(unwrapJsonFence(normalized)) as unknown;
+  } catch (error) {
+    const message = error instanceof Error ? error.message : String(error);
+    throw new Error(`Workflow V2 llmHook returned invalid JSON: ${message}`);
+  }
+  if (!isWorkflowV2HookJsonValue(parsed)) throw new Error("Workflow V2 llmHook returned a non-finite JSON value.");
+  return parsed;
 }
 
 function parseStructuredWorkflowV2WorkerOutput(expectedNodeId: string, value: unknown): WorkflowV2WorkerOutput {
@@ -1235,6 +1256,10 @@ export class WorkflowRuntime {
     const durableNodeControl: Record<string, WorkflowV2DurableNodeControlState> = input.initialNodeControl
       ? structuredClone(input.initialNodeControl)
       : Object.fromEntries(plan.definition.nodes.map((node) => [node.id, { extensionCount: 0 }]));
+    const hookVariablesByNodeId = new Map<string, Record<string, unknown>>(
+      Object.entries(durableNodeControl).map(([nodeId, control]) => [nodeId, structuredClone(control.hookVariables ?? {})]),
+    );
+    const hookInjectedContextByNodeId = new Map<string, string[]>();
     let latestSnapshot = this.deps.snapshot();
     let latestProgress = plan.definition.nodes.map((node): WorkflowRunProgressItem => {
       const recovered = input.initialCheckpoint?.runState.nodes[node.id];
@@ -1796,7 +1821,12 @@ export class WorkflowRuntime {
         node: request.node,
         taskPacket: effectiveTaskPacket,
         upstreamOutputs: request.upstreamOutputs,
-        baseWorkflowContextDocument,
+        baseWorkflowContextDocument: [
+          baseWorkflowContextDocument,
+          ...(hookInjectedContextByNodeId.get(request.node.id)?.length
+            ? ["# Hook-injected context", ...hookInjectedContextByNodeId.get(request.node.id)!]
+            : []),
+        ].filter(Boolean).join("\n\n"),
         storagePlanDocument,
       });
       const recoveryCheckpoint = consumedRecoveryNodeIds.has(request.node.id)
@@ -1950,6 +1980,106 @@ export class WorkflowRuntime {
       }
     };
 
+    const hookMemory = new Map<string, unknown>();
+    const hookRegistry = createWorkflowV2HookRegistry({
+      readMemory: async (key) => structuredClone(hookMemory.get(key) ?? null),
+      writeMemory: async (key, value) => {
+        hookMemory.set(key, structuredClone(value));
+      },
+      writeFile: async (relativePath, content) => {
+        if (!relativePath.trim() || path.isAbsolute(relativePath)) {
+          throw new Error("Workflow V2 writeFile hook requires a relative path.");
+        }
+        const targetPath = path.resolve(workflowWorkDir, relativePath);
+        const relativeToRoot = path.relative(workflowWorkDir, targetPath);
+        if (!relativeToRoot || relativeToRoot.startsWith("..") || path.isAbsolute(relativeToRoot)) {
+          throw new Error("Workflow V2 writeFile hook path must stay inside the workflow work directory.");
+        }
+        await mkdir(path.dirname(targetPath), { recursive: true });
+        await writeFile(targetPath, content, "utf8");
+      },
+      runReadOnlyLlm: async ({ prompt: hookPrompt, context }) => {
+        const boundedHookContext = truncateWorkflowContext(JSON.stringify({
+          ...context,
+          runContext: truncateWorkflowContext(context.runContext, 6_000),
+        }), 12_000);
+        const task = await startModelTask(`hook:${context.nodeId}`, {
+          prompt: [
+            "Run one read-only, low-cost Workflow V2 llmHook.",
+            "Model profile: fast.",
+            "Do not call tools, modify files, navigate the graph, judge node completion, or request workflow control.",
+            "Return one JSON value only.",
+            `Hook instruction: ${hookPrompt}`,
+            `Hook context: ${boundedHookContext}`,
+          ].join("\n\n"),
+          configuredAgentId,
+          modelId,
+          workDir: workflowWorkDir,
+        });
+        try {
+          const completedTask = await waitForTask(task.id, context.nodeId);
+          return parseWorkflowV2HookLlmValue(taskArtifact(completedTask));
+        } finally {
+          latestSnapshot = await this.deps.deleteTask(task.id);
+        }
+      },
+    });
+    const persistHookResult = async (
+      nodeId: string,
+      lifecycle: "beforeExecute" | "afterOutput" | "afterComplete",
+      result: WorkflowV2HookChainResult,
+    ): Promise<void> => {
+      hookVariablesByNodeId.set(nodeId, structuredClone(result.variables));
+      if (result.injectedContext.length > 0) {
+        hookInjectedContextByNodeId.set(nodeId, [
+          ...(hookInjectedContextByNodeId.get(nodeId) ?? []),
+          ...result.injectedContext,
+        ]);
+      }
+      durableNodeControl[nodeId] = {
+        ...(durableNodeControl[nodeId] ?? { extensionCount: 0 }),
+        hookVariables: structuredClone(result.variables),
+      };
+      await persistLatestControlState(
+        nodeId,
+        `hooks_${lifecycle}`,
+        result.records.map((record) => `${record.kind}:${record.status}`).join(", ") || "No hooks",
+      );
+    };
+    const runNodeHooks: NonNullable<Parameters<typeof executeWorkflowV2Plan>[0]["runNodeHooks"]> = async ({
+      lifecycle,
+      node,
+      output,
+    }) => {
+      if ((node.hooks?.[lifecycle]?.length ?? 0) === 0) return;
+      try {
+        const existingVariables = hookVariablesByNodeId.get(node.id);
+        const result = await runWorkflowV2HookChain({
+          hooks: node.hooks,
+          lifecycle,
+          context: {
+            workflowId: workflow.workflowId,
+            runId,
+            nodeId: node.id,
+            runContext: baseWorkflowContextDocument,
+            ...(output ? { output: structuredClone(output) } : {}),
+          },
+          ...(existingVariables ? { variables: existingVariables } : {}),
+          registry: hookRegistry,
+        });
+        await persistHookResult(node.id, lifecycle, result);
+      } catch (error) {
+        if (error instanceof WorkflowV2HookSignal) {
+          await persistHookResult(node.id, lifecycle, {
+            variables: structuredClone(error.variables),
+            injectedContext: [...error.injectedContext],
+            records: structuredClone(error.records),
+          });
+        }
+        throw error;
+      }
+    };
+
     try {
       this.deps.updateWorkflowRunState({
         workflowId: workflow.workflowId,
@@ -1965,6 +2095,7 @@ export class WorkflowRuntime {
         runLlmNode,
         executeScript: runScriptNode,
         reviewNodeOutput,
+        runNodeHooks,
         forceIndependentReviewNodeIds: new Set(
           [...(input.recoveryOverrides?.entries() ?? [])]
             .filter(([, override]) => override.forceIndependentReview)
@@ -1980,6 +2111,12 @@ export class WorkflowRuntime {
               detail: "Starting",
             });
           } else if (transition.status === "completed") {
+            updateNode(transition.nodeId, { status: "completed", detail: transition.output.summary }, {
+              type: "node_completed",
+              nodeId: transition.nodeId,
+              detail: transition.output.summary,
+            }, true);
+          } else if (transition.status === "skipped") {
             updateNode(transition.nodeId, { status: "completed", detail: transition.output.summary }, {
               type: "node_completed",
               nodeId: transition.nodeId,

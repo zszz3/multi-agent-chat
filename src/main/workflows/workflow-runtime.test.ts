@@ -509,6 +509,86 @@ describe("WorkflowRuntime Workflow V2 bridge", () => {
     expect(fixture.taskRequests[1]?.prompt).toContain('"executorNodeId":"draft"');
   });
 
+  test("executes hooks around a real node TaskRun and durably accumulates hook variables", async () => {
+    const definition = workflowV2Definition();
+    const draftNode = definition.nodes[0]!;
+    if (draftNode.execModel !== "llm") throw new Error("test requires an llm node");
+    draftNode.hooks = {
+      beforeExecute: [
+        { kind: "setVariable", config: { key: "scope", value: "HOOK_CONTEXT_SENTINEL" } },
+        { kind: "injectContext", config: { fromVariable: "scope" } },
+      ],
+      afterOutput: [{
+        kind: "llmHook",
+        config: {
+          readOnly: true,
+          modelProfile: "fast",
+          prompt: "Extract the output risk.",
+          outputVariable: "risk",
+        },
+      }],
+      afterComplete: [{ kind: "setVariable", config: { key: "complete", value: true } }],
+    };
+    definition.nodes = [draftNode];
+    definition.edges = [];
+    const persistedStates: import("../../shared/workflow-v2/storage").WorkflowV2PersistedRunState[] = [];
+    const durableEvents: import("../../shared/workflow-v2/storage").WorkflowV2DurableEvent[] = [];
+    const fixture = await workflowV2RuntimeFixture({
+      definition,
+      store: {
+        persistRunState: async (state) => {
+          persistedStates.push(structuredClone(state));
+        },
+        appendEvents: async ({ events }) => {
+          durableEvents.push(...structuredClone(events));
+        },
+      },
+      taskFactory: (request, index) => ({
+        id: `task-${index}`,
+        title: request.prompt.includes("read-only, low-cost Workflow V2 llmHook") ? "Read-only hook" : "Workflow worker",
+        status: "completed",
+        prompt: request.prompt,
+        configuredAgentId: request.configuredAgentId,
+        messages: [{
+          role: "assistant",
+          content: request.prompt.includes("read-only, low-cost Workflow V2 llmHook")
+            ? JSON.stringify({ severity: "low" })
+            : JSON.stringify({
+                nodeId: "draft",
+                summary: "Hooked draft ready",
+                outputs: { draft: "const hooked = true;" },
+                proposals: [],
+              }),
+        }],
+        createdAt: index,
+        updatedAt: index,
+      } as TaskRun),
+      executeScript: async () => {
+        throw new Error("script runner should not be called");
+      },
+    });
+
+    fixture.runtime.runWorkflowGraph({ workflowId: fixture.workflow.workflowId });
+    const finished = await fixture.finished;
+
+    expect(finished.status).toBe("completed");
+    expect(fixture.taskRequests).toHaveLength(2);
+    expect(fixture.taskRequests[0]?.prompt).toContain("# Hook-injected context");
+    expect(fixture.taskRequests[0]?.prompt).toContain("HOOK_CONTEXT_SENTINEL");
+    expect(fixture.taskRequests[1]?.prompt).toContain("Do not call tools, modify files, navigate the graph");
+    expect(fixture.taskRequests[1]?.prompt).toContain("Model profile: fast");
+    expect(persistedStates.at(-1)?.nodeControl.draft?.hookVariables).toEqual({
+      scope: "HOOK_CONTEXT_SENTINEL",
+      risk: { severity: "low" },
+      complete: true,
+    });
+    expect(durableEvents.map((event) => event.type)).toEqual(expect.arrayContaining([
+      "hooks_beforeExecute",
+      "hooks_afterOutput",
+      "hooks_afterComplete",
+    ]));
+  });
+
   test("probes, supervises, and resumes an llm task after its execution lease becomes inactive", async () => {
     const definition = workflowV2Definition();
     const draftNode = definition.nodes[0]!;
