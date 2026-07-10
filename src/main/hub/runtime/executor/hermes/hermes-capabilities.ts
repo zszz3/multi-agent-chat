@@ -8,7 +8,6 @@ export const hermesSurfaceSupport: RuntimeSurfaceSupport[] = [
   support("task", ["oneshot"], ["fresh"]),
   support("workflow", ["oneshot"], ["fresh"]),
   support("channel-test", ["oneshot"], ["fresh"]),
-  support("cleanup", ["oneshot"], ["fresh"]),
 ];
 
 export function getHermesCapabilities(runtime: AgentRuntime): RuntimeCapabilities {

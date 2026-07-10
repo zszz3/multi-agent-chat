@@ -1,15 +1,15 @@
-import { runtimeModelId } from "../../../../shared/models";
-import { codexEnvironmentForChannel } from "../../../agents/codex/codex-env";
-import { CodexRpcClient } from "../../../agents/codex/codex-rpc";
-import { codexRuntimeStateCodec } from "../../../agents/runtime/runtime-state-codec";
-import { codexAppServerConfigArgs } from "../../../channels/model-config";
-import { codexThreadIdFromConversation } from "./agent-executor-conversation";
+import { runtimeModelId } from "../../../../../shared/models";
+import { codexEnvironmentForChannel } from "../../../../agents/codex/codex-env";
+import { CodexRpcClient } from "../../../../agents/codex/codex-rpc";
+import { codexRuntimeStateCodec } from "../../../../agents/runtime/runtime-state-codec";
+import { codexAppServerConfigArgs } from "../../../../channels/model-config";
+import { codexThreadIdFromConversation } from "../agent-executor-conversation";
 import type {
   AgentExecutionContext,
   AgentExecutor,
   RuntimeAgentExecutorFactoryOptions,
-} from "./agent-executor-types";
-import { modelFromRuntimeConfig } from "./agent-executor-types";
+} from "../agent-executor-types";
+import { modelFromRuntimeConfig } from "../agent-executor-types";
 
 export class CodexAgentExecutor implements AgentExecutor {
   private client: CodexRpcClient | undefined;

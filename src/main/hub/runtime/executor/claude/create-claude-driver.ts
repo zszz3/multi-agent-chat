@@ -5,7 +5,6 @@ import { claudeCliModelForChannel } from "../../../../agents/claude/claude-env";
 import type { RuntimeDriver } from "../../../../agents/runtime/runtime-driver";
 import { claudeRuntimeStateCodec } from "../../../../agents/runtime/runtime-state-codec";
 import { createInteractiveRuntimeDriver } from "../agent-executor-driver-factories";
-import { ClaudeAgentExecutor } from "../agent-executor-claude";
 import { modelFromRuntimeConfig, type RuntimeAgentExecutorFactoryOptions } from "../agent-executor-types";
 import {
   claudeInteractiveSessionCapabilities,
@@ -13,6 +12,8 @@ import {
   getClaudeCapabilities,
 } from "./claude-capabilities";
 import { deleteClaudeSessionArtifacts } from "./claude-cleanup";
+import { ClaudeAgentExecutor } from "./claude-executor";
+import { runClaudeChannelTest } from "./claude-test";
 import { runClaudeWorkflow } from "./claude-workflow";
 
 export function createClaudeDriver(options: RuntimeAgentExecutorFactoryOptions): RuntimeDriver {
@@ -22,6 +23,7 @@ export function createClaudeDriver(options: RuntimeAgentExecutorFactoryOptions):
   const claudeSdkAdapter = new ClaudeAgentSdkAdapter();
   const runClaudeOneShot =
     options.runClaudeOneShot ?? ((input: ClaudeAgentSdkRunInput) => claudeSdkAdapter.runOneShot(input));
+  const oneShotAdapter: Pick<ClaudeAgentSdkAdapter, "runOneShot"> = { runOneShot: runClaudeOneShot };
 
   return createInteractiveRuntimeDriver({
     runtimeId: "claude",
@@ -31,7 +33,7 @@ export function createClaudeDriver(options: RuntimeAgentExecutorFactoryOptions):
     createOneShotExecutor: (context) =>
       new ClaudeAgentExecutor(
         context,
-        claudeSdkAdapter,
+        oneShotAdapter,
         claudeCliModelForChannel(options.channelById(context.channelId), modelFromRuntimeConfig(context.runtimeConfig)),
       ),
     createInteractiveSession: (context) =>
@@ -48,7 +50,7 @@ export function createClaudeDriver(options: RuntimeAgentExecutorFactoryOptions):
         },
       ),
     askWorkflow: askWorkflowByRuntime.claude ?? ((input) => runClaudeWorkflow(input, options, runClaudeOneShot)),
-    testChannel: testChannelByRuntime.claude,
+    testChannel: testChannelByRuntime.claude ?? ((input) => runClaudeChannelTest(input, options, oneShotAdapter)),
     deleteSessionArtifacts:
       deleteSessionArtifactsByRuntime.claude ??
       ((input) => deleteClaudeSessionArtifacts(input)),

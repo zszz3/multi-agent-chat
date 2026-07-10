@@ -29,10 +29,6 @@ export interface ClaudeRuntimeConversationPayload {
   extensions?: Record<string, unknown>;
 }
 
-export interface HermesRuntimeConversationPayload {
-  sessionId: string;
-}
-
 export interface RuntimeStateCodec<TState> {
   runtimeId: AgentId;
   restorePersistedConversation(raw: unknown): RuntimeConversation | undefined;
@@ -173,13 +169,6 @@ function decodeClaudePayload(raw: unknown): ClaudeRuntimeConversationPayload | u
   };
 }
 
-function decodeHermesPayload(raw: unknown): HermesRuntimeConversationPayload | undefined {
-  const record = asRecord(raw);
-  const sessionId = asString(record?.sessionId);
-  if (!sessionId) return undefined;
-  return { sessionId };
-}
-
 function createRuntimeStateCodec<TState>(input: {
   runtimeId: AgentId;
   decodePayload: (raw: unknown) => TState | undefined;
@@ -214,9 +203,4 @@ export const codexRuntimeStateCodec = createRuntimeStateCodec<CodexRuntimeConver
 export const claudeRuntimeStateCodec = createRuntimeStateCodec<ClaudeRuntimeConversationPayload>({
   runtimeId: "claude",
   decodePayload: decodeClaudePayload,
-});
-
-export const hermesRuntimeStateCodec = createRuntimeStateCodec<HermesRuntimeConversationPayload>({
-  runtimeId: "hermes",
-  decodePayload: decodeHermesPayload,
 });

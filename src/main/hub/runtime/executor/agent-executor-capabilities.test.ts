@@ -121,7 +121,6 @@ describe("runtime capability declarations", () => {
       { surface: "task", executionModes: ["oneshot"], continuationPolicies: ["fresh"] },
       { surface: "workflow", executionModes: ["oneshot"], continuationPolicies: ["fresh"] },
       { surface: "channel-test", executionModes: ["oneshot"], continuationPolicies: ["fresh"] },
-      { surface: "cleanup", executionModes: ["oneshot"], continuationPolicies: ["fresh"] },
     ]);
     expect(registry.driverFor("api").getCapabilities(runtime("api"))).toMatchObject({
       chatStyle: "oneshot",
@@ -146,7 +145,6 @@ describe("runtime capability declarations", () => {
       { surface: "task", executionModes: ["oneshot"], continuationPolicies: ["fresh"] },
       { surface: "workflow", executionModes: ["oneshot"], continuationPolicies: ["fresh"] },
       { surface: "channel-test", executionModes: ["oneshot"], continuationPolicies: ["fresh"] },
-      { surface: "cleanup", executionModes: ["oneshot"], continuationPolicies: ["fresh"] },
     ]);
     expect(registry.driverFor("hermes").getCapabilities(runtime("hermes"))).toMatchObject({
       chatStyle: "oneshot",

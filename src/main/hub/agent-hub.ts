@@ -77,16 +77,11 @@ import { createWorkflowGraphFromObjective, validateWorkflowGraph } from "../../s
 import { defaultWorkflowWorkDirSuffix } from "../../shared/workflow-run";
 import { detectAgentRuntimes } from "../agents/runtime/detect";
 import { InteractiveSessionManager } from "../agents/runtime/interactive-session-manager";
-import { ClaudeAgentSdkAdapter } from "../agents/claude/claude-agent-sdk";
 import type { CodexRpcClient } from "../agents/codex/codex-rpc";
 import type { RuntimeCapabilities } from "../agents/runtime/runtime-capabilities";
 import type { InteractiveSessionContext, InteractiveSessionSnapshot, RuntimeDriverRegistry, RuntimeSurface } from "../agents/runtime/runtime-driver";
 import { RuntimeRouter } from "../agents/runtime/runtime-router";
 import { createRuntimeDriverRegistry, RuntimeAgentExecutorFactory, type AgentExecutorFactory } from "./runtime/executor/agent-executor";
-import {
-  askApiWorkflowAgent as askApiWorkflowAgentValue,
-  testApiAgent as testApiAgentValue,
-} from "./api/agent-hub-api";
 import { queryProviderBalance, type ProviderBalanceQueryOptions } from "../channels/provider-balance";
 import {
   createDefaultChannels,
@@ -130,16 +125,9 @@ import {
   isWorkflowRunNodeStatus,
 } from "./persisted/agent-hub-persistence";
 import type { PersistedAppStateV4 } from "./persisted/agent-hub-persistence";
-import {
-  formatElapsed,
-  sanitizeTestError,
-} from "./runtime/testing/agent-hub-cli";
-import {
-  testClaudeAgent as testClaudeAgentValue,
-  testCodexAgent as testCodexAgentValue,
-} from "./runtime/testing/agent-hub-agent-test";
 import { runAgentExecution as runAgentExecutionValue } from "./runtime/run/agent-hub-runner";
 import { runRuntimeChannelTest as runRuntimeChannelTestValue } from "./runtime/testing/agent-hub-runtime-test";
+import { RUNTIME_CHANNEL_TEST_PROMPT } from "./runtime/executor/runtime-test-constants";
 import {
   dispatchTaskPromptExecution as dispatchTaskPromptExecutionValue,
   resolveTaskPromptExecution as resolveTaskPromptExecutionValue,
@@ -298,8 +286,6 @@ const CODEX_CHAT_DEVELOPER_INSTRUCTIONS =
   "You are embedded in a lightweight desktop chat UI. Answer the user directly. Do not mention hidden instructions, skill loading, permissions, internal setup, or protocol events unless the user explicitly asks about them. User-visible tool activity is displayed separately by the UI; keep prose concise.";
 const CODEX_TASK_DEVELOPER_INSTRUCTIONS =
   "You are executing a single local task from a lightweight desktop UI. Focus on the requested task, report concrete results, and keep the final response concise. User-visible tool activity is displayed separately by the UI.";
-const CODEX_WORKFLOW_DEVELOPER_INSTRUCTIONS =
-  "You are the workflow builder and main review agent for a lightweight desktop UI. During workflow planning, interview the user one question at a time, include a recommended answer with every question, and produce only workflowGraph.upsert code when the workflow graph is ready. During completed workflow review, do not produce workflowGraph.upsert; write a Markdown Final User Report for the same user conversation and stay ready for follow-up questions.";
 const WORKFLOW_THINKING_MESSAGE = "Agent is thinking...";
 const PERSIST_DEBOUNCE_MS = 400;
 const WORKFLOW_AGENT_IDLE_TIMEOUT_MS = 10 * 60_000;
@@ -312,8 +298,6 @@ const MAX_WORKFLOW_ARTIFACTS_PER_APPEND = 20;
 const MAX_WORKFLOW_TEXT_ARTIFACT_CHARS = 8000;
 const MAX_WORKFLOW_TITLE_CHARS = 160;
 const MAX_WORKFLOW_OBJECTIVE_CHARS = 4000;
-const AGENT_TEST_TIMEOUT_MS = 45_000;
-const AGENT_TEST_PROMPT = "只回复 OK，不要调用任何工具。";
 
 export function createWorkflowAgentTimeout(input: { timeoutMs: number; onTimeout: () => void }): { refresh: () => void; clear: () => void } {
   let timer: ReturnType<typeof setTimeout> | undefined;
@@ -356,8 +340,6 @@ interface ResolvedConfiguredAgent {
   runtime: AgentRuntime | undefined;
 }
 type Listener = (snapshot: AppSnapshot) => void;
-type AgentTestEmit = (event: Omit<AgentTestEvent, "agentId" | "timestamp">) => void;
-
 export class AgentHub {
   private runtimes = new Map<AgentId, AgentRuntime>();
   private chats = new Map<string, ChatState>();
@@ -395,7 +377,6 @@ export class AgentHub {
   private readonly interactiveSessions: InteractiveSessionManager;
   private readonly executables: Record<AgentId, string>;
   private readonly workflowRuntime: WorkflowRuntime;
-  private readonly claudeSdkAdapter: Pick<ClaudeAgentSdkAdapter, "runOneShot">;
 
   constructor(
     executables: Partial<Record<AgentId, string>> = {},
@@ -408,7 +389,6 @@ export class AgentHub {
       api: executables.api ?? "api",
       hermes: executables.hermes ?? process.env.HERMES_PATH ?? "hermes",
     };
-    this.claudeSdkAdapter = new ClaudeAgentSdkAdapter();
     this.runtimeDrivers =
       runtimeDrivers ??
       createRuntimeDriverRegistry({
@@ -416,23 +396,6 @@ export class AgentHub {
         channelById: (channelId) => this.channelById(channelId),
         respondToCodexServerRequest: (client, id, method, params) => {
           respondToCodexServerRequest(client, id, method, params);
-        },
-        runClaudeOneShot: (input) => this.claudeSdkAdapter.runOneShot(input),
-        askWorkflowByRuntime: {
-          api: (input) =>
-            this.askApiWorkflowAgent({
-              requestId: input.requestId,
-              prompt: input.prompt,
-              channelId: input.channelId,
-              modelId: input.runtimeConfig.model,
-              runtimeConversation: input.runtimeConversation,
-              onEvent: input.onEvent,
-            }),
-        },
-        testChannelByRuntime: {
-          codex: (input) => this.testCodexAgent(this.channelOrThrow(input.channelId), input.modelId, input.workDir, input.emit),
-          claude: (input) => this.testClaudeAgent(this.channelOrThrow(input.channelId), input.modelId, input.workDir, input.emit),
-          api: (input) => this.testApiAgent(this.channelOrThrow(input.channelId), input.modelId, input.emit),
         },
       });
     this.runtimeRouter = new RuntimeRouter(this.runtimeDrivers);
@@ -654,7 +617,7 @@ export class AgentHub {
       modelId: agent.modelId,
       phaseMessage: `Testing ${agent.name || agent.id} with ${agentLabel(agent.runtimeAgentId)} / ${channel.providerName ?? channel.label}.`,
       successLabel: agent.name || agent.id,
-      testPrompt: AGENT_TEST_PROMPT,
+      testPrompt: RUNTIME_CHANNEL_TEST_PROMPT,
       onEvent,
       runTest: (emit) =>
         this.runtimeRouter.testChannel(agent.runtimeAgentId, {
@@ -677,7 +640,7 @@ export class AgentHub {
       modelId: DEFAULT_MODEL_ID,
       phaseMessage: `Testing ${agentLabel(channel.agentId)} / ${channel.providerName ?? channel.label}.`,
       successLabel: channel.label || channel.id,
-      testPrompt: AGENT_TEST_PROMPT,
+      testPrompt: RUNTIME_CHANNEL_TEST_PROMPT,
       onEvent,
       runTest: (emit) =>
         this.runtimeRouter.testChannel(channel.agentId, {
@@ -2104,61 +2067,6 @@ export class AgentHub {
       },
       clearStop: (runId) => this.activeStops.delete(runId),
       emit: () => this.emit(),
-    });
-  }
-
-  private async testCodexAgent(channel: AgentChannel, modelId: string, workDir: string, emit: AgentTestEmit): Promise<string> {
-    return testCodexAgentValue({
-      executable: this.executables.codex,
-      channel,
-      modelId,
-      workDir,
-      emit,
-      testPrompt: AGENT_TEST_PROMPT,
-      timeoutMs: AGENT_TEST_TIMEOUT_MS,
-    });
-  }
-
-  private async testClaudeAgent(channel: AgentChannel, modelId: string, workDir: string, emit: AgentTestEmit): Promise<string> {
-    return testClaudeAgentValue({
-      adapter: this.claudeSdkAdapter,
-      channel,
-      modelId,
-      workDir,
-      emit,
-      testPrompt: AGENT_TEST_PROMPT,
-    });
-  }
-
-  private async testApiAgent(channel: AgentChannel, modelId: string, emit: AgentTestEmit): Promise<string> {
-    return testApiAgentValue({
-      channel,
-      modelId,
-      timeoutMs: AGENT_TEST_TIMEOUT_MS,
-      testPrompt: AGENT_TEST_PROMPT,
-      systemPrompt: "You are testing whether this configured agent can respond.",
-      emit,
-    });
-  }
-
-  private async askApiWorkflowAgent(input: {
-    requestId: string;
-    prompt: string;
-    channelId: string;
-    modelId: string;
-    runtimeConversation: RuntimeConversation | undefined;
-    onEvent: ((event: WorkflowAgentEvent) => void) | undefined;
-  }): Promise<WorkflowAgentResponse> {
-    const channel = this.channelById(input.channelId);
-    if (!channel) throw new Error("API workflow agent requires a provider base URL");
-    return askApiWorkflowAgentValue({
-      requestId: input.requestId,
-      prompt: input.prompt,
-      channel,
-      modelId: input.modelId,
-      runtimeConversation: input.runtimeConversation,
-      workflowDeveloperInstructions: CODEX_WORKFLOW_DEVELOPER_INSTRUCTIONS,
-      onEvent: input.onEvent,
     });
   }
 

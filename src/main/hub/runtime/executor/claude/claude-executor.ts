@@ -1,13 +1,13 @@
-import { ClaudeAgentSdkAdapter } from "../../../agents/claude/claude-agent-sdk";
-import { claudeSessionIdFromConversation } from "./agent-executor-conversation";
-import type { AgentExecutionContext, AgentExecutor } from "./agent-executor-types";
+import { ClaudeAgentSdkAdapter } from "../../../../agents/claude/claude-agent-sdk";
+import { claudeSessionIdFromConversation } from "../agent-executor-conversation";
+import type { AgentExecutionContext, AgentExecutor } from "../agent-executor-types";
 
 export class ClaudeAgentExecutor implements AgentExecutor {
   private abortController: AbortController | undefined;
 
   constructor(
     private readonly context: AgentExecutionContext,
-    private readonly adapter: ClaudeAgentSdkAdapter,
+    private readonly adapter: Pick<ClaudeAgentSdkAdapter, "runOneShot">,
     private readonly resolvedModelId: string | undefined,
   ) {}
 

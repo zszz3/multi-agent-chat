@@ -1,6 +1,6 @@
 import { describe, expect, test } from "vitest";
 import type { RuntimeConversation } from "../../../shared/types";
-import { claudeRuntimeStateCodec, codexRuntimeStateCodec, hermesRuntimeStateCodec } from "./runtime-state-codec";
+import { claudeRuntimeStateCodec, codexRuntimeStateCodec } from "./runtime-state-codec";
 
 function runtimeConversation(runtimeId: RuntimeConversation["runtimeId"], payload: Record<string, unknown>): RuntimeConversation {
   return {
@@ -73,16 +73,5 @@ describe("runtime state codecs", () => {
         }),
       ),
     ).toBeUndefined();
-  });
-
-  test("hermes codec validates its bounded session payload", () => {
-    const raw = runtimeConversation("hermes", { sessionId: "hermes-session-1" });
-
-    expect(hermesRuntimeStateCodec.restorePersistedConversation(raw)).toEqual(raw);
-    expect(hermesRuntimeStateCodec.decodeConversation(raw)).toEqual({ sessionId: "hermes-session-1" });
-    expect(hermesRuntimeStateCodec.encodeConversation({ sessionId: "hermes-session-2" })).toEqual(
-      runtimeConversation("hermes", { sessionId: "hermes-session-2" }),
-    );
-    expect(hermesRuntimeStateCodec.restorePersistedConversation(runtimeConversation("hermes", {}))).toBeUndefined();
   });
 });

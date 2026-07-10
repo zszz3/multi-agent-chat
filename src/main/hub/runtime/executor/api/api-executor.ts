@@ -1,10 +1,10 @@
-import { apiRequestBody, apiRequestUrl, extractApiContent, resolveApiModel } from "../../api/agent-hub-api";
+import { apiRequestBody, apiRequestUrl, extractApiContent, resolveApiModel } from "./api-protocol";
 import type {
   AgentExecutionContext,
   AgentExecutor,
   RuntimeAgentExecutorFactoryOptions,
-} from "./agent-executor-types";
-import { modelFromRuntimeConfig } from "./agent-executor-types";
+} from "../agent-executor-types";
+import { modelFromRuntimeConfig } from "../agent-executor-types";
 
 export class ApiAgentExecutor implements AgentExecutor {
   private controller: AbortController | undefined;

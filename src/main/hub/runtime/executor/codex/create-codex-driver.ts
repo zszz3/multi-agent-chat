@@ -5,7 +5,6 @@ import type { RuntimeDriver } from "../../../../agents/runtime/runtime-driver";
 import { codexRuntimeStateCodec } from "../../../../agents/runtime/runtime-state-codec";
 import { codexAppServerConfigArgs } from "../../../../channels/model-config";
 import { createInteractiveRuntimeDriver } from "../agent-executor-driver-factories";
-import { CodexAgentExecutor } from "../agent-executor-codex";
 import { modelFromRuntimeConfig, type RuntimeAgentExecutorFactoryOptions } from "../agent-executor-types";
 import {
   codexInteractiveSessionCapabilities,
@@ -13,6 +12,8 @@ import {
   getCodexCapabilities,
 } from "./codex-capabilities";
 import { deleteCodexSessionArtifacts } from "./codex-cleanup";
+import { CodexAgentExecutor } from "./codex-executor";
+import { runCodexChannelTest } from "./codex-test";
 import { runCodexWorkflow } from "./codex-workflow";
 
 export function createCodexDriver(options: RuntimeAgentExecutorFactoryOptions): RuntimeDriver {
@@ -47,7 +48,7 @@ export function createCodexDriver(options: RuntimeAgentExecutorFactoryOptions): 
         },
       }),
     askWorkflow: askWorkflowByRuntime.codex ?? ((input) => runCodexWorkflow(input, options)),
-    testChannel: testChannelByRuntime.codex,
+    testChannel: testChannelByRuntime.codex ?? ((input) => runCodexChannelTest(input, options)),
     deleteSessionArtifacts:
       deleteSessionArtifactsByRuntime.codex ??
       ((input) => deleteCodexSessionArtifacts(options.executables.codex, input)),

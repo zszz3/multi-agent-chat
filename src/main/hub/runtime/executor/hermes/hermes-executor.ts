@@ -1,10 +1,10 @@
-import { HermesRunner } from "../../../agents/hermes/hermes-runner";
+import { HermesRunner } from "../../../../agents/hermes/hermes-runner";
 import type {
   AgentExecutionContext,
   AgentExecutor,
   RuntimeAgentExecutorFactoryOptions,
-} from "./agent-executor-types";
-import { modelFromRuntimeConfig } from "./agent-executor-types";
+} from "../agent-executor-types";
+import { modelFromRuntimeConfig } from "../agent-executor-types";
 
 export class HermesAgentExecutor implements AgentExecutor {
   private runner: HermesRunner | undefined;

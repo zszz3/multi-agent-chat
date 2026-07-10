@@ -10,7 +10,7 @@ import { createRuntimeDriverRegistry, RuntimeDriverRegistry } from "./runtime/ex
 import type { AgentExecutionContext, AgentExecutorFactory } from "./runtime/executor/agent-executor";
 import { claudeCliModelForChannel } from "../agents/claude/claude-env";
 import { ClaudeInteractiveSession } from "../agents/claude/claude-interactive-session";
-import { claudeRuntimeStateCodec, codexRuntimeStateCodec, hermesRuntimeStateCodec } from "../agents/runtime/runtime-state-codec";
+import { claudeRuntimeStateCodec, codexRuntimeStateCodec } from "../agents/runtime/runtime-state-codec";
 import { writeNodeCliLauncher } from "../platform/test-cli-fixtures";
 
 function configuredAgent(
@@ -121,6 +121,27 @@ function support(
   };
 }
 
+function createHubWithClaudeOneShot(
+  runOneShot: (input: any) => Promise<void>,
+  executables: Partial<Record<AgentId, string>> = {},
+): AgentHub {
+  let hub: AgentHub;
+  const resolvedExecutables = {
+    codex: executables.codex ?? "missing-codex-for-test",
+    claude: executables.claude ?? "missing-claude-for-test",
+    api: executables.api ?? "api",
+    hermes: executables.hermes ?? "missing-hermes-for-test",
+  };
+  const runtimeDrivers = createRuntimeDriverRegistry({
+    executables: resolvedExecutables,
+    channelById: (channelId) => (hub as any).channelById(channelId),
+    respondToCodexServerRequest: () => undefined,
+    runClaudeOneShot: runOneShot,
+  });
+  hub = new AgentHub(executables, undefined, runtimeDrivers);
+  return hub;
+}
+
 function createHubWithTwoCodexChannels(): AgentHub {
   const hub = new AgentHub({ codex: "missing-codex-for-test", claude: "missing-claude-for-test" });
   (hub as any).channels = [
@@ -220,7 +241,6 @@ test("api runtime advertises oneshot chat style", () => {
 test("askWorkflowAgent delegates to the registered runtime driver hook", async () => {
   const workflow = vi.fn(async () => ({
     content: "hermes workflow",
-    runtimeConversation: runtimeConversation("hermes", { sessionId: "hermes-session-1" }),
   }));
   const hub = new AgentHub(
     { codex: "missing-codex-for-test", claude: "missing-claude-for-test", hermes: "missing-hermes-for-test" } as any,
@@ -229,7 +249,6 @@ test("askWorkflowAgent delegates to the registered runtime driver hook", async (
       {
         runtimeId: "hermes",
         surfaceSupport: [support("workflow", ["oneshot"], ["fresh"])],
-        runtimeStateCodec: hermesRuntimeStateCodec,
         getCapabilities: () => oneshotChatCapabilities("hermes"),
         createOneShotExecutor: () => ({ start: async () => undefined, stop: async () => undefined }),
         askWorkflow: workflow,
@@ -266,7 +285,6 @@ test("askWorkflowAgent delegates to the registered runtime driver hook", async (
 
   expect(response).toEqual({
     content: "hermes workflow",
-    runtimeConversation: runtimeConversation("hermes", { sessionId: "hermes-session-1" }),
   });
   expect(workflow).toHaveBeenCalled();
 });
@@ -1888,7 +1906,15 @@ describe("AgentHub chat sessions", () => {
     await mkdir(sessionDir, { recursive: true });
     await writeFile(sessionPath, "{}\n", "utf8");
     vi.stubEnv("HOME", homeDir);
-    const hub = new AgentHub({ codex: "missing-codex-for-test", claude: "missing-claude-for-test" });
+    const runOneShot = vi.fn(async (input: any) => {
+      input.onEvent({
+        type: "runtime_conversation",
+        runtimeConversation: runtimeConversation("claude", { native: { sessionId } }),
+      });
+      input.onEvent({ type: "delta", content: "SDK ok" });
+      input.onEvent({ type: "completed", content: "SDK ok" });
+    });
+    const hub = createHubWithClaudeOneShot(runOneShot);
     await hub.loadModelChannels(path.join(homeDir, "claude-model-channels.json"));
     await hub.saveModelChannels([
       {
@@ -1920,16 +1946,6 @@ describe("AgentHub chat sessions", () => {
       version: "test",
       available: true,
     });
-
-    const runOneShot = vi.fn(async (input: any) => {
-      input.onEvent({
-        type: "runtime_conversation",
-        runtimeConversation: runtimeConversation("claude", { native: { sessionId } }),
-      });
-      input.onEvent({ type: "delta", content: "SDK ok" });
-      input.onEvent({ type: "completed", content: "SDK ok" });
-    });
-    (hub as any).claudeSdkAdapter = { runOneShot };
 
     try {
       const result = await hub.testConfiguredAgent("claude-agent");
@@ -2665,16 +2681,6 @@ fs.writeFileSync(${JSON.stringify(argsPath)}, process.argv.slice(2).join("\\n") 
 
   test("asks a Claude workflow agent through the official SDK one-shot path without resuming when continuationPolicy is fresh", async () => {
     const dir = await mkdtemp(path.join(os.tmpdir(), "multi-agent-chat-claude-workflow-sdk-"));
-    const hub = new AgentHub({ codex: "missing-codex-for-test", claude: "missing-claude-for-test" });
-    addConfiguredAgents(hub, [configuredAgent("claude-agent", { runtimeAgentId: "claude", name: "Claude Agent" })]);
-    (hub as any).runtimes.set("claude", {
-      id: "claude",
-      label: "Claude",
-      command: "claude",
-      version: "test",
-      available: true,
-    });
-
     const runOneShot = vi.fn(async (input: any) => {
       input.onEvent({
         type: "runtime_conversation",
@@ -2683,7 +2689,15 @@ fs.writeFileSync(${JSON.stringify(argsPath)}, process.argv.slice(2).join("\\n") 
       input.onEvent({ type: "delta", content: "workflow-sdk" });
       input.onEvent({ type: "completed", content: "workflow-sdk" });
     });
-    (hub as any).claudeSdkAdapter = { runOneShot };
+    const hub = createHubWithClaudeOneShot(runOneShot);
+    addConfiguredAgents(hub, [configuredAgent("claude-agent", { runtimeAgentId: "claude", name: "Claude Agent" })]);
+    (hub as any).runtimes.set("claude", {
+      id: "claude",
+      label: "Claude",
+      command: "claude",
+      version: "test",
+      available: true,
+    });
 
     const events: any[] = [];
     const response = await (hub as any).askWorkflowAgent(
@@ -2725,7 +2739,11 @@ fs.writeFileSync(${JSON.stringify(argsPath)}, process.argv.slice(2).join("\\n") 
 
   test("resumes a Claude workflow agent through the official SDK one-shot path when continuationPolicy is resume-preferred", async () => {
     const dir = await mkdtemp(path.join(os.tmpdir(), "multi-agent-chat-claude-workflow-sdk-resume-"));
-    const hub = new AgentHub({ codex: "missing-codex-for-test", claude: "missing-claude-for-test" });
+    const runOneShot = vi.fn(async (input: any) => {
+      input.onEvent({ type: "delta", content: "workflow-resumed" });
+      input.onEvent({ type: "completed", content: "workflow-resumed" });
+    });
+    const hub = createHubWithClaudeOneShot(runOneShot);
     addConfiguredAgents(hub, [configuredAgent("claude-agent", { runtimeAgentId: "claude", name: "Claude Agent" })]);
     (hub as any).runtimes.set("claude", {
       id: "claude",
@@ -2734,12 +2752,6 @@ fs.writeFileSync(${JSON.stringify(argsPath)}, process.argv.slice(2).join("\\n") 
       version: "test",
       available: true,
     });
-
-    const runOneShot = vi.fn(async (input: any) => {
-      input.onEvent({ type: "delta", content: "workflow-resumed" });
-      input.onEvent({ type: "completed", content: "workflow-resumed" });
-    });
-    (hub as any).claudeSdkAdapter = { runOneShot };
 
     const priorConversation = runtimeConversation("claude", { native: { sessionId: "claude-session-9" } });
     const response = await (hub as any).askWorkflowAgent({
