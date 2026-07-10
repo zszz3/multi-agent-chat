@@ -2028,6 +2028,15 @@ textarea:focus-visible {
   padding-right: 2px;
 }
 
+.workflow-history-group-label,
+.skills-nav-group-label {
+  padding: 4px 2px 0;
+  color: var(--muted);
+  font-size: 10px;
+  font-weight: 800;
+  text-transform: uppercase;
+}
+
 .workflow-empty-history {
   padding: 9px;
   border: 1px dashed var(--line);

@@ -3352,6 +3352,8 @@ export class AgentHub {
     const now = Date.now();
     return {
       workflowId: draft.workflowId || `wf_${randomUUID()}`,
+      sourceType: draft.sourceType === "official" ? "official" : "user",
+      topologyLocked: draft.sourceType === "official" || draft.topologyLocked === true,
       title: draft.title || draft.graph.title || draft.objective || "Untitled workflow",
       status: this.normalizeWorkflowStatus(draft.status),
       revision: Number.isFinite(draft.revision) && draft.revision > 0 ? Math.floor(draft.revision) : 1,
@@ -4685,6 +4687,8 @@ export class AgentHub {
     if (record.runtimeConversation !== undefined && !restoredRuntimeConversation) return undefined;
     return this.cloneWorkflowDraft({
       workflowId: asOptionalString(record.workflowId) ?? `wf_${randomUUID()}`,
+      sourceType: record.sourceType === "official" ? "official" : "user",
+      topologyLocked: record.sourceType === "official" || record.topologyLocked === true,
       title: asOptionalString(record.title) ?? graph.title,
       status: this.restoreWorkflowDraftStatus(record.status),
       revision: Math.max(1, Math.floor(asNumber(record.revision, 1))),

@@ -80,4 +80,46 @@ describe("WorkflowStore", () => {
     expect(store.getRun("run_1")).toMatchObject({ status: "completed", finalReport: "done" });
     expect(store.getWorkflow(workflow.workflowId)).toMatchObject({ status: "completed", finalReport: "done" });
   });
+
+  test("locks official topology while allowing agent prompt and runtime overrides", () => {
+    const { store } = createStore();
+    store.ensureBundledWorkflows([
+      {
+        workflowId: "official-release",
+        title: "Release",
+        objective: "Ship",
+        graph: {
+          title: "Release graph",
+          objective: "Ship",
+          nodes: [
+            { id: "start", kind: "start", title: "Start", prompt: "", position: { x: 0, y: 0 } },
+            { id: "build", kind: "agent", title: "Build", prompt: "old", position: { x: 100, y: 0 } },
+          ],
+          edges: [{ id: "start-build", fromNodeId: "start", toNodeId: "build" }],
+        },
+      },
+    ]);
+    const official = store.getWorkflow("official-release")!;
+    expect(official).toMatchObject({ sourceType: "official", topologyLocked: true });
+
+    const editableGraph = structuredClone(official.graph);
+    editableGraph.nodes[1] = {
+      ...editableGraph.nodes[1]!,
+      prompt: "new",
+      configuredAgentId: "agent-2",
+      modelId: "model-2",
+    };
+    expect(store.patchDraft({ workflowId: official.workflowId, graph: editableGraph })).toBeDefined();
+    expect(store.getWorkflow(official.workflowId)?.graph.nodes[1]).toMatchObject({
+      prompt: "new",
+      configuredAgentId: "agent-2",
+      modelId: "model-2",
+    });
+
+    const movedGraph = structuredClone(editableGraph);
+    movedGraph.nodes[1] = { ...movedGraph.nodes[1]!, position: { x: 200, y: 0 } };
+    expect(store.patchDraft({ workflowId: official.workflowId, graph: movedGraph })).toBeUndefined();
+    expect(store.renameWorkflow(official.workflowId, "Changed")).toBe(false);
+    expect(store.deleteWorkflow(official.workflowId)).toBe(false);
+  });
 });

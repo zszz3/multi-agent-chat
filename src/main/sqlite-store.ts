@@ -292,12 +292,14 @@ export class SqliteAppStore {
       const workflowId = asString(workflow.workflowId);
       db.prepare(
         `insert into workflows
-         (id, title, status, revision, configured_agent_id, model_id, objective, work_dir, graph_ready,
+         (id, source_type, topology_locked, title, status, revision, configured_agent_id, model_id, objective, work_dir, graph_ready,
           reply, error, run_context_document, context_document, final_report, runtime_conversation_json,
           created_at, updated_at)
-         values (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+         values (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
       ).run(
         workflowId,
+        workflow.sourceType === "official" ? "official" : "user",
+        workflow.topologyLocked === true ? 1 : 0,
         asString(workflow.title),
         asString(workflow.status),
         asNumber(workflow.revision),
@@ -553,6 +555,8 @@ export class SqliteAppStore {
       .map((item) => asString(asRecord(item).run_id));
     const workflow: RecordValue = {
       workflowId,
+      sourceType: row.source_type === "official" ? "official" : "user",
+      topologyLocked: row.topology_locked === 1,
       title: row.title,
       status: row.status,
       revision: row.revision,

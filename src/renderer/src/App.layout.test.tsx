@@ -976,6 +976,42 @@ describe("Sidebar history panels", () => {
     expect(html).toContain("aria-label=\"Rename workflow\"");
     expect(html).toContain("value=\"Review payment release\"");
   });
+
+  test("separates official and user workflow history", () => {
+    const base = {
+      objective: "Run",
+      status: "draft" as const,
+      revision: 1,
+      graph: workflowPanelGraph,
+      graphReady: true,
+      messages: [],
+      reply: "",
+      error: undefined,
+      runProgress: [],
+      runContextDocument: "",
+      contextDocument: "",
+      runIds: [],
+      configuredAgentId: "repo-reviewer",
+      modelId: "gpt-5.5",
+      createdAt: 1,
+      updatedAt: 1,
+    };
+    const html = renderToStaticMarkup(
+      <WorkflowHistoryPanel
+        workflows={[
+          { ...base, workflowId: "official", title: "Official release", sourceType: "official", topologyLocked: true },
+          { ...base, workflowId: "user", title: "My release", sourceType: "user", topologyLocked: false },
+        ]}
+        activeWorkflowId="official"
+        onSelectWorkflow={() => undefined}
+        onNewWorkflow={() => undefined}
+      />,
+    );
+
+    expect(html).toContain("Official workflows");
+    expect(html).toContain("My workflows");
+    expect(html.indexOf("Official release")).toBeLessThan(html.indexOf("My release"));
+  });
 });
 
 describe("ConfigPage", () => {
@@ -2127,6 +2163,20 @@ describe("ConfigPage", () => {
 });
 
 describe("SkillsPage", () => {
+  test("renders official and user skills as separate collections", () => {
+    const html = renderToStaticMarkup(
+      <SkillsPage
+        language="zh"
+        officialSkills={[{ id: "official", sourceType: "official", name: "Official", description: "Official", prompt: "official", tags: [] }]}
+        userSkills={[{ id: "user", sourceType: "user", name: "User", description: "User", prompt: "user", tags: [] }]}
+      />,
+    );
+    expect(html).toContain("官方技能");
+    expect(html).toContain("我的技能");
+    expect(html).toContain("Official");
+    expect(html).toContain("User");
+  });
+
   test("renders the built-in skill library as a sourced reader", () => {
     const installResult: InstalledSkillResult = {
       templateId: "brainstorming",

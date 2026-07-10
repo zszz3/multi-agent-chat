@@ -57,6 +57,8 @@ export interface ConfiguredAgent {
   updatedAt: number;
 }
 
+export type ResourceSourceType = "official" | "user";
+
 export interface SkillTemplate {
   id: string;
   name: string;
@@ -67,6 +69,7 @@ export interface SkillTemplate {
   sourcePath?: string;
   sourceUrl?: string;
   translationZh?: string;
+  sourceType?: ResourceSourceType;
 }
 
 export type SkillInstallTarget = "codex" | "claude" | "trae";
@@ -74,6 +77,7 @@ export type SkillInstallTarget = "codex" | "claude" | "trae";
 export interface InstallSkillRequest {
   templateId: string;
   target: SkillInstallTarget;
+  sourceType?: ResourceSourceType;
 }
 
 export interface ImportOnlineSkillRequest {
@@ -611,6 +615,8 @@ export interface RegisterArtifactRequest {
 
 export interface WorkflowDraftState {
   workflowId: string;
+  sourceType?: ResourceSourceType;
+  topologyLocked?: boolean;
   title: string;
   status: WorkflowStatus;
   revision: number;

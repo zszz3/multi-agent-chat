@@ -54,7 +54,8 @@ export interface ScheduleSidebarModel {
 }
 
 export interface SkillsSidebarModel {
-  skillTemplates: SkillTemplate[];
+  officialSkills: SkillTemplate[];
+  userSkills: SkillTemplate[];
 }
 
 export interface SidebarViewModel {
@@ -188,15 +189,25 @@ export function ResourceSidebar({
             <Wand2 size={14} />
           </div>
           <div className="skills-nav-list">
-            {skillsModel.skillTemplates.length === 0 ? (
+            {skillsModel.officialSkills.length === 0 && skillsModel.userSkills.length === 0 ? (
               <div className="empty-state config-empty">{text.chrome.noSkills}</div>
             ) : (
-              skillsModel.skillTemplates.map((template) => (
-                <div key={template.id} className="skills-nav-row">
-                  <strong>{template.name}</strong>
-                  <span>{template.tags.join(", ")}</span>
-                </div>
-              ))
+              <>
+                {skillsModel.officialSkills.length > 0 ? <div className="skills-nav-group-label">{language === "zh" ? "官方技能" : "Official skills"}</div> : null}
+                {skillsModel.officialSkills.map((template) => (
+                  <div key={`official:${template.id}`} className="skills-nav-row">
+                    <strong>{template.name}</strong>
+                    <span>{template.tags.join(", ")}</span>
+                  </div>
+                ))}
+                {skillsModel.userSkills.length > 0 ? <div className="skills-nav-group-label">{language === "zh" ? "我的技能" : "My skills"}</div> : null}
+                {skillsModel.userSkills.map((template) => (
+                  <div key={`user:${template.id}`} className="skills-nav-row">
+                    <strong>{template.name}</strong>
+                    <span>{template.tags.join(", ")}</span>
+                  </div>
+                ))}
+              </>
             )}
           </div>
         </section>

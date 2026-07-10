@@ -74,7 +74,18 @@ export class WorkflowStore {
   }
 
   setWorkflow(_workflowId: string, workflow: WorkflowDraftState): void {
-    const normalized = this.deps.normalizeDraft(workflow);
+    const existing = this.workflows.get(workflow.workflowId);
+    const guarded = existing?.topologyLocked
+      ? {
+          ...workflow,
+          sourceType: "official" as const,
+          topologyLocked: true,
+          title: existing.title,
+          objective: existing.objective,
+          graph: isAllowedOfficialGraphUpdate(existing.graph, workflow.graph) ? workflow.graph : existing.graph,
+        }
+      : workflow;
+    const normalized = this.deps.normalizeDraft(guarded);
     this.workflows.set(normalized.workflowId, normalized);
   }
 
@@ -109,6 +120,8 @@ export class WorkflowStore {
     const graph = createWorkflowGraphFromObjective("");
     const workflow = this.deps.normalizeDraft({
       workflowId: this.deps.createWorkflowId(),
+      sourceType: "user",
+      topologyLocked: false,
       title: input.title?.trim() || graph.title,
       status: "draft",
       revision: 1,
@@ -154,6 +167,8 @@ export class WorkflowStore {
   patchDraft(input: PatchWorkflowDraftRequest): WorkflowDraftState | undefined {
     const current = this.workflows.get(input.workflowId);
     if (!current) return undefined;
+    if (current.topologyLocked && input.graph && !isAllowedOfficialGraphUpdate(current.graph, input.graph)) return undefined;
+    if (current.topologyLocked && (input.title !== undefined || input.objective !== undefined)) return undefined;
     const {
       finalReport: _currentFinalReport,
       runtimeConversation: _currentRuntimeConversation,
@@ -210,7 +225,7 @@ export class WorkflowStore {
 
   resetDraftSession(workflowId: string): WorkflowDraftState | undefined {
     const current = this.workflows.get(workflowId);
-    if (!current) return undefined;
+    if (!current || current.topologyLocked) return undefined;
     const graph = createWorkflowGraphFromObjective("");
     const {
       finalReport: _currentFinalReport,
@@ -254,6 +269,8 @@ export class WorkflowStore {
     const workflowId = this.deps.createWorkflowId();
     const workflow = this.deps.normalizeDraft({
       workflowId,
+      sourceType: "user",
+      topologyLocked: false,
       title: input.title.trim() || input.graph.title,
       status: "draft",
       revision: 1,
@@ -284,26 +301,45 @@ export class WorkflowStore {
   ensureBundledWorkflows(defs: Array<{ workflowId: string; title: string; objective: string; graph: WorkflowGraph }>): boolean {
     let changed = false;
     for (const def of defs) {
-      if (!def.workflowId || this.workflows.has(def.workflowId)) continue;
+      if (!def.workflowId) continue;
       const now = this.deps.now();
+      const existing = this.workflows.get(def.workflowId);
+      const existingNodes = new Map(existing?.graph.nodes.map((node) => [node.id, node]) ?? []);
+      const graph: WorkflowGraph = {
+        ...structuredClone(def.graph),
+        nodes: def.graph.nodes.map((node) => {
+          const override = existingNodes.get(node.id);
+          if (node.kind !== "agent" || !override) return structuredClone(node);
+          return {
+            ...structuredClone(node),
+            prompt: override.prompt,
+            ...(override.configuredAgentId ? { configuredAgentId: override.configuredAgentId } : {}),
+            ...(override.modelId ? { modelId: override.modelId } : {}),
+          };
+        }),
+      };
       const workflow = this.deps.normalizeDraft({
         workflowId: def.workflowId,
+        sourceType: "official",
+        topologyLocked: true,
         title: def.title,
-        status: "draft",
-        revision: 1,
-        configuredAgentId: "",
-        modelId: "",
+        status: existing?.status ?? "draft",
+        revision: existing?.revision ?? 1,
+        configuredAgentId: existing?.configuredAgentId ?? "",
+        modelId: existing?.modelId ?? "",
         objective: def.objective,
-        graph: def.graph,
+        graph,
         graphReady: true,
-        messages: [],
-        reply: "",
-        error: undefined,
-        runProgress: [],
-        runContextDocument: "",
-        contextDocument: "",
-        runIds: [],
-        createdAt: now,
+        messages: existing?.messages ?? [],
+        reply: existing?.reply ?? "",
+        error: existing?.error,
+        runProgress: existing?.runProgress ?? [],
+        runContextDocument: existing?.runContextDocument ?? "",
+        contextDocument: existing?.contextDocument ?? "",
+        ...(existing?.finalReport !== undefined ? { finalReport: existing.finalReport } : {}),
+        runIds: existing?.runIds ?? [],
+        ...(existing?.runtimeConversation ? { runtimeConversation: existing.runtimeConversation } : {}),
+        createdAt: existing?.createdAt ?? now,
         updatedAt: now,
       });
       this.workflows.set(workflow.workflowId, workflow);
@@ -324,7 +360,7 @@ export class WorkflowStore {
   renameWorkflow(workflowId: string, title: string): boolean {
     const workflow = this.workflows.get(workflowId);
     const nextTitle = title.trim();
-    if (!workflow || !nextTitle) return false;
+    if (!workflow || workflow.topologyLocked || !nextTitle) return false;
     this.workflows.set(workflowId, this.deps.normalizeDraft({
       ...workflow,
       title: nextTitle,
@@ -336,6 +372,7 @@ export class WorkflowStore {
   }
 
   deleteWorkflow(workflowId: string): boolean {
+    if (this.workflows.get(workflowId)?.topologyLocked) return false;
     if (!this.workflows.delete(workflowId)) return false;
     for (const run of this.runs.values()) {
       if (run.workflowId === workflowId) this.runs.delete(run.runId);
@@ -351,6 +388,14 @@ export class WorkflowStore {
     const current = this.workflows.get(input.workflowId);
     if (!current) return { ok: false, error: `Workflow ${input.workflowId} was not found.` };
     if (current.status === "running") return { ok: false, error: "Cannot modify workflow graph while it is running." };
+    if (current.topologyLocked) {
+      const changesIdentity =
+        (input.title !== undefined && input.title !== current.title) ||
+        (input.objective !== undefined && input.objective !== current.objective);
+      if (changesIdentity || (input.graph && !isAllowedOfficialGraphUpdate(current.graph, input.graph))) {
+        return { ok: false, error: "Official workflow topology is read-only." };
+      }
+    }
     if (input.expectedRevision !== undefined && input.expectedRevision !== current.revision) {
       return {
         ok: false,
@@ -567,6 +612,30 @@ function workflowLimitError(graph: WorkflowGraph, title: string, objective: stri
     return `Workflow node ${oversizedNode.id} prompt exceeds ${MAX_WORKFLOW_NODE_PROMPT_CHARS} characters.`;
   }
   return undefined;
+}
+
+function isAllowedOfficialGraphUpdate(current: WorkflowGraph, next: WorkflowGraph): boolean {
+  if (current.title !== next.title || current.objective !== next.objective) return false;
+  if (current.nodes.length !== next.nodes.length || current.edges.length !== next.edges.length) return false;
+  for (let index = 0; index < current.nodes.length; index += 1) {
+    const before = current.nodes[index];
+    const after = next.nodes[index];
+    if (!before || !after) return false;
+    if (before.id !== after.id || before.kind !== after.kind || before.title !== after.title) return false;
+    if (before.position?.x !== after.position?.x || before.position?.y !== after.position?.y) return false;
+    if (before.kind !== "agent") {
+      if (before.prompt !== after.prompt || before.configuredAgentId !== after.configuredAgentId || before.modelId !== after.modelId) return false;
+    }
+  }
+  return current.edges.every((before, index) => {
+    const after = next.edges[index];
+    return Boolean(
+      after &&
+      before.id === after.id &&
+      before.fromNodeId === after.fromNodeId &&
+      before.toNodeId === after.toNodeId,
+    );
+  });
 }
 
 function contextAppendLimitError(input: AppendWorkflowContextRequest): string | undefined {

@@ -1,6 +1,6 @@
 export interface SqliteSchemaDatabase {
   exec(sql: string): void;
-  prepare(sql: string): { run(...params: unknown[]): unknown };
+  prepare(sql: string): { all(...params: unknown[]): unknown[]; run(...params: unknown[]): unknown };
 }
 
 const SCHEMA_VERSION = 2;
@@ -192,4 +192,12 @@ export function createNormalizedSchema(db: SqliteSchemaDatabase): void {
     );
   `);
   db.prepare("insert or ignore into schema_migrations (version, applied_at) values (?, ?)").run(SCHEMA_VERSION, Date.now());
+  ensureColumn(db, "workflows", "source_type", "text not null default 'user'");
+  ensureColumn(db, "workflows", "topology_locked", "integer not null default 0");
+}
+
+function ensureColumn(db: SqliteSchemaDatabase, table: string, column: string, definition: string): void {
+  const columns = db.prepare(`pragma table_info(${table})`).all() as Array<{ name?: unknown }>;
+  if (columns.some((item) => item.name === column)) return;
+  db.exec(`alter table ${table} add column ${column} ${definition}`);
 }

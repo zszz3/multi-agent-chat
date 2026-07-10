@@ -81,6 +81,8 @@ function sampleState() {
       workflows: [
         {
           workflowId: "workflow-1",
+          sourceType: "user",
+          topologyLocked: false,
           title: "Release",
           status: "running",
           revision: 3,
