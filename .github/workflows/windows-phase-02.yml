@@ -80,7 +80,16 @@ jobs:
 
       - name: Verify installed Explorer-style startup
         shell: pwsh
-        run: ./scripts/verify-win-installed-smoke.ps1
+        run: |
+          $SmokeOutput = & pwsh -NoProfile -File ./scripts/verify-win-installed-smoke.ps1 2>&1
+          $SmokeExitCode = $LASTEXITCODE
+          $SmokeOutput | ForEach-Object { Write-Host $_ }
+          if ($SmokeExitCode -ne 0) {
+            $Tail = (($SmokeOutput | Select-Object -Last 30) -join "`n")
+            $Tail = $Tail.Replace("%", "%25").Replace("`r", "%0D").Replace("`n", "%0A")
+            Write-Host "::error title=Installed Windows smoke failed::$Tail"
+            exit $SmokeExitCode
+          }
 
       - name: Upload Windows artifacts
         if: always()

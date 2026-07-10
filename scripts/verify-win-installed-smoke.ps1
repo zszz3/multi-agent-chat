@@ -11,9 +11,10 @@ if (-not (Test-Path $Installer -PathType Leaf)) {
 }
 
 Remove-Item $InstallRoot -Recurse -Force -ErrorAction SilentlyContinue
-& $Installer /S "/D=$InstallRoot"
-if ($LASTEXITCODE -ne 0) {
-  throw "Silent installer exited with $LASTEXITCODE"
+$InstallerArguments = "/S `"/D=$InstallRoot`""
+$InstallerProcess = Start-Process -FilePath $Installer -ArgumentList $InstallerArguments -Wait -PassThru
+if ($InstallerProcess.ExitCode -ne 0) {
+  throw "Silent installer exited with $($InstallerProcess.ExitCode)"
 }
 if (-not (Test-Path $Executable -PathType Leaf)) {
   throw "Installed executable is missing: $Executable"
