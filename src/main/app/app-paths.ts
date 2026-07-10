@@ -1,5 +1,14 @@
-import path from "node:path";
+import {
+  createAppResourceLocator,
+  type AppResourceLocator,
+} from "../platform/app-resource-locator";
 
-export function resolvePreloadBundlePath(mainBundleDir: string): string {
-  return path.join(mainBundleDir, "../preload/index.mjs");
+export interface MainAppResourceContext {
+  mainBundleDir: string;
+  isPackaged: boolean;
+  resourcesPath: string;
+}
+
+export function createMainAppResourceLocator(context: MainAppResourceContext): AppResourceLocator {
+  return createAppResourceLocator(context);
 }

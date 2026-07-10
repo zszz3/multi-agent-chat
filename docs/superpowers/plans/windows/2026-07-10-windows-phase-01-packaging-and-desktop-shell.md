@@ -4,13 +4,35 @@
 
 ### Status
 
-Proposed. Requires Phase 00 scope and baseline decisions.
+In progress. The cross-platform window presentation and application resource locator slice was implemented on 2026-07-10. Installer configuration and Windows-hosted packaging validation remain pending.
 
 ## Goal
 
 Produce an installable Windows x64 application that starts, loads Renderer and Preload assets, reads bundled resources, persists application data, and presents a native Windows-compatible window shell.
 
 This phase does not certify Agent Runtime execution or packaged MCP.
+
+## Implementation Progress
+
+Completed:
+
+- extracted platform-specific BrowserWindow presentation options;
+- preserved macOS `hiddenInset`/traffic-light behavior;
+- selected native window chrome for Windows and Linux;
+- added a platform-neutral `AppResourceLocator` with injectable path semantics;
+- defined locator paths for Preload, Renderer, bundled skills/workflows, and the future MCP bundle;
+- routed Preload, Renderer, and bundled workflow loading through the locator;
+- removed bundled-workflow lookup from the repository-relative application bootstrap path;
+- added POSIX development and `path.win32` packaged-path tests;
+- passed focused tests, TypeScript checks, production build, and an isolated Electron startup smoke.
+
+Pending:
+
+- `electron-builder` dependency, configuration, and scripts;
+- Windows icon and installer metadata;
+- packaged `extraResources` wiring for shared assets;
+- Windows-hosted unpacked and NSIS build;
+- install, upgrade, restart, and uninstall smoke tests.
 
 ## Target Files
 

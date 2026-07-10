@@ -13,7 +13,8 @@ import { loadBundledWorkflows } from "../workflows/bundled-workflows";
 import { OfficialCatalogStore } from "../official-catalog-store";
 import { UserSkillStore } from "../user-skill-store";
 import { centeredWindowBounds } from "../platform/window-bounds";
-import { resolvePreloadBundlePath } from "./app-paths";
+import { createMainAppResourceLocator } from "./app-paths";
+import { windowPresentationOptions } from "./window-options";
 import { fetchOnlineSkills, ONLINE_SKILL_SOURCES } from "../../shared/online-skills";
 import { SKILL_TEMPLATES } from "../../shared/skill-templates";
 import { DEFAULT_SCHEDULED_WORKFLOW_CLOUD_BASE_URL } from "../../shared/types";
@@ -60,6 +61,11 @@ const DEFAULT_WINDOW_WIDTH = 1360;
 const DEFAULT_WINDOW_HEIGHT = 860;
 const MIN_WINDOW_WIDTH = 980;
 const MIN_WINDOW_HEIGHT = 680;
+const appResources = createMainAppResourceLocator({
+  mainBundleDir: __dirname,
+  isPackaged: app.isPackaged,
+  resourcesPath: process.resourcesPath,
+});
 const hub = new AgentHub();
 const officialCatalog = new OfficialCatalogStore(path.join(app.getPath("userData"), OFFICIAL_CATALOG_DATABASE_FILE));
 const userSkillStore = new UserSkillStore(path.join(app.getPath("userData"), APP_DATABASE_FILE));
@@ -73,7 +79,6 @@ const scheduledWorkflowCloudClient = new ScheduledWorkflowCloudClient();
 let scheduledWorkflowEventConnection: ScheduledWorkflowCloudEventConnection | undefined;
 
 function createWindow(): BrowserWindow {
-  const preloadPath = resolvePreloadBundlePath(__dirname);
   const bounds = preferredWindowBounds();
   const window = new BrowserWindow({
     ...bounds,
@@ -82,10 +87,9 @@ function createWindow(): BrowserWindow {
     title: PRODUCT_NAME,
     backgroundColor: "#ffffff",
     show: false,
-    titleBarStyle: "hiddenInset",
-    trafficLightPosition: { x: 12, y: 14 },
+    ...windowPresentationOptions(process.platform),
     webPreferences: {
-      preload: preloadPath,
+      preload: appResources.preloadBundlePath(),
       contextIsolation: true,
       sandbox: false,
       nodeIntegration: false,
@@ -100,7 +104,7 @@ function createWindow(): BrowserWindow {
   if (process.env.ELECTRON_RENDERER_URL) {
     void window.loadURL(process.env.ELECTRON_RENDERER_URL);
   } else {
-    void window.loadFile(path.join(__dirname, "../renderer/index.html"));
+    void window.loadFile(appResources.rendererHtmlPath());
   }
 
   return window;
@@ -256,7 +260,7 @@ async function bootstrap(): Promise<void> {
   await app.whenReady();
   await hub.loadModelChannels(path.join(app.getPath("userData"), MODEL_CHANNELS_FILE));
   await hub.loadPersistedState(path.join(app.getPath("userData"), APP_DATABASE_FILE));
-  const bundledWorkflows = await loadBundledWorkflows(path.join(__dirname, "../../shared/bundled-workflows"));
+  const bundledWorkflows = await loadBundledWorkflows(appResources.bundledWorkflowsRoot());
   await officialCatalog.rebuild(bundledWorkflows, SKILL_TEMPLATES);
   hub.ensureBundledWorkflows(await officialCatalog.listWorkflows());
   codexChatRouter = await startCodexChatRouter({ channels: () => hub.snapshot().channels });
