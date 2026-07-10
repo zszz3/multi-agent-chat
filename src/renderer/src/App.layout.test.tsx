@@ -44,6 +44,7 @@ import {
   resolveConfiguredAgentChannel,
   reorderTeamMembers,
   taskDetailIdFor,
+  navigateWithRuntimeSave,
   TaskPage,
   TaskStatusFilter,
   TeamPage,
@@ -181,6 +182,21 @@ const codexPluginCatalog: CodexPluginCatalogItem[] = [
     enabled: false,
   },
 ];
+
+test("guards only navigation away from the Runtime page", async () => {
+  const navigated: string[] = [];
+  let confirmations = 0;
+  const confirm = async () => {
+    confirmations += 1;
+    return false;
+  };
+
+  await navigateWithRuntimeSave("chat", "workflow", confirm, (feature) => navigated.push(feature));
+  await navigateWithRuntimeSave("runtimes", "skills", confirm, (feature) => navigated.push(feature));
+
+  expect(confirmations).toBe(1);
+  expect(navigated).toEqual(["workflow"]);
+});
 
 const taskRuns: TaskRun[] = [
   {

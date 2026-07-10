@@ -193,6 +193,17 @@ export function applySkillTemplate(agent: ConfiguredAgent, template: SkillTempla
   };
 }
 
+export async function navigateWithRuntimeSave(
+  activeFeature: ActiveFeature,
+  nextFeature: ActiveFeature,
+  confirmSave: () => Promise<boolean>,
+  navigate: (feature: ActiveFeature) => void,
+): Promise<void> {
+  if (activeFeature === nextFeature) return;
+  if (activeFeature === "runtimes" && !(await confirmSave())) return;
+  navigate(nextFeature);
+}
+
 export function AppShell() {
   const chatApi = useMemo(() => multiAgentChatService(), []);
   const snapshots = useMemo(() => snapshotService(), []);
@@ -249,13 +260,24 @@ export function AppShell() {
     queryRuntimeChannelBalance,
     refreshModelCatalog,
     confirmSaveBeforeSwitch,
-    selectConfigChannel,
   } = useRuntimeConfigManager({
     chatApi,
     snapshot,
     setSnapshot,
     runtimeViewActive: activeFeature === "runtimes",
   });
+  const navigateToFeature = useCallback((feature: ActiveFeature): void => {
+    void navigateWithRuntimeSave(
+      activeFeature,
+      feature,
+      () => confirmSaveBeforeSwitch(
+        language === "zh"
+          ? "当前 Runtime 配置尚未保存，离开前保存吗？"
+          : "This Runtime config has unsaved changes. Save before leaving?",
+      ),
+      setActiveFeature,
+    );
+  }, [activeFeature, confirmSaveBeforeSwitch, language]);
   const {
     selectedConfiguredAgentId,
     configuredAgentStatus,
@@ -282,7 +304,7 @@ export function AppShell() {
     onChooseWorkDir: chooseWorkDir,
     onRefresh: refresh,
     onReadOutputFile: readLocalFile,
-    onEnterWorkflow: () => setActiveFeature("workflow"),
+    onEnterWorkflow: () => navigateToFeature("workflow"),
   });
   const menuCoordinator = useShellMenuCoordinator({
     hasChatContextMenu: chatContextMenu !== undefined,
@@ -319,7 +341,7 @@ export function AppShell() {
     chatApi,
     snapshot,
     setSnapshot,
-    onEnterSchedules: () => setActiveFeature("schedules"),
+    onEnterSchedules: () => navigateToFeature("schedules"),
   });
 
   useEffect(() => {
@@ -491,7 +513,7 @@ export function AppShell() {
         const feature = navMap[event.key.toLowerCase()];
         if (feature) {
           event.preventDefault();
-          setActiveFeature(feature);
+          navigateToFeature(feature);
         }
         gChordRef.current = 0;
       }
@@ -523,7 +545,7 @@ export function AppShell() {
         }),
         theme,
         language,
-        onNavigate: setActiveFeature,
+        onNavigate: navigateToFeature,
         onSelectChat: (chatId) => void selectChat(chatId),
         onNewChat: () => void createChat(),
         onToggleTheme: toggleTheme,
@@ -762,7 +784,7 @@ export function AppShell() {
       ],
     });
     setSnapshot(next);
-    setActiveFeature("workflow");
+    navigateToFeature("workflow");
   }
 
   async function updateTeam(
@@ -812,14 +834,14 @@ export function AppShell() {
     [theme, language, keepAwake, providerKeys],
   );
   const providerNavigation = useMemo(
-    () => ({ activeFeature, setActiveFeature, paletteOpen, setPaletteOpen }),
-    [activeFeature, paletteOpen],
+    () => ({ activeFeature, setActiveFeature: navigateToFeature, paletteOpen, setPaletteOpen }),
+    [activeFeature, navigateToFeature, paletteOpen],
   );
 
   return (
     <AppProviders snapshot={providerSnapshot} preferences={providerPreferences} navigation={providerNavigation}>
       <div className={appShellClass(activeFeature)}>
-        <FeatureRail activeFeature={activeFeature} theme={theme} text={text} onSelectFeature={setActiveFeature} onToggleTheme={toggleTheme} />
+        <FeatureRail activeFeature={activeFeature} theme={theme} text={text} onSelectFeature={navigateToFeature} onToggleTheme={toggleTheme} />
 
         <ResourceSidebar
           activeFeature={activeFeature}
@@ -912,13 +934,7 @@ export function AppShell() {
             onRemoveModel={removeConfigModel}
             onSave={saveChannelConfig}
             onLoadCodexPluginCatalog={loadCodexPluginCatalog}
-            onSelectChannel={(channelId) => selectConfigChannel(
-              channelId,
-              language === "zh" ? "当前 Runtime 配置尚未保存，切换前保存吗？" : "This Runtime config has unsaved changes. Save before switching?",
-            )}
-            onBeforeProviderSwitch={() => confirmSaveBeforeSwitch(
-              language === "zh" ? "当前 Runtime 配置尚未保存，切换 Provider 前保存吗？" : "This Runtime config has unsaved changes. Save before switching providers?",
-            )}
+            onSelectChannel={setSelectedConfigChannelId}
             onAddConfig={addConfigChannel}
             onOpenContextMenu={openRuntimeConfigContextMenu}
             onDeleteConfig={deleteConfigChannel}

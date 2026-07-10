@@ -85,7 +85,6 @@ export interface RuntimeConfigManager {
   queryRuntimeChannelBalance: (channelId: string, options?: { persistBeforeQuery?: boolean; quiet?: boolean }) => Promise<void>;
   refreshModelCatalog: (channelId: string) => Promise<void>;
   confirmSaveBeforeSwitch: (message: string) => Promise<boolean>;
-  selectConfigChannel: (channelId: string, message: string) => Promise<void>;
 }
 
 export function useRuntimeConfigManager({
@@ -238,12 +237,6 @@ export function useRuntimeConfigManager({
       return false;
     }
   }, [persistChannelConfig]);
-
-  const selectConfigChannel = useCallback(async (channelId: string, message: string): Promise<void> => {
-    if (channelId === selectedConfigChannelId) return;
-    if (!(await confirmSaveBeforeSwitch(message))) return;
-    setSelectedConfigChannelId(channelId);
-  }, [confirmSaveBeforeSwitch, selectedConfigChannelId]);
 
   const updateConfigChannel = useCallback((channelId: string, updater: (channel: AgentChannel) => AgentChannel) => {
     setBalanceResults((current) => {
@@ -532,6 +525,5 @@ export function useRuntimeConfigManager({
     queryRuntimeChannelBalance,
     refreshModelCatalog,
     confirmSaveBeforeSwitch,
-    selectConfigChannel,
   };
 }

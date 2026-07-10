@@ -111,7 +111,6 @@ interface RuntimePageProps {
   onSave: () => Promise<void>;
   onLoadCodexPluginCatalog: () => Promise<void>;
   onSelectChannel: (channelId: string) => void | Promise<void>;
-  onBeforeProviderSwitch?: () => Promise<boolean>;
   onAddConfig: () => void;
   onOpenContextMenu: (event: MouseEvent, channelId: string) => void;
   onDeleteConfig: (channelId: string) => void;
@@ -145,7 +144,6 @@ export function RuntimePage({
   onSave,
   onLoadCodexPluginCatalog,
   onSelectChannel,
-  onBeforeProviderSwitch,
   onAddConfig,
   onOpenContextMenu,
   onDeleteConfig,
@@ -219,7 +217,6 @@ export function RuntimePage({
 
   const applyRuntimePreset = async (preset: AgentProviderPreset): Promise<void> => {
     if (!selectedRuntimeChannelRecord) return;
-    if (preset.id !== selectedRuntimePresetId && onBeforeProviderSwitch && !(await onBeforeProviderSwitch())) return;
     if (preset.id === CODEX_DEFAULT_PRESET_ID) {
       onStatusChange?.("");
       onUpdateProviderKey(CODEX_DEFAULT_PRESET_ID, "");
