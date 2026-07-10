@@ -80,7 +80,7 @@ The key entry files are:
 - `src/main/index.ts`: bootstraps Electron, loads state, registers IPC, starts local services
 - `src/main/agent-hub.ts`: central in-memory state container plus orchestration logic
 - `src/main/hub/runtime/executor/agent-executor.ts`: runtime registry aggregator that composes one `createXxxDriver()` builder per runtime
-- `src/main/hub/runtime/executor/codex/`, `claude/`, `api/`, `hermes/`, `opencode/`: runtime-local bundles that own executor, workflow, cleanup, session, and capability assembly
+- `src/main/hub/runtime/executor/codex/`, `claude/`, `api/`, `hermes/`, `opencode/`, `openclaw/`: runtime-local bundles that own executor, workflow, cleanup, session, and capability assembly
 - `src/main/agents/runtime/runtime-driver.ts`: shared runtime capabilities, interactive session contracts, and optional workflow/test/cleanup hooks
 - `src/main/agents/interactive-session-manager.ts`: per-chat interactive queue plus central idle-detach sweep
 - `src/main/agents/codex-interactive-session.ts`: long-lived Codex chat attachment boundary
@@ -90,6 +90,7 @@ The key entry files are:
 - `src/main/agents/claude-stream.ts`: shared Claude event normalization helpers reused by the SDK adapters
 - `src/main/agents/hermes/hermes-runner.ts`: documented `hermes -z` one-shot adapter
 - `src/main/agents/opencode/opencode-runner.ts`: documented `opencode run --format json` NDJSON adapter
+- `src/main/agents/openclaw/openclaw-runner.ts`: documented `openclaw agent --json` one-shot adapter
 - `src/main/agents/acp/acp-interactive-client.ts`: shared official ACP stdio client used by interactive runtimes
 - `src/main/agents/acp/acp-interactive-session.ts`: shared ACP attach/resume/interrupt/detach lifecycle
 - `src/main/sqlite-store.ts`: small SQLite persistence wrapper
@@ -146,13 +147,14 @@ Persistence is intentionally simple:
 
 ## 7. Agent Execution Model
 
-The app supports five runtime families:
+The app supports six runtime families:
 
 - `codex`
 - `claude`
 - `api`
 - `hermes`
 - `opencode`
+- `openclaw`
 
 Execution is delegated through a thin driver registry in `src/main/hub/runtime/executor/agent-executor.ts`.
 Runtime onboarding now enters through runtime-local builder modules rather than through a single expanding central assembly file. The registry layer remains the only place that knows which runtimes exist, but runtime-specific workflow, cleanup, capability, and session wiring now stay inside runtime-owned bundle directories.
@@ -172,6 +174,8 @@ Each runtime still has a different backend:
 - Hermes interactive: official ACP sessions through `hermes acp`, `AcpInteractiveClient`, and the runtime-local `HermesInteractiveSession`
 - OpenCode one-shot: documented NDJSON events through `opencode run --format json`
 - OpenCode interactive: official ACP sessions through `opencode acp`, the shared ACP client/session lifecycle, and the runtime-local codec/driver
+- OpenClaw one-shot: documented `openclaw agent --json` calls with isolated session keys
+- OpenClaw interactive: the official Gateway-backed `openclaw acp` bridge; chat uses the Gateway session model because this ACP bridge does not expose model selection
 
 `AgentHub` remains the state authority. It persists logical chat identity, app-owned `runtimeState`, opaque `runtimeConversation` envelopes, and structured approval or user-input request lifecycles, restores interactive chats in a detached state after app restart, downgrades abandoned live requests to non-live state, and lets `InteractiveSessionManager` own serialized per-chat execution and idle sweeping.
 
@@ -185,7 +189,7 @@ Upper layers now build explicit runtime requests before crossing into the router
 
 Claude SDK events are normalized in `src/main/agents/claude-stream.ts` before they reach shared chat history.
 Interactive reconfigure classification lives in `src/main/agents/session-reconfigure.ts`, and chat state can persist an optional per-chat `channelId` override instead of treating the configured-agent channel as immutable forever.
-The same `RuntimeDriver` contract lets Hermes and OpenCode plug one-shot, interactive, workflow, test, cleanup, codec, and capability behavior in at the runtime-local builder layer instead of reopening `AgentHub`.
+The same `RuntimeDriver` contract lets Hermes, OpenCode, and OpenClaw plug their declared one-shot, interactive, workflow, test, cleanup, codec, and capability behavior in at the runtime-local builder layer instead of reopening `AgentHub`.
 
 The same high-level concepts are reused across chat, task, and workflow execution:
 

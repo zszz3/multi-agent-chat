@@ -20,7 +20,7 @@
 ┌─────────────────────────────────────────────────────┐
 │           RuntimeDriverRegistry                       │
 │  根据 AgentId 分发到对应的 RuntimeDriver              │
-│  codex │ claude │ api │ hermes │ opencode             │
+│  codex │ claude │ api │ hermes │ opencode │ openclaw  │
 └──────────────┬──────────────────────────────────────┘
                │
                ▼
@@ -48,7 +48,7 @@
 
 ```typescript
 // src/shared/types.ts
-type AgentId = "codex" | "claude" | "api" | "hermes" | "opencode";
+type AgentId = "codex" | "claude" | "api" | "hermes" | "opencode" | "openclaw";
 ```
 
 联合类型，每个值对应一个 Runtime Driver。
@@ -60,7 +60,7 @@ type AgentId = "codex" | "claude" | "api" | "hermes" | "opencode";
 interface ConfiguredAgent {
   id: string;              // 用户定义的唯一 ID
   name: string;            // 显示名称
-  runtimeAgentId: AgentId; // 指向哪个 Runtime（codex/claude/api/hermes/opencode）
+  runtimeAgentId: AgentId; // 指向哪个 Runtime（codex/claude/api/hermes/opencode/openclaw）
   channelId: string;       // 指向哪个 Channel（包含 provider/模型列表/API key 等）
   modelId: string;         // 默认模型
 }
@@ -159,7 +159,7 @@ AgentHub.runTask(request)
 1. runTask() 创建 TaskState，设置 status=running
 2. resolveConfiguredAgent() 查找：
    - configuredAgentId → ConfiguredAgent
-   - ConfiguredAgent.runtimeAgentId → AgentId (codex/claude/api/hermes/opencode)
+   - ConfiguredAgent.runtimeAgentId → AgentId (codex/claude/api/hermes/opencode/openclaw)
    - ConfiguredAgent.channelId → AgentChannel (含 modelProvider, baseUrl 等)
 3. runChat() 构造 AgentExecutionContext：
    {
@@ -233,7 +233,7 @@ AgentHub.sendPrompt(prompt, chatId)
 - `turnId`：每次新 turn 递增，用于识别事件是否来自已被中断的 turn
 - 当 `attachmentGeneration` 或 `turnId` 不匹配时，事件被丢弃
 
-## 4. 五种 Runtime 的详细实现
+## 4. 六种 Runtime 的详细实现
 
 ### 4.1 Codex — 子进程 JSON-RPC
 
@@ -328,6 +328,19 @@ chat (interactive)
 
 OpenCode chat 支持 ACP session 恢复、中断、继续、审批和模型选择；`openCodeRuntimeStateCodec` 持久化 native session id，cleanup 使用 `opencode session delete <sessionId>`。
 
+### 4.6 OpenClaw — 官方 agent JSON one-shot + Gateway ACP interactive
+
+```text
+task / workflow / channel-test (oneshot)
+  └─ openclaw agent --session-key <isolated-key> --message <prompt> --json [--model provider/model]
+
+chat (interactive)
+  └─ openclaw acp
+       └─ Gateway-backed ACP session new/resume/prompt/cancel/permission
+```
+
+OpenClaw ACP 当前不暴露模型选择，interactive 使用 Gateway session model；配置页中的可选 `provider/model` 只用于 one-shot。runtime codec 持久化 Gateway-backed ACP session id。因官方没有精确删除单个 durable Gateway session 的等价命令，OpenClaw 不声明 cleanup surface。
+
 ## 5. RuntimeDriverRegistry 的构造
 
 ```typescript
@@ -340,6 +353,7 @@ createRuntimeDriverRegistry(options) {
     createApiDriver(options),     // oneshot, HTTP 风格
     createHermesDriver(options),  // interactive chat + CLI oneshot
     createOpenCodeDriver(options), // interactive chat + NDJSON oneshot
+    createOpenClawDriver(options), // Gateway ACP chat + agent JSON oneshot
   ]);
 }
 ```
@@ -565,7 +579,7 @@ const nodeAgent = resolveWorkflowNodeAgent(
 
 ```typescript
 // src/shared/types.ts
-type AgentId = "codex" | "claude" | "api" | "hermes" | "opencode" | "mymodel";
+type AgentId = "codex" | "claude" | "api" | "hermes" | "opencode" | "openclaw" | "mymodel";
 ```
 
 ### 步骤 2：实现 Runner（拉起子进程/发 HTTP）
@@ -605,7 +619,7 @@ const mymodelDriver: RuntimeDriver = {
   askWorkflow: ...,               // 如需 workflow 专用调用
   testChannel: ...,               // 如需测试功能
 };
-return new RuntimeDriverRegistry([codexDriver, claudeDriver, apiDriver, hermesDriver, openCodeDriver, mymodelDriver]);
+return new RuntimeDriverRegistry([codexDriver, claudeDriver, apiDriver, hermesDriver, openCodeDriver, openClawDriver, mymodelDriver]);
 ```
 
 ### 步骤 5：更新 tools 层

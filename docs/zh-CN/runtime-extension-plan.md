@@ -1,6 +1,6 @@
 # Runtime 扩展方案：面向 Hermes / OpenClaw / 后续 Runtime
 
-> 状态（2026-07-10）：runtime 自治架构、Hermes 和 OpenCode 接入已经完成。OpenCode 的 task/workflow/channel-test 使用官方 `opencode run --format json` one-shot，chat 使用官方 `opencode acp` interactive。OpenClaw 按独立后续分支推进。
+> 状态（2026-07-10）：runtime 自治架构、Hermes、OpenCode 和 OpenClaw 接入已经完成。OpenClaw 的 task/workflow/channel-test 使用官方 `openclaw agent --json` one-shot，chat 使用官方 Gateway-backed `openclaw acp` interactive。
 
 ## 1. 目标
 
@@ -166,8 +166,8 @@ src/main/hub/runtime/
       create-openclaw-driver.ts
       openclaw-executor.ts
       openclaw-workflow.ts
-      openclaw-session.ts            # 如果未来支持 interactive
-      openclaw-cleanup.ts            # 如果未来支持 cleanup
+      openclaw-capabilities.ts
+      openclaw-session.ts
 ```
 
 该结构现已落地。通用 ACP 协议客户端与 session 生命周期位于 `src/main/agents/acp/`，Hermes/OpenCode bundle 分别负责命令选择、能力声明、codec 和会话装配。
@@ -207,9 +207,18 @@ export function createOpenClawDriver(options: RuntimeAgentExecutorFactoryOptions
 
 Hermes 因此同时证明了“简单 one-shot CLI”和“session-capable ACP runtime”可以共存在同一 runtime-local bundle 内，而不向 `AgentHub` 泄漏协议细节。
 
-## 7. OpenClaw 接入建议
+## 7. OpenClaw 接入结果
 
-`openclaw` 不应先入为主地按 Codex 或 Claude 套。
+官方材料证明 OpenClaw 是 Gateway-backed runtime，并同时提供脚本化 agent CLI 与 ACP bridge：
+
+- `task/workflow/channel-test`：`openclaw agent --session-key ... --message ... --json`
+- `chat`：`openclaw acp`
+- `runtimeConversation codec`：持久化 Gateway-backed ACP session id
+- `interrupt/approval`：ACP cancel 与 exec permission relay
+- `Default` 配置：可选 `provider/model` 只用于 one-shot；ACP chat 使用 Gateway session model
+- `cleanup`：不声明精确单会话删除；官方维护命令与 ACP close 不等价于删除当前聊天的 durable Gateway session
+
+下面的分类问题保留为后续 runtime 接入检查表：
 
 接入时应先回答下面几个问题：
 
