@@ -1,6 +1,6 @@
 # Runtime Specs
 
-Runtime specs describe the canonical execution architecture and any phase-by-phase contracts required to change it safely.
+Runtime specs describe the canonical execution boundaries and any phase-by-phase contracts required to change them safely.
 
 ## Current Canonical Set
 

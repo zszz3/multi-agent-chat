@@ -32,7 +32,7 @@ Current branch evidence for this phase now includes:
 - `src/main/agent-hub.ts` selecting chat, task, and workflow runtime defaults explicitly at the app boundary and only forwarding `runtimeConversation` when the selected continuation policy allows it
 - `src/main/agent-hub.ts` honoring explicit workflow request fields for `runtimeId`, `executionMode`, `continuationPolicy`, and `runtimeConfig.model` instead of reconstructing them from generic session semantics
 - `src/main/agent-hub.test.ts` covering support-matrix-driven chat defaults, explicit workflow fresh-vs-resume behavior, and task oneshot defaults
-- `docs/README.md`, `docs/runtime-execution-architecture-spec.md`, `docs/architecture-overview.md`, `docs/modules/main.md`, and the `docs/zh-CN/` mirrors pointing to the 2026-07-08 boundary reset contract as the canonical runtime story
+- `docs/README.md`, `docs/agent-integration-guide.md`, and `docs/superpowers/specs/runtime/README.md` pointing to the 2026-07-08 boundary reset contract as the canonical runtime story
 - deletion of the 2026-07-07 runtime-modes doc set so the repository no longer presents the old runtime story beside the reset contract
 
 ### Required Preconditions
@@ -62,7 +62,7 @@ This phase must enforce all of the following:
 
 - renderer, preload, and main request-building paths that choose runtime behavior
 - chat/workflow/task/configured-agent-test/cleanup default policy wiring
-- docs under `docs/` and `docs/zh-CN/` that describe runtime execution architecture
+- the runtime execution guide and specs under `docs/`
 - tests that still encode old migration or compatibility behavior
 - verification commands and live startup proof
 

@@ -41,7 +41,7 @@ Instead, it adds the next layer of constraints:
 
 This contract is derived from:
 
-- `docs/zh-CN/runtime-extension-plan.md`
+- `docs/agent-integration-guide.md`
 - current repository runtime architecture and driver registry layout
 
 ### This File Is Self-Contained
