@@ -7,7 +7,11 @@ import { codexAppServerConfigArgs } from "../../../../channels/model-config";
 import { createInteractiveRuntimeDriver } from "../agent-executor-driver-factories";
 import { CodexAgentExecutor } from "../agent-executor-codex";
 import { modelFromRuntimeConfig, type RuntimeAgentExecutorFactoryOptions } from "../agent-executor-types";
-import { codexSurfaceSupport, getCodexCapabilities } from "./codex-capabilities";
+import {
+  codexInteractiveSessionCapabilities,
+  codexSurfaceSupport,
+  getCodexCapabilities,
+} from "./codex-capabilities";
 import { deleteCodexSessionArtifacts } from "./codex-cleanup";
 import { runCodexWorkflow } from "./codex-workflow";
 
@@ -24,16 +28,7 @@ export function createCodexDriver(options: RuntimeAgentExecutorFactoryOptions): 
     createOneShotExecutor: (context) => new CodexAgentExecutor(context, options),
     createInteractiveSession: (context) =>
       new CodexInteractiveSession(context, {
-        capabilities: {
-          supportsInProcessConversationResume: true,
-          supportsResumeAfterDetach: true,
-          supportsResumeAfterAppRestart: true,
-          supportsTurnResume: false,
-          supportsInterrupt: true,
-          supportsContinue: true,
-          supportsApprovalRequests: true,
-          supportsUserInputRequests: true,
-        },
+        capabilities: codexInteractiveSessionCapabilities,
         createCodexClient: ({ onEvent, onExit }) => {
           const channel = options.channelById(context.channelId);
           let client: CodexRpcClient;

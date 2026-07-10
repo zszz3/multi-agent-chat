@@ -1,4 +1,4 @@
-import type { AgentRuntime } from "../../../../../shared/types";
+import type { AgentRuntime, ChatRuntimeSessionState } from "../../../../../shared/types";
 import type { RuntimeCapabilities } from "../../../../agents/runtime/runtime-capabilities";
 import type { RuntimeSurfaceSupport } from "../../../../agents/runtime/runtime-driver";
 import { support } from "../agent-executor-capabilities";
@@ -11,6 +11,17 @@ export const claudeSurfaceSupport: RuntimeSurfaceSupport[] = [
   support("cleanup", ["oneshot"], ["fresh", "resume-preferred"]),
 ];
 
+export const claudeInteractiveSessionCapabilities: ChatRuntimeSessionState["capabilities"] = {
+  supportsInProcessConversationResume: true,
+  supportsResumeAfterDetach: true,
+  supportsResumeAfterAppRestart: true,
+  supportsTurnResume: false,
+  supportsInterrupt: true,
+  supportsContinue: true,
+  supportsApprovalRequests: true,
+  supportsUserInputRequests: true,
+};
+
 export function getClaudeCapabilities(runtime: AgentRuntime): RuntimeCapabilities {
   return {
     runtimeId: runtime.id,
@@ -18,15 +29,15 @@ export function getClaudeCapabilities(runtime: AgentRuntime): RuntimeCapabilitie
     taskStyle: "oneshot",
     workflowStyle: "oneshot",
     testStyle: "oneshot",
-    supportsInterrupt: true,
-    supportsContinue: true,
-    supportsApprovalRequests: true,
-    supportsUserInputRequests: true,
+    supportsInterrupt: claudeInteractiveSessionCapabilities.supportsInterrupt,
+    supportsContinue: claudeInteractiveSessionCapabilities.supportsContinue,
+    supportsApprovalRequests: claudeInteractiveSessionCapabilities.supportsApprovalRequests,
+    supportsUserInputRequests: claudeInteractiveSessionCapabilities.supportsUserInputRequests,
     resume: {
-      supportsInProcessConversationResume: true,
-      supportsResumeAfterDetach: true,
-      supportsResumeAfterAppRestart: true,
-      supportsTurnResume: false,
+      supportsInProcessConversationResume: claudeInteractiveSessionCapabilities.supportsInProcessConversationResume,
+      supportsResumeAfterDetach: claudeInteractiveSessionCapabilities.supportsResumeAfterDetach,
+      supportsResumeAfterAppRestart: claudeInteractiveSessionCapabilities.supportsResumeAfterAppRestart,
+      supportsTurnResume: claudeInteractiveSessionCapabilities.supportsTurnResume,
     },
   };
 }

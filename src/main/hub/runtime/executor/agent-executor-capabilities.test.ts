@@ -1,10 +1,10 @@
 import { describe, expect, test } from "vitest";
 import type { AgentRuntime } from "../../../shared/types";
 import { createRuntimeDriverRegistry } from "./agent-executor";
-import { getApiCapabilities, apiSurfaceSupport } from "./api/api-capabilities";
-import { getClaudeCapabilities, claudeSurfaceSupport } from "./claude/claude-capabilities";
-import { getCodexCapabilities, codexSurfaceSupport } from "./codex/codex-capabilities";
-import { getHermesCapabilities, hermesSurfaceSupport } from "./hermes/hermes-capabilities";
+import { apiSurfaceSupport } from "./api/api-capabilities";
+import { claudeInteractiveSessionCapabilities, claudeSurfaceSupport } from "./claude/claude-capabilities";
+import { codexInteractiveSessionCapabilities, codexSurfaceSupport } from "./codex/codex-capabilities";
+import { hermesSurfaceSupport } from "./hermes/hermes-capabilities";
 
 function buildOptions() {
   return {
@@ -31,31 +31,152 @@ function runtime(id: AgentRuntime["id"]): AgentRuntime {
   };
 }
 
+function interactiveSessionContext(runtimeId: AgentRuntime["id"]) {
+  return {
+    chatId: `${runtimeId}-chat-1`,
+    configuredAgentId: `${runtimeId}-agent-1`,
+    runtimeId,
+    executionMode: "interactive",
+    continuationPolicy: "resume-preferred",
+    runtimeConfig: { model: "default" },
+    runtime: runtime(runtimeId),
+    channelId: "test-channel",
+    workDir: "/tmp/runtime-capability-contract",
+    developerInstructions: "Be helpful",
+    emit: () => undefined,
+  } as const;
+}
+
+function sessionCapabilityProjection(runtimeId: AgentRuntime["id"]) {
+  const capabilities = createRuntimeDriverRegistry(buildOptions()).driverFor(runtimeId).getCapabilities(runtime(runtimeId));
+  return {
+    supportsInProcessConversationResume: capabilities.resume.supportsInProcessConversationResume,
+    supportsResumeAfterDetach: capabilities.resume.supportsResumeAfterDetach,
+    supportsResumeAfterAppRestart: capabilities.resume.supportsResumeAfterAppRestart,
+    supportsTurnResume: capabilities.resume.supportsTurnResume,
+    supportsInterrupt: capabilities.supportsInterrupt,
+    supportsContinue: capabilities.supportsContinue,
+    supportsApprovalRequests: capabilities.supportsApprovalRequests,
+    supportsUserInputRequests: capabilities.supportsUserInputRequests,
+  };
+}
+
 describe("runtime capability declarations", () => {
-  test("exposes each runtime's support matrix and capability contract through the runtime driver registry", () => {
+  test("preserves the registry-facing support matrices and chat styles for each runtime", () => {
     const registry = createRuntimeDriverRegistry(buildOptions());
 
     expect(registry.driverFor("codex").surfaceSupport).toEqual(codexSurfaceSupport);
-    expect(registry.driverFor("codex").getCapabilities(runtime("codex"))).toEqual(getCodexCapabilities(runtime("codex")));
+    expect(registry.driverFor("codex").surfaceSupport).toEqual([
+      { surface: "chat", executionModes: ["interactive"], continuationPolicies: ["fresh", "resume-preferred"] },
+      { surface: "task", executionModes: ["oneshot"], continuationPolicies: ["fresh", "resume-preferred"] },
+      { surface: "workflow", executionModes: ["oneshot"], continuationPolicies: ["fresh", "resume-preferred"] },
+      { surface: "channel-test", executionModes: ["oneshot"], continuationPolicies: ["fresh"] },
+      { surface: "cleanup", executionModes: ["oneshot"], continuationPolicies: ["fresh", "resume-preferred"] },
+    ]);
+    expect(registry.driverFor("codex").getCapabilities(runtime("codex"))).toMatchObject({
+      chatStyle: "interactive",
+      taskStyle: "oneshot",
+      workflowStyle: "oneshot",
+      testStyle: "oneshot",
+      supportsInterrupt: true,
+      supportsContinue: true,
+      supportsApprovalRequests: true,
+      supportsUserInputRequests: true,
+      resume: {
+        supportsInProcessConversationResume: true,
+        supportsResumeAfterDetach: true,
+        supportsResumeAfterAppRestart: true,
+        supportsTurnResume: false,
+      },
+    });
 
     expect(registry.driverFor("claude").surfaceSupport).toEqual(claudeSurfaceSupport);
-    expect(registry.driverFor("claude").getCapabilities(runtime("claude"))).toEqual(
-      getClaudeCapabilities(runtime("claude")),
-    );
+    expect(registry.driverFor("claude").surfaceSupport).toEqual([
+      { surface: "chat", executionModes: ["interactive"], continuationPolicies: ["fresh", "resume-preferred"] },
+      { surface: "task", executionModes: ["oneshot"], continuationPolicies: ["fresh", "resume-preferred"] },
+      { surface: "workflow", executionModes: ["oneshot"], continuationPolicies: ["fresh", "resume-preferred"] },
+      { surface: "channel-test", executionModes: ["oneshot"], continuationPolicies: ["fresh"] },
+      { surface: "cleanup", executionModes: ["oneshot"], continuationPolicies: ["fresh", "resume-preferred"] },
+    ]);
+    expect(registry.driverFor("claude").getCapabilities(runtime("claude"))).toMatchObject({
+      chatStyle: "interactive",
+      taskStyle: "oneshot",
+      workflowStyle: "oneshot",
+      testStyle: "oneshot",
+      supportsInterrupt: true,
+      supportsContinue: true,
+      supportsApprovalRequests: true,
+      supportsUserInputRequests: true,
+      resume: {
+        supportsInProcessConversationResume: true,
+        supportsResumeAfterDetach: true,
+        supportsResumeAfterAppRestart: true,
+        supportsTurnResume: false,
+      },
+    });
 
     expect(registry.driverFor("api").surfaceSupport).toEqual(apiSurfaceSupport);
-    expect(registry.driverFor("api").getCapabilities(runtime("api"))).toEqual(getApiCapabilities(runtime("api")));
+    expect(registry.driverFor("api").surfaceSupport).toEqual([
+      { surface: "chat", executionModes: ["oneshot"], continuationPolicies: ["fresh"] },
+      { surface: "task", executionModes: ["oneshot"], continuationPolicies: ["fresh"] },
+      { surface: "workflow", executionModes: ["oneshot"], continuationPolicies: ["fresh"] },
+      { surface: "channel-test", executionModes: ["oneshot"], continuationPolicies: ["fresh"] },
+      { surface: "cleanup", executionModes: ["oneshot"], continuationPolicies: ["fresh"] },
+    ]);
+    expect(registry.driverFor("api").getCapabilities(runtime("api"))).toMatchObject({
+      chatStyle: "oneshot",
+      taskStyle: "oneshot",
+      workflowStyle: "oneshot",
+      testStyle: "oneshot",
+      supportsInterrupt: false,
+      supportsContinue: false,
+      supportsApprovalRequests: false,
+      supportsUserInputRequests: false,
+      resume: {
+        supportsInProcessConversationResume: false,
+        supportsResumeAfterDetach: false,
+        supportsResumeAfterAppRestart: false,
+        supportsTurnResume: false,
+      },
+    });
 
     expect(registry.driverFor("hermes").surfaceSupport).toEqual(hermesSurfaceSupport);
-    expect(registry.driverFor("hermes").getCapabilities(runtime("hermes"))).toEqual(
-      getHermesCapabilities(runtime("hermes")),
-    );
+    expect(registry.driverFor("hermes").surfaceSupport).toEqual([
+      { surface: "chat", executionModes: ["oneshot"], continuationPolicies: ["fresh"] },
+      { surface: "task", executionModes: ["oneshot"], continuationPolicies: ["fresh"] },
+      { surface: "workflow", executionModes: ["oneshot"], continuationPolicies: ["fresh"] },
+      { surface: "channel-test", executionModes: ["oneshot"], continuationPolicies: ["fresh"] },
+      { surface: "cleanup", executionModes: ["oneshot"], continuationPolicies: ["fresh"] },
+    ]);
+    expect(registry.driverFor("hermes").getCapabilities(runtime("hermes"))).toMatchObject({
+      chatStyle: "oneshot",
+      taskStyle: "oneshot",
+      workflowStyle: "oneshot",
+      testStyle: "oneshot",
+      supportsInterrupt: false,
+      supportsContinue: false,
+      supportsApprovalRequests: false,
+      supportsUserInputRequests: false,
+      resume: {
+        supportsInProcessConversationResume: false,
+        supportsResumeAfterDetach: false,
+        supportsResumeAfterAppRestart: false,
+        supportsTurnResume: false,
+      },
+    });
   });
 
-  test("keeps chat execution ownership explicit per runtime", () => {
-    expect(getCodexCapabilities(runtime("codex")).chatStyle).toBe("interactive");
-    expect(getClaudeCapabilities(runtime("claude")).chatStyle).toBe("interactive");
-    expect(getApiCapabilities(runtime("api")).chatStyle).toBe("oneshot");
-    expect(getHermesCapabilities(runtime("hermes")).chatStyle).toBe("oneshot");
+  test("reuses runtime-local interactive session capability declarations for codex and claude snapshots", () => {
+    const registry = createRuntimeDriverRegistry(buildOptions());
+
+    const codexDriver = registry.driverFor("codex");
+    const codexSession = codexDriver.createInteractiveSession?.(interactiveSessionContext("codex"));
+    expect(codexSession?.snapshot().runtimeState.capabilities).toEqual(codexInteractiveSessionCapabilities);
+    expect(codexSession?.snapshot().runtimeState.capabilities).toEqual(sessionCapabilityProjection("codex"));
+
+    const claudeDriver = registry.driverFor("claude");
+    const claudeSession = claudeDriver.createInteractiveSession?.(interactiveSessionContext("claude"));
+    expect(claudeSession?.snapshot().runtimeState.capabilities).toEqual(claudeInteractiveSessionCapabilities);
+    expect(claudeSession?.snapshot().runtimeState.capabilities).toEqual(sessionCapabilityProjection("claude"));
   });
 });
