@@ -34,6 +34,7 @@ import { WorkflowV2SupervisionSignal } from "./workflow-v2-supervision-signal";
 
 export interface ExecuteWorkflowV2PlanInput {
   plan: WorkflowV2Plan;
+  initialCheckpoint?: ExecuteWorkflowV2Checkpoint;
   maxParallelNodes?: number;
   runLlmNode: (input: {
     node: WorkflowV2LLMNode;
@@ -80,13 +81,18 @@ export async function executeWorkflowV2Plan(input: ExecuteWorkflowV2PlanInput): 
   assertWorkflowV2ExecutionBudgets(input.plan);
   const planNodesById = new Map(input.plan.nodes.map((node) => [node.nodeId, node]));
   const definitionNodesById = new Map(input.plan.definition.nodes.map((node) => [node.id, node]));
-  const workerOutputs: WorkflowV2WorkerOutput[] = [];
-  const workerOutputsByNodeId = new Map<string, WorkflowV2WorkerOutput>();
+  if (input.initialCheckpoint) assertWorkflowV2InitialCheckpoint(input.plan, input.initialCheckpoint);
+  const workerOutputs: WorkflowV2WorkerOutput[] = input.initialCheckpoint
+    ? input.initialCheckpoint.workerOutputs.map(cloneWorkflowV2WorkerOutput)
+    : [];
+  const workerOutputsByNodeId = new Map(workerOutputs.map((output) => [output.nodeId, output]));
   const now = input.now ?? Date.now;
-  let runState = createWorkflowV2RunState({
-    definition: input.plan.definition,
-    ...(input.maxParallelNodes !== undefined ? { maxParallelNodes: input.maxParallelNodes } : {}),
-  });
+  let runState = input.initialCheckpoint
+    ? structuredClone(input.initialCheckpoint.runState)
+    : createWorkflowV2RunState({
+        definition: input.plan.definition,
+        ...(input.maxParallelNodes !== undefined ? { maxParallelNodes: input.maxParallelNodes } : {}),
+      });
   const checkpoint = async (): Promise<void> => {
     if (!input.onRunCheckpoint) return;
     await input.onRunCheckpoint({
@@ -363,6 +369,34 @@ export async function executeWorkflowV2Plan(input: ExecuteWorkflowV2PlanInput): 
       workerOutputs,
     }),
   };
+}
+
+function assertWorkflowV2InitialCheckpoint(
+  plan: WorkflowV2Plan,
+  checkpoint: ExecuteWorkflowV2Checkpoint,
+): void {
+  const runState = checkpoint.runState;
+  if (runState.workflowId !== plan.workflowId || runState.graphVersion !== plan.graphVersion) {
+    throw new Error("Workflow V2 initial checkpoint identity does not match the frozen plan.");
+  }
+  const planNodeIds = plan.definition.nodes.map((node) => node.id);
+  if (runState.nodeOrder.length !== planNodeIds.length
+    || runState.nodeOrder.some((nodeId, index) => nodeId !== planNodeIds[index])) {
+    throw new Error("Workflow V2 initial checkpoint node order does not match the frozen plan.");
+  }
+  const outputNodeIds = new Set<string>();
+  for (const output of checkpoint.workerOutputs) {
+    if (outputNodeIds.has(output.nodeId)) throw new Error(`Workflow V2 initial checkpoint duplicates output ${output.nodeId}.`);
+    outputNodeIds.add(output.nodeId);
+    const nodeState = runState.nodes[output.nodeId];
+    if (!nodeState || nodeState.status !== "completed") {
+      throw new Error(`Workflow V2 initial checkpoint output ${output.nodeId} is not completed.`);
+    }
+    cloneWorkflowV2WorkerOutput(output);
+  }
+  for (const nodeId of planNodeIds) {
+    if (!runState.nodes[nodeId]) throw new Error(`Workflow V2 initial checkpoint is missing node ${nodeId}.`);
+  }
 }
 
 function failWorkflowV2NodeExecution(

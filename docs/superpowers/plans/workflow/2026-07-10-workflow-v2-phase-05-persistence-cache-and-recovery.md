@@ -43,18 +43,24 @@
 - Create: `src/main/workflows/v2/workflow-v2-recovery.test.ts`
 - Modify: `src/main/hub/workflow/agent-hub-workflow-restore.ts`
 
-- [ ] **Step 1: Reconstruct run state from persisted files**
+- [x] **Step 1: Read, validate, and materialize executor state from persisted files**
 
-- [x] **Step 2: Determine which nodes can resume, rerun, or reuse cache**
+- [x] **Step 2: Resume unfinished execution without rerunning reusable upstream nodes**
 
-- [x] **Step 3: Re-evaluate unfinished nodes when `graphVersion` changes**
+- [x] **Step 3: Resume interrupted LLM attempts with saved checkpoint and runtime conversation**
+
+- [ ] **Step 4: Reconcile durable Workflow V2 state during AgentHub startup restore**
+
+- [x] **Step 5: Determine which nodes can resume, rerun, or reuse cache**
+
+- [x] **Step 6: Re-evaluate unfinished nodes when `graphVersion` changes**
 
 ### Task 4: Verification
 
 **Files:**
 - Modify: tests only as needed
 
-- [ ] **Step 1: Run focused persistence and recovery tests**
+- [x] **Step 1: Run focused persistence and recovery tests**
 
 Run:
 
@@ -64,7 +70,11 @@ npx vitest run src/shared/workflow-v2/storage.test.ts src/main/workflows/v2/work
 
 Expected: all pass
 
+Latest focused recovery/runtime result: 89 tests passed across the store, recovery planner, executor, and runtime bridge.
+
 - [ ] **Step 2: Run typecheck**
 
 Run: `npm run typecheck`
 Expected: exit code `0`
+
+Workflow V2 and workflow-runtime paths currently report no type errors. Repository-wide typecheck remains blocked by pre-existing missing agent runtime modules outside Workflow V2.

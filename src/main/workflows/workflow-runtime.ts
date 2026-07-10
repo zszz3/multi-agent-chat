@@ -11,6 +11,8 @@ import type {
   WorkflowEvent,
   WorkflowGraphNode,
   WorkflowOperationResult,
+  RuntimeConversation,
+  WorkflowRunState,
   WorkflowRunProgressItem,
 } from "../../shared/types";
 import type {
@@ -87,9 +89,14 @@ import {
   type WorkflowV2DurableEvent,
   type WorkflowV2DurableNodeControlState,
   type WorkflowV2PersistedRunState,
+  type WorkflowV2NodeCacheFingerprint,
 } from "../../shared/workflow-v2/storage";
 import type { ExecuteWorkflowV2Checkpoint } from "./v2/workflow-v2-executor";
-import { createWorkflowV2NodeCacheFingerprint } from "./v2/workflow-v2-recovery";
+import {
+  buildWorkflowV2RecoveryPlan,
+  createWorkflowV2NodeCacheFingerprint,
+  materializeWorkflowV2Recovery,
+} from "./v2/workflow-v2-recovery";
 
 export interface WorkflowRunStateUpdate {
   workflowId: string;
@@ -131,6 +138,12 @@ export interface WorkflowV2StorePort {
     events: readonly WorkflowV2DurableEvent[];
   }) => Promise<void>;
   persistCacheEntry?: (entry: WorkflowV2CacheEntryMetadata) => Promise<void>;
+  readRunState?: (workflowId: string, runId: string) => Promise<WorkflowV2PersistedRunState | undefined>;
+  readCacheEntry?: (
+    workflowId: string,
+    graphVersion: number,
+    nodeId: string,
+  ) => Promise<WorkflowV2CacheEntryMetadata | undefined>;
 }
 
 const WORKFLOW_V2_MAX_PARALLEL_NODES = 4;
@@ -144,6 +157,32 @@ function delay(ms: number): Promise<void> {
 function configuredAgentModelId(workflow: WorkflowDraftState, snapshot: AppSnapshot): string {
   const agent = snapshot.configuredAgents.find((item) => item.id === workflow.configuredAgentId);
   return workflow.modelId || agent?.modelId || DEFAULT_MODEL_ID;
+}
+
+function workflowV2ExecutionEnvironment(input: {
+  node: WorkflowV2LLMNode | WorkflowV2ScriptNode;
+  workDir: string;
+  configuredAgentId: string;
+  modelId: string;
+}): Record<string, unknown> {
+  return {
+    workDir: input.workDir,
+    configuredAgentId: input.configuredAgentId,
+    modelId: input.modelId,
+    execModel: input.node.execModel,
+    ...(input.node.execModel === "script"
+      ? { sandboxMode: input.node.sandboxMode, language: input.node.script.language }
+      : {}),
+  };
+}
+
+function workflowV2ReviewerPolicy(node: WorkflowV2LLMNode | WorkflowV2ScriptNode): Record<string, unknown> {
+  return {
+    judgeDimensions: node.execModel === "llm" ? node.judgeDimensions ?? [] : [],
+    requiresIndependentReview: node.execModel === "llm"
+      && node.role !== "reviewer"
+      && (node.judgeDimensions?.length ?? 0) > 0,
+  };
 }
 
 function workflowV2PlanValidationError(workflow: WorkflowDraftState, plan: WorkflowV2Plan): string | undefined {
@@ -659,12 +698,7 @@ export class WorkflowRuntime {
     if (!workflow) return { ok: false, error: `Workflow ${input.workflowId} was not found.` };
     if (!run) return { ok: false, workflowId: input.workflowId, error: `Workflow run ${input.runId} was not found.` };
     if (run.workflowV2Plan) {
-      return {
-        ok: false,
-        workflowId: input.workflowId,
-        runId: input.runId,
-        error: WORKFLOW_V2_INTERVENTION_PHASE04_ERROR,
-      };
+      return this.resumeWorkflowV2Node({ workflow, run, nodeId: input.nodeId });
     }
     if (run.status !== "running" && run.status !== "stopped") {
       return { ok: false, workflowId: input.workflowId, runId: input.runId, error: "Workflow run is not resumable." };
@@ -735,6 +769,154 @@ export class WorkflowRuntime {
       if (!currentActiveRun || (currentActiveRun.pausedNodeIds.size === 0 && currentActiveRun.gatedNodeIds.size === 0)) this.activeRuns.delete(input.runId);
     });
     return { ok: true, workflowId: input.workflowId, runId: input.runId };
+  }
+
+  private async resumeWorkflowV2Node(input: {
+    workflow: WorkflowDraftState;
+    run: WorkflowRunState;
+    nodeId: string;
+  }): Promise<WorkflowOperationResult> {
+    if (input.run.status !== "stopped" && input.run.status !== "failed") {
+      return {
+        ok: false,
+        workflowId: input.workflow.workflowId,
+        runId: input.run.runId,
+        error: "Workflow run is not resumable.",
+      };
+    }
+    if (this.activeRuns.has(input.run.runId)) {
+      return {
+        ok: false,
+        workflowId: input.workflow.workflowId,
+        runId: input.run.runId,
+        error: "Workflow run is already active.",
+      };
+    }
+    const store = this.deps.createWorkflowV2Store?.();
+    if (!store?.readRunState) {
+      return {
+        ok: false,
+        workflowId: input.workflow.workflowId,
+        runId: input.run.runId,
+        error: "Workflow V2 durable state is unavailable.",
+      };
+    }
+    const persisted = await store.readRunState(input.workflow.workflowId, input.run.runId);
+    if (!persisted) {
+      return {
+        ok: false,
+        workflowId: input.workflow.workflowId,
+        runId: input.run.runId,
+        error: "Workflow V2 durable run state was not found.",
+      };
+    }
+    if (persisted.workflowId !== input.workflow.workflowId || persisted.runId !== input.run.runId) {
+      return {
+        ok: false,
+        workflowId: input.workflow.workflowId,
+        runId: input.run.runId,
+        error: "Workflow V2 durable run state identity does not match the requested run.",
+      };
+    }
+    const plan = input.workflow.workflowV2Plan;
+    if (!plan) {
+      return { ok: false, workflowId: input.workflow.workflowId, runId: input.run.runId, error: "Workflow V2 plan was not found." };
+    }
+    if (!plan.definition.nodes.some((node) => node.id === input.nodeId)) {
+      return {
+        ok: false,
+        workflowId: input.workflow.workflowId,
+        runId: input.run.runId,
+        error: `Workflow V2 node ${input.nodeId} was not found.`,
+      };
+    }
+
+    const snapshot = this.deps.snapshot();
+    const workDir = input.workflow.workDir || snapshot.workDir;
+    const configuredAgentId = input.workflow.configuredAgentId || snapshot.configuredAgents[0]?.id || "default-agent";
+    const modelId = configuredAgentModelId(input.workflow, snapshot);
+    const cacheEntries = new Map<string, WorkflowV2CacheEntryMetadata>();
+    const targetFingerprints = new Map<string, WorkflowV2NodeCacheFingerprint>();
+    const knownOutputs = new Map(persisted.workerOutputs.map((output) => [output.nodeId, output]));
+
+    for (const node of plan.definition.nodes) {
+      const planNode = plan.nodes.find((item) => item.nodeId === node.id);
+      if (!planNode) {
+        return {
+          ok: false,
+          workflowId: input.workflow.workflowId,
+          runId: input.run.runId,
+          error: `Workflow V2 plan node ${node.id} was not found.`,
+        };
+      }
+      const cacheEntry = await store.readCacheEntry?.(input.workflow.workflowId, plan.graphVersion, node.id);
+      if (cacheEntry) cacheEntries.set(node.id, cacheEntry);
+      const upstreamOutputs = plan.definition.edges
+        .filter((edge) => edge.toNodeId === node.id)
+        .map((edge) => knownOutputs.get(edge.fromNodeId))
+        .filter((output): output is WorkflowV2WorkerOutput => Boolean(output));
+      const fingerprint = createWorkflowV2NodeCacheFingerprint({
+        graphVersion: plan.graphVersion,
+        node,
+        planNode,
+        upstreamOutputs,
+        executionEnvironment: workflowV2ExecutionEnvironment({ node, workDir, configuredAgentId, modelId }),
+        reviewerPolicy: workflowV2ReviewerPolicy(node),
+      });
+      targetFingerprints.set(node.id, fingerprint);
+      if (cacheEntry) knownOutputs.set(node.id, cacheEntry.output);
+    }
+
+    const recovery = buildWorkflowV2RecoveryPlan({
+      persisted,
+      targetDefinition: plan.definition,
+      targetFingerprints,
+      cacheEntries,
+    });
+    const targetDecision = recovery.decisions.find((decision) => decision.nodeId === input.nodeId);
+    if (!targetDecision || targetDecision.action === "reuse") {
+      return {
+        ok: false,
+        workflowId: input.workflow.workflowId,
+        runId: input.run.runId,
+        error: `Workflow V2 node ${input.nodeId} does not require recovery.`,
+      };
+    }
+    const materialized = materializeWorkflowV2Recovery({
+      persisted,
+      targetDefinition: plan.definition,
+      recovery,
+    });
+
+    this.activeRuns.set(input.run.runId, {
+      workflowId: input.workflow.workflowId,
+      runId: input.run.runId,
+      pausedNodeIds: new Set(),
+      pausedTaskIds: new Set(),
+      gatedNodeIds: new Set(),
+      taskIdByNodeId: new Map(),
+    });
+    this.deps.updateWorkflowRunState({
+      workflowId: input.workflow.workflowId,
+      runId: input.run.runId,
+      status: "running",
+      contextDocument: input.run.contextDocument,
+    });
+    const storagePlan = workflowStoragePlanFor(input.workflow.workflowId);
+    void this.executeWorkflowV2Run({
+      workflow: input.workflow,
+      plan,
+      runId: input.run.runId,
+      baseWorkflowContextDocument: input.run.contextDocument,
+      storagePlanDocument: workflowStoragePlanDocument(storagePlan),
+      initialCheckpoint: materialized.checkpoint,
+      initialNodeControl: persisted.nodeControl,
+      recoveryCheckpoints: materialized.recoveryCheckpoints,
+      resumeConversations: materialized.resumeConversations,
+    }).finally(() => {
+      this.activeRuns.delete(input.run.runId);
+    });
+    return { ok: true, workflowId: input.workflow.workflowId, runId: input.run.runId };
   }
 
   async answerWorkflowGate(input: AnswerWorkflowGateRequest): Promise<WorkflowOperationResult> {
@@ -821,6 +1003,10 @@ export class WorkflowRuntime {
     runId: string;
     baseWorkflowContextDocument: string;
     storagePlanDocument: string;
+    initialCheckpoint?: ExecuteWorkflowV2Checkpoint;
+    initialNodeControl?: Record<string, WorkflowV2DurableNodeControlState>;
+    recoveryCheckpoints?: ReadonlyMap<string, string>;
+    resumeConversations?: ReadonlyMap<string, RuntimeConversation>;
   }): Promise<void> {
     const { workflow, plan, runId, baseWorkflowContextDocument, storagePlanDocument } = input;
     const executionStartedAt = Date.now();
@@ -832,16 +1018,20 @@ export class WorkflowRuntime {
     let latestExecutorCheckpoint: ExecuteWorkflowV2Checkpoint | undefined;
     let previousDurableRunState: ExecuteWorkflowV2Checkpoint["runState"] | undefined;
     const persistedCacheNodeIds = new Set<string>();
-    const durableNodeControl: Record<string, WorkflowV2DurableNodeControlState> = Object.fromEntries(
-      plan.definition.nodes.map((node) => [node.id, { extensionCount: 0 }]),
-    );
+    const durableNodeControl: Record<string, WorkflowV2DurableNodeControlState> = input.initialNodeControl
+      ? structuredClone(input.initialNodeControl)
+      : Object.fromEntries(plan.definition.nodes.map((node) => [node.id, { extensionCount: 0 }]));
     let latestSnapshot = this.deps.snapshot();
-    let latestProgress = plan.definition.nodes.map((node): WorkflowRunProgressItem => ({
-      nodeId: node.id,
-      title: node.title,
-      status: "queued",
-      detail: "Queued",
-    }));
+    let latestProgress = plan.definition.nodes.map((node): WorkflowRunProgressItem => {
+      const recovered = input.initialCheckpoint?.runState.nodes[node.id];
+      if (recovered?.status === "completed" || recovered?.status === "skipped") {
+        return { nodeId: node.id, title: node.title, status: "completed", detail: "Recovered" };
+      }
+      if (recovered?.status === "failed") {
+        return { nodeId: node.id, title: node.title, status: "failed", detail: recovered.lastError ?? "Recovery failed" };
+      }
+      return { nodeId: node.id, title: node.title, status: "queued", detail: "Queued" };
+    });
     const workflowWorkDir = workflow.workDir || latestSnapshot.workDir;
     const configuredAgentId = workflow.configuredAgentId || latestSnapshot.configuredAgents[0]?.id || "default-agent";
     const modelId = configuredAgentModelId(workflow, latestSnapshot);
@@ -909,21 +1099,13 @@ export class WorkflowRuntime {
               node,
               planNode,
               upstreamOutputs,
-              executionEnvironment: {
+              executionEnvironment: workflowV2ExecutionEnvironment({
+                node,
                 workDir: workflowWorkDir,
                 configuredAgentId,
                 modelId,
-                execModel: node.execModel,
-                ...(node.execModel === "script"
-                  ? { sandboxMode: node.sandboxMode, language: node.script.language }
-                  : {}),
-              },
-              reviewerPolicy: {
-                judgeDimensions: node.execModel === "llm" ? node.judgeDimensions ?? [] : [],
-                requiresIndependentReview: node.execModel === "llm"
-                  && node.role !== "reviewer"
-                  && (node.judgeDimensions?.length ?? 0) > 0,
-              },
+              }),
+              reviewerPolicy: workflowV2ReviewerPolicy(node),
             }),
             output: structuredClone(output),
             savedAt: Date.now(),
@@ -1021,6 +1203,7 @@ export class WorkflowRuntime {
     };
 
     const runtimeAttemptByNodeId = new Map<string, number>();
+    const consumedRecoveryNodeIds = new Set<string>();
 
     const startModelTask = async (nodeId: string, request: RunTaskRequest): Promise<TaskRun> => {
       consumeModelCallBudget(nodeId);
@@ -1294,14 +1477,33 @@ export class WorkflowRuntime {
         baseWorkflowContextDocument,
         storagePlanDocument,
       });
+      const recoveryCheckpoint = consumedRecoveryNodeIds.has(request.node.id)
+        ? undefined
+        : input.recoveryCheckpoints?.get(request.node.id);
+      const recoveryConversation = consumedRecoveryNodeIds.has(request.node.id)
+        ? undefined
+        : input.resumeConversations?.get(request.node.id);
+      const effectivePrompt = recoveryCheckpoint
+        ? [
+            prompt,
+            "",
+            "# Recovery checkpoint",
+            "Resume the interrupted node attempt from this checkpoint. It is control context, not a completed result:",
+            recoveryCheckpoint,
+          ].join("\n")
+        : prompt;
       const attempt = (runtimeAttemptByNodeId.get(request.node.id) ?? 0) + 1;
       runtimeAttemptByNodeId.set(request.node.id, attempt);
       const task = await startModelTask(request.node.id, {
-        prompt,
+        prompt: effectivePrompt,
         configuredAgentId,
         modelId,
         workDir: workflowWorkDir,
+        ...(recoveryConversation
+          ? { continuationPolicy: "resume-required" as const, runtimeConversation: recoveryConversation }
+          : {}),
       });
+      consumedRecoveryNodeIds.add(request.node.id);
       updateNode(request.node.id, { status: "running", detail: "Task running", taskId: task.id });
 
       let taskIds = [task.id];
@@ -1401,6 +1603,7 @@ export class WorkflowRuntime {
       const result = await executeWorkflowV2Plan({
         plan,
         maxParallelNodes: WORKFLOW_V2_MAX_PARALLEL_NODES,
+        ...(input.initialCheckpoint ? { initialCheckpoint: input.initialCheckpoint } : {}),
         runLlmNode,
         executeScript: runScriptNode,
         onRunCheckpoint: persistExecutorCheckpoint,

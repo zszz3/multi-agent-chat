@@ -9,7 +9,11 @@ import {
 } from "../../../shared/workflow-v2/storage";
 import { buildWorkflowV2Plan } from "./workflow-v2-planner";
 import { transitionWorkflowV2NodeState } from "./workflow-v2-scheduler";
-import { buildWorkflowV2RecoveryPlan, createWorkflowV2NodeCacheFingerprint } from "./workflow-v2-recovery";
+import {
+  buildWorkflowV2RecoveryPlan,
+  createWorkflowV2NodeCacheFingerprint,
+  materializeWorkflowV2Recovery,
+} from "./workflow-v2-recovery";
 
 function definition(): WorkflowV2Definition {
   return {
@@ -68,7 +72,7 @@ describe("workflow-v2 recovery", () => {
     const state = await persisted();
     const recovery = buildWorkflowV2RecoveryPlan({
       persisted: state,
-      targetGraphVersion: 1,
+      targetDefinition: definition(),
       targetFingerprints: new Map(),
       cacheEntries: new Map(),
     });
@@ -82,6 +86,7 @@ describe("workflow-v2 recovery", () => {
   test("reuses changed-graph work only with an exact target fingerprint", async () => {
     const state = await persisted();
     const target = fingerprint(2);
+    const targetDefinition = { ...definition(), graphVersion: 2 };
     const cache: WorkflowV2CacheEntryMetadata = {
       schemaVersion: WORKFLOW_V2_STORAGE_SCHEMA_VERSION,
       workflowId: state.workflowId,
@@ -93,7 +98,7 @@ describe("workflow-v2 recovery", () => {
     };
     const recovery = buildWorkflowV2RecoveryPlan({
       persisted: state,
-      targetGraphVersion: 2,
+      targetDefinition,
       targetFingerprints: new Map([["first", target]]),
       cacheEntries: new Map([["first", cache]]),
     });
@@ -104,9 +109,10 @@ describe("workflow-v2 recovery", () => {
 
   test("invalidates a node and its downstream nodes when a fingerprint changes", async () => {
     const state = await persisted();
+    const targetDefinition = { ...definition(), graphVersion: 2 };
     const recovery = buildWorkflowV2RecoveryPlan({
       persisted: state,
-      targetGraphVersion: 2,
+      targetDefinition,
       targetFingerprints: new Map([["first", fingerprint(2)]]),
       cacheEntries: new Map([["first", {
         schemaVersion: WORKFLOW_V2_STORAGE_SCHEMA_VERSION,
@@ -145,5 +151,23 @@ describe("workflow-v2 recovery", () => {
       executionEnvironment: { a: 1, b: 2 },
     });
     expect(left).toEqual(right);
+  });
+
+  test("materializes reusable outputs while leaving checkpoint work runnable", async () => {
+    const state = await persisted();
+    const targetDefinition = definition();
+    const recovery = buildWorkflowV2RecoveryPlan({
+      persisted: state,
+      targetDefinition,
+      targetFingerprints: new Map(),
+      cacheEntries: new Map(),
+    });
+
+    const materialized = materializeWorkflowV2Recovery({ persisted: state, targetDefinition, recovery });
+
+    expect(materialized.checkpoint.runState.nodes.first?.status).toBe("completed");
+    expect(materialized.checkpoint.runState.nodes.second?.status).toBe("ready");
+    expect(materialized.checkpoint.workerOutputs).toEqual(state.workerOutputs);
+    expect(materialized.recoveryCheckpoints.get("second")).toBe("checkpoint-2");
   });
 });

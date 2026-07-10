@@ -132,5 +132,10 @@ describe("workflow-v2 file store", () => {
 
     const cachePath = path.join(root, "workflows", "workflow-1", "cache", "graph-1", "node-1.json");
     expect(JSON.parse(await readFile(cachePath, "utf8"))).toMatchObject({ nodeId: "node-1", graphVersion: 1 });
+    expect(await store.readCacheEntry("workflow-1", 1, "node-1")).toMatchObject({
+      nodeId: "node-1",
+      graphVersion: 1,
+      output: { nodeId: "node-1" },
+    });
   });
 });

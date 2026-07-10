@@ -1,9 +1,11 @@
 import { describe, expect, test } from "vitest";
 import type { WorkflowV2Definition, WorkflowV2LLMNode } from "../../../shared/workflow-v2/definition";
 import type { WorkflowV2WorkerOutput } from "../../../shared/workflow-v2/packets";
+import { createWorkflowV2RunState } from "../../../shared/workflow-v2/state";
 import { buildWorkflowV2Plan } from "./workflow-v2-planner";
 import { executeWorkflowV2Plan } from "./workflow-v2-executor";
 import { WorkflowV2SupervisionSignal } from "./workflow-v2-supervision-signal";
+import { transitionWorkflowV2NodeState } from "./workflow-v2-scheduler";
 
 function definition(): WorkflowV2Definition {
   return {
@@ -1139,5 +1141,61 @@ describe("workflow-v2 executor", () => {
       { status: "running", outputs: [] },
       { status: "completed", outputs: ["draft"] },
     ]);
+  });
+
+  test("resumes from a validated checkpoint without rerunning completed nodes", async () => {
+    const plan = await buildWorkflowV2Plan({ definition: definition(), approvedBy: "tester", now: 5_900 });
+    let runState = createWorkflowV2RunState({ definition: plan.definition });
+    runState = transitionWorkflowV2NodeState(runState, { nodeId: "draft", status: "running", now: 6_000 });
+    runState = transitionWorkflowV2NodeState(runState, { nodeId: "draft", status: "completed", now: 6_100 });
+    const calls: string[] = [];
+
+    const result = await executeWorkflowV2Plan({
+      plan,
+      initialCheckpoint: {
+        runState,
+        workerOutputs: [{
+          nodeId: "draft",
+          summary: "Recovered draft",
+          outputs: { draft: "const recovered = true;" },
+          proposals: [],
+        }],
+      },
+      runLlmNode: async () => {
+        calls.push("llm");
+        throw new Error("completed llm node must not rerun");
+      },
+      executeScript: async ({ node, upstreamOutputs }) => {
+        calls.push("script");
+        expect(upstreamOutputs[0]?.summary).toBe("Recovered draft");
+        return {
+          nodeId: node.id,
+          summary: "Verified recovered draft",
+          outputs: { verification: true },
+          proposals: [],
+        };
+      },
+    });
+
+    expect(calls).toEqual(["script"]);
+    expect(result.runState.status).toBe("completed");
+    expect(result.workerOutputs.map((output) => output.nodeId)).toEqual(["draft", "verify"]);
+  });
+
+  test("rejects a checkpoint whose identity does not match the frozen plan", async () => {
+    const plan = await buildWorkflowV2Plan({ definition: definition(), approvedBy: "tester", now: 6_200 });
+    const runState = createWorkflowV2RunState({ definition: plan.definition });
+    runState.graphVersion += 1;
+
+    await expect(executeWorkflowV2Plan({
+      plan,
+      initialCheckpoint: { runState, workerOutputs: [] },
+      runLlmNode: async () => {
+        throw new Error("runner should not be called");
+      },
+      executeScript: async () => {
+        throw new Error("script should not be called");
+      },
+    })).rejects.toThrow("identity does not match");
   });
 });

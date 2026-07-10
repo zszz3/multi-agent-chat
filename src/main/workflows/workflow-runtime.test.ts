@@ -15,8 +15,11 @@ import type {
   WorkflowV2ScriptNode,
 } from "../../shared/workflow-v2/definition";
 import type { WorkflowV2WorkerOutput } from "../../shared/workflow-v2/packets";
+import { createWorkflowV2RunState } from "../../shared/workflow-v2/state";
+import { WORKFLOW_V2_STORAGE_SCHEMA_VERSION } from "../../shared/workflow-v2/storage";
 import type { WorkflowV2CostBudget, WorkflowV2ResultPacket } from "../../shared/workflow-v2/planning";
 import { buildWorkflowV2Plan } from "./v2/workflow-v2-planner";
+import { transitionWorkflowV2NodeState } from "./v2/workflow-v2-scheduler";
 import {
   type ExecuteWorkflowV2ScriptRequest,
   type WorkflowV2StorePort,
@@ -681,11 +684,160 @@ describe("WorkflowRuntime Workflow V2 bridge", () => {
       ok: false,
       workflowId: fixture.workflow.workflowId,
       runId: "run-v2-intervention",
-      error: "Workflow V2 intervention requires Phase 04.",
+      error: "Workflow V2 durable state is unavailable.",
     });
     expect(fixture.stopTaskIds).toEqual([]);
     expect(fixture.taskRequests).toEqual([]);
     expect(fixture.updates).toEqual([]);
+  });
+
+  test("recovers reusable nodes and reruns only unfinished work from durable state", async () => {
+    let scriptCalls = 0;
+    let persistedPlan!: NonNullable<WorkflowDraftState["workflowV2Plan"]>;
+    let persistedRunState = createWorkflowV2RunState({ definition: workflowV2Definition(), maxParallelNodes: 4 });
+    persistedRunState = transitionWorkflowV2NodeState(persistedRunState, { nodeId: "draft", status: "running", now: 1_100 });
+    persistedRunState = transitionWorkflowV2NodeState(persistedRunState, { nodeId: "draft", status: "completed", now: 1_200 });
+    persistedRunState = transitionWorkflowV2NodeState(persistedRunState, { nodeId: "verify", status: "running", now: 1_300 });
+    persistedRunState = transitionWorkflowV2NodeState(persistedRunState, {
+      nodeId: "verify",
+      status: "paused",
+      now: 1_400,
+      error: "Interrupted",
+    });
+    const fixture = await workflowV2RuntimeFixture({
+      store: {
+        persistRunState: async () => undefined,
+        appendEvents: async () => undefined,
+        readRunState: async (_workflowId, runId) => ({
+          schemaVersion: WORKFLOW_V2_STORAGE_SCHEMA_VERSION,
+          workflowId: workflowV2Definition().workflowId,
+          runId,
+          graphVersion: workflowV2Definition().graphVersion,
+          savedAt: 1_500,
+          eventCount: 4,
+          plan: persistedPlan,
+          runState: persistedRunState,
+          workerOutputs: [{
+            nodeId: "draft",
+            summary: "Recovered draft",
+            outputs: { draft: "const recovered = true;" },
+            proposals: [],
+          }],
+          nodeControl: { draft: { extensionCount: 0 }, verify: { extensionCount: 0 } },
+        }),
+        readCacheEntry: async () => undefined,
+      },
+      executeScript: async ({ node, upstreamOutputs }) => {
+        scriptCalls += 1;
+        expect(upstreamOutputs[0]?.summary).toBe("Recovered draft");
+        return {
+          nodeId: node.id,
+          summary: "Recovered verification complete",
+          outputs: { verified: true },
+          proposals: [],
+        };
+      },
+    });
+    persistedPlan = fixture.workflow.workflowV2Plan!;
+    fixture.setRuns([workflowV2InterventionRun(fixture.workflow, "stopped", "paused")]);
+
+    const resumed = await fixture.runtime.startWorkflowNode({
+      workflowId: fixture.workflow.workflowId,
+      runId: "run-v2-intervention",
+      nodeId: "verify",
+    });
+    const finished = await fixture.finished;
+
+    expect(resumed).toMatchObject({ ok: true, runId: "run-v2-intervention" });
+    expect(finished.status).toBe("completed");
+    expect(scriptCalls).toBe(1);
+    expect(fixture.taskRequests).toEqual([]);
+  });
+
+  test("resumes an interrupted LLM node with its checkpoint and runtime conversation", async () => {
+    const definition = workflowV2Definition();
+    definition.nodes = [definition.nodes[0]!];
+    definition.edges = [];
+    const resumeConversation = {
+      runtimeId: "codex" as const,
+      codecVersion: "1",
+      payload: { native: { threadId: "recovery-thread" } },
+    };
+    let persistedPlan!: NonNullable<WorkflowDraftState["workflowV2Plan"]>;
+    let persistedRunState = createWorkflowV2RunState({ definition, maxParallelNodes: 4 });
+    persistedRunState = transitionWorkflowV2NodeState(persistedRunState, {
+      nodeId: "draft",
+      status: "running",
+      now: 1_100,
+    });
+    persistedRunState = transitionWorkflowV2NodeState(persistedRunState, {
+      nodeId: "draft",
+      status: "paused",
+      now: 1_200,
+      error: "Interrupted after progress probe",
+      intervention: {
+        nodeId: "draft",
+        source: "supervision_pause",
+        reason: "Continue from the captured checkpoint.",
+        allowedActions: ["continue"],
+        requestedAt: 1_200,
+        resumeConversation,
+      },
+    });
+    const fixture = await workflowV2RuntimeFixture({
+      definition,
+      llmArtifact: JSON.stringify({
+        nodeId: "draft",
+        summary: "Recovered draft complete",
+        outputs: { draft: "const resumed = true;" },
+        proposals: [],
+      }),
+      store: {
+        persistRunState: async () => undefined,
+        appendEvents: async () => undefined,
+        readRunState: async (_workflowId, runId) => ({
+          schemaVersion: WORKFLOW_V2_STORAGE_SCHEMA_VERSION,
+          workflowId: definition.workflowId,
+          runId,
+          graphVersion: definition.graphVersion,
+          savedAt: 1_300,
+          eventCount: 2,
+          plan: persistedPlan,
+          runState: persistedRunState,
+          workerOutputs: [],
+          nodeControl: {
+            draft: {
+              extensionCount: 1,
+              checkpoint: "checkpoint-from-progress-probe",
+              stopReason: "supervision_pause",
+            },
+          },
+        }),
+        readCacheEntry: async () => undefined,
+      },
+      executeScript: async () => {
+        throw new Error("script runner should not be called");
+      },
+    });
+    persistedPlan = fixture.workflow.workflowV2Plan!;
+    fixture.setRuns([workflowV2InterventionRun(fixture.workflow, "stopped", "paused")]);
+
+    const resumed = await fixture.runtime.startWorkflowNode({
+      workflowId: fixture.workflow.workflowId,
+      runId: "run-v2-intervention",
+      nodeId: "draft",
+    });
+    const finished = await fixture.finished;
+
+    expect(resumed).toMatchObject({ ok: true, runId: "run-v2-intervention" });
+    expect(finished.status).toBe("completed");
+    expect(fixture.taskRequests).toHaveLength(1);
+    expect(fixture.taskRequests[0]).toMatchObject({
+      continuationPolicy: "resume-required",
+      runtimeConversation: resumeConversation,
+    });
+    expect(fixture.taskRequests[0]?.prompt).toContain("# Recovery checkpoint");
+    expect(fixture.taskRequests[0]?.prompt).toContain("checkpoint-from-progress-probe");
   });
 
   test("fails V2 gate intervention before resuming through the legacy executor", async () => {

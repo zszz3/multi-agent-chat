@@ -1,5 +1,5 @@
 import { createHash } from "node:crypto";
-import type { WorkflowV2Node } from "../../../shared/workflow-v2/definition";
+import type { WorkflowV2Definition, WorkflowV2Node } from "../../../shared/workflow-v2/definition";
 import type { WorkflowV2WorkerOutput } from "../../../shared/workflow-v2/packets";
 import type { WorkflowV2PlanNode } from "../../../shared/workflow-v2/planning";
 import {
@@ -10,6 +10,10 @@ import {
   type WorkflowV2PersistedRunState,
   type WorkflowV2RecoveryPlan,
 } from "../../../shared/workflow-v2/storage";
+import { createWorkflowV2RunState } from "../../../shared/workflow-v2/state";
+import type { RuntimeConversation } from "../../../shared/types";
+import type { ExecuteWorkflowV2Checkpoint } from "./workflow-v2-executor";
+import { transitionWorkflowV2NodeState } from "./workflow-v2-scheduler";
 
 export function createWorkflowV2NodeCacheFingerprint(input: {
   graphVersion: number;
@@ -37,21 +41,21 @@ export function createWorkflowV2NodeCacheFingerprint(input: {
 
 export function buildWorkflowV2RecoveryPlan(input: {
   persisted: WorkflowV2PersistedRunState;
-  targetGraphVersion: number;
+  targetDefinition: WorkflowV2Definition;
   targetFingerprints: ReadonlyMap<string, WorkflowV2NodeCacheFingerprint>;
   cacheEntries: ReadonlyMap<string, WorkflowV2CacheEntryMetadata>;
 }): WorkflowV2RecoveryPlan {
-  const graphChanged = input.persisted.graphVersion !== input.targetGraphVersion;
+  const targetGraphVersion = input.targetDefinition.graphVersion;
+  const graphChanged = input.persisted.graphVersion !== targetGraphVersion;
   const outputByNodeId = new Map(input.persisted.workerOutputs.map((output) => [output.nodeId, output]));
   const decisions = new Map<string, WorkflowV2NodeRecoveryDecision>();
 
-  for (const nodeId of input.persisted.runState.nodeOrder) {
+  for (const targetNode of input.targetDefinition.nodes) {
+    const nodeId = targetNode.id;
     const nodeState = input.persisted.runState.nodes[nodeId];
-    if (!nodeState) {
-      decisions.set(nodeId, { nodeId, action: "blocked", reason: "Persisted node state is missing." });
-      continue;
-    }
-    const upstreamNodeIds = nodeState.dependsOn;
+    const upstreamNodeIds = input.targetDefinition.edges
+      .filter((edge) => edge.toNodeId === nodeId)
+      .map((edge) => edge.fromNodeId);
     if (upstreamNodeIds.some((upstreamNodeId) => decisions.get(upstreamNodeId)?.action !== "reuse")) {
       decisions.set(nodeId, { nodeId, action: "rerun", reason: "An upstream node is not reusable." });
       continue;
@@ -62,7 +66,7 @@ export function buildWorkflowV2RecoveryPlan(input: {
     const cacheReusable = Boolean(
       targetFingerprint
       && cacheEntry
-      && cacheEntry.graphVersion === input.targetGraphVersion
+      && cacheEntry.graphVersion === targetGraphVersion
       && sameWorkflowV2CacheFingerprint(cacheEntry.fingerprint, targetFingerprint),
     );
     if (cacheReusable && cacheEntry) {
@@ -72,6 +76,11 @@ export function buildWorkflowV2RecoveryPlan(input: {
         reason: "Cache fingerprint matches the target execution contract.",
         cachedOutput: structuredClone(cacheEntry.output),
       });
+      continue;
+    }
+
+    if (!nodeState) {
+      decisions.set(nodeId, { nodeId, action: "rerun", reason: "Node is new or missing from persisted state." });
       continue;
     }
 
@@ -114,8 +123,66 @@ export function buildWorkflowV2RecoveryPlan(input: {
     workflowId: input.persisted.workflowId,
     runId: input.persisted.runId,
     persistedGraphVersion: input.persisted.graphVersion,
-    targetGraphVersion: input.targetGraphVersion,
-    decisions: input.persisted.runState.nodeOrder.map((nodeId) => decisions.get(nodeId)!),
+    targetGraphVersion,
+    decisions: input.targetDefinition.nodes.map((node) => decisions.get(node.id)!),
+  };
+}
+
+export interface WorkflowV2MaterializedRecovery {
+  checkpoint: ExecuteWorkflowV2Checkpoint;
+  recoveryCheckpoints: Map<string, string>;
+  resumeConversations: Map<string, RuntimeConversation>;
+}
+
+export function materializeWorkflowV2Recovery(input: {
+  persisted: WorkflowV2PersistedRunState;
+  targetDefinition: WorkflowV2Definition;
+  recovery: WorkflowV2RecoveryPlan;
+}): WorkflowV2MaterializedRecovery {
+  let runState = createWorkflowV2RunState({
+    definition: input.targetDefinition,
+    maxParallelNodes: input.persisted.runState.maxParallelNodes,
+  });
+  const workerOutputs: WorkflowV2WorkerOutput[] = [];
+  const recoveryCheckpoints = new Map<string, string>();
+  const resumeConversations = new Map<string, RuntimeConversation>();
+
+  for (const decision of input.recovery.decisions) {
+    if (decision.action === "reuse") {
+      if (!decision.cachedOutput) {
+        runState = transitionWorkflowV2NodeState(runState, {
+          nodeId: decision.nodeId,
+          status: "failed",
+          error: "Recovery selected reuse without an output.",
+        });
+        continue;
+      }
+      runState = transitionWorkflowV2NodeState(runState, { nodeId: decision.nodeId, status: "running" });
+      runState = transitionWorkflowV2NodeState(runState, { nodeId: decision.nodeId, status: "completed" });
+      workerOutputs.push(structuredClone(decision.cachedOutput));
+      continue;
+    }
+    if (decision.action === "blocked") {
+      runState = transitionWorkflowV2NodeState(runState, {
+        nodeId: decision.nodeId,
+        status: "failed",
+        error: decision.reason,
+      });
+      continue;
+    }
+    if (decision.action === "resume" && decision.checkpoint) {
+      recoveryCheckpoints.set(decision.nodeId, decision.checkpoint);
+      const conversation = input.persisted.runState.nodes[decision.nodeId]?.intervention?.resumeConversation;
+      if (conversation && isRuntimeConversation(conversation)) {
+        resumeConversations.set(decision.nodeId, structuredClone(conversation));
+      }
+    }
+  }
+
+  return {
+    checkpoint: { runState, workerOutputs },
+    recoveryCheckpoints,
+    resumeConversations,
   };
 }
 
@@ -140,4 +207,15 @@ function canonicalize(value: unknown): unknown {
       .sort(([left], [right]) => left.localeCompare(right))
       .map(([key, item]) => [key, canonicalize(item)]),
   );
+}
+
+function isRuntimeConversation(value: {
+  runtimeId: string;
+  codecVersion: string;
+  payload: unknown;
+}): value is RuntimeConversation {
+  return value.runtimeId === "codex"
+    || value.runtimeId === "claude"
+    || value.runtimeId === "api"
+    || value.runtimeId === "hermes";
 }

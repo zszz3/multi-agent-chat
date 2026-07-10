@@ -86,6 +86,27 @@ export class WorkflowV2FileStore {
       .map((line, index) => parseDurableEvent(line, index + 1));
   }
 
+  async readCacheEntry(
+    workflowId: string,
+    graphVersion: number,
+    nodeId: string,
+  ): Promise<WorkflowV2CacheEntryMetadata | undefined> {
+    assertSafeSegment(workflowId, "workflow id");
+    assertSafeSegment(nodeId, "node id");
+    if (!Number.isSafeInteger(graphVersion) || graphVersion <= 0) {
+      throw new Error("Workflow V2 cache graph version must be a positive safe integer.");
+    }
+    const workflowDir = path.join(this.rootDir, "workflows", workflowId);
+    const cachePath = path.join(workflowDir, "cache", `graph-${graphVersion}`, `${nodeId}.json`);
+    const content = await readOptionalFile(cachePath);
+    if (content === undefined) return undefined;
+    const parsed = parseJson(content, `Workflow V2 cache entry ${nodeId}`);
+    if (!isWorkflowV2CacheEntryMetadata(parsed)) {
+      throw new Error(`Workflow V2 cache entry ${nodeId} is malformed.`);
+    }
+    return structuredClone(parsed);
+  }
+
   private enqueue(operation: () => Promise<void>): Promise<void> {
     const pending = this.writeChain.then(operation);
     this.writeChain = pending.catch(() => undefined);

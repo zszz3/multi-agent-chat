@@ -4,7 +4,7 @@
 
 ### Status
 
-Draft on 2026-07-10.
+Implementation in progress on 2026-07-10. Durable storage, cache fingerprints, incremental checkpoints, and explicit node-level resume/rerun/reuse decisions are implemented. Automatic AgentHub startup reconciliation remains outstanding.
 
 ### This File Is Self-Contained
 
@@ -127,6 +127,17 @@ The system must distinguish between:
 Critical files such as run state must use a write strategy that avoids partial corruption from interruption.
 
 The repository must not rely on best-effort overwrites for authoritative state files.
+
+#### 7. Resume Must Preserve Recoverable Agent Context
+
+When an interrupted LLM node has both a checkpoint and a resumable runtime conversation, recovery must:
+
+- create a fresh executor attempt for that node
+- include the checkpoint as recovery context rather than treating it as a result
+- request `resume-required` continuation against the saved runtime conversation
+- consume that saved recovery context only once so later retries follow normal retry policy
+
+Completed upstream nodes must remain completed and supply their persisted or fingerprint-matched outputs to the resumed node.
 
 ### Phase Failure Conditions
 
