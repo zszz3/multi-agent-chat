@@ -30,6 +30,7 @@ import {
   resolveWorkflowV2ReviewVerdict,
 } from "./workflow-v2-reviewer";
 import { validateWorkflowV2NodeOutput } from "./workflow-v2-validation";
+import { WorkflowV2SupervisionSignal } from "./workflow-v2-supervision-signal";
 
 export interface ExecuteWorkflowV2PlanInput {
   plan: WorkflowV2Plan;
@@ -137,6 +138,52 @@ export async function executeWorkflowV2Plan(input: ExecuteWorkflowV2PlanInput): 
       const settledNode = settledBatch[index]!;
 
       if (settledNode.status === "rejected") {
+        if (settledNode.reason instanceof WorkflowV2SupervisionSignal) {
+          const signal = settledNode.reason;
+          const attempt = runState.nodes[nodeId]!.attempt;
+          if (signal.resolution.action === "retry" && attempt <= (node.execModel === "llm" ? node.maxRetry ?? 0 : 0)) {
+            runState = transitionWorkflowV2NodeState(runState, {
+              nodeId,
+              status: "ready",
+              now: now(),
+              error: signal.resolution.reason,
+            });
+            continue;
+          }
+          if (signal.resolution.action === "retry" && exhaustedPolicyFor(node) === "skip") {
+            workerOutputsByNodeId.set(nodeId, createSkippedOutput(nodeId, signal.resolution.reason));
+            runState = transitionWorkflowV2NodeState(runState, { nodeId, status: "skipped", now: now() });
+            continue;
+          }
+          if (
+            signal.resolution.action === "pause"
+            || signal.resolution.action === "escalate"
+            || (signal.resolution.action === "retry" && exhaustedPolicyFor(node) === "ask_human")
+          ) {
+            const source = signal.resolution.action === "escalate" ? "supervision_escalation" : "supervision_pause";
+            const intervention = createIntervention(
+              nodeId,
+              source,
+              signal.resolution.reason,
+              now(),
+              undefined,
+              {
+                report: signal.report,
+                decision: signal.resolution,
+                ...(signal.resumeConversation ? { resumeConversation: signal.resumeConversation } : {}),
+              },
+            );
+            runState = transitionWorkflowV2NodeState(runState, {
+              nodeId,
+              status: "paused",
+              now: now(),
+              error: signal.resolution.reason,
+              intervention,
+            });
+            input.onNodeStateTransition?.({ nodeId, status: "paused", intervention });
+            continue;
+          }
+        }
         const error = settledNode.reason instanceof Error ? settledNode.reason.message : String(settledNode.reason);
         runState = transitionWorkflowV2NodeState(runState, {
           nodeId,
@@ -454,6 +501,11 @@ function createIntervention(
   reason: string,
   requestedAt: number,
   reviewVerdict?: WorkflowV2ReviewVerdict,
+  supervision?: {
+    report: WorkflowV2HumanIntervention["progressReport"];
+    decision: WorkflowV2HumanIntervention["supervisorDecision"];
+    resumeConversation?: WorkflowV2HumanIntervention["resumeConversation"];
+  },
 ): WorkflowV2HumanIntervention {
   return {
     nodeId,
@@ -462,6 +514,9 @@ function createIntervention(
     allowedActions: ["continue", "skip", "escalate", "replan", "increase_review_strength"],
     requestedAt,
     ...(reviewVerdict ? { reviewVerdict: structuredClone(reviewVerdict) } : {}),
+    ...(supervision?.report ? { progressReport: structuredClone(supervision.report) } : {}),
+    ...(supervision?.decision ? { supervisorDecision: structuredClone(supervision.decision) } : {}),
+    ...(supervision?.resumeConversation ? { resumeConversation: structuredClone(supervision.resumeConversation) } : {}),
   };
 }
 

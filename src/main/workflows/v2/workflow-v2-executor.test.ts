@@ -3,6 +3,7 @@ import type { WorkflowV2Definition, WorkflowV2LLMNode } from "../../../shared/wo
 import type { WorkflowV2WorkerOutput } from "../../../shared/workflow-v2/packets";
 import { buildWorkflowV2Plan } from "./workflow-v2-planner";
 import { executeWorkflowV2Plan } from "./workflow-v2-executor";
+import { WorkflowV2SupervisionSignal } from "./workflow-v2-supervision-signal";
 
 function definition(): WorkflowV2Definition {
   return {
@@ -998,5 +999,111 @@ describe("workflow-v2 executor", () => {
     expect(reviewAttempts).toBe(2);
     expect(result.runState.status).toBe("completed");
     expect(result.workerOutputs[0]?.outputs).toEqual({ draft: "revision 2" });
+  });
+
+  test("projects a supervisor pause through the unified intervention contract", async () => {
+    const supervisedDefinition = definition();
+    supervisedDefinition.nodes = [supervisedDefinition.nodes[0]!];
+    supervisedDefinition.edges = [];
+    const plan = await buildWorkflowV2Plan({ definition: supervisedDefinition, approvedBy: "tester", now: 5_400 });
+    const report = {
+      nodeId: "draft",
+      attempt: 1,
+      phase: "blocked",
+      completedItems: ["captured partial output"],
+      remainingItems: ["finish draft"],
+      blockers: ["needs user input"],
+      evidence: ["partial output exists"],
+      checkpoint: "checkpoint-1",
+      safeToInterrupt: true,
+      requestedAction: "need_input" as const,
+      reportedAt: 5_500,
+    };
+
+    const result = await executeWorkflowV2Plan({
+      plan,
+      runLlmNode: async () => {
+        throw new WorkflowV2SupervisionSignal({
+          report,
+          resumeConversation: {
+            runtimeId: "codex",
+            codecVersion: "1",
+            payload: { native: { threadId: "paused-thread" } },
+          },
+          resolution: {
+            action: "pause",
+            question: "Provide the missing input?",
+            reason: "The overdue task requested user input.",
+          },
+        });
+      },
+      executeScript: async () => {
+        throw new Error("script runner should not be called");
+      },
+    });
+
+    expect(result.runState.status).toBe("paused");
+    expect(result.runState.nodes.draft?.intervention).toMatchObject({
+      source: "supervision_pause",
+      reason: "The overdue task requested user input.",
+      progressReport: report,
+      supervisorDecision: { action: "pause", question: "Provide the missing input?" },
+      resumeConversation: {
+        runtimeId: "codex",
+        codecVersion: "1",
+        payload: { native: { threadId: "paused-thread" } },
+      },
+    });
+  });
+
+  test("requeues an explicit supervisor retry within the node retry budget", async () => {
+    const supervisedDefinition = definition();
+    const draftNode = supervisedDefinition.nodes[0] as WorkflowV2LLMNode;
+    supervisedDefinition.nodes = [{ ...draftNode, maxRetry: 1 }];
+    supervisedDefinition.edges = [];
+    const plan = await buildWorkflowV2Plan({ definition: supervisedDefinition, approvedBy: "tester", now: 5_600 });
+    let attempts = 0;
+
+    const result = await executeWorkflowV2Plan({
+      plan,
+      runLlmNode: async ({ node }) => {
+        attempts += 1;
+        if (attempts === 1) {
+          throw new WorkflowV2SupervisionSignal({
+            report: {
+              nodeId: "draft",
+              attempt: 1,
+              phase: "stalled",
+              completedItems: [],
+              remainingItems: ["draft"],
+              blockers: ["attempt stalled"],
+              evidence: [],
+              checkpoint: "checkpoint-1",
+              safeToInterrupt: true,
+              requestedAction: "continue",
+              reportedAt: 5_700,
+            },
+            resolution: {
+              action: "retry",
+              fromCheckpoint: "checkpoint-1",
+              reason: "Restart from the checkpoint.",
+            },
+          });
+        }
+        return {
+          nodeId: node.id,
+          summary: "Recovered on retry",
+          outputs: { draft: "recovered" },
+          proposals: [],
+        };
+      },
+      executeScript: async () => {
+        throw new Error("script runner should not be called");
+      },
+    });
+
+    expect(attempts).toBe(2);
+    expect(result.runState.status).toBe("completed");
+    expect(result.runState.nodes.draft?.attempt).toBe(2);
   });
 });

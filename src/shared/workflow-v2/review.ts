@@ -1,5 +1,6 @@
 import type { WorkflowV2ConstraintDef, WorkflowV2ExhaustedPolicy } from "./definition";
 import type { WorkflowV2ResultPacket } from "./planning";
+import type { WorkflowV2ProgressReport, WorkflowV2SupervisorDecision } from "./supervision";
 
 export type WorkflowV2ReviewDecision = "accept" | "reject" | "escalate";
 export type WorkflowV2ReviewRiskLevel = "low" | "medium" | "high";
@@ -44,9 +45,21 @@ export type WorkflowV2InterventionAction = "continue" | "skip" | "escalate" | "r
 
 export interface WorkflowV2HumanIntervention {
   nodeId: string;
-  source: "validation" | "review_rejection" | "review_escalation";
+  source:
+    | "validation"
+    | "review_rejection"
+    | "review_escalation"
+    | "supervision_pause"
+    | "supervision_escalation";
   reason: string;
   allowedActions: WorkflowV2InterventionAction[];
   requestedAt: number;
   reviewVerdict?: WorkflowV2ReviewVerdict;
+  progressReport?: WorkflowV2ProgressReport;
+  supervisorDecision?: WorkflowV2SupervisorDecision;
+  resumeConversation?: {
+    runtimeId: string;
+    codecVersion: string;
+    payload: unknown;
+  };
 }

@@ -239,6 +239,7 @@ async function workflowV2RuntimeFixture(input: {
   contextBudget?: WorkflowV2ContextBudget;
   costBudget?: WorkflowV2CostBudget;
   llmArtifact?: string;
+  taskFactory?: (request: RunTaskRequest, index: number) => TaskRun;
   executeScript: (request: ExecuteWorkflowV2ScriptRequest) => Promise<WorkflowV2WorkerOutput>;
 }): Promise<{
   runtime: WorkflowRuntime;
@@ -247,6 +248,7 @@ async function workflowV2RuntimeFixture(input: {
   updates: Array<{ progress?: WorkflowRunProgressItem[]; appendEvents?: WorkflowEvent[] }>;
   startRequests: string[];
   stopTaskIds: string[];
+  deleteTaskRequests: Array<{ taskId: string; preserveRuntimeConversation: boolean }>;
   setRuns: (runs: WorkflowRunState[]) => void;
   finished: Promise<FinishWorkflowRunRequest>;
 }> {
@@ -289,6 +291,7 @@ async function workflowV2RuntimeFixture(input: {
   const updates: Array<{ progress?: WorkflowRunProgressItem[]; appendEvents?: WorkflowEvent[] }> = [];
   const startRequests: string[] = [];
   const stopTaskIds: string[] = [];
+  const deleteTaskRequests: Array<{ taskId: string; preserveRuntimeConversation: boolean }> = [];
   let tasks: TaskRun[] = [];
   let runs: WorkflowRunState[] = [];
   let finishRun!: (request: FinishWorkflowRunRequest) => void;
@@ -320,7 +323,7 @@ async function workflowV2RuntimeFixture(input: {
     },
     runTask: async (request) => {
       taskRequests.push(request);
-      tasks = [{
+      const task = input.taskFactory?.(request, taskRequests.length) ?? ({
         id: `task-${taskRequests.length}`,
         title: "Workflow V2 LLM node",
         status: "completed",
@@ -334,13 +337,22 @@ async function workflowV2RuntimeFixture(input: {
           proposals: [],
         }) }],
         createdAt: taskRequests.length,
-      } as TaskRun];
+        updatedAt: taskRequests.length,
+      } as TaskRun);
+      tasks = [...tasks, task];
       return snapshot();
     },
     stopTask: async (taskId) => {
       stopTaskIds.push(taskId);
+      tasks = tasks.map((task) => task.id === taskId
+        ? { ...task, status: "stopped", running: false, lastError: "Stopped", updatedAt: Date.now() }
+        : task);
     },
-    deleteTask: async (taskId) => {
+    deleteTask: async (taskId, options) => {
+      deleteTaskRequests.push({
+        taskId,
+        preserveRuntimeConversation: options?.preserveRuntimeConversation === true,
+      });
       tasks = tasks.filter((task) => task.id !== taskId);
       return snapshot();
     },
@@ -354,6 +366,7 @@ async function workflowV2RuntimeFixture(input: {
     updates,
     startRequests,
     stopTaskIds,
+    deleteTaskRequests,
     setRuns: (nextRuns) => {
       runs = nextRuns;
     },
@@ -435,6 +448,126 @@ describe("WorkflowRuntime Workflow V2 bridge", () => {
 
     expect(result).toMatchObject({ ok: true, workflowId: fixture.workflow.workflowId });
     expect(fixture.startRequests).toEqual([fixture.workflow.workflowId]);
+  });
+
+  test("probes, supervises, and resumes an llm task after its execution lease becomes inactive", async () => {
+    const definition = workflowV2Definition();
+    const draftNode = definition.nodes[0]!;
+    draftNode.executionLease = {
+      inactivityTimeoutMs: 5,
+      softTimeoutMs: 50,
+      hardTimeoutMs: 2_000,
+      progressProbeTimeoutMs: 500,
+      maxExtensions: 1,
+      maxExtensionMs: 500,
+    };
+    definition.nodes = [draftNode];
+    definition.edges = [];
+    const conversation = (threadId: string) => ({
+      runtimeId: "codex" as const,
+      codecVersion: "1",
+      payload: { native: { threadId } },
+    });
+
+    const fixture = await workflowV2RuntimeFixture({
+      definition,
+      taskFactory: (request, index) => {
+        const base = {
+          id: `task-${index}`,
+          title: "Workflow V2 supervised task",
+          prompt: request.prompt,
+          configuredAgentId: request.configuredAgentId,
+          modelId: request.modelId ?? "model-a",
+          workDir: request.workDir ?? "/tmp/workflow-v2-runtime",
+          progress: "in_progress" as const,
+          pendingAssistantMessageId: undefined,
+          lastError: undefined,
+          createdAt: Date.now(),
+          updatedAt: Date.now(),
+        };
+        if (request.prompt.includes("Report progress only")) {
+          return {
+            ...base,
+            status: "completed",
+            running: false,
+            runtimeConversation: conversation("progress-thread"),
+            messages: [{ role: "assistant", content: JSON.stringify({
+              nodeId: "draft",
+              attempt: 1,
+              phase: "implementation",
+              completedItems: ["drafted implementation"],
+              remainingItems: ["return final packet"],
+              blockers: [],
+              evidence: ["partial implementation exists"],
+              checkpoint: "checkpoint-1",
+              estimatedRemainingMs: 100,
+              safeToInterrupt: true,
+              requestedAction: "continue",
+              reportedAt: Date.now(),
+            }) }],
+          } as TaskRun;
+        }
+        if (request.prompt.includes("Act as the Workflow V2 orchestrator")) {
+          return {
+            ...base,
+            status: "completed",
+            running: false,
+            messages: [{ role: "assistant", content: JSON.stringify({
+              action: "continue",
+              extensionMs: 200,
+              reason: "The report contains concrete new evidence.",
+            }) }],
+          } as TaskRun;
+        }
+        if (request.prompt.includes("Continue the interrupted work")) {
+          return {
+            ...base,
+            status: "completed",
+            running: false,
+            runtimeConversation: conversation("progress-thread"),
+            messages: [{ role: "assistant", content: JSON.stringify({
+              nodeId: "draft",
+              summary: "Draft completed after supervised continuation",
+              outputs: { draft: "const resumed = true;" },
+              proposals: [],
+            }) }],
+          } as TaskRun;
+        }
+        return {
+          ...base,
+          status: "running",
+          running: true,
+          runtimeConversation: conversation("initial-thread"),
+          messages: [{ role: "assistant", content: "partial implementation" }],
+        } as TaskRun;
+      },
+      executeScript: async () => {
+        throw new Error("script runner should not be called");
+      },
+    });
+
+    const started = fixture.runtime.runWorkflowGraph({ workflowId: fixture.workflow.workflowId });
+    const finished = await fixture.finished;
+
+    expect(started).toMatchObject({ ok: true, workflowId: fixture.workflow.workflowId });
+    expect(finished.status).toBe("completed");
+    expect(fixture.stopTaskIds).toEqual(["task-1"]);
+    expect(fixture.taskRequests).toHaveLength(4);
+    expect(fixture.taskRequests[1]).toMatchObject({
+      continuationPolicy: "resume-required",
+      runtimeConversation: conversation("initial-thread"),
+    });
+    expect(fixture.taskRequests[2]?.continuationPolicy).toBeUndefined();
+    expect(fixture.taskRequests[3]).toMatchObject({
+      continuationPolicy: "resume-required",
+      runtimeConversation: conversation("progress-thread"),
+    });
+    expect(fixture.deleteTaskRequests).toEqual([
+      { taskId: "task-1", preserveRuntimeConversation: true },
+      { taskId: "task-2", preserveRuntimeConversation: true },
+      { taskId: "task-3", preserveRuntimeConversation: false },
+      { taskId: "task-4", preserveRuntimeConversation: false },
+    ]);
   });
 
   test("fails V2 pause intervention before stopping a task or changing run state", async () => {

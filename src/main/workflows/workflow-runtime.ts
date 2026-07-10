@@ -63,6 +63,24 @@ import {
   type WorkflowJudgeResult,
 } from "../../shared/workflow-run";
 import { executeWorkflowV2Plan } from "./v2/workflow-v2-executor";
+import type {
+  WorkflowV2ExecutionLeaseState,
+  WorkflowV2ProgressReport,
+} from "../../shared/workflow-v2/supervision";
+import {
+  createWorkflowV2ExecutionLease,
+  inspectWorkflowV2ExecutionLease,
+  recordWorkflowV2LeaseActivity,
+  resolveWorkflowV2SupervisorDecision,
+} from "./v2/workflow-v2-supervisor";
+import {
+  parseWorkflowV2ProgressReport,
+  parseWorkflowV2SupervisorDecision,
+  workflowV2ContinueAfterProbePrompt,
+  workflowV2ProgressProbePrompt,
+  workflowV2SupervisorDecisionPrompt,
+} from "./v2/workflow-v2-supervision-prompts";
+import { WorkflowV2SupervisionSignal } from "./v2/workflow-v2-supervision-signal";
 
 export interface WorkflowRunStateUpdate {
   workflowId: string;
@@ -854,11 +872,11 @@ export class WorkflowRuntime {
       return fallbackTask;
     };
 
-    const waitForTask = async (taskId: string, nodeId: string): Promise<TaskRun> => {
+    const waitForTask = async (taskId: string, nodeId: string, timeoutMs = WORKFLOW_TASK_TIMEOUT_MS): Promise<TaskRun> => {
       const startedAt = Date.now();
       while (true) {
         assertWallClockBudget(nodeId);
-        const remainingTaskMs = WORKFLOW_TASK_TIMEOUT_MS - (Date.now() - startedAt);
+        const remainingTaskMs = timeoutMs - (Date.now() - startedAt);
         if (remainingTaskMs <= 0) throw new Error(`Workflow V2 task ${taskId} timed out.`);
         latestSnapshot = this.deps.snapshot();
         const task = latestSnapshot.tasks.find((item) => item.id === taskId);
@@ -869,6 +887,210 @@ export class WorkflowRuntime {
         }
         updateNode(nodeId, { status: "running", detail: taskArtifact(task), taskId });
         await delay(Math.min(WORKFLOW_TASK_POLL_MS, remainingTaskMs, remainingWallClockMs()));
+      }
+    };
+
+    const runtimeAttemptByNodeId = new Map<string, number>();
+
+    const startModelTask = async (nodeId: string, request: RunTaskRequest): Promise<TaskRun> => {
+      consumeModelCallBudget(nodeId);
+      return startWorkflowTask(request);
+    };
+
+    const cleanupSupervisedTasks = async (
+      taskIds: readonly string[],
+      archiveTaskIds: ReadonlySet<string>,
+    ): Promise<void> => {
+      for (const taskId of taskIds) {
+        latestSnapshot = await this.deps.deleteTask(taskId, {
+          preserveRuntimeConversation: !archiveTaskIds.has(taskId),
+        });
+      }
+    };
+
+    const stoppedTaskSnapshot = (task: TaskRun): TaskRun => {
+      latestSnapshot = this.deps.snapshot();
+      return latestSnapshot.tasks.find((item) => item.id === task.id) ?? task;
+    };
+
+    const unavailableProgressReport = (
+      node: WorkflowV2LLMNode,
+      attempt: number,
+      partialArtifact: string,
+      lease: WorkflowV2ExecutionLeaseState,
+    ): WorkflowV2ProgressReport => ({
+      nodeId: node.id,
+      attempt,
+      phase: "progress probe unavailable",
+      completedItems: [],
+      remainingItems: [node.title],
+      blockers: ["The runtime did not expose a resumable conversation after interruption."],
+      evidence: partialArtifact.trim() ? [truncateWorkflowContext(partialArtifact, 500)] : [],
+      safeToInterrupt: true,
+      requestedAction: "need_input",
+      reportedAt: Math.min(Date.now(), lease.hardDeadlineAt),
+    });
+
+    const waitForLeasedLlmTask = async (input: {
+      node: WorkflowV2LLMNode;
+      initialTask: TaskRun;
+      attempt: number;
+      configuredAgentId: string;
+      modelId: string;
+      workDir: string;
+      taskIds: string[];
+      supervisorTaskIds: string[];
+    }): Promise<TaskRun> => {
+      const policy = input.node.executionLease;
+      if (!policy) {
+        return waitForTask(input.initialTask.id, input.node.id);
+      }
+
+      let currentTask = input.initialTask;
+      let lease = createWorkflowV2ExecutionLease({
+        nodeId: input.node.id,
+        attempt: input.attempt,
+        startedAt: Date.now(),
+        policy,
+      });
+      let previousReport: WorkflowV2ProgressReport | undefined;
+      const boundedProbeTimeoutMs = (): number => {
+        const remainingLeaseMs = lease.hardDeadlineAt - Date.now();
+        const remainingRunMs = remainingWallClockMs();
+        const timeoutMs = Math.min(policy.progressProbeTimeoutMs, remainingLeaseMs, remainingRunMs);
+        if (timeoutMs <= 0) throw new Error(`Workflow V2 node ${input.node.id} reached its hard execution timeout.`);
+        return timeoutMs;
+      };
+
+      while (true) {
+        assertWallClockBudget(input.node.id);
+        latestSnapshot = this.deps.snapshot();
+        const task = latestSnapshot.tasks.find((item) => item.id === currentTask.id);
+        if (!task) throw new Error(`Workflow V2 task ${currentTask.id} was deleted before completion.`);
+        currentTask = task;
+        if (task.status === "completed") return task;
+        if (task.status === "failed" || task.status === "stopped") {
+          throw new Error(task.lastError || `Workflow V2 task ${task.title} ${task.status}.`);
+        }
+
+        if (task.updatedAt > lease.lastActivityAt) {
+          lease = recordWorkflowV2LeaseActivity(lease, Math.min(task.updatedAt, lease.hardDeadlineAt));
+        }
+        updateNode(input.node.id, { status: "running", detail: taskArtifact(task), taskId: task.id });
+        const now = Date.now();
+        const inspection = inspectWorkflowV2ExecutionLease({ lease, policy, now });
+        if (inspection === "active") {
+          const untilInactivity = policy.inactivityTimeoutMs - (now - lease.lastActivityAt);
+          const waitMs = Math.max(1, Math.min(
+            WORKFLOW_TASK_POLL_MS,
+            lease.softDeadlineAt - now,
+            lease.hardDeadlineAt - now,
+            untilInactivity,
+            remainingWallClockMs(),
+          ));
+          await delay(waitMs);
+          continue;
+        }
+        if (inspection === "hard_timeout") {
+          await this.deps.stopTask(task.id);
+          throw new Error(`Workflow V2 node ${input.node.id} reached its hard execution timeout.`);
+        }
+
+        await this.deps.stopTask(task.id);
+        const stoppedTask = stoppedTaskSnapshot(task);
+        const partialArtifact = truncateWorkflowContext(taskArtifact(stoppedTask), 4_000);
+        if (!stoppedTask.runtimeConversation) {
+          throw new WorkflowV2SupervisionSignal({
+            report: unavailableProgressReport(input.node, input.attempt, partialArtifact, lease),
+            resolution: {
+              action: "pause",
+              question: `Node ${input.node.title} exceeded its soft timeout but its runtime cannot resume for a progress probe.`,
+              reason: "Progress probe requires a resumable runtime conversation.",
+            },
+          });
+        }
+
+        const progressTask = await startModelTask(input.node.id, {
+          prompt: workflowV2ProgressProbePrompt({
+            node: input.node,
+            attempt: input.attempt,
+            partialArtifact,
+            now: Date.now(),
+          }),
+          configuredAgentId: input.configuredAgentId,
+          modelId: input.modelId,
+          workDir: input.workDir,
+          continuationPolicy: "resume-required",
+          runtimeConversation: stoppedTask.runtimeConversation,
+        });
+        input.taskIds.push(progressTask.id);
+
+        let completedProgressTask: TaskRun;
+        try {
+          completedProgressTask = await waitForTask(progressTask.id, input.node.id, boundedProbeTimeoutMs());
+        } catch (error) {
+          await this.deps.stopTask(progressTask.id);
+          throw error;
+        }
+        const report = parseWorkflowV2ProgressReport(taskArtifact(completedProgressTask));
+
+        const supervisorTask = await startModelTask(input.node.id, {
+          prompt: workflowV2SupervisorDecisionPrompt({
+            node: input.node,
+            report,
+            policy,
+            extensionCount: lease.extensionCount,
+          }),
+          configuredAgentId: input.configuredAgentId,
+          modelId: input.modelId,
+          workDir: input.workDir,
+        });
+        input.taskIds.push(supervisorTask.id);
+        input.supervisorTaskIds.push(supervisorTask.id);
+
+        let completedSupervisorTask: TaskRun;
+        try {
+          completedSupervisorTask = await waitForTask(supervisorTask.id, input.node.id, boundedProbeTimeoutMs());
+        } catch (error) {
+          await this.deps.stopTask(supervisorTask.id);
+          throw error;
+        }
+        const decision = parseWorkflowV2SupervisorDecision(taskArtifact(completedSupervisorTask));
+        const resolution = resolveWorkflowV2SupervisorDecision({
+          lease,
+          policy,
+          report,
+          ...(previousReport ? { previousReport } : {}),
+          decision,
+          now: Date.now(),
+        });
+        if (resolution.action !== "continue") {
+          throw new WorkflowV2SupervisionSignal({
+            report,
+            resolution,
+            ...(completedProgressTask.runtimeConversation
+              ? { resumeConversation: completedProgressTask.runtimeConversation }
+              : {}),
+          });
+        }
+        if (decision.action !== "continue") {
+          throw new Error(`Workflow V2 supervisor resolution for node ${input.node.id} lost its continue decision.`);
+        }
+        if (!completedProgressTask.runtimeConversation) {
+          throw new Error(`Workflow V2 progress probe for node ${input.node.id} did not return a resumable conversation.`);
+        }
+
+        previousReport = report;
+        lease = resolution.lease;
+        currentTask = await startModelTask(input.node.id, {
+          prompt: workflowV2ContinueAfterProbePrompt({ node: input.node, report, decision }),
+          configuredAgentId: input.configuredAgentId,
+          modelId: input.modelId,
+          workDir: input.workDir,
+          continuationPolicy: "resume-required",
+          runtimeConversation: completedProgressTask.runtimeConversation,
+        });
+        input.taskIds.push(currentTask.id);
       }
     };
 
@@ -885,8 +1107,9 @@ export class WorkflowRuntime {
         baseWorkflowContextDocument,
         storagePlanDocument,
       });
-      consumeModelCallBudget(request.node.id);
-      const task = await startWorkflowTask({
+      const attempt = (runtimeAttemptByNodeId.get(request.node.id) ?? 0) + 1;
+      runtimeAttemptByNodeId.set(request.node.id, attempt);
+      const task = await startModelTask(request.node.id, {
         prompt,
         configuredAgentId,
         modelId,
@@ -894,8 +1117,21 @@ export class WorkflowRuntime {
       });
       updateNode(request.node.id, { status: "running", detail: "Task running", taskId: task.id });
 
+      let taskIds = [task.id];
+      const supervisorTaskIds: string[] = [];
+      let archiveTaskId: string | undefined = task.id;
       try {
-        const completedTask = await waitForTask(task.id, request.node.id);
+        const completedTask = await waitForLeasedLlmTask({
+          node: request.node,
+          initialTask: task,
+          attempt,
+          configuredAgentId,
+          modelId,
+          workDir: workflowWorkDir,
+          taskIds,
+          supervisorTaskIds,
+        });
+        archiveTaskId = completedTask.id;
         const artifact = taskArtifact(completedTask);
         const output = parseWorkflowV2WorkerArtifact(request.node, artifact);
         updateNode(request.node.id, { status: "running", detail: output.summary, taskId: task.id }, {
@@ -906,8 +1142,22 @@ export class WorkflowRuntime {
           summary: output.summary,
         });
         return output;
+      } catch (error) {
+        if (
+          error instanceof WorkflowV2SupervisionSignal
+          && (error.resolution.action === "pause" || error.resolution.action === "escalate")
+        ) {
+          archiveTaskId = undefined;
+        }
+        throw error;
       } finally {
-        latestSnapshot = await this.deps.deleteTask(task.id);
+        await cleanupSupervisedTasks(
+          taskIds,
+          new Set([
+            ...supervisorTaskIds,
+            ...(archiveTaskId ? [archiveTaskId] : []),
+          ]),
+        );
       }
     };
 

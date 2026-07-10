@@ -76,13 +76,13 @@ type ValidationOutcome = "pass" | "retry" | "fail" | "ask_human";
 - Modify: `src/main/workflows/workflow-runtime.ts`
 - Modify: tests only as needed
 
-- [ ] **Step 1: Track attempt lease and meaningful-activity timestamps**
+- [x] **Step 1: Track attempt lease and meaningful-activity timestamps**
 
-- [ ] **Step 2: On soft timeout, probe the active task before interrupting when steering is supported**
+- [x] **Step 2: On soft timeout, interrupt and resume the active task for a progress probe when a resumable conversation is available**
 
-- [ ] **Step 3: Resolve continue, retry, escalate, pause, and cancel as explicit runtime transitions**
+- [x] **Step 3: Resolve continue, retry, escalate, pause, and cancel as explicit runtime transitions**
 
-- [ ] **Step 4: Bound extensions by per-node hard timeout and run budgets**
+- [x] **Step 4: Bound extensions by per-node hard timeout and run budgets**
 
 - [ ] **Step 5: On missing response or hard timeout, abort the active task and retain available recovery context**
 
