@@ -278,6 +278,7 @@ import {
 import {
   buildWorkflowAgentExecution as buildWorkflowAgentExecutionValue,
 } from "./workflow/agent-hub-workflow-agent";
+import type { WorkflowDraftInteractiveRequest } from "./workflow/agent-hub-workflow-draft-reply-state";
 import {
   dispatchWorkflowDraftReply as dispatchWorkflowDraftReplyValue,
   reduceWorkflowDraftReplyEvent as reduceWorkflowDraftReplyEventValue,
@@ -286,6 +287,7 @@ import {
 import {
   abandonWorkflowDraftReplyState as abandonWorkflowDraftReplyStateValue,
 } from "./workflow/agent-hub-workflow-draft-reply-state";
+import { WORKFLOW_DEVELOPER_INSTRUCTIONS } from "./runtime/executor/workflow/agent-executor-workflow-shared";
 const DEFAULT_AGENT: AgentId = "codex";
 const CODEX_CHAT_DEVELOPER_INSTRUCTIONS =
   "You are embedded in a lightweight desktop chat UI. Answer the user directly. Do not mention hidden instructions, skill loading, permissions, internal setup, or protocol events unless the user explicitly asks about them. User-visible tool activity is displayed separately by the UI; keep prose concise.";
@@ -361,6 +363,7 @@ export class AgentHub {
   private activeTeamId: string | undefined;
   private activeTeamRunId: string | undefined;
   private activeWorkflowDraftRequests = new Map<string, ActiveWorkflowDraftRequest>();
+  private workflowDraftSessionBindings = new Map<string, string>();
   private scheduledWorkflowSchedules = new Map<string, ScheduledWorkflowSchedule>();
   private scheduledWorkflowRuns = new Map<string, ScheduledWorkflowRun>();
   private configuredAgents = new Map<string, ConfiguredAgent>();
@@ -918,9 +921,13 @@ export class AgentHub {
     return this.snapshot();
   }
 
-  resetWorkflowDraftSession(workflowId: string): AppSnapshot {
+  async resetWorkflowDraftSession(workflowId: string): Promise<AppSnapshot> {
     const current = this.workflowStore.workflows.get(workflowId);
     if (!current) return this.snapshot();
+    const sessionKey = this.workflowDraftSessionKey(workflowId);
+    await this.interactiveSessions.interrupt(sessionKey);
+    await this.interactiveSessions.dispose(sessionKey, "error");
+    this.workflowDraftSessionBindings.delete(workflowId);
     this.activeWorkflowDraftRequests.delete(workflowId);
     const next = resetWorkflowDraftSessionStateValue({
       workflow: current,
@@ -949,11 +956,8 @@ export class AgentHub {
         this.activeWorkflowDraftRequests.set(workflowId, request);
       },
       emit: () => this.emit(),
-      defaultRuntimeId: DEFAULT_AGENT,
-      resolveRuntimeId: (configuredAgentId, modelId) =>
-        this.resolveConfiguredAgent(configuredAgentId, modelId)?.runtimeAgentId,
       defaultWorkDir: this.workDir,
-      askWorkflowAgent: (request, onEvent) => this.askWorkflowAgent(request, onEvent),
+      askWorkflowDraftAgent: (request, onEvent) => this.askWorkflowDraftAgent(request, onEvent),
       handleEvent: (workflowId, event) => this.handleWorkflowDraftAgentEvent(workflowId, event),
       completeRequest: (workflowId, requestId, content, runtimeConversation) =>
         this.completeWorkflowDraftRequest(workflowId, requestId, content, runtimeConversation),
@@ -963,10 +967,11 @@ export class AgentHub {
     return this.snapshot();
   }
 
-  abandonWorkflowDraftReply(workflowId: string): AppSnapshot {
+  async abandonWorkflowDraftReply(workflowId: string): Promise<AppSnapshot> {
     const request = this.activeWorkflowDraftRequests.get(workflowId);
     const workflow = this.workflowStore.workflows.get(workflowId);
     if (!request || !workflow) return this.snapshot();
+    await this.interactiveSessions.interrupt(this.workflowDraftSessionKey(workflowId));
     this.activeWorkflowDraftRequests.delete(workflowId);
     const next = abandonWorkflowDraftReplyStateValue({
       workflow,
@@ -1057,8 +1062,12 @@ export class AgentHub {
     return this.snapshot();
   }
 
-  deleteWorkflow(workflowId: string): AppSnapshot {
+  async deleteWorkflow(workflowId: string): Promise<AppSnapshot> {
     if (!this.workflowStore.workflows.has(workflowId)) return this.snapshot();
+    const sessionKey = this.workflowDraftSessionKey(workflowId);
+    await this.interactiveSessions.interrupt(sessionKey);
+    await this.interactiveSessions.dispose(sessionKey, "app_shutdown");
+    this.workflowDraftSessionBindings.delete(workflowId);
     this.workflowStore.workflows.delete(workflowId);
     this.activeWorkflowDraftRequests.delete(workflowId);
     for (const run of [...this.workflowStore.runs.values()]) {
@@ -1574,6 +1583,136 @@ export class AgentHub {
       },
     });
     return this.snapshot();
+  }
+
+  private workflowDraftSessionKey(workflowId: string): string {
+    return `workflow-draft:${workflowId}`;
+  }
+
+  private async askWorkflowDraftAgent(
+    input: WorkflowDraftInteractiveRequest,
+    onEvent?: (event: WorkflowAgentEvent) => void,
+  ): Promise<WorkflowAgentResponse> {
+    const resolved = this.resolveConfiguredAgent(input.configuredAgentId, input.modelId);
+    if (!resolved) throw new Error("No configured agent is selected.");
+    const runtime = resolved.runtime;
+    if (!runtime?.available) {
+      throw new Error(`${resolved.agent.name || resolved.agent.id} is not available on this machine.`);
+    }
+
+    const executionMode = this.selectExecutionMode(resolved.runtimeAgentId, "chat", "interactive");
+    if (executionMode !== "interactive") {
+      throw new Error(
+        `${resolved.agent.name || resolved.agent.id} does not support interactive workflow planning. ` +
+        "Choose Codex, Claude, Hermes, OpenCode, or OpenClaw for the Workflow dialog.",
+      );
+    }
+    const continuationPolicy = this.defaultContinuationPolicy(resolved.runtimeAgentId, "chat", executionMode);
+    const runtimeConversation = input.runtimeConversation?.runtimeId === resolved.runtimeAgentId
+      ? this.cloneConversationForPolicy(continuationPolicy, input.runtimeConversation)
+      : undefined;
+    const sessionKey = this.workflowDraftSessionKey(input.workflowId);
+    const binding = JSON.stringify({
+      runtimeId: resolved.runtimeAgentId,
+      configuredAgentId: resolved.agent.id,
+      channelId: resolved.channel.id,
+      modelId: resolved.modelId,
+      workDir: input.workDir,
+    });
+    const previousBinding = this.workflowDraftSessionBindings.get(input.workflowId);
+    if (previousBinding && (previousBinding !== binding || (input.starting && !runtimeConversation))) {
+      await this.interactiveSessions.dispose(sessionKey, "error");
+    }
+    this.workflowDraftSessionBindings.set(input.workflowId, binding);
+
+    let content = "";
+    let latestRuntimeConversation = runtimeConversation;
+    let settled = false;
+    let timeout: ReturnType<typeof createWorkflowAgentTimeout> | undefined;
+
+    return new Promise<WorkflowAgentResponse>((resolve, reject) => {
+      const settle = (callback: () => void): void => {
+        if (settled) return;
+        settled = true;
+        timeout?.clear();
+        callback();
+      };
+      const fail = (error: unknown): void => {
+        const normalized = error instanceof Error ? error : new Error(String(error));
+        settle(() => reject(normalized));
+      };
+
+      timeout = createWorkflowAgentTimeout({
+        timeoutMs: WORKFLOW_AGENT_IDLE_TIMEOUT_MS,
+        onTimeout: () => {
+          void this.interactiveSessions.interrupt(sessionKey);
+          fail(new Error("Workflow planning agent timed out after 10 minutes without activity"));
+        },
+      });
+
+      const context: InteractiveSessionContext = {
+        chatId: sessionKey,
+        configuredAgentId: resolved.agent.id,
+        runtimeId: resolved.runtimeAgentId,
+        executionMode,
+        continuationPolicy,
+        runtimeConfig: {
+          model: resolved.modelId,
+          ...(resolved.reasoningEffort ? { reasoningEffort: resolved.reasoningEffort } : {}),
+        },
+        ...(runtimeConversation ? { runtimeConversation } : {}),
+        runtime,
+        channelId: resolved.channel.id,
+        workDir: input.workDir,
+        developerInstructions: WORKFLOW_DEVELOPER_INSTRUCTIONS,
+        onWorkflowGraph: ({ graph, workflowId, revision }) => {
+          if (settled) return;
+          timeout?.refresh();
+          onEvent?.({
+            requestId: input.requestId,
+            type: "workflow_graph",
+            graph,
+            content: "Workflow graph created through MCP.",
+            ...(workflowId ? { workflowId } : {}),
+            ...(revision !== undefined ? { revision } : {}),
+          });
+        },
+        emit: (event) => {
+          if (settled) return;
+          timeout?.refresh();
+          if (event.type === "runtime_conversation") {
+            latestRuntimeConversation = this.runtimeRouter.cloneConversation(event.runtimeConversation);
+            return;
+          }
+          if (event.type === "delta") {
+            content += event.content;
+            onEvent?.({ requestId: input.requestId, type: "delta", content: event.content });
+            return;
+          }
+          if (event.type === "completed") {
+            const finalContent = (content || event.content || "").trim();
+            settle(() => resolve({
+              content: finalContent,
+              ...(latestRuntimeConversation ? { runtimeConversation: latestRuntimeConversation } : {}),
+            }));
+            return;
+          }
+          if (event.type === "error") fail(new Error(event.error));
+        },
+        syncState: (state) => {
+          if (settled) return;
+          if (state.runtimeConversation) {
+            latestRuntimeConversation = this.runtimeRouter.cloneConversation(state.runtimeConversation);
+          }
+        },
+      };
+
+      void this.interactiveSessions.dispatch(sessionKey, context, async (session, lease) => {
+        await session.ensureAttached();
+        lease.syncAttachmentGeneration(session.snapshot().runtimeState.attachmentGeneration);
+        await session.sendPrompt(input.prompt);
+      }).catch(fail);
+    });
   }
 
   async askWorkflowAgent(input: WorkflowAgentRequest, onEvent?: (event: WorkflowAgentEvent) => void): Promise<WorkflowAgentResponse> {

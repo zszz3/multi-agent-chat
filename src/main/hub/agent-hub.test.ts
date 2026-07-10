@@ -3167,10 +3167,11 @@ fs.writeFileSync(${JSON.stringify(argsPath)}, process.argv.slice(2).join("\\n") 
     expect(calls.filter((call) => call.method === "thread/resume" && call.params.threadId === "thread-7")).toHaveLength(1);
   });
 
-  test("keeps workflow draft replies in main-owned snapshot state", async () => {
+  test("keeps workflow draft replies in one interactive session without creating chats or tasks", async () => {
     const dir = await mkdtemp(path.join(os.tmpdir(), "multi-agent-chat-workflow-draft-reply-"));
     const fake = await writeSequentialCodexFake(dir);
     const hub = new AgentHub({ codex: fake.executable, claude: "missing-claude-for-test" });
+    hub.setMcpBridgeDiscoveryPath(path.join(dir, "mcp-bridge.json"));
     (hub as any).runtimes.set("codex", {
       id: "codex",
       label: "Codex",
@@ -3224,8 +3225,40 @@ fs.writeFileSync(${JSON.stringify(argsPath)}, process.argv.slice(2).join("\\n") 
     expect(second.tasks).toHaveLength(before.tasks.length);
 
     const calls = (await readFile(fake.callsPath, "utf8")).trim().split("\n").map((line) => JSON.parse(line) as any);
-    expect(calls.filter((call) => call.method === "thread/start")).toHaveLength(2);
+    expect(calls.filter((call) => call.method === "process/argv")).toHaveLength(1);
+    expect(calls.filter((call) => call.method === "thread/start")).toHaveLength(1);
     expect(calls.filter((call) => call.method === "thread/resume")).toHaveLength(0);
+    expect(calls.filter((call) => call.method === "turn/start")).toHaveLength(2);
+    expect((calls.find((call) => call.method === "process/argv")?.params.args as string[]).join("\n"))
+      .toContain("mcp_servers.multi_agent_chat.command");
+  });
+
+  test("rejects one-shot-only runtimes in the Workflow planning dialog", async () => {
+    const hub = new AgentHub({
+      codex: "missing-codex-for-test",
+      claude: "missing-claude-for-test",
+      api: "api",
+    });
+    addConfiguredAgents(hub, [configuredAgent("api-agent", { runtimeAgentId: "api" })]);
+    (hub as any).runtimes.set("api", {
+      id: "api",
+      label: "API",
+      command: "api",
+      version: "test",
+      available: true,
+    });
+    const workflowId = hub.createWorkflowDraft({ configuredAgentId: "api-agent" }).workflowDraft!.workflowId;
+
+    const snapshot = await hub.sendWorkflowDraftReply({ workflowId, reply: "Plan this task." });
+
+    expect(snapshot.workflowDraft?.messages).toEqual([
+      expect.objectContaining({ role: "user", content: "Plan this task." }),
+      expect.objectContaining({
+        role: "assistant",
+        content: expect.stringContaining("does not support interactive workflow planning"),
+      }),
+    ]);
+    expect(snapshot.workflowDraft?.runtimeConversation).toBeUndefined();
   });
 
   test("uses the workflow-selected model for workflow agent API requests", async () => {
@@ -4159,7 +4192,7 @@ fs.writeFileSync(${JSON.stringify(argsPath)}, process.argv.slice(2).join("\\n") 
     expect(updatedNodes.get("start").position).toEqual({ x: 12, y: 34 });
   });
 
-  test("deletes a workflow draft with its runs and selects the next remaining workflow", () => {
+  test("deletes a workflow draft with its runs and selects the next remaining workflow", async () => {
     const hub = new AgentHub();
     const first = (hub as any).createWorkflow({
       title: "First workflow",
@@ -4198,7 +4231,7 @@ fs.writeFileSync(${JSON.stringify(argsPath)}, process.argv.slice(2).join("\\n") 
     });
     (hub as any).selectWorkflow(first.workflowId);
 
-    const snapshot = (hub as any).deleteWorkflow(first.workflowId);
+    const snapshot = await (hub as any).deleteWorkflow(first.workflowId);
 
     expect(snapshot.workflowStore.workflows.map((workflow: any) => workflow.workflowId)).toEqual([second.workflowId]);
     expect(snapshot.workflowStore.runs.some((item: any) => item.runId === run.runId || item.workflowId === first.workflowId)).toBe(false);
@@ -4206,7 +4239,7 @@ fs.writeFileSync(${JSON.stringify(argsPath)}, process.argv.slice(2).join("\\n") 
     expect(snapshot.workflowDraft.workflowId).toBe(second.workflowId);
   });
 
-  test("resets one workflow draft session without dropping other drafts", () => {
+  test("resets one workflow draft session without dropping other drafts", async () => {
     const hub = new AgentHub();
     const first = hub.createWorkflowDraft({ title: "First draft" }).workflowDraft!;
     const patched = hub.patchWorkflowDraft({
@@ -4232,7 +4265,7 @@ fs.writeFileSync(${JSON.stringify(argsPath)}, process.argv.slice(2).join("\\n") 
     });
     const second = hub.createWorkflowDraft({ title: "Second draft" }).workflowDraft!;
 
-    const reset = hub.resetWorkflowDraftSession(first.workflowId);
+    const reset = await hub.resetWorkflowDraftSession(first.workflowId);
     const resetFirst = reset.workflowStore.workflows.find((workflow) => workflow.workflowId === first.workflowId);
     const preservedSecond = reset.workflowStore.workflows.find((workflow) => workflow.workflowId === second.workflowId);
 

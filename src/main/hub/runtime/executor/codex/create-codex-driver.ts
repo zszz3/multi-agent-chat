@@ -20,6 +20,7 @@ import { CodexAgentExecutor } from "./codex-executor";
 import { respondToCodexRuntimeServerRequest } from "./codex-server-request";
 import { runCodexChannelTest } from "./codex-test";
 import { runCodexWorkflow } from "./codex-workflow";
+import { codexWorkflowMcpArgs } from "./codex-workflow-mcp";
 
 export function createCodexDriver(options: RuntimeAgentExecutorFactoryOptions): RuntimeDriver {
   const askWorkflowByRuntime = options.askWorkflowByRuntime ?? {};
@@ -35,21 +36,30 @@ export function createCodexDriver(options: RuntimeAgentExecutorFactoryOptions): 
     createInteractiveSession: (context) =>
       new CodexInteractiveSession(context, {
         capabilities: codexInteractiveSessionCapabilities,
-        createCodexClient: ({ onEvent, onExit }) => {
-          const channel = options.channelById(context.channelId);
+        createCodexClient: ({ context: sessionContext, onEvent, onExit }) => {
+          const channel = options.channelById(sessionContext.channelId);
           let client: CodexRpcClient;
           client = new CodexRpcClient({
-            executable: context.runtime.command || options.executables.codex,
-            cwd: context.workDir,
-            extraArgs: codexAppServerConfigArgs(
-              channel,
-              modelFromRuntimeConfig(context.runtimeConfig),
-              reasoningEffortFromRuntimeConfig(context.runtimeConfig),
-            ),
+            executable: sessionContext.runtime.command || options.executables.codex,
+            cwd: sessionContext.workDir,
+            extraArgs: [
+              ...codexAppServerConfigArgs(
+                channel,
+                modelFromRuntimeConfig(sessionContext.runtimeConfig),
+                reasoningEffortFromRuntimeConfig(sessionContext.runtimeConfig),
+              ),
+              ...(sessionContext.onWorkflowGraph
+                ? codexWorkflowMcpArgs(options.workflowHost?.mcpBridgeDiscoveryPath())
+                : []),
+            ],
             env: codexEnvironmentForChannel(channel),
             onEvent,
             onRequest: (id, method, params) => {
-              respondToCodexRuntimeServerRequest(options, client, id, method, params);
+              respondToCodexRuntimeServerRequest(options, client, id, method, params, {
+                ...(sessionContext.onWorkflowGraph
+                  ? { onWorkflowGraph: sessionContext.onWorkflowGraph }
+                  : {}),
+              });
             },
             onExit,
           });

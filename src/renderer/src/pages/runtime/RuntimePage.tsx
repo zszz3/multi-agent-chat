@@ -303,8 +303,10 @@ export function RuntimePage({
                   onContextMenu={(event) => onOpenContextMenu(event, channel.id)}
                 >
                   <span className={`agent-badge mini ${agentAccent(channel.agentId)}`}>{agentLabel(channel.agentId)}</span>
-                  <strong>{channel.label || channel.id}</strong>
-                  <span>{channel.providerName ?? channel.modelProvider ?? channel.id}</span>
+                  <strong title={channel.label || channel.id}>{channel.label || channel.id}</strong>
+                  <span title={channel.providerName ?? channel.modelProvider ?? channel.id}>
+                    {channel.providerName ?? channel.modelProvider ?? channel.id}
+                  </span>
                 </button>
               ))
             )}
@@ -447,9 +449,10 @@ export function RuntimePage({
                       type="button"
                       key={agentId}
                       className={`agent-provider-preset ${selectedRuntime === agentId ? "is-active" : ""}`}
+                      title={agentLabel(agentId)}
                       onClick={() => selectRuntime(agentId)}
                     >
-                      <span className={`agent-badge mini ${agentAccent(agentId)}`}>{agentLabel(agentId)}</span>
+                      <span className={`runtime-choice-dot ${agentAccent(agentId)}`} aria-hidden="true" />
                       <strong>{agentLabel(agentId)}</strong>
                     </button>
                   ))}
