@@ -46,8 +46,17 @@ jobs:
       - name: Run full regression suite
         run: npm test
 
-      - name: Build installer
-        run: npm run dist:win
+      - name: Build production bundles
+        run: npm run build
+
+      - name: Verify package inputs
+        run: npm run verify:package-inputs
+
+      - name: Package NSIS installer
+        run: npx electron-builder --win nsis --x64
+
+      - name: Verify NSIS installer
+        run: npm run verify:win-installer
 
       - name: Verify installed Explorer-style startup
         shell: pwsh
