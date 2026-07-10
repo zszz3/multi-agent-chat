@@ -145,6 +145,11 @@ import {
   resolveTaskPromptExecution as resolveTaskPromptExecutionValue,
 } from "./runtime/agent-hub-task-run";
 import {
+  cloneConversationForPolicy as cloneConversationForPolicyValue,
+  defaultContinuationPolicy as defaultContinuationPolicyValue,
+  selectExecutionMode as selectExecutionModeValue,
+} from "./runtime/agent-hub-runtime-policy";
+import {
   codexPluginSummaries,
   respondToCodexServerRequest,
 } from "./codex/agent-hub-codex-app";
@@ -1386,38 +1391,17 @@ export class AgentHub {
     this.emit();
   }
 
-  private supportsContinuationPolicy(
-    runtimeId: AgentId,
-    surface: RuntimeSurface,
-    executionMode: RuntimeExecutionMode,
-    continuationPolicy: RuntimeContinuationPolicy,
-  ): boolean {
-    const driver = this.runtimeDrivers.maybeDriverFor(runtimeId);
-    if (!driver) return false;
-    const support = driver?.surfaceSupport.find((item) => item.surface === surface);
-    if (!support) return false;
-    if (!support.executionModes.includes(executionMode)) return false;
-    if (!support.continuationPolicies.includes(continuationPolicy)) return false;
-    if (continuationPolicy !== "fresh" && !driver.runtimeStateCodec) return false;
-    return true;
-  }
-
-  private surfaceSupportFor(runtimeId: AgentId, surface: RuntimeSurface) {
-    return this.runtimeDrivers.maybeDriverFor(runtimeId)?.surfaceSupport.find((item) => item.surface === surface);
-  }
-
   private selectExecutionMode(
     runtimeId: AgentId,
     surface: RuntimeSurface,
     preferred: RuntimeExecutionMode,
   ): RuntimeExecutionMode {
-    const support = this.surfaceSupportFor(runtimeId, surface);
-    if (!support) return "oneshot";
-    if (support.executionModes.length === 0) return "oneshot";
-    if (support.executionModes.includes(preferred)) return preferred;
-    if (preferred !== "oneshot" && support.executionModes.includes("oneshot")) return "oneshot";
-    if (preferred !== "interactive" && support.executionModes.includes("interactive")) return "interactive";
-    return "oneshot";
+    return selectExecutionModeValue({
+      runtimeDrivers: this.runtimeDrivers,
+      runtimeId,
+      surface,
+      preferred,
+    });
   }
 
   private defaultContinuationPolicy(
@@ -1425,22 +1409,23 @@ export class AgentHub {
     surface: RuntimeSurface,
     executionMode: RuntimeExecutionMode,
   ): RuntimeContinuationPolicy {
-    if (surface === "chat") {
-      for (const policy of ["resume-preferred", "fresh", "resume-required"] as const) {
-        if (this.supportsContinuationPolicy(runtimeId, surface, executionMode, policy)) {
-          return policy;
-        }
-      }
-    }
-    return "fresh";
+    return defaultContinuationPolicyValue({
+      runtimeDrivers: this.runtimeDrivers,
+      runtimeId,
+      surface,
+      executionMode,
+    });
   }
 
   private cloneConversationForPolicy(
     continuationPolicy: RuntimeContinuationPolicy,
     runtimeConversation: RuntimeConversation | undefined,
   ): RuntimeConversation | undefined {
-    if (!runtimeConversation || continuationPolicy === "fresh") return undefined;
-    return this.runtimeRouter.cloneConversation(runtimeConversation);
+    return cloneConversationForPolicyValue(
+      continuationPolicy,
+      runtimeConversation,
+      (conversation) => this.runtimeRouter.cloneConversation(conversation),
+    );
   }
 
   private buildInteractiveChatContext(chat: ChatState, resolved: ResolvedConfiguredAgent): InteractiveSessionContext {
