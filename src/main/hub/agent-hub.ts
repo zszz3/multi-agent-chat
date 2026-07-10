@@ -112,8 +112,9 @@ import {
   switchChatConfiguredAgent as switchChatConfiguredAgentValue,
 } from "./chat/agent-hub-chat-config";
 import {
-  prepareChatPromptExecution as prepareChatPromptExecutionValue,
-} from "./chat/agent-hub-chat-prompt";
+  dispatchChatPromptExecution as dispatchChatPromptExecutionValue,
+  dispatchSlashChatPrompt as dispatchSlashChatPromptValue,
+} from "./chat/agent-hub-chat-dispatch";
 import {
   buildInteractiveChatContext as buildInteractiveChatContextValue,
   dispatchInteractiveChatPrompt as dispatchInteractiveChatPromptValue,
@@ -1514,72 +1515,60 @@ export class AgentHub {
     if (!trimmedPrompt) return;
 
     if (trimmedPrompt.startsWith("/")) {
-      await this.handleSlashCommand(chat, trimmedPrompt);
+      await dispatchSlashChatPromptValue({
+        chat,
+        prompt: trimmedPrompt,
+        createUserMessage: (content, hidden) => createUserMessage(content, hidden),
+        createAssistantMessage: (content, hidden) => createAssistantMessage(content, hidden),
+        activateChat: (nextChatId) => {
+          this.activeChatId = nextChatId;
+        },
+        emit: () => this.emit(),
+        runSlashCommand: (currentChat, currentPrompt) =>
+          runSlashCommandValue({
+            chat: currentChat,
+            prompt: currentPrompt,
+            executable: this.executables.codex,
+            workDir: this.workDir,
+            resolveConfiguredAgent: (configuredAgentId, modelIdOverride, channelIdOverride) =>
+              this.resolveConfiguredAgentForSlash(configuredAgentId, modelIdOverride, channelIdOverride),
+          }),
+      });
       return;
     }
 
-    const resolved = this.resolveConfiguredAgent(chat.configuredAgentId, chat.modelId, chat.channelId);
-    const supportsInteractiveChat =
-      resolved ? this.selectExecutionMode(resolved.runtimeAgentId, "chat", "interactive") === "interactive" : false;
-    const capabilities =
-      resolved?.runtime && supportsInteractiveChat ? this.runtimeRouter.capabilitiesFor(resolved.runtime) : undefined;
-    const preparedResolved = prepareChatPromptExecutionValue({
+    await dispatchChatPromptExecutionValue({
       chat,
       prompt: trimmedPrompt,
-      resolved,
-      capabilities,
+      resolveConfiguredAgent: (configuredAgentId, modelIdOverride, channelIdOverride) =>
+        this.resolveConfiguredAgent(configuredAgentId, modelIdOverride, channelIdOverride),
+      selectExecutionMode: (runtimeId, surface, preferred) => this.selectExecutionMode(runtimeId, surface, preferred),
+      capabilitiesForRuntime: (runtime) => this.runtimeRouter.capabilitiesFor(runtime),
       hasAgentConversationMessages: (messages) => hasAgentConversationMessages(messages),
       titleFromPrompt: (currentPrompt) => titleFromPrompt(currentPrompt),
       createUserMessage: (content) => createUserMessage(content),
       createErrorMessage: (content) => createErrorMessage(content),
       createRuntimeState: (runtimeCapabilities) => this.runtimeStateFromCapabilities(runtimeCapabilities),
-    });
-    if (!preparedResolved) {
-      this.emit();
-      return;
-    }
-    this.activeChatId = chat.id;
-    this.emit();
-
-    if (supportsInteractiveChat) {
-      await dispatchInteractiveChatPromptValue({
-        chat,
-        prompt: trimmedPrompt,
-        interactiveSessions: this.interactiveSessions,
-        buildContext: () => this.buildInteractiveChatContext(chat, preparedResolved),
-        syncInteractiveChatState: (currentChat, state) => this.syncInteractiveChatState(currentChat, state),
-        registerStop: (stop) => {
-          this.activeStops.set(chat.id, stop);
-        },
-        markRunFailed: (currentChat, error) => this.markRunFailed(currentChat, error),
-      });
-      return;
-    }
-
-    void this.runChat(chat, trimmedPrompt, preparedResolved);
-  }
-
-  private async handleSlashCommand(chat: ChatState, prompt: string): Promise<void> {
-    chat.messages.push(createUserMessage(prompt, true));
-    chat.lastError = undefined;
-    chat.updatedAt = Date.now();
-    this.activeChatId = chat.id;
-    this.emit();
-
-    const content = await this.runSlashCommand(chat, prompt);
-    chat.messages.push(createAssistantMessage(content, true));
-    chat.updatedAt = Date.now();
-    this.emit();
-  }
-
-  private async runSlashCommand(chat: ChatState, prompt: string): Promise<string> {
-    return runSlashCommandValue({
-      chat,
-      prompt,
-      executable: this.executables.codex,
-      workDir: this.workDir,
-      resolveConfiguredAgent: (configuredAgentId, modelIdOverride, channelIdOverride) =>
-        this.resolveConfiguredAgentForSlash(configuredAgentId, modelIdOverride, channelIdOverride),
+      activateChat: (nextChatId) => {
+        this.activeChatId = nextChatId;
+      },
+      emit: () => this.emit(),
+      dispatchInteractivePrompt: async (currentChat, currentPrompt, preparedResolved) => {
+        await dispatchInteractiveChatPromptValue({
+          chat: currentChat,
+          prompt: currentPrompt,
+          interactiveSessions: this.interactiveSessions,
+          buildContext: () => this.buildInteractiveChatContext(currentChat, preparedResolved),
+          syncInteractiveChatState: (nextChat, state) => this.syncInteractiveChatState(nextChat, state),
+          registerStop: (stop) => {
+            this.activeStops.set(currentChat.id, stop);
+          },
+          markRunFailed: (nextChat, error) => this.markRunFailed(nextChat, error),
+        });
+      },
+      run: (currentChat, currentPrompt, preparedResolved) => {
+        void this.runChat(currentChat, currentPrompt, preparedResolved);
+      },
     });
   }
 
