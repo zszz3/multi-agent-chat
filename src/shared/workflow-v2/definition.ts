@@ -1,3 +1,5 @@
+import type { WorkflowV2ExecutionLeasePolicy } from "./supervision";
+
 export type WorkflowV2NodeRole = "orchestrator" | "executor" | "reviewer";
 export type WorkflowV2ExecModel = "llm" | "script";
 export type WorkflowV2ModelProfile = "fast" | "balanced" | "expert";
@@ -58,6 +60,7 @@ export interface WorkflowV2BaseNode {
   outputFields: WorkflowV2OutputFieldDef[];
   hooks?: WorkflowV2NodeHooks;
   resourceLocks?: string[];
+  executionLease?: WorkflowV2ExecutionLeasePolicy;
 }
 
 export interface WorkflowV2LLMNode extends WorkflowV2BaseNode {
@@ -114,6 +117,7 @@ export interface WorkflowV2TemplateNodeOverrides {
   outputFields?: WorkflowV2OutputFieldDef[];
   hooks?: WorkflowV2NodeHooks;
   resourceLocks?: string[];
+  executionLease?: WorkflowV2ExecutionLeasePolicy;
   modelProfile?: WorkflowV2ModelProfile;
   prompt?: string;
   judgeDimensions?: WorkflowV2JudgeDimensionDef[];

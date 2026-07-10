@@ -1,5 +1,5 @@
 import { describe, expect, test } from "vitest";
-import type { WorkflowV2Definition } from "../../../shared/workflow-v2/definition";
+import type { WorkflowV2Definition, WorkflowV2LLMNode } from "../../../shared/workflow-v2/definition";
 import type { WorkflowV2WorkerOutput } from "../../../shared/workflow-v2/packets";
 import { buildWorkflowV2Plan } from "./workflow-v2-planner";
 import { executeWorkflowV2Plan } from "./workflow-v2-executor";
@@ -840,8 +840,9 @@ describe("workflow-v2 executor", () => {
 
   test("retries mechanical validation before accepting the authoritative output", async () => {
     const retryDefinition = definition();
+    const draftNode = retryDefinition.nodes[0] as WorkflowV2LLMNode;
     retryDefinition.nodes = [{
-      ...retryDefinition.nodes[0]!,
+      ...draftNode,
       maxRetry: 1,
     }];
     retryDefinition.edges = [];
@@ -877,8 +878,9 @@ describe("workflow-v2 executor", () => {
 
   test("pauses through one intervention contract when validation requires a human", async () => {
     const pausedDefinition = definition();
+    const draftNode = pausedDefinition.nodes[0] as WorkflowV2LLMNode;
     pausedDefinition.nodes = [{
-      ...pausedDefinition.nodes[0]!,
+      ...draftNode,
       maxRetry: 0,
       onExhausted: "ask_human",
     }];
@@ -910,8 +912,9 @@ describe("workflow-v2 executor", () => {
 
   test("requires an independent structured reviewer for semantic judge dimensions", async () => {
     const reviewedDefinition = definition();
+    const draftNode = reviewedDefinition.nodes[0] as WorkflowV2LLMNode;
     reviewedDefinition.nodes = [{
-      ...reviewedDefinition.nodes[0]!,
+      ...draftNode,
       judgeDimensions: [{ key: "quality", passThreshold: "must" }],
     }];
     reviewedDefinition.edges = [];
@@ -951,8 +954,9 @@ describe("workflow-v2 executor", () => {
 
   test("requeues a reviewer rejection and accepts a later corrected attempt", async () => {
     const reviewedDefinition = definition();
+    const draftNode = reviewedDefinition.nodes[0] as WorkflowV2LLMNode;
     reviewedDefinition.nodes = [{
-      ...reviewedDefinition.nodes[0]!,
+      ...draftNode,
       judgeDimensions: [{ key: "quality", passThreshold: "must" }],
       maxRetry: 1,
     }];

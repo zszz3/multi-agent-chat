@@ -6,18 +6,12 @@ import type {
   WorkflowV2SupervisorDecision,
   WorkflowV2SupervisorResolution,
 } from "../../../shared/workflow-v2/supervision";
+import { isWorkflowV2ExecutionLeasePolicy } from "../../../shared/workflow-v2/supervision";
 
 export function validateWorkflowV2ExecutionLeasePolicy(
   value: unknown,
 ): value is WorkflowV2ExecutionLeasePolicy {
-  if (!isRecord(value)) return false;
-  if (!isPositiveInteger(value.inactivityTimeoutMs)) return false;
-  if (!isPositiveInteger(value.softTimeoutMs)) return false;
-  if (!isPositiveInteger(value.hardTimeoutMs)) return false;
-  if (!isPositiveInteger(value.progressProbeTimeoutMs)) return false;
-  if (!isNonNegativeInteger(value.maxExtensions)) return false;
-  if (!isPositiveInteger(value.maxExtensionMs)) return false;
-  return value.softTimeoutMs < value.hardTimeoutMs;
+  return isWorkflowV2ExecutionLeasePolicy(value);
 }
 
 export function createWorkflowV2ExecutionLease(input: {

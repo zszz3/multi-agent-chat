@@ -14,6 +14,14 @@ describe("workflow-v2 templates", () => {
         outputFields: [{ key: "summary", required: true }],
         role: "executor",
         modelProfile: "fast",
+        executionLease: {
+          inactivityTimeoutMs: 1_000,
+          softTimeoutMs: 5_000,
+          hardTimeoutMs: 10_000,
+          progressProbeTimeoutMs: 500,
+          maxExtensions: 1,
+          maxExtensionMs: 1_000,
+        },
       },
     ];
     const authored: WorkflowV2AuthoredDefinition = {
@@ -45,6 +53,14 @@ describe("workflow-v2 templates", () => {
         outputFields: [{ key: "summary", required: true }],
         role: "executor",
         modelProfile: "fast",
+        executionLease: {
+          inactivityTimeoutMs: 1_000,
+          softTimeoutMs: 5_000,
+          hardTimeoutMs: 10_000,
+          progressProbeTimeoutMs: 500,
+          maxExtensions: 1,
+          maxExtensionMs: 1_000,
+        },
         prompt: "Research workflow v2 in scope design, execution.\nReturn only structured output.",
       },
     ]);

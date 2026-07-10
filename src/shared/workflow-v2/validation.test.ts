@@ -251,6 +251,37 @@ describe("workflow-v2 validation", () => {
     expect(result.errors).toContain("Workflow V2 script node apply must have a safe-integer expectedExitCode.");
   });
 
+  test("accepts a bounded execution lease policy", () => {
+    const definition = validDefinition();
+    definition.nodes[0]!.executionLease = {
+      inactivityTimeoutMs: 1_000,
+      softTimeoutMs: 5_000,
+      hardTimeoutMs: 10_000,
+      progressProbeTimeoutMs: 500,
+      maxExtensions: 2,
+      maxExtensionMs: 1_000,
+    };
+
+    expect(validateWorkflowV2Definition(definition).valid).toBe(true);
+  });
+
+  test("rejects an execution lease whose soft deadline is not below its hard deadline", () => {
+    const invalid = validDefinition();
+    invalid.nodes[0]!.executionLease = {
+      inactivityTimeoutMs: 1_000,
+      softTimeoutMs: 10_000,
+      hardTimeoutMs: 10_000,
+      progressProbeTimeoutMs: 500,
+      maxExtensions: 2,
+      maxExtensionMs: 1_000,
+    };
+
+    const result = validateWorkflowV2Definition(invalid);
+
+    expect(result.valid).toBe(false);
+    expect(result.errors).toContain("Workflow V2 node plan has an invalid execution lease policy.");
+  });
+
   test("fails fast when a template reference cannot be compiled", () => {
     const authored: WorkflowV2AuthoredDefinition = {
       workflowId: "wf-v2",

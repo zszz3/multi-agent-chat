@@ -383,7 +383,7 @@ function isRecord(value: unknown): value is Record<string, unknown> {
 function workflowV2FinalReport(
   plan: WorkflowV2Plan,
   workerOutputs: readonly WorkflowV2WorkerOutput[],
-  status: "completed" | "failed" | "running",
+  status: "completed" | "failed" | "paused" | "running",
 ): string {
   const outputByNodeId = new Map(workerOutputs.map((output) => [output.nodeId, output]));
   return [
@@ -980,6 +980,14 @@ export class WorkflowRuntime {
               nodeId: transition.nodeId,
               detail: transition.output.summary,
             }, true);
+          } else if (transition.status === "paused") {
+            const activeRun = this.activeRuns.get(runId);
+            activeRun?.pausedNodeIds.add(transition.nodeId);
+            updateNode(transition.nodeId, { status: "paused", detail: transition.intervention.reason }, {
+              type: "node_paused",
+              nodeId: transition.nodeId,
+              detail: transition.intervention.reason,
+            }, true);
           } else {
             updateNode(transition.nodeId, { status: "failed", detail: transition.error }, {
               type: "node_failed",
@@ -1002,6 +1010,7 @@ export class WorkflowRuntime {
         });
         return;
       }
+      if (result.runState.status === "paused") return;
 
       const lastError = result.runState.nodeOrder
         .map((nodeId) => result.runState.nodes[nodeId])

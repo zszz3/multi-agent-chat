@@ -58,3 +58,26 @@ export const DEFAULT_WORKFLOW_V2_EXECUTION_LEASE_POLICY: WorkflowV2ExecutionLeas
   maxExtensions: 2,
   maxExtensionMs: 5 * 60_000,
 };
+
+export function isWorkflowV2ExecutionLeasePolicy(value: unknown): value is WorkflowV2ExecutionLeasePolicy {
+  if (!isRecord(value)) return false;
+  if (!isPositiveInteger(value.inactivityTimeoutMs)) return false;
+  if (!isPositiveInteger(value.softTimeoutMs)) return false;
+  if (!isPositiveInteger(value.hardTimeoutMs)) return false;
+  if (!isPositiveInteger(value.progressProbeTimeoutMs)) return false;
+  if (!isNonNegativeInteger(value.maxExtensions)) return false;
+  if (!isPositiveInteger(value.maxExtensionMs)) return false;
+  return value.softTimeoutMs < value.hardTimeoutMs;
+}
+
+function isRecord(value: unknown): value is Record<string, unknown> {
+  return typeof value === "object" && value !== null && !Array.isArray(value);
+}
+
+function isPositiveInteger(value: unknown): value is number {
+  return typeof value === "number" && Number.isSafeInteger(value) && value > 0;
+}
+
+function isNonNegativeInteger(value: unknown): value is number {
+  return typeof value === "number" && Number.isSafeInteger(value) && value >= 0;
+}

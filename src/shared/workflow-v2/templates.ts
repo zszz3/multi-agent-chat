@@ -72,6 +72,7 @@ export function compileWorkflowV2Node(
   const outputFields = overrides.outputFields ?? template.outputFields;
   const hooks = overrides.hooks ?? template.hooks;
   const resourceLocks = overrides.resourceLocks ?? template.resourceLocks;
+  const executionLease = overrides.executionLease ?? template.executionLease;
 
   if (template.execModel === "llm") {
     const compiled: WorkflowV2LLMNode = {
@@ -84,6 +85,7 @@ export function compileWorkflowV2Node(
       ...(role ? { role } : {}),
       ...(hooks ? { hooks } : {}),
       ...(resourceLocks ? { resourceLocks } : {}),
+      ...(executionLease ? { executionLease: { ...executionLease } } : {}),
       ...(overrides.modelProfile ?? template.modelProfile ? { modelProfile: overrides.modelProfile ?? template.modelProfile } : {}),
       ...(overrides.judgeDimensions ?? template.judgeDimensions
         ? { judgeDimensions: overrides.judgeDimensions ?? template.judgeDimensions }
@@ -110,6 +112,7 @@ export function compileWorkflowV2Node(
     ...(role ? { role } : {}),
     ...(hooks ? { hooks } : {}),
     ...(resourceLocks ? { resourceLocks } : {}),
+    ...(executionLease ? { executionLease: { ...executionLease } } : {}),
     ...((overrides.expectedExitCode ?? template.expectedExitCode) !== undefined
       ? { expectedExitCode: overrides.expectedExitCode ?? template.expectedExitCode }
       : {}),

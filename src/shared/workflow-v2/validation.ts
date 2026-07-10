@@ -12,6 +12,7 @@ import type {
   WorkflowV2BudgetEnvelope,
   WorkflowV2CostBudget,
 } from "./planning";
+import { isWorkflowV2ExecutionLeasePolicy } from "./supervision";
 import type { WorkflowV2TemplateRegistry } from "./templates";
 import { compileWorkflowV2Definition, WorkflowV2TemplateCompileError } from "./templates";
 
@@ -109,6 +110,9 @@ function appendNodeValidationErrors(node: WorkflowV2Node, errors: string[]): voi
   if (!node.kind.trim()) errors.push(`Workflow V2 node ${node.id} must have a kind.`);
   if (node.role !== undefined && !isWorkflowV2NodeRole(node.role)) {
     errors.push(`Workflow V2 node ${node.id} has unsupported role ${String(node.role)}.`);
+  }
+  if (node.executionLease !== undefined && !isWorkflowV2ExecutionLeasePolicy(node.executionLease)) {
+    errors.push(`Workflow V2 node ${node.id} has an invalid execution lease policy.`);
   }
 
   if (!Array.isArray(node.outputFields) || node.outputFields.length === 0) {

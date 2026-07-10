@@ -54,7 +54,8 @@ export function transitionWorkflowV2NodeState(
   if (transition.status === "ready") {
     nextTarget.status = "ready";
     delete nextTarget.finishedAt;
-    nextTarget.lastError = transition.error;
+    if (transition.error !== undefined) nextTarget.lastError = transition.error;
+    else delete nextTarget.lastError;
   } else if (transition.status === "running") {
     nextTarget.status = "running";
     nextTarget.attempt += 1;
@@ -66,16 +67,17 @@ export function transitionWorkflowV2NodeState(
     delete nextTarget.intervention;
   } else if (transition.status === "validating") {
     nextTarget.status = "validating";
-    nextTarget.validation = transition.validation;
+    if (transition.validation !== undefined) nextTarget.validation = transition.validation;
+    else delete nextTarget.validation;
   } else if (transition.status === "awaiting_review") {
     nextTarget.status = "awaiting_review";
-    nextTarget.reviewVerdict = transition.reviewVerdict;
+    if (transition.reviewVerdict !== undefined) nextTarget.reviewVerdict = transition.reviewVerdict;
   } else if (transition.status === "paused") {
     nextTarget.status = "paused";
     nextTarget.finishedAt = now;
-    nextTarget.intervention = transition.intervention;
-    nextTarget.reviewVerdict = transition.reviewVerdict;
-    nextTarget.lastError = transition.error;
+    if (transition.intervention !== undefined) nextTarget.intervention = transition.intervention;
+    if (transition.reviewVerdict !== undefined) nextTarget.reviewVerdict = transition.reviewVerdict;
+    if (transition.error !== undefined) nextTarget.lastError = transition.error;
   } else if (transition.status === "completed" || transition.status === "skipped") {
     nextTarget.status = transition.status;
     nextTarget.finishedAt = now;
