@@ -20,7 +20,7 @@
 ┌─────────────────────────────────────────────────────┐
 │           RuntimeDriverRegistry                       │
 │  根据 AgentId 分发到对应的 RuntimeDriver              │
-│  codex │ claude │ api │ hermes                        │
+│  codex │ claude │ api │ hermes │ opencode             │
 └──────────────┬──────────────────────────────────────┘
                │
                ▼
@@ -48,7 +48,7 @@
 
 ```typescript
 // src/shared/types.ts
-type AgentId = "codex" | "claude" | "api" | "hermes";
+type AgentId = "codex" | "claude" | "api" | "hermes" | "opencode";
 ```
 
 联合类型，每个值对应一个 Runtime Driver。
@@ -60,7 +60,7 @@ type AgentId = "codex" | "claude" | "api" | "hermes";
 interface ConfiguredAgent {
   id: string;              // 用户定义的唯一 ID
   name: string;            // 显示名称
-  runtimeAgentId: AgentId; // 指向哪个 Runtime（codex/claude/api/hermes）
+  runtimeAgentId: AgentId; // 指向哪个 Runtime（codex/claude/api/hermes/opencode）
   channelId: string;       // 指向哪个 Channel（包含 provider/模型列表/API key 等）
   modelId: string;         // 默认模型
 }
@@ -159,7 +159,7 @@ AgentHub.runTask(request)
 1. runTask() 创建 TaskState，设置 status=running
 2. resolveConfiguredAgent() 查找：
    - configuredAgentId → ConfiguredAgent
-   - ConfiguredAgent.runtimeAgentId → AgentId (codex/claude/api/hermes)
+   - ConfiguredAgent.runtimeAgentId → AgentId (codex/claude/api/hermes/opencode)
    - ConfiguredAgent.channelId → AgentChannel (含 modelProvider, baseUrl 等)
 3. runChat() 构造 AgentExecutionContext：
    {
@@ -233,7 +233,7 @@ AgentHub.sendPrompt(prompt, chatId)
 - `turnId`：每次新 turn 递增，用于识别事件是否来自已被中断的 turn
 - 当 `attachmentGeneration` 或 `turnId` 不匹配时，事件被丢弃
 
-## 4. 四种 Runtime 的详细实现
+## 4. 五种 Runtime 的详细实现
 
 ### 4.1 Codex — 子进程 JSON-RPC
 
@@ -315,6 +315,19 @@ chat (interactive)
 
 Hermes chat 支持 detach、应用重启后的会话恢复、中断、继续和审批请求；不声明 turn resume 与自由形式用户输入请求。ACP `sessionId` 由 `hermesRuntimeStateCodec` 持久化，cleanup 使用 `hermes sessions delete <sessionId> --yes`。
 
+### 4.5 OpenCode — 官方 NDJSON one-shot + ACP interactive
+
+```text
+task / workflow / channel-test (oneshot)
+  └─ opencode run --format json [--model provider/model] <prompt>
+
+chat (interactive)
+  └─ opencode acp --cwd <workDir>
+       └─ 通用 AcpInteractiveClient / AcpInteractiveSession
+```
+
+OpenCode chat 支持 ACP session 恢复、中断、继续、审批和模型选择；`openCodeRuntimeStateCodec` 持久化 native session id，cleanup 使用 `opencode session delete <sessionId>`。
+
 ## 5. RuntimeDriverRegistry 的构造
 
 ```typescript
@@ -326,6 +339,7 @@ createRuntimeDriverRegistry(options) {
     createClaudeDriver(options),  // interactive, SDK 风格
     createApiDriver(options),     // oneshot, HTTP 风格
     createHermesDriver(options),  // interactive chat + CLI oneshot
+    createOpenCodeDriver(options), // interactive chat + NDJSON oneshot
   ]);
 }
 ```
@@ -551,7 +565,7 @@ const nodeAgent = resolveWorkflowNodeAgent(
 
 ```typescript
 // src/shared/types.ts
-type AgentId = "codex" | "claude" | "api" | "hermes" | "mymodel";
+type AgentId = "codex" | "claude" | "api" | "hermes" | "opencode" | "mymodel";
 ```
 
 ### 步骤 2：实现 Runner（拉起子进程/发 HTTP）
@@ -591,7 +605,7 @@ const mymodelDriver: RuntimeDriver = {
   askWorkflow: ...,               // 如需 workflow 专用调用
   testChannel: ...,               // 如需测试功能
 };
-return new RuntimeDriverRegistry([codexDriver, claudeDriver, apiDriver, hermesDriver, mymodelDriver]);
+return new RuntimeDriverRegistry([codexDriver, claudeDriver, apiDriver, hermesDriver, openCodeDriver, mymodelDriver]);
 ```
 
 ### 步骤 5：更新 tools 层

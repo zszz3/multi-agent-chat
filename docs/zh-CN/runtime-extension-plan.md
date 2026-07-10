@@ -1,6 +1,6 @@
 # Runtime 扩展方案：面向 Hermes / OpenClaw / 后续 Runtime
 
-> 状态（2026-07-10）：runtime 自治架构与 Hermes 接入已经完成。Hermes 的 task/workflow/channel-test 使用官方 `hermes -z` one-shot，chat 使用官方 `hermes acp` interactive。OpenCode 与 OpenClaw 按独立后续分支推进。
+> 状态（2026-07-10）：runtime 自治架构、Hermes 和 OpenCode 接入已经完成。OpenCode 的 task/workflow/channel-test 使用官方 `opencode run --format json` one-shot，chat 使用官方 `opencode acp` interactive。OpenClaw 按独立后续分支推进。
 
 ## 1. 目标
 
@@ -154,6 +154,14 @@ src/main/hub/runtime/
       hermes-session.ts
       hermes-cleanup.ts
 
+    opencode/
+      create-opencode-driver.ts
+      opencode-executor.ts
+      opencode-workflow.ts
+      opencode-capabilities.ts
+      opencode-session.ts
+      opencode-cleanup.ts
+
     openclaw/
       create-openclaw-driver.ts
       openclaw-executor.ts
@@ -162,7 +170,7 @@ src/main/hub/runtime/
       openclaw-cleanup.ts            # 如果未来支持 cleanup
 ```
 
-该结构现已落地。通用 ACP 协议客户端位于 `src/main/agents/acp/`，Hermes bundle 只负责 Hermes 的命令选择、能力声明和会话装配。
+该结构现已落地。通用 ACP 协议客户端与 session 生命周期位于 `src/main/agents/acp/`，Hermes/OpenCode bundle 分别负责命令选择、能力声明、codec 和会话装配。
 
 ## 5. 推荐的 driver builder 形态
 

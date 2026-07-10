@@ -11,7 +11,7 @@ If a renderer feature changes the actual behavior of chats, tasks, workflows, ag
 - `index.ts`: Electron bootstrap, BrowserWindow creation, IPC registration, local bridge startup
 - `agent-hub.ts`: central app state container and domain orchestration layer
 - `hub/runtime/executor/agent-executor.ts`: runtime registry aggregator that composes one `createXxxDriver()` builder per runtime
-- `hub/runtime/executor/codex/`, `claude/`, `api/`, `hermes/`: runtime-local bundles that own executor, workflow, cleanup, session, and capability assembly for each runtime
+- `hub/runtime/executor/codex/`, `claude/`, `api/`, `hermes/`, `opencode/`: runtime-local bundles that own executor, workflow, cleanup, session, and capability assembly for each runtime
 - `agents/runtime/runtime-driver.ts`: shared runtime capability and interactive session interfaces plus optional workflow/test/cleanup hooks
 - `agents/interactive-session-manager.ts`: per-chat queueing and idle-detach orchestration for interactive runtimes
 - `agents/codex-interactive-session.ts`: reusable Codex chat attachment
@@ -20,7 +20,9 @@ If a renderer feature changes the actual behavior of chats, tasks, workflows, ag
 - `agents/claude-interactive-session.ts`: reusable Claude chat attachment backed by the official SDK
 - `agents/claude-stream.ts`: shared Claude event normalization helpers
 - `agents/hermes/hermes-runner.ts`: documented `hermes -z` one-shot adapter
+- `agents/opencode/opencode-runner.ts`: documented `opencode run --format json` NDJSON adapter
 - `agents/acp/acp-interactive-client.ts`: shared official ACP stdio client for session-capable runtimes
+- `agents/acp/acp-interactive-session.ts`: shared ACP session attachment and continuation lifecycle
 - `model-config.ts`: channel normalization, Codex config generation/import, preset-backed config handling
 - `provider-balance.ts`: provider balance queries
 - `scheduled-workflow-cloud.ts`: cloud sync for scheduled workflows
@@ -81,6 +83,7 @@ Backends:
 - Claude one-shot uses `ClaudeAgentSdkAdapter`, while interactive chat reuse is managed by `ClaudeInteractiveSession` plus `ClaudeAgentSdkInteractive`
 - API runtime uses direct `fetch` and stays one-shot only
 - Hermes tasks, workflows, and channel tests use `HermesRunner` with `hermes -z`; interactive chat uses `hermes acp` through `AcpInteractiveClient` and `HermesInteractiveSession`
+- OpenCode tasks, workflows, and channel tests use `opencode run --format json`; interactive chat uses `opencode acp` with persisted session resume
 
 `AgentHub` still owns snapshot state plus app-owned `runtimeState` and opaque `runtimeConversation` persistence, but interactive process lifecycle now sits behind `InteractiveSessionManager` and the runtime-specific session helpers under `src/main/agents/`.
 Before crossing into `RuntimeRouter`, upper layers in main now build explicit runtime requests with `runtimeId`, `executionMode`, `continuationPolicy`, and `runtimeConfig.model` instead of relying on generic `sessionId` semantics or runtime-native payload parsing.
