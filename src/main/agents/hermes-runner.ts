@@ -1,7 +1,7 @@
 import type { ChildProcess } from "node:child_process";
 import { createInterface } from "node:readline";
 import type { AgentEvent } from "../../shared/types";
-import { spawnCli } from "../cli-launcher";
+import { spawnCli } from "../platform/cli-launcher";
 
 export interface HermesRunOptions {
   executable: string;

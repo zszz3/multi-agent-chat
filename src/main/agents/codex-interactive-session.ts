@@ -2,7 +2,7 @@ import { runtimeModelId } from "../../shared/models";
 import type { AgentEvent, ChatRuntimeSessionState, RuntimeConversation } from "../../shared/types";
 import type { InteractiveSession, InteractiveSessionContext, InteractiveSessionSnapshot } from "./runtime-driver";
 import { ProcessLease } from "./process-lease";
-import { CodexRpcClient } from "./codex-rpc";
+import { CodexRpcClient } from "./codex/codex-rpc";
 import { codexRuntimeStateCodec } from "./runtime-state-codec";
 import { planSessionReconfigure } from "./session-reconfigure";
 

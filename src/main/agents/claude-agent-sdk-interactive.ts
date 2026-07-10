@@ -5,7 +5,7 @@ import {
 } from "@anthropic-ai/claude-agent-sdk";
 import type { AgentEvent } from "../../shared/types";
 import { createClaudeSdkQueryOptions } from "./claude-agent-sdk";
-import { createClaudeStreamState, normalizeClaudeStreamEvent } from "./claude-stream";
+import { createClaudeStreamState, normalizeClaudeStreamEvent } from "./claude/claude-stream";
 
 interface ClaudeAgentSdkInteractiveAttachInput {
   cwd: string;

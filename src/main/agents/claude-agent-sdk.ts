@@ -8,7 +8,7 @@ import {
   type Query,
 } from "@anthropic-ai/claude-agent-sdk";
 import type { AgentEvent } from "../../shared/types";
-import { createClaudeStreamState, normalizeClaudeStreamEvent } from "./claude-stream";
+import { createClaudeStreamState, normalizeClaudeStreamEvent } from "./claude/claude-stream";
 
 export interface ClaudeAgentSdkRunInput {
   prompt: string;

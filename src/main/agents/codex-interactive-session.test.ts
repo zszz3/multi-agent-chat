@@ -3,7 +3,7 @@ import os from "node:os";
 import path from "node:path";
 import { describe, expect, test, vi } from "vitest";
 import type { AgentEvent, AgentRuntime, ChatRuntimeSessionState } from "../../shared/types";
-import { CodexRpcClient } from "./codex-rpc";
+import { CodexRpcClient } from "./codex/codex-rpc";
 import { CodexInteractiveSession } from "./codex-interactive-session";
 
 function codexRuntime(command: string): AgentRuntime {

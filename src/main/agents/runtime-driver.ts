@@ -11,7 +11,7 @@ import type {
   WorkflowAgentEvent,
   WorkflowAgentResponse,
 } from "../../shared/types";
-import type { AgentExecutionContext, AgentExecutor } from "../agent-executor";
+import type { AgentExecutionContext, AgentExecutor } from "../hub/runtime/executor/agent-executor";
 import type { RuntimeCapabilities } from "./runtime-capabilities";
 import type { RuntimeStateCodec } from "./runtime-state-codec";
 

@@ -1,5 +1,5 @@
 import { describe, expect, test, vi } from "vitest";
-import type { AgentExecutionContext, AgentExecutor } from "../agent-executor";
+import type { AgentExecutionContext, AgentExecutor } from "../hub/runtime/executor/agent-executor";
 import type { AgentRuntime } from "../../shared/types";
 import {
   RuntimeDriverRegistry,

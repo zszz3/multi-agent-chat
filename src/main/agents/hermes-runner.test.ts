@@ -3,7 +3,7 @@ import os from "node:os";
 import path from "node:path";
 import { describe, expect, test } from "vitest";
 import type { AgentEvent } from "../../shared/types";
-import { writeNodeCliLauncher } from "../test-cli-fixtures";
+import { writeNodeCliLauncher } from "../platform/test-cli-fixtures";
 import { HermesRunner } from "./hermes-runner";
 
 describe("HermesRunner", () => {
