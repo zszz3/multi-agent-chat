@@ -33,15 +33,6 @@ const builderMocks = vi.hoisted(() => ({
   hermes: vi.fn(),
 }));
 
-const runtimeLocalBundleMocks = vi.hoisted(() => ({
-  codexWorkflow: vi.fn(async () => ({ message: "codex workflow" })),
-  claudeWorkflow: vi.fn(async () => ({ message: "claude workflow" })),
-  hermesWorkflow: vi.fn(async () => ({ message: "hermes workflow" })),
-  hermesChannelTest: vi.fn(async () => "hermes channel test"),
-  codexCleanup: vi.fn(async () => undefined),
-  claudeCleanup: vi.fn(async () => undefined),
-}));
-
 const sharedHelperMocks = vi.hoisted(() => ({
   codexWorkflow: vi.fn(async () => ({ message: "shared codex workflow" })),
   claudeWorkflow: vi.fn(async () => ({ message: "shared claude workflow" })),
@@ -49,27 +40,6 @@ const sharedHelperMocks = vi.hoisted(() => ({
   hermesChannelTest: vi.fn(async () => "shared hermes channel test"),
   codexCleanup: vi.fn(async () => undefined),
   claudeCleanup: vi.fn(async () => undefined),
-}));
-
-vi.mock("./codex/codex-workflow", () => ({
-  runCodexWorkflow: runtimeLocalBundleMocks.codexWorkflow,
-}));
-
-vi.mock("./claude/claude-workflow", () => ({
-  runClaudeWorkflow: runtimeLocalBundleMocks.claudeWorkflow,
-}));
-
-vi.mock("./hermes/hermes-workflow", () => ({
-  runHermesWorkflow: runtimeLocalBundleMocks.hermesWorkflow,
-  runHermesChannelTest: runtimeLocalBundleMocks.hermesChannelTest,
-}));
-
-vi.mock("./codex/codex-cleanup", () => ({
-  deleteCodexSessionArtifacts: runtimeLocalBundleMocks.codexCleanup,
-}));
-
-vi.mock("./claude/claude-cleanup", () => ({
-  deleteClaudeSessionArtifacts: runtimeLocalBundleMocks.claudeCleanup,
 }));
 
 vi.mock("./workflow/agent-executor-workflow", () => ({
@@ -91,12 +61,6 @@ describe("createRuntimeDriverRegistry", () => {
     builderMocks.claude.mockReset();
     builderMocks.api.mockReset();
     builderMocks.hermes.mockReset();
-    runtimeLocalBundleMocks.codexWorkflow.mockClear();
-    runtimeLocalBundleMocks.claudeWorkflow.mockClear();
-    runtimeLocalBundleMocks.hermesWorkflow.mockClear();
-    runtimeLocalBundleMocks.hermesChannelTest.mockClear();
-    runtimeLocalBundleMocks.codexCleanup.mockClear();
-    runtimeLocalBundleMocks.claudeCleanup.mockClear();
     sharedHelperMocks.codexWorkflow.mockClear();
     sharedHelperMocks.claudeWorkflow.mockClear();
     sharedHelperMocks.hermesWorkflow.mockClear();
@@ -200,18 +164,80 @@ describe("createRuntimeDriverRegistry", () => {
     await hermesDriver.askWorkflow?.(workflowInput);
     await hermesDriver.testChannel?.(channelTestInput);
 
-    expect(runtimeLocalBundleMocks.codexWorkflow).toHaveBeenCalledOnce();
-    expect(runtimeLocalBundleMocks.codexCleanup).toHaveBeenCalledOnce();
-    expect(runtimeLocalBundleMocks.claudeWorkflow).toHaveBeenCalledOnce();
-    expect(runtimeLocalBundleMocks.claudeCleanup).toHaveBeenCalledOnce();
-    expect(runtimeLocalBundleMocks.hermesWorkflow).toHaveBeenCalledOnce();
-    expect(runtimeLocalBundleMocks.hermesChannelTest).toHaveBeenCalledOnce();
+    expect(sharedHelperMocks.codexWorkflow).toHaveBeenCalledOnce();
+    expect(sharedHelperMocks.codexWorkflow).toHaveBeenCalledWith(workflowInput, options);
+    expect(sharedHelperMocks.codexCleanup).toHaveBeenCalledOnce();
+    expect(sharedHelperMocks.codexCleanup).toHaveBeenCalledWith(options.executables.codex, cleanupInput.runtimeConversation);
+    expect(sharedHelperMocks.claudeWorkflow).toHaveBeenCalledOnce();
+    expect(sharedHelperMocks.claudeWorkflow).toHaveBeenCalledWith(
+      workflowInput,
+      options,
+      expect.any(Function),
+    );
+    expect(sharedHelperMocks.claudeCleanup).toHaveBeenCalledOnce();
+    expect(sharedHelperMocks.claudeCleanup).toHaveBeenCalledWith(
+      cleanupInput.workDir,
+      cleanupInput.runtimeConversation,
+    );
+    expect(sharedHelperMocks.hermesWorkflow).toHaveBeenCalledOnce();
+    expect(sharedHelperMocks.hermesWorkflow).toHaveBeenCalledWith(workflowInput, options);
+    expect(sharedHelperMocks.hermesChannelTest).toHaveBeenCalledOnce();
+    expect(sharedHelperMocks.hermesChannelTest).toHaveBeenCalledWith(channelTestInput, options);
+  });
 
-    expect(sharedHelperMocks.codexWorkflow).not.toHaveBeenCalled();
-    expect(sharedHelperMocks.codexCleanup).not.toHaveBeenCalled();
-    expect(sharedHelperMocks.claudeWorkflow).not.toHaveBeenCalled();
-    expect(sharedHelperMocks.claudeCleanup).not.toHaveBeenCalled();
-    expect(sharedHelperMocks.hermesWorkflow).not.toHaveBeenCalled();
-    expect(sharedHelperMocks.hermesChannelTest).not.toHaveBeenCalled();
+  test("runtime-local wrapper modules forward arguments to shared helpers", async () => {
+    const options = buildOptions();
+    const workflowInput = {
+      requestId: "request-2",
+      prompt: "workflow prompt",
+      runtime: { type: "stdio", command: "cmd" },
+      channelId: "test-channel",
+      workDir: "/tmp/wrapper-runtime",
+    } as any;
+    const cleanupInput = {
+      workDir: "/tmp/wrapper-runtime",
+      runtimeConversation: { id: "conversation-2" },
+    } as any;
+
+    const [
+      codexWorkflowModule,
+      claudeWorkflowModule,
+      hermesWorkflowModule,
+      codexCleanupModule,
+      claudeCleanupModule,
+    ] = await Promise.all([
+      import("./codex/codex-workflow"),
+      import("./claude/claude-workflow"),
+      import("./hermes/hermes-workflow"),
+      import("./codex/codex-cleanup"),
+      import("./claude/claude-cleanup"),
+    ]);
+
+    const runClaudeOneShot = vi.fn(async () => undefined);
+
+    await codexWorkflowModule.runCodexWorkflow(workflowInput, options);
+    await claudeWorkflowModule.runClaudeWorkflow(workflowInput, options, runClaudeOneShot);
+    await hermesWorkflowModule.runHermesWorkflow(workflowInput, options);
+    await hermesWorkflowModule.runHermesChannelTest(
+      {
+        runtime: { type: "stdio", command: "cmd" },
+        channelId: "test-channel",
+        modelId: "default",
+        workDir: "/tmp/wrapper-runtime",
+        emit: vi.fn(),
+      } as any,
+      options,
+    );
+    await codexCleanupModule.deleteCodexSessionArtifacts(options.executables.codex, cleanupInput);
+    await claudeCleanupModule.deleteClaudeSessionArtifacts(cleanupInput);
+
+    expect(sharedHelperMocks.codexWorkflow).toHaveBeenCalledWith(workflowInput, options);
+    expect(sharedHelperMocks.claudeWorkflow).toHaveBeenCalledWith(workflowInput, options, runClaudeOneShot);
+    expect(sharedHelperMocks.hermesWorkflow).toHaveBeenCalledWith(workflowInput, options);
+    expect(sharedHelperMocks.codexCleanup).toHaveBeenCalledWith(options.executables.codex, cleanupInput.runtimeConversation);
+    expect(sharedHelperMocks.claudeCleanup).toHaveBeenCalledWith(
+      cleanupInput.workDir,
+      cleanupInput.runtimeConversation,
+    );
   });
 });
