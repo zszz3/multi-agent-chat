@@ -1,4 +1,4 @@
-import { Bot, CalendarClock, ClipboardList, Cpu, GitBranch, MessageSquareText, Moon, Settings, SlidersHorizontal, Sun, Wand2 } from "lucide-react";
+import { Bot, CalendarClock, ClipboardList, Cpu, GitBranch, MessageSquareText, Moon, SlidersHorizontal, Sun, Wand2 } from "lucide-react";
 import type { Theme } from "../CommandPalette";
 import type { ActiveFeature } from "./shell";
 
@@ -9,8 +9,6 @@ interface FeatureRailText {
     lightTheme: string;
     darkTheme: string;
     toggleTheme: string;
-    settings: string;
-    openSettings: string;
   };
 }
 
@@ -66,9 +64,6 @@ export function FeatureRail({ activeFeature, theme, text, onSelectFeature, onTog
           aria-label={text.chrome.toggleTheme}
         >
           {theme === "dark" ? <Sun size={14} /> : <Moon size={14} />}
-        </button>
-        <button className="icon-btn" onClick={() => onSelectFeature("settings")} data-tip={text.chrome.settings} aria-label={text.chrome.openSettings}>
-          <Settings size={14} />
         </button>
       </div>
     </aside>

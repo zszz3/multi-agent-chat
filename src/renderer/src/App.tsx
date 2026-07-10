@@ -28,7 +28,6 @@ export { ConfigPage } from "./pages/config/ConfigPage";
 export { ChatPage } from "./pages/chat/ChatPage";
 export { ChatControls } from "./pages/chat/ChatControls";
 export { ChatHistoryPanel } from "./pages/chat/ChatHistoryPanel";
-export { SettingsPage } from "./pages/settings/SettingsPage";
 export { RuntimePage } from "./pages/runtime/RuntimePage";
 export {
   applyCodexDefaultConfigToChannel,

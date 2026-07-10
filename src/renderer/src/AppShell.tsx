@@ -53,7 +53,6 @@ import { ChatPage } from "./pages/chat/ChatPage";
 import { chatConfigLocked, SlashCommandSuggestions, slashCommandSuggestionsFor } from "./pages/chat/chat-utils";
 export { chatConfigLocked, SlashCommandSuggestions, slashCommandSuggestionsFor } from "./pages/chat/chat-utils";
 import { SkillsPage } from "./pages/skills/SkillsPage";
-import { SettingsPage } from "./pages/settings/SettingsPage";
 import { RuntimePage } from "./pages/runtime/RuntimePage";
 export { RuntimePage } from "./pages/runtime/RuntimePage";
 import { useRuntimeConfigManager } from "./pages/runtime/hooks/useRuntimeConfigManager";
@@ -142,7 +141,6 @@ export { ConfigPage } from "./pages/config/ConfigPage";
 export { ChatPage } from "./pages/chat/ChatPage";
 export { ChatControls } from "./pages/chat/ChatControls";
 export { ChatHistoryPanel } from "./pages/chat/ChatHistoryPanel";
-export { SettingsPage } from "./pages/settings/SettingsPage";
 export { TaskStatusFilter } from "./pages/tasks/task-status";
 export type { TaskStatusFilterValue } from "./pages/tasks/task-status";
 export { TaskPage } from "./pages/tasks/TaskPage";
@@ -934,8 +932,6 @@ export function AppShell() {
             onSelectConfiguredAgent={setSelectedConfiguredAgentId}
             onUpdateConfiguredAgent={updateConfiguredAgent}
           />
-        ) : activeFeature === "settings" ? (
-          <SettingsPage language={language} keepAwake={keepAwake} onLanguageChange={setLanguage} onKeepAwakeChange={setKeepAwake} />
         ) : (
           <ChatPage
             activeChat={activeChat}

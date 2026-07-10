@@ -12,7 +12,6 @@ import {
   ChatControls,
   ConfigPage,
   RuntimePage,
-  SettingsPage,
   ScheduledWorkflowPage,
   SkillsPage,
   applySkillTemplate,
@@ -1787,35 +1786,6 @@ describe("ConfigPage", () => {
     expect(SKILL_TEMPLATES.find((template) => template.id === "code-review-and-quality")?.translationZh).toContain("# 代码评审与质量");
   });
 
-  test("renders language controls without a duplicate settings sidebar", () => {
-    const html = renderToStaticMarkup(<SettingsPage language="zh" onLanguageChange={() => undefined} />);
-
-    expect(html).toContain("settings-page");
-    expect(html).not.toContain("settings-sidebar");
-    expect(html).toContain("语言");
-    expect(html).toContain("aria-label=\"Language\"");
-    expect(html).toContain("统一中文");
-    expect(html).toContain("English");
-  });
-
-  test("renders a keep-awake control for scheduled local task execution", () => {
-    const html = renderToStaticMarkup(
-      <SettingsPage
-        language="zh"
-        onLanguageChange={() => undefined}
-        {...({
-          keepAwake: true,
-          onKeepAwakeChange: () => undefined,
-        } as Record<string, unknown>)}
-      />,
-    );
-
-    expect(html).toContain("保持唤醒");
-    expect(html).toContain("定时任务");
-    expect(html).toContain("aria-label=\"Keep awake for scheduled tasks\"");
-    expect(html).toContain("checked=\"\"");
-  });
-
   test("renders scheduled workflow runner status, schedules, and run history", () => {
     const workflow: WorkflowDraftState = {
       workflowId: "wf_daily_review",
@@ -2691,7 +2661,7 @@ describe("App chrome", () => {
     await expect(syncKeepAwakeIfAvailable({} as Window["multiAgentChat"], true)).resolves.toBeUndefined();
   });
 
-  test("uses the rail footer for settings instead of clearing all history", () => {
+  test("keeps Runtime and Agent navigation without a general settings page", () => {
     const originalWindow = globalThis.window;
     const storage = new Map<string, string>();
     Object.defineProperty(globalThis, "window", {
@@ -2711,8 +2681,9 @@ describe("App chrome", () => {
     try {
       const html = renderToStaticMarkup(<App />);
 
-      expect(html).toContain("aria-label=\"打开设置\"");
-      expect(html).toContain("data-tip=\"设置\"");
+      expect(html).not.toContain("aria-label=\"打开设置\"");
+      expect(html).not.toContain("data-tip=\"设置\"");
+      expect(html).toContain("<span>Agent</span>");
       expect(html).toContain("<span>配置</span>");
       expect(html).not.toContain("清除全部历史");
       expect(html).not.toContain("danger");

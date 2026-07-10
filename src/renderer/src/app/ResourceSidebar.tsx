@@ -1,5 +1,5 @@
 import type { MouseEvent } from "react";
-import { CalendarClock, ClipboardList, Plus, Search, Settings, SlidersHorizontal, Wand2 } from "lucide-react";
+import { CalendarClock, ClipboardList, Plus, Search, SlidersHorizontal, Wand2 } from "lucide-react";
 import type {
   AgentChannel,
   ChatSession,
@@ -21,7 +21,7 @@ import type { WorkflowSidebarController } from "../pages/workflow/workflow-contr
 type MaybePromise = void | Promise<void>;
 
 interface ResourceSidebarText {
-  nav: Record<"chat" | "tasks" | "workflow" | "schedules" | "skills" | "runtimes" | "settings" | "configuration", string>;
+  nav: Record<"chat" | "tasks" | "workflow" | "schedules" | "skills" | "runtimes" | "configuration", string>;
   chrome: {
     search: string;
     newChat: string;
@@ -90,7 +90,6 @@ function resourceFeatureLabel(activeFeature: ActiveFeature, text: ResourceSideba
   if (activeFeature === "skills") return text.nav.skills;
   if (activeFeature === "configuration") return text.nav.configuration;
   if (activeFeature === "runtimes") return text.nav.runtimes;
-  if (activeFeature === "settings") return text.nav.settings;
   return text.nav.chat;
 }
 
@@ -219,18 +218,7 @@ export function ResourceSidebar({
           </div>
           <button className="settings-nav-row is-active" type="button">
             <SlidersHorizontal size={13} />
-            <span>{language === "zh" ? "Agent 组装" : "Agent assembly"}</span>
-          </button>
-        </section>
-      ) : activeFeature === "settings" ? (
-        <section className="resource-panel settings-nav-panel">
-          <div className="panel-header">
-            <span>{text.nav.settings}</span>
-            <Settings size={14} />
-          </div>
-          <button className="settings-nav-row is-active" type="button">
-            <Settings size={13} />
-            <span>{language === "zh" ? "语言" : "Language"}</span>
+            <span>Agent</span>
           </button>
         </section>
       ) : null}

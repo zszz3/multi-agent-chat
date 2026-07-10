@@ -10,7 +10,6 @@ import {
   Plus,
   RefreshCw,
   Search,
-  Settings,
   SlidersHorizontal,
   Sun,
   Wand2,
@@ -33,7 +32,7 @@ export function filterPaletteCommands(commands: PaletteCommand[], query: string)
 
 export type Theme = "light" | "dark";
 export type PaletteLanguage = "zh" | "en";
-export type PaletteFeature = "chat" | "tasks" | "workflow" | "skills" | "configuration" | "runtimes" | "settings";
+export type PaletteFeature = "chat" | "tasks" | "workflow" | "skills" | "configuration" | "runtimes";
 
 export interface PaletteContext {
   chats: Array<{ id: string; title: string; agentId: string }>;
@@ -57,9 +56,8 @@ function labelsFor(language: PaletteLanguage) {
       tasks: "任务",
       workflow: "Workflow",
       skills: "技能",
-      configuration: "Agent 组装",
+      configuration: "Agent",
       runtimes: "运行配置",
-      settings: "设置",
       newChat: "新建对话",
       lightTheme: "切换到浅色主题",
       darkTheme: "切换到深色主题",
@@ -84,9 +82,8 @@ function labelsFor(language: PaletteLanguage) {
     tasks: "Tasks",
     workflow: "Workflow",
     skills: "Skills",
-    configuration: "Configuration",
+    configuration: "Agent",
     runtimes: "Runtime Config",
-    settings: "Settings",
     newChat: "New chat",
     lightTheme: "Switch to light theme",
     darkTheme: "Switch to dark theme",
@@ -119,7 +116,6 @@ export function buildPaletteCommands(context: PaletteContext): PaletteCommand[] 
       run: () => context.onNavigate("configuration"),
     },
     { id: "nav-runtimes", section: label.jump, label: label.runtimes, hint: "G R", icon: <Cpu size={14} />, run: () => context.onNavigate("runtimes") },
-    { id: "nav-settings", section: label.jump, label: label.settings, icon: <Settings size={14} />, run: () => context.onNavigate("settings") },
   ];
 
   const actions: PaletteCommand[] = [
