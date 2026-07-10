@@ -19,6 +19,7 @@ export interface ResolvedConfiguredAgentForSlash {
   runtimeAgentId: AgentId;
   channel: AgentChannel;
   modelId: string;
+  reasoningEffort?: string;
 }
 
 export async function runSlashCommand(input: {
@@ -65,7 +66,11 @@ export async function withCodexAppServer<T>(input: {
   const client = new CodexRpcClient({
     executable: input.executable,
     cwd: input.workDir,
-    extraArgs: codexAppServerConfigArgs(input.resolved.channel, input.resolved.modelId),
+    extraArgs: codexAppServerConfigArgs(
+      input.resolved.channel,
+      input.resolved.modelId,
+      input.resolved.reasoningEffort,
+    ),
     env: codexEnvironmentForChannel(input.resolved.channel),
     onEvent: () => undefined,
     onRequest: (id, method, params) => {

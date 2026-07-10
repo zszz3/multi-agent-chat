@@ -13,4 +13,37 @@ describe("runtime catalog", () => {
       configurableModelId: true,
     });
   });
+
+  test("includes the curated CC Switch provider catalog", () => {
+    const codex = AGENT_PROVIDER_PRESETS.filter((preset) => preset.runtimeAgentId === "codex");
+    const claude = AGENT_PROVIDER_PRESETS.filter((preset) => preset.runtimeAgentId === "claude");
+
+    expect(codex).toHaveLength(28);
+    expect(claude).toHaveLength(26);
+    expect(codex.map((preset) => preset.label)).toEqual(expect.arrayContaining([
+      "OpenAI Official", "火山Agentplan", "DeepSeek", "Zhipu GLM", "Bailian", "Kimi", "MiniMax", "OpenRouter",
+    ]));
+    expect(claude.map((preset) => preset.label)).toEqual(expect.arrayContaining([
+      "Claude Official", "DeepSeek", "Zhipu GLM", "Bailian For Coding", "Kimi", "AWS Bedrock (API Key)",
+    ]));
+    expect(claude.every((preset) => preset.apiFormat === "anthropic")).toBe(true);
+  });
+
+  test("keeps provider model choices focused on the primary runtime model", () => {
+    const codexOfficial = AGENT_PROVIDER_PRESETS.find((preset) => preset.id === "codex-default");
+    const claude = AGENT_PROVIDER_PRESETS.filter((preset) => preset.runtimeAgentId === "claude");
+
+    expect(codexOfficial?.models).toEqual(expect.arrayContaining([
+      {
+        id: "gpt-5.6-sol",
+        label: "GPT-5.6-Sol",
+        reasoningEfforts: ["low", "medium", "high", "xhigh", "max", "ultra"],
+        defaultReasoningEffort: "low",
+      },
+      expect.objectContaining({ id: "gpt-5.6-terra", label: "GPT-5.6-Terra" }),
+      expect.objectContaining({ id: "gpt-5.6-luna", label: "GPT-5.6-Luna" }),
+    ]));
+    expect(codexOfficial).toMatchObject({ usesApiKey: false, requiresOAuth: true, modelProvider: "openai" });
+    expect(claude.every((preset) => preset.models.length <= 2)).toBe(true);
+  });
 });

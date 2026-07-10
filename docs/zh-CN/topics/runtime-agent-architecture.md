@@ -84,7 +84,7 @@ interface RuntimeDriver {
 ### 2.4 AgentExecutor — 一次性执行器
 
 ```typescript
-// src/main/agent-executor.ts
+// src/main/hub/runtime/executor/agent-executor-types.ts
 interface AgentExecutor {
   start(): Promise<void>;
   stop(): Promise<void>;
@@ -332,6 +332,8 @@ createRuntimeDriverRegistry(options) {
 
 新的 runtime 扩展路径以 `createXxxDriver()` 为唯一入口。中央 registry 只做注册聚合，具体 runtime 的 executor / workflow / cleanup / session / capability 组装放回各自目录自治。
 
+AgentHub 初始化时传入共享上下文和可选的按-runtime覆盖钩子。各 `createXxxDriver()` builder 负责决定使用覆盖实现，还是使用 runtime-local 默认实现：
+
 ```
 AgentHub 构造:
   runtimeDrivers = createRuntimeDriverRegistry({
@@ -339,12 +341,12 @@ AgentHub 构造:
     channelById,                          // AgentHub 的 channel 查询
     respondToCodexServerRequest,          // Codex RPC 的 server→client 回调
 
-    // 以下钩子由 AgentHub 实现，因为需要访问 AgentHub 内部状态
+    // 以下钩子可由 AgentHub 覆盖，因为某些路径需要访问 AgentHub 内部状态
     askWorkflowByRuntime: {
-      codex:  → this.askCodexWorkflowAgent(),  // 直接操纵 CodexRpcClient
-      claude: → this.askClaudeWorkflowAgent(), // 直接操纵 ClaudeRunner
-      api:    → this.askApiWorkflowAgent(),    // 直接 fetch
-      // hermes 没有 askWorkflow，走 OneShot Executor
+      codex:  → this.askCodexWorkflowAgent(),
+      claude: → this.askClaudeWorkflowAgent(),
+      api:    → this.askApiWorkflowAgent(),
+      // hermes builder 可使用 runtime-local runHermesWorkflow 默认实现
     },
 
     testChannelByRuntime: {
@@ -564,10 +566,10 @@ export class MymodelRunner {
 }
 ```
 
-### 步骤 3：实现 AgentExecutor
+### 步骤 3：实现 AgentExecutor 与 runtime-local bundle
 
 ```typescript
-// src/main/agent-executor.ts 新增
+// src/main/hub/runtime/executor/mymodel/mymodel-executor.ts
 class MymodelAgentExecutor implements AgentExecutor {
   async start(): Promise<void> {
     // new MymodelRunner(...) → runner.start()
@@ -578,20 +580,32 @@ class MymodelAgentExecutor implements AgentExecutor {
 }
 ```
 
-### 步骤 4：注册 RuntimeDriver
+同时在 `src/main/hub/runtime/executor/mymodel/` 下声明本 runtime 自己的 capability、workflow、cleanup、session 等模块。只实现实际支持的能力；不支持的 surface 和 continuation policy 要显式拒绝。
+
+### 步骤 4：实现并注册 RuntimeDriver builder
 
 ```typescript
-// src/main/agent-executor.ts → createRuntimeDriverRegistry() 新增
-const mymodelDriver: RuntimeDriver = {
-  runtimeId: "mymodel",
-  getCapabilities: () => defaultOneShotCapabilities("mymodel"),
-  createOneShotExecutor: (context) => new MymodelAgentExecutor(context, options),
-  // 可选：
-  createInteractiveSession: ...,  // 如需 interactive 模式
-  askWorkflow: ...,               // 如需 workflow 专用调用
-  testChannel: ...,               // 如需测试功能
-};
-return new RuntimeDriverRegistry([codexDriver, claudeDriver, apiDriver, hermesDriver, mymodelDriver]);
+// src/main/hub/runtime/executor/mymodel/create-mymodel-driver.ts
+export function createMymodelDriver(options: RuntimeAgentExecutorFactoryOptions): RuntimeDriver {
+  return createOneShotRuntimeDriver({
+    runtimeId: "mymodel",
+    surfaceSupport: mymodelSurfaceSupport,
+    getCapabilities: getMymodelCapabilities,
+    createOneShotExecutor: (context) => new MymodelAgentExecutor(context, options),
+    askWorkflow: undefined,
+    testChannel: undefined,
+    deleteSessionArtifacts: undefined,
+  });
+}
+
+// src/main/hub/runtime/executor/agent-executor.ts
+return new RuntimeDriverRegistry([
+  createCodexDriver(options),
+  createClaudeDriver(options),
+  createApiDriver(options),
+  createHermesDriver(options),
+  createMymodelDriver(options),
+]);
 ```
 
 ### 步骤 5：更新 tools 层

@@ -107,6 +107,7 @@ async function importedSkillTemplateFromDir(skillDir: string): Promise<SkillTemp
   const parsed = parseSkillMarkdown(prompt, skillPath);
   const template: SkillTemplate = {
     id: path.basename(skillDir),
+    sourceType: "user",
     name: parsed.name,
     description: parsed.description,
     prompt,
@@ -155,17 +156,22 @@ export async function importOnlineSkillToLibrary(request: ImportOnlineSkillReque
   return { template, path: skillPath, existed };
 }
 
-async function managedSkillTemplate(templateId: string, bundledRoot: string): Promise<{ template: SkillTemplate; imported: boolean }> {
-  const bundledTemplate = SKILL_TEMPLATES.find((item) => item.id === templateId);
-  if (bundledTemplate) return { template: bundledTemplate, imported: false };
-  const importedTemplate = await importedSkillTemplateFromDir(managedSkillDir(templateId, bundledRoot));
+async function managedSkillTemplate(request: InstallSkillRequest, bundledRoot: string): Promise<{ template: SkillTemplate; imported: boolean }> {
+  const bundledTemplate = SKILL_TEMPLATES.find((item) => item.id === request.templateId);
+  if (request.sourceType !== "user" && bundledTemplate) return { template: bundledTemplate, imported: false };
+  const importedTemplate = await importedSkillTemplateFromDir(managedSkillDir(request.templateId, bundledRoot));
   if (importedTemplate) return { template: importedTemplate, imported: true };
-  throw new Error(`Unknown skill: ${templateId}`);
+  throw new Error(`Unknown ${request.sourceType ?? "managed"} skill: ${request.templateId}`);
+}
+
+export async function deleteImportedSkillFromLibrary(templateId: string, bundledRoot: string): Promise<void> {
+  assertSafeTemplateId(templateId);
+  await rm(managedSkillDir(templateId, bundledRoot), { recursive: true, force: true });
 }
 
 export async function installBundledSkill(request: InstallSkillRequest, homeDir: string, bundledRoot = defaultBundledSkillRoot(homeDir)): Promise<InstalledSkillResult> {
   assertSafeTemplateId(request.templateId);
-  const { template, imported } = await managedSkillTemplate(request.templateId, bundledRoot);
+  const { template, imported } = await managedSkillTemplate(request, bundledRoot);
 
   const sourceDir = managedSkillDir(template.id, bundledRoot);
   const sourcePath = path.join(sourceDir, "SKILL.md");
