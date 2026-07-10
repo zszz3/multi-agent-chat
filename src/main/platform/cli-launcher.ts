@@ -3,7 +3,7 @@ import { promisify } from "node:util";
 
 const execFileAsync = promisify(execFile);
 
-interface CliPlatformOptions {
+export interface CliPlatformOptions {
   platform?: NodeJS.Platform;
   comspec?: string;
 }
@@ -19,6 +19,12 @@ export interface CliExecRequest extends Omit<ExecFileOptionsWithStringEncoding, 
 }
 
 export type ExecCli = (request: CliExecRequest) => Promise<{ stdout: string; stderr: string }>;
+export type SpawnCli = (request: CliSpawnRequest) => ChildProcess;
+
+export interface ProcessLauncher {
+  spawn: SpawnCli;
+  exec: ExecCli;
+}
 
 function shouldUseWindowsCmd(executable: string, platform = process.platform): boolean {
   if (platform !== "win32") return false;
@@ -77,21 +83,31 @@ export function resolveCliInvocation(executable: string, args: string[] = [], op
   };
 }
 
-export function spawnCli(request: CliSpawnRequest): ChildProcess {
+export function spawnCli(request: CliSpawnRequest, platformOptions: CliPlatformOptions = {}): ChildProcess {
   const { executable, args = [], ...options } = request;
-  const invocation = resolveCliInvocation(executable, args);
+  const invocation = resolveCliInvocation(executable, args, platformOptions);
   return spawn(invocation.file, invocation.args, {
     ...options,
     ...(invocation.windowsVerbatimArguments ? { windowsVerbatimArguments: true } : {}),
   });
 }
 
-export async function execCli(request: CliExecRequest): Promise<{ stdout: string; stderr: string }> {
+export async function execCli(
+  request: CliExecRequest,
+  platformOptions: CliPlatformOptions = {},
+): Promise<{ stdout: string; stderr: string }> {
   const { executable, args = [], ...options } = request;
-  const invocation = resolveCliInvocation(executable, args);
+  const invocation = resolveCliInvocation(executable, args, platformOptions);
   return execFileAsync(invocation.file, invocation.args, {
     ...options,
     encoding: "utf8",
     ...(invocation.windowsVerbatimArguments ? { windowsVerbatimArguments: true } : {}),
   });
+}
+
+export function createProcessLauncher(platformOptions: CliPlatformOptions): ProcessLauncher {
+  return {
+    spawn: (request) => spawnCli(request, platformOptions),
+    exec: (request) => execCli(request, platformOptions),
+  };
 }

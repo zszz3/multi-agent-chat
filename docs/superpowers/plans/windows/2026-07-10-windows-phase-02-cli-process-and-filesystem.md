@@ -4,7 +4,7 @@
 
 ### Status
 
-In progress. The first executable-discovery slice was implemented on 2026-07-10. Process-tree control, filesystem hardening, full `PlatformServices` composition, and Windows-hosted validation remain pending.
+In progress. Executable discovery and the `PlatformServices` composition contract were implemented on 2026-07-10. Main-process injection, process-tree control, filesystem hardening, and Windows-hosted validation remain pending.
 
 ## Goal
 
@@ -21,11 +21,16 @@ Completed:
 - kept `detectAgentRuntimes(...)` backward compatible while allowing locator and launcher injection in tests and future platform composition;
 - preserved constructor and environment executable overrides when `AgentHub.refreshAgents()` reruns detection;
 - added host-independent tests for Windows path normalization, `where.exe` results, npm-shim fallback, and non-Windows behavior;
-- verified Codex, Hermes, OpenCode, and OpenClaw detection with injected executable resolution.
+- verified Codex, Hermes, OpenCode, and OpenClaw detection with injected executable resolution;
+- introduced focused `PlatformServices`, `ProcessLauncher`, `ProcessTreeController`, and path-policy contracts;
+- added `createPlatformServices(...)` as the explicit win32/darwin/linux strategy selector, with unsupported desktop platforms rejected rather than silently inheriting host behavior;
+- bound the existing launcher to an injected platform without breaking current `spawnCli(...)` and `execCli(...)` callers;
+- added host-independent composition contract tests for win32, darwin, and linux.
 
 Pending:
 
-- compose the locator, process launcher, process-tree controller, path policy, and Phase 01 resource locator behind `createPlatformServices(...)`;
+- construct `PlatformServices` once in Main-process bootstrap and inject it into Runtime infrastructure and packaged sidecar launchers;
+- implement the concrete Windows and POSIX process-tree strategies required before bootstrap composition can be complete;
 - preserve environment overrides as a separately classified `environment` resolution source instead of only preselecting them in `resolveRuntimeExecutables(...)`;
 - add bounded locator caching, ambiguity handling, and classified remediation for unresolved executables;
 - replace the remaining hand-written Windows command quoting with the selected mature spawn adapter and complete metacharacter/Unicode fixtures;

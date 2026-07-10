@@ -1,0 +1,74 @@
+import path from "node:path";
+import type { AppResourceLocator } from "./app-resource-locator";
+import { createExecutableLocator, type ExecutableLocator } from "./cli-locator";
+import { createProcessLauncher, type ProcessLauncher } from "./cli-launcher";
+import type { ProcessTreeController } from "./process-tree";
+
+export type PlatformPathApi = Pick<
+  typeof path.win32,
+  "isAbsolute" | "join" | "normalize" | "relative" | "resolve" | "sep"
+>;
+
+export interface PlatformPathPolicy {
+  pathApi: PlatformPathApi;
+  caseSensitive: boolean;
+}
+
+export interface PlatformServices {
+  executableLocator: ExecutableLocator;
+  processLauncher: ProcessLauncher;
+  processTreeController: ProcessTreeController;
+  pathPolicy: PlatformPathPolicy;
+  resourceLocator: AppResourceLocator;
+}
+
+export interface PlatformServiceDependencies {
+  resourceLocator: AppResourceLocator;
+  processTreeController: ProcessTreeController;
+  executableLocator?: ExecutableLocator;
+  processLauncher?: ProcessLauncher;
+  environment?: Record<string, string | undefined>;
+  cwd?: string;
+  fileExists?: (filePath: string) => Promise<boolean>;
+}
+
+function platformPathPolicy(platform: NodeJS.Platform): PlatformPathPolicy {
+  switch (platform) {
+    case "win32":
+      return { pathApi: path.win32, caseSensitive: false };
+    case "darwin":
+    case "linux":
+      return { pathApi: path.posix, caseSensitive: true };
+    default:
+      throw new Error(`Unsupported desktop platform: ${platform}`);
+  }
+}
+
+export function createPlatformServices(
+  platform: NodeJS.Platform,
+  dependencies: PlatformServiceDependencies,
+): PlatformServices {
+  const pathPolicy = platformPathPolicy(platform);
+  const environment = dependencies.environment ?? process.env;
+  const comspec = environment.comspec ?? environment.ComSpec;
+  const processLauncher = dependencies.processLauncher ?? createProcessLauncher({
+    platform,
+    ...(comspec ? { comspec } : {}),
+  });
+  const executableLocator = dependencies.executableLocator ?? createExecutableLocator({
+    platform,
+    environment,
+    execute: processLauncher.exec,
+    pathApi: pathPolicy.pathApi,
+    ...(dependencies.cwd !== undefined ? { cwd: dependencies.cwd } : {}),
+    ...(dependencies.fileExists ? { fileExists: dependencies.fileExists } : {}),
+  });
+
+  return {
+    executableLocator,
+    processLauncher,
+    processTreeController: dependencies.processTreeController,
+    pathPolicy,
+    resourceLocator: dependencies.resourceLocator,
+  };
+}
