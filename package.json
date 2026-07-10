@@ -16,7 +16,7 @@
     "verify:win-unpacked": "node scripts/verify-win-unpacked.mjs",
     "verify:win-installer": "node scripts/verify-win-installer.mjs",
     "dist:win:dir": "npm run build && npm run verify:package-inputs && electron-builder --win --x64 --dir && npm run verify:win-unpacked",
-    "dist:win": "npm run build && npm run verify:package-inputs && electron-builder --win nsis --x64 && npm run verify:win-installer",
+    "dist:win": "npm run build && npm run verify:package-inputs && electron-builder --win nsis --x64 --publish never && npm run verify:win-installer",
     "mcp": "tsx src/mcp/server.ts",
     "typecheck": "tsc --noEmit",
     "test": "vitest run",

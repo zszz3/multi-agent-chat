@@ -55,7 +55,7 @@ jobs:
       - name: Package NSIS installer
         shell: pwsh
         run: |
-          $BuilderOutput = & npx electron-builder --win nsis --x64 2>&1
+          $BuilderOutput = & npx electron-builder --win nsis --x64 --publish never 2>&1
           $BuilderExitCode = $LASTEXITCODE
           $BuilderOutput | ForEach-Object { Write-Host $_ }
           if ($BuilderExitCode -ne 0) {
