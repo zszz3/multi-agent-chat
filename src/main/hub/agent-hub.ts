@@ -148,6 +148,7 @@ import {
 import { runAgentExecution as runAgentExecutionValue } from "./runtime/agent-hub-runner";
 import { runRuntimeChannelTest as runRuntimeChannelTestValue } from "./runtime/agent-hub-runtime-test";
 import {
+  dispatchTaskPromptExecution as dispatchTaskPromptExecutionValue,
   resolveTaskPromptExecution as resolveTaskPromptExecutionValue,
 } from "./runtime/agent-hub-task-run";
 import {
@@ -1604,22 +1605,20 @@ export class AgentHub {
 
   async runTask(input: RunTaskRequest): Promise<AppSnapshot> {
     const task = this.createTaskState(input);
-    this.tasks.set(task.id, task);
-    this.activeTaskId = task.id;
-
-    const preparedResolved = resolveTaskPromptExecutionValue({
+    dispatchTaskPromptExecutionValue({
       task,
+      registerTask: (nextTask) => {
+        this.tasks.set(nextTask.id, nextTask);
+        this.activeTaskId = nextTask.id;
+      },
       resolveConfiguredAgent: (configuredAgentId, modelId) => this.resolveConfiguredAgent(configuredAgentId, modelId),
       createUserMessage: (content) => createUserMessage(content),
       createErrorMessage: (content) => createErrorMessage(content),
+      emit: () => this.emit(),
+      run: (nextTask, preparedResolved) => {
+        void this.runChat(nextTask, nextTask.prompt, preparedResolved);
+      },
     });
-    if (!preparedResolved) {
-      this.emit();
-      return this.snapshot();
-    }
-
-    this.emit();
-    void this.runChat(task, task.prompt, preparedResolved);
     return this.snapshot();
   }
 
@@ -2142,24 +2141,22 @@ export class AgentHub {
       return;
     }
 
-    const task = prepared.task;
-    this.tasks.set(task.id, task);
-    this.activeTaskId = task.id;
-
-    const preparedResolved = resolveTaskPromptExecutionValue({
-      task,
+    const dispatched = dispatchTaskPromptExecutionValue({
+      task: prepared.task,
+      registerTask: (task) => {
+        this.tasks.set(task.id, task);
+        this.activeTaskId = task.id;
+      },
       resolveConfiguredAgent: (configuredAgentId, modelId) => this.resolveConfiguredAgent(configuredAgentId, modelId),
       createUserMessage: (content) => createUserMessage(content),
       createErrorMessage: (content) => createErrorMessage(content),
-      onUnavailable: (error) => this.failTeamStepFromTask(task, error),
+      onUnavailable: (error) => this.failTeamStepFromTask(prepared.task, error),
+      emit: () => this.emit(),
+      run: (task, preparedResolved) => {
+        void this.runChat(task, task.prompt, preparedResolved);
+      },
     });
-    if (!preparedResolved) {
-      this.emit();
-      return;
-    }
-
-    this.emit();
-    void this.runChat(task, task.prompt, preparedResolved);
+    if (!dispatched) return;
   }
 
   private async startTeamRun(teamRunId: string): Promise<void> {
