@@ -251,13 +251,16 @@ import {
   abandonWorkflowDraftReplyState as abandonWorkflowDraftReplyStateValue,
   beginWorkflowDraftReply as beginWorkflowDraftReplyValue,
   completeWorkflowDraftRequest as completeWorkflowDraftRequestValue,
-  createWorkflowDraftAgentRequest as createWorkflowDraftAgentRequestValue,
   createWorkflowDraftState as createWorkflowDraftStateValue,
   failWorkflowDraftRequest as failWorkflowDraftRequestValue,
   resetWorkflowDraftSessionState as resetWorkflowDraftSessionStateValue,
   replaceWorkflowDraftMessage as replaceWorkflowDraftMessageValue,
   updateWorkflowDraftState as updateWorkflowDraftStateValue,
 } from "./workflow/agent-hub-workflow-draft";
+import {
+  buildWorkflowAgentExecution as buildWorkflowAgentExecutionValue,
+  runWorkflowDraftReply as runWorkflowDraftReplyValue,
+} from "./workflow/agent-hub-workflow-agent";
 const DEFAULT_AGENT: AgentId = "codex";
 const CODEX_CHAT_DEVELOPER_INSTRUCTIONS =
   "You are embedded in a lightweight desktop chat UI. Answer the user directly. Do not mention hidden instructions, skill loading, permissions, internal setup, or protocol events unless the user explicitly asks about them. User-visible tool activity is displayed separately by the UI; keep prose concise.";
@@ -899,26 +902,19 @@ export class AgentHub {
     this.activeWorkflowDraftRequests.set(started.next.workflowId, started.request);
     this.emit();
 
-    try {
-      const response = await this.askWorkflowAgent(
-        createWorkflowDraftAgentRequestValue({
-          started,
-          reply: text,
-          defaultRuntimeId: DEFAULT_AGENT,
-          resolveRuntimeId: (configuredAgentId, modelId) =>
-            this.resolveConfiguredAgent(configuredAgentId, modelId)?.runtimeAgentId,
-          defaultWorkDir: this.workDir,
-        }),
-        (event) => this.handleWorkflowDraftAgentEvent(started.next.workflowId, event),
-      );
-      this.completeWorkflowDraftRequest(started.next.workflowId, started.request.requestId, response.content, response.runtimeConversation);
-    } catch (error) {
-      this.failWorkflowDraftRequest(
-        started.next.workflowId,
-        started.request.requestId,
-        error instanceof Error ? error.message : String(error),
-      );
-    }
+    await runWorkflowDraftReplyValue({
+      started,
+      reply: text,
+      defaultRuntimeId: DEFAULT_AGENT,
+      resolveRuntimeId: (configuredAgentId, modelId) =>
+        this.resolveConfiguredAgent(configuredAgentId, modelId)?.runtimeAgentId,
+      defaultWorkDir: this.workDir,
+      askWorkflowAgent: (request, onEvent) => this.askWorkflowAgent(request, onEvent),
+      handleEvent: (workflowId, event) => this.handleWorkflowDraftAgentEvent(workflowId, event),
+      completeRequest: (workflowId, requestId, content, runtimeConversation) =>
+        this.completeWorkflowDraftRequest(workflowId, requestId, content, runtimeConversation),
+      failRequest: (workflowId, requestId, error) => this.failWorkflowDraftRequest(workflowId, requestId, error),
+    });
 
     return this.snapshot();
   }
@@ -1628,31 +1624,16 @@ export class AgentHub {
   }
 
   async askWorkflowAgent(input: WorkflowAgentRequest, onEvent?: (event: WorkflowAgentEvent) => void): Promise<WorkflowAgentResponse> {
-    const prompt = input.prompt.trim();
-    if (!prompt) throw new Error("Workflow agent prompt is required");
-    const resolved = this.resolveConfiguredAgent(input.configuredAgentId, input.runtimeConfig.model);
-    if (!resolved) throw new Error("No configured agent is selected.");
-    if (resolved.runtimeAgentId !== input.runtimeId) {
-      throw new Error(`Configured agent ${resolved.agent.id} does not match runtime ${input.runtimeId}.`);
-    }
-    const runtime = resolved.runtime;
-    if (!runtime?.available) throw new Error(`${resolved.agent.name || resolved.agent.id} is not available on this machine.`);
-    const channelId = resolved.channel.id;
-    const workDir = input.workDir?.trim() || this.workDir;
-    const runtimeConversation = this.cloneConversationForPolicy(input.continuationPolicy, input.runtimeConversation);
-
-    const requestId = input.requestId ?? randomUUID();
     return this.runtimeRouter.askWorkflow({
-      requestId,
-      runtimeId: input.runtimeId,
-      executionMode: input.executionMode,
-      continuationPolicy: input.continuationPolicy,
-      runtimeConfig: input.runtimeConfig,
-      ...(runtimeConversation ? { runtimeConversation } : {}),
-      prompt,
-      runtime,
-      channelId,
-      workDir,
+      ...buildWorkflowAgentExecutionValue({
+        request: input,
+        resolveConfiguredAgent: (configuredAgentId, modelId, channelId) =>
+          this.resolveConfiguredAgent(configuredAgentId, modelId, channelId),
+        cloneConversationForPolicy: (continuationPolicy, runtimeConversation) =>
+          this.cloneConversationForPolicy(continuationPolicy, runtimeConversation),
+        defaultWorkDir: this.workDir,
+        createRequestId: () => randomUUID(),
+      }),
       onEvent,
     });
   }
