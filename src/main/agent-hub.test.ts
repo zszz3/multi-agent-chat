@@ -620,6 +620,37 @@ async function waitFor<T>(read: () => T, predicate: (value: T) => boolean): Prom
 }
 
 describe("AgentHub chat sessions", () => {
+  test("creates one managed default agent per runtime config and keeps its name in sync", () => {
+    const hub = new AgentHub();
+    (hub as any).channels = [
+      {
+        id: "codex-openai",
+        agentId: "codex",
+        label: "Codex Official",
+        models: [{ id: DEFAULT_MODEL_ID, label: "Default" }],
+      },
+      {
+        id: "codex-glm",
+        agentId: "codex",
+        label: "Codex GLM",
+        models: [{ id: DEFAULT_MODEL_ID, label: "Default" }],
+      },
+    ];
+    (hub as any).installRestoredConfiguredAgents([]);
+
+    expect(hub.snapshot().configuredAgents).toEqual(
+      expect.arrayContaining([
+        expect.objectContaining({ id: "default-agent", name: "Codex Official", channelId: "codex-openai", managed: true }),
+        expect.objectContaining({ id: "runtime-agent:codex-glm", name: "Codex GLM", channelId: "codex-glm", managed: true }),
+      ]),
+    );
+
+    const existing = hub.snapshot().configuredAgents;
+    (hub as any).channels[1].label = "Codex GLM Updated";
+    (hub as any).installRestoredConfiguredAgents(existing);
+    expect(hub.snapshot().configuredAgents.find((agent) => agent.id === "runtime-agent:codex-glm")?.name).toBe("Codex GLM Updated");
+  });
+
   test("refreshes workflow agent timeout after activity", () => {
     vi.useFakeTimers();
     try {
@@ -4844,7 +4875,7 @@ describe("AgentHub task runs", () => {
       running: false,
       messages: [
         expect.objectContaining({ role: "user", content: "Inspect the repo and summarize risks" }),
-        expect.objectContaining({ role: "error", content: "Default Agent is not available on this machine." }),
+        expect.objectContaining({ role: "error", content: "Codex OpenAI is not available on this machine." }),
       ],
       });
     });

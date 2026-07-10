@@ -53,6 +53,7 @@ export interface ConfiguredAgent {
   channelId: string;
   modelId: string;
   tags: string[];
+  managed?: boolean;
   createdAt: number;
   updatedAt: number;
 }

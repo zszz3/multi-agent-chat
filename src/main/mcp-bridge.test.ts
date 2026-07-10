@@ -125,16 +125,13 @@ describe("MCP bridge", () => {
     expect(unauthorized.status).toBe(401);
 
     const agents = (await (await bridgeRequest("/mcp/agents/list", bridge.token, {})).json()) as any;
-    expect(agents).toMatchObject({
-      ok: true,
-      agents: [
-        {
-          id: "repo-reviewer",
-          name: "Repo Reviewer",
-          runtimeAgentId: "codex",
-        },
-      ],
-    });
+    expect(agents).toMatchObject({ ok: true });
+    expect(agents.agents).toEqual(
+      expect.arrayContaining([
+        expect.objectContaining({ id: "default-agent", name: "Codex OpenAI", runtimeAgentId: "codex" }),
+        expect.objectContaining({ id: "repo-reviewer", name: "Repo Reviewer", runtimeAgentId: "codex" }),
+      ]),
+    );
     expect(JSON.stringify(agents)).not.toContain("prompt");
 
     const templates = (await (await bridgeRequest("/mcp/agent-templates/list", bridge.token, {})).json()) as any;

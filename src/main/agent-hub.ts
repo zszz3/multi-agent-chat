@@ -318,6 +318,10 @@ function createDefaultConfiguredAgent(channels: AgentChannel[], now = Date.now()
   };
 }
 
+function managedRuntimeAgentId(channel: AgentChannel): string {
+  return channel.id === "codex-openai" ? "default-agent" : `runtime-agent:${channel.id}`;
+}
+
 function titleFromPrompt(prompt: string): string {
   const oneLine = prompt.replace(/\s+/g, " ").trim();
   if (!oneLine) return "New chat";
@@ -1302,8 +1306,8 @@ export class AgentHub {
   async loadModelChannels(configPath: string): Promise<void> {
     this.modelConfigPath = configPath;
     this.channels = await readModelChannels(configPath, this.executables.codex);
-    this.normalizeRunSelections();
     this.installRestoredConfiguredAgents(this.listConfiguredAgents());
+    this.normalizeRunSelections();
     this.emit();
   }
 
@@ -1316,8 +1320,8 @@ export class AgentHub {
       if (!targetPath) throw new Error("Model channel config path is not initialized");
       this.channels = await writeModelChannels(targetPath, normalizedChannels);
     }
-    this.normalizeRunSelections();
     this.installRestoredConfiguredAgents(this.listConfiguredAgents());
+    this.normalizeRunSelections();
     this.emit();
     await this.flushPersistence();
     return this.snapshot();
@@ -1348,12 +1352,8 @@ export class AgentHub {
   }
 
   updateConfiguredAgents(agents: ConfiguredAgent[]): AppSnapshot {
-    this.configuredAgents.clear();
-    const now = Date.now();
-    for (const input of agents) {
-      const restored = this.restoreConfiguredAgent(input, now);
-      if (restored) this.configuredAgents.set(restored.id, restored);
-    }
+    this.installRestoredConfiguredAgents(agents);
+    this.normalizeRunSelections();
     this.emit();
     return this.snapshot();
   }
@@ -1365,11 +1365,11 @@ export class AgentHub {
   }
 
   private defaultConfiguredAgentId(): string {
-    return this.configuredAgents.get("default-agent")?.id ?? this.configuredAgents.values().next().value?.id ?? "";
+    return this.configuredAgents.get("default-agent")?.id ?? this.listConfiguredAgents().find((agent) => agent.managed)?.id ?? this.configuredAgents.values().next().value?.id ?? "";
   }
 
   private defaultConfiguredAgentIdForRuntime(runtimeAgentId: AgentId): string {
-    return this.listConfiguredAgents().find((agent) => agent.runtimeAgentId === runtimeAgentId)?.id ?? this.defaultConfiguredAgentId();
+    return this.listConfiguredAgents().find((agent) => agent.runtimeAgentId === runtimeAgentId && agent.managed)?.id ?? this.listConfiguredAgents().find((agent) => agent.runtimeAgentId === runtimeAgentId)?.id ?? this.defaultConfiguredAgentId();
   }
 
   private configuredAgentOrDefault(configuredAgentId: string | undefined): ConfiguredAgent | undefined {
@@ -4298,11 +4298,31 @@ export class AgentHub {
     const now = Date.now();
     for (const rawAgent of rawAgents) {
       const agent = this.restoreConfiguredAgent(rawAgent, now);
-      if (agent) this.configuredAgents.set(agent.id, agent);
+      if (agent && agent.managed !== true && agent.id !== "default-agent" && !agent.id.startsWith("runtime-agent:")) {
+        this.configuredAgents.set(agent.id, agent);
+      }
+    }
+    for (const channel of this.channels) {
+      const id = managedRuntimeAgentId(channel);
+      const previous = rawAgents
+        .map((rawAgent) => this.restoreConfiguredAgent(rawAgent, now))
+        .find((agent) => agent?.id === id || (agent?.managed === true && agent.channelId === channel.id));
+      this.configuredAgents.set(id, {
+        id,
+        name: channel.label,
+        description: "",
+        runtimeAgentId: channel.agentId,
+        channelId: channel.id,
+        modelId: defaultModelForAgent(channel.agentId),
+        tags: [],
+        managed: true,
+        createdAt: previous?.createdAt ?? now,
+        updatedAt: now,
+      });
     }
     if (this.configuredAgents.size === 0) {
       const agent = createDefaultConfiguredAgent(this.channels, now);
-      this.configuredAgents.set(agent.id, agent);
+      this.configuredAgents.set(agent.id, { ...agent, managed: true });
     }
   }
 
@@ -4325,6 +4345,7 @@ export class AgentHub {
       channelId: normalizedChannelId,
       modelId: modelId && isModelForChannel(runtimeAgentId, normalizedChannelId, modelId, this.channels) ? modelId : defaultModelForAgent(runtimeAgentId),
       tags: asArray(record.tags).map((tag) => asOptionalString(tag)).filter((tag): tag is string => Boolean(tag)),
+      ...(record.managed === true ? { managed: true } : {}),
       createdAt: asNumber(record.createdAt, now),
       updatedAt: asNumber(record.updatedAt, now),
     };
