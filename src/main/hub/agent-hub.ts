@@ -243,6 +243,7 @@ import {
   restoreScheduledWorkflowRunnerConfig as restoreScheduledWorkflowRunnerConfigValue,
   restoreScheduledWorkflowRun as restoreScheduledWorkflowRunValue,
   restoreScheduledWorkflowSchedule as restoreScheduledWorkflowScheduleValue,
+  reconcileWorkflowV2RunFromDurableState,
   restoreWorkflowDraft as restoreWorkflowDraftValue,
   restoreWorkflowRun as restoreWorkflowRunValue,
 } from "./workflow/agent-hub-workflow-restore";
@@ -498,10 +499,16 @@ export class AgentHub {
     this.sqliteStore = loaded.sqliteStore;
 
     if (loaded.payload !== undefined) {
-      if (!this.restorePersistedState(loaded.payload)) {
+      const restored = this.restorePersistedState(loaded.payload);
+      if (!restored) {
         this.reinitializePersistedState();
       }
-      if (!Array.isArray(asRecord(loaded.payload)?.channels) || !this.isPersistedAppStateV4(loaded.payload)) {
+      const reconciledWorkflowV2 = restored
+        ? await this.reconcileRestoredWorkflowV2Runs()
+        : false;
+      if (reconciledWorkflowV2
+        || !Array.isArray(asRecord(loaded.payload)?.channels)
+        || !this.isPersistedAppStateV4(loaded.payload)) {
         await this.persistState();
       }
       return;
@@ -2490,6 +2497,44 @@ export class AgentHub {
 
   private restoreWorkflowRun(raw: unknown): WorkflowRunState | undefined {
     return restoreWorkflowRunValue(raw);
+  }
+
+  private async reconcileRestoredWorkflowV2Runs(): Promise<boolean> {
+    if (!this.storagePath) return false;
+    const store = new WorkflowV2FileStore(path.dirname(this.storagePath));
+    let reconciled = false;
+
+    for (const [runId, run] of this.workflowRuns) {
+      if (!run.workflowV2Plan) continue;
+      const workflow = this.workflows.get(run.workflowId);
+      if (!workflow) continue;
+
+      let persisted: Awaited<ReturnType<WorkflowV2FileStore["readRunState"]>>;
+      try {
+        persisted = await store.readRunState(run.workflowId, runId);
+      } catch (error) {
+        console.warn(`Failed to reconcile Workflow V2 run ${runId} from durable state:`, error);
+        continue;
+      }
+      if (!persisted) continue;
+
+      const latestRunId = workflow.runIds[workflow.runIds.length - 1];
+      const result = reconcileWorkflowV2RunFromDurableState({
+        workflow,
+        run,
+        persisted,
+        updateWorkflowProjection: latestRunId === runId,
+      });
+      if (!result) {
+        console.warn(`Skipped Workflow V2 durable state with mismatched identity for run ${runId}.`);
+        continue;
+      }
+      this.workflowRuns.set(runId, result.run);
+      if (latestRunId === runId) this.workflows.set(workflow.workflowId, result.workflow);
+      reconciled = true;
+    }
+
+    return reconciled;
   }
 
   private schedulePersist(): void {

@@ -33,6 +33,9 @@ import {
   restoreWorkflowRunStatus,
 } from "../state/agent-hub-restore";
 import { cloneWorkflowV2Plan } from "../../../shared/workflow-v2/planning";
+import type { WorkflowV2PersistedRunState } from "../../../shared/workflow-v2/storage";
+import type { WorkflowV2RunNodeState } from "../../../shared/workflow-v2/state";
+import { buildWorkflowV2FinalReport } from "../../workflows/v2/workflow-v2-recovery";
 
 function restoreWorkflowV2Plan(raw: unknown): WorkflowV2Plan | undefined {
   const record = asRecord(raw);
@@ -211,6 +214,106 @@ export function restoreWorkflowRun(raw: unknown): WorkflowRunState | undefined {
     finishedAt: typeof record.finishedAt === "number" ? record.finishedAt : undefined,
     lastError: asOptionalString(record.lastError),
   };
+}
+
+export function reconcileWorkflowV2RunFromDurableState(input: {
+  workflow: WorkflowDraftState;
+  run: WorkflowRunState;
+  persisted: WorkflowV2PersistedRunState;
+  updateWorkflowProjection: boolean;
+}): { workflow: WorkflowDraftState; run: WorkflowRunState } | undefined {
+  if (input.persisted.workflowId !== input.workflow.workflowId
+    || input.persisted.workflowId !== input.run.workflowId
+    || input.persisted.runId !== input.run.runId
+    || !input.run.workflowV2Plan
+    || input.run.workflowV2Plan.graphVersion !== input.persisted.graphVersion) {
+    return undefined;
+  }
+
+  const outputByNodeId = new Map(input.persisted.workerOutputs.map((output) => [output.nodeId, output]));
+  const progress = input.persisted.runState.nodeOrder.map((nodeId): WorkflowRunProgressItem => {
+    const node = input.persisted.runState.nodes[nodeId]!;
+    return {
+      nodeId,
+      title: node.title,
+      status: publicWorkflowV2NodeStatus(node),
+      detail: publicWorkflowV2NodeDetail(node, outputByNodeId.get(nodeId)?.summary),
+    };
+  });
+  const events = [...input.run.events];
+  for (const nodeId of input.persisted.runState.nodeOrder) {
+    const intervention = input.persisted.runState.nodes[nodeId]?.intervention;
+    if (!intervention) continue;
+    const alreadyProjected = events.some((event) => event.type === "node_paused"
+      && event.nodeId === nodeId
+      && event.at === intervention.requestedAt);
+    if (!alreadyProjected) {
+      events.push({
+        type: "node_paused",
+        nodeId,
+        at: intervention.requestedAt,
+        detail: intervention.reason,
+        intervention: structuredClone(intervention),
+      });
+    }
+  }
+
+  const durableStatus = input.persisted.runState.status;
+  const status = durableStatus === "completed"
+    ? "completed"
+    : durableStatus === "failed"
+      ? "failed"
+      : "stopped";
+  const finalReport = status === "completed" || status === "failed"
+    ? buildWorkflowV2FinalReport(input.persisted.plan, input.persisted.workerOutputs, durableStatus)
+    : undefined;
+  const lastError = status === "failed"
+    ? progress.find((item) => item.status === "failed")?.detail ?? "Workflow V2 run failed before app restart."
+    : undefined;
+  const nextRun: WorkflowRunState = {
+    ...input.run,
+    status,
+    progress,
+    events,
+    finishedAt: status === "completed" || status === "failed" ? input.persisted.savedAt : undefined,
+    lastError,
+  };
+  if (finalReport !== undefined) nextRun.finalReport = finalReport;
+  else delete nextRun.finalReport;
+
+  if (!input.updateWorkflowProjection) return { workflow: input.workflow, run: nextRun };
+  const nextWorkflow: WorkflowDraftState = {
+    ...input.workflow,
+    status,
+    runProgress: structuredClone(progress),
+    error: lastError,
+    updatedAt: Math.max(input.workflow.updatedAt, input.persisted.savedAt),
+  };
+  if (finalReport !== undefined) nextWorkflow.finalReport = finalReport;
+  else delete nextWorkflow.finalReport;
+  return { workflow: nextWorkflow, run: nextRun };
+}
+
+function publicWorkflowV2NodeStatus(node: WorkflowV2RunNodeState): WorkflowRunProgressItem["status"] {
+  if (node.status === "completed" || node.status === "skipped") return "completed";
+  if (node.status === "failed") return "failed";
+  if (node.status === "paused" || node.status === "running" || node.status === "validating" || node.status === "awaiting_review") {
+    return "paused";
+  }
+  return "queued";
+}
+
+function publicWorkflowV2NodeDetail(node: WorkflowV2RunNodeState, outputSummary: string | undefined): string {
+  if (node.status === "completed") return outputSummary ?? "Completed before app restart";
+  if (node.status === "skipped") return "Skipped before app restart";
+  if (node.status === "failed") return node.lastError ?? "Failed before app restart";
+  if (node.status === "paused") {
+    return node.intervention?.reason ?? node.lastError ?? "Paused with durable recovery state";
+  }
+  if (node.status === "running" || node.status === "validating" || node.status === "awaiting_review") {
+    return "Interrupted before app restart; durable recovery is available";
+  }
+  return "Queued for recovery";
 }
 
 export function restoreWorkflowStoreCollections(

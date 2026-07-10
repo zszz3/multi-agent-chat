@@ -49,7 +49,7 @@
 
 - [x] **Step 3: Resume interrupted LLM attempts with saved checkpoint and runtime conversation**
 
-- [ ] **Step 4: Reconcile durable Workflow V2 state during AgentHub startup restore**
+- [x] **Step 4: Reconcile durable Workflow V2 state during AgentHub startup restore**
 
 - [x] **Step 5: Determine which nodes can resume, rerun, or reuse cache**
 
@@ -71,6 +71,8 @@ npx vitest run src/shared/workflow-v2/storage.test.ts src/main/workflows/v2/work
 Expected: all pass
 
 Latest focused recovery/runtime result: 89 tests passed across the store, recovery planner, executor, and runtime bridge.
+
+AgentHub startup reconciliation additionally passes focused pure-projection and product-level persistence tests. Durable `completed` runs repair missed public completion, while durable `running` or `paused` runs restore as `stopped` with node-level recovery progress.
 
 - [ ] **Step 2: Run typecheck**
 

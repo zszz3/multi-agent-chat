@@ -56,6 +56,8 @@ MVP 优先使用文件系统，而不是 SQLite。
 
 恢复入口只接受非活跃且可恢复的 run。持久化状态的 workflow/run 身份必须与请求一致；已完成节点不会因为单个下游节点中断而被重新执行。
 
+AgentHub 启动时会用 durable run state 对账公开状态：durable `completed` 修复为公开完成；durable `running` 或 `paused` 映射为 `stopped`，同时保留已完成输出、暂停原因和介入事件，供用户从具体节点继续。对账结果会立即回写公开存储，避免下一次启动再次看到过期的 `running` 状态。
+
 ## 缓存复用原则
 
 缓存只有在这些关键因素都未变化时才可信：

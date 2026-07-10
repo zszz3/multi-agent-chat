@@ -134,6 +134,29 @@ export interface WorkflowV2MaterializedRecovery {
   resumeConversations: Map<string, RuntimeConversation>;
 }
 
+export function buildWorkflowV2FinalReport(
+  plan: WorkflowV2PersistedRunState["plan"],
+  workerOutputs: readonly WorkflowV2WorkerOutput[],
+  status: "completed" | "failed" | "paused" | "running",
+): string {
+  const outputByNodeId = new Map(workerOutputs.map((output) => [output.nodeId, output]));
+  return [
+    "# Workflow V2 Run Summary",
+    "",
+    `- Workflow: ${plan.objective}`,
+    `- Graph version: ${plan.graphVersion}`,
+    `- Status: ${status}`,
+    "",
+    "## Node outputs",
+    ...plan.definition.nodes.map((node) => {
+      const output = outputByNodeId.get(node.id);
+      if (!output) return `- ${node.title} (${node.id}): no output`;
+      const outputKeys = Object.keys(output.outputs).sort();
+      return `- ${node.title} (${node.id}): ${output.summary} [outputs: ${outputKeys.join(", ") || "none"}]`;
+    }),
+  ].join("\n");
+}
+
 export function materializeWorkflowV2Recovery(input: {
   persisted: WorkflowV2PersistedRunState;
   targetDefinition: WorkflowV2Definition;

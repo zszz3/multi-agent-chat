@@ -93,6 +93,7 @@ import {
 } from "../../shared/workflow-v2/storage";
 import type { ExecuteWorkflowV2Checkpoint } from "./v2/workflow-v2-executor";
 import {
+  buildWorkflowV2FinalReport,
   buildWorkflowV2RecoveryPlan,
   createWorkflowV2NodeCacheFingerprint,
   materializeWorkflowV2Recovery,
@@ -456,30 +457,6 @@ function isWorkflowV2WorkProposal(value: unknown): value is WorkflowV2WorkPropos
 function isRecord(value: unknown): value is Record<string, unknown> {
   return typeof value === "object" && value !== null && !Array.isArray(value);
 }
-
-function workflowV2FinalReport(
-  plan: WorkflowV2Plan,
-  workerOutputs: readonly WorkflowV2WorkerOutput[],
-  status: "completed" | "failed" | "paused" | "running",
-): string {
-  const outputByNodeId = new Map(workerOutputs.map((output) => [output.nodeId, output]));
-  return [
-    "# Workflow V2 Run Summary",
-    "",
-    `- Workflow: ${plan.objective}`,
-    `- Graph version: ${plan.graphVersion}`,
-    `- Status: ${status}`,
-    "",
-    "## Node outputs",
-    ...plan.definition.nodes.map((node) => {
-      const output = outputByNodeId.get(node.id);
-      if (!output) return `- ${node.title} (${node.id}): no output`;
-      const outputKeys = Object.keys(output.outputs).sort();
-      return `- ${node.title} (${node.id}): ${output.summary} [outputs: ${outputKeys.join(", ") || "none"}]`;
-    }),
-  ].join("\n");
-}
-
 
 /**
  * Resolve the agent + model an individual agent node runs with. A node may
@@ -1640,7 +1617,7 @@ export class WorkflowRuntime {
         },
       });
 
-      const finalReport = workflowV2FinalReport(plan, result.workerOutputs, result.runState.status);
+      const finalReport = buildWorkflowV2FinalReport(plan, result.workerOutputs, result.runState.status);
       if (result.runState.status === "completed") {
         this.deps.finishWorkflowRun({
           workflowId: workflow.workflowId,
