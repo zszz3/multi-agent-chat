@@ -15,7 +15,7 @@ Execute them in order. A phase may start only after the preceding phase satisfie
 
 - Phase 00: planning baseline defined; Windows-hosted compatibility evidence is still required.
 - Phase 01: in progress; cross-platform window/resources and cross-built NSIS artifacts are implemented, while Windows install/upgrade/uninstall validation is pending.
-- Phase 02: in progress; executable discovery, Main composition, shared process-tree strategies, and interactive Runtime lifecycle injection are implemented, while one-shot migration, path hardening, junction work, and Windows integration evidence are pending.
+- Phase 02: in progress; executable discovery, Main composition, shared process-tree strategies, and production Runtime lifecycle injection are implemented, while compatibility cleanup, path hardening, junction work, and Windows integration evidence are pending.
 - Phases 03-05: proposed and dependent on the earlier phase contracts and Windows evidence.
 
 ## Program Rule

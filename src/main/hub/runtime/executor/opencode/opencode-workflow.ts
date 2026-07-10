@@ -20,6 +20,7 @@ export async function runOpenCodeWorkflow(
     cwd: input.workDir,
     prompt: input.prompt,
     modelId: modelFromRuntimeConfig(input.runtimeConfig),
+    ...(options.platformServices ? { processServices: options.platformServices } : {}),
     onEvent: (event) => {
       if (event.type === "delta") {
         content += event.content;

@@ -16,6 +16,7 @@ export class OpenCodeAgentExecutor implements AgentExecutor {
       cwd: this.context.workDir,
       prompt: this.context.prompt,
       modelId: modelFromRuntimeConfig(this.context.runtimeConfig),
+      ...(this.options.platformServices ? { processServices: this.options.platformServices } : {}),
       onEvent: this.context.emit,
       onExit: this.context.onExit,
     });

@@ -4,7 +4,7 @@
 
 ### Status
 
-In progress. Executable discovery, Main-process `PlatformServices` composition, the shared process-tree controller, and the first Runtime lifecycle migration were implemented on 2026-07-10. One-shot lifecycle migration, filesystem hardening, and Windows-hosted validation remain pending.
+In progress. Executable discovery, Main-process `PlatformServices` composition, the shared process-tree controller, and production Runtime lifecycle injection were implemented on 2026-07-10. Compatibility fallback removal, filesystem hardening, and Windows-hosted validation remain pending.
 
 ## Goal
 
@@ -34,11 +34,13 @@ Completed:
 - injected the platform launcher/controller into Hermes, OpenCode, and OpenClaw ACP interactive clients;
 - injected the same services into Codex RPC chat, workflow, channel-test, and slash-command paths;
 - routed ACP detach, Codex shutdown, and streamed channel-test timeouts through `ProcessTreeController` in production composition;
-- added a real-child-process assertion that ACP launch and detach use the injected platform services.
+- added a real-child-process assertion that ACP launch and detach use the injected platform services;
+- injected the platform launcher/controller into Hermes, OpenCode, and OpenClaw one-shot executor, workflow, and channel-test construction;
+- routed all three one-shot runner `stop()` paths through tree termination with a classified `user-cancel` reason;
+- added a parameterized lifecycle contract test covering all three one-shot runners.
 
 Pending:
 
-- migrate Hermes, OpenCode, and OpenClaw one-shot runners from direct `.kill(...)` calls to the shared controller;
 - remove temporary direct-kill compatibility fallbacks after all tests and non-Main construction sites inject process services;
 - pass the platform launcher/controller through future packaged sidecars;
 - add Windows parent/child integration fixtures proving both processes disappear after cancellation and app shutdown;

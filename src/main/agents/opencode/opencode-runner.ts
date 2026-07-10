@@ -1,6 +1,7 @@
 import type { ChildProcess } from "node:child_process";
 import type { AgentEvent } from "../../../shared/types";
 import { spawnCli } from "../../platform/cli-launcher";
+import type { PlatformProcessServices } from "../../platform/platform-services";
 
 const MAX_STDERR_CHARS = 8_000;
 
@@ -10,6 +11,7 @@ export interface OpenCodeRunOptions {
   env?: NodeJS.ProcessEnv;
   prompt: string;
   modelId?: string;
+  processServices?: PlatformProcessServices;
   onEvent: (event: AgentEvent) => void;
   onStderr?: (text: string) => void;
   onExit: (code: number | null) => void;
@@ -77,7 +79,8 @@ export class OpenCodeRunner {
     if (this.options.modelId && this.options.modelId !== "default") args.push("--model", this.options.modelId);
     args.push(this.options.prompt);
 
-    const proc = spawnCli({
+    const launch = this.options.processServices?.processLauncher.spawn ?? spawnCli;
+    const proc = launch({
       executable: this.options.executable,
       args,
       cwd: this.options.cwd,
@@ -162,6 +165,15 @@ export class OpenCodeRunner {
 
   async stop(): Promise<void> {
     this.stopping = true;
-    this.proc?.kill("SIGINT");
+    const proc = this.proc;
+    if (!proc || proc.killed) return;
+    if (this.options.processServices) {
+      await this.options.processServices.processTreeController.terminate({
+        process: proc,
+        reason: "user-cancel",
+      });
+      return;
+    }
+    proc.kill("SIGINT");
   }
 }
