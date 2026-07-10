@@ -44,7 +44,17 @@ jobs:
           src/main/agents/runtime/runtime-runner-lifecycle.test.ts
 
       - name: Run full regression suite
-        run: npm test
+        shell: pwsh
+        run: |
+          $TestOutput = & npm test 2>&1
+          $TestExitCode = $LASTEXITCODE
+          $TestOutput | ForEach-Object { Write-Host $_ }
+          if ($TestExitCode -ne 0) {
+            $Tail = (($TestOutput | Select-Object -Last 60) -join "`n")
+            $Tail = $Tail.Replace("%", "%25").Replace("`r", "%0D").Replace("`n", "%0A")
+            Write-Host "::error title=Windows full regression failed::$Tail"
+            exit $TestExitCode
+          }
 
       - name: Build production bundles
         run: npm run build
