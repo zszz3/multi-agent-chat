@@ -5,6 +5,8 @@
 ## 开发入口
 
 - [不同 Agent 接入指南](agent-integration-guide.md)：新增 CLI、ACP、SDK 或 API Agent 时的实现路径与验收清单
+- [Windows 适配总纲](superpowers/specs/windows/2026-07-10-windows-adaptation-program.md)：Windows 平台边界、阶段依赖与整体验收标准
+- [Windows 适配执行计划](superpowers/plans/windows/README.md)：从基线验证到签名发布的逐阶段实施路径
 - [Workflow V2 设计](workflow-v2/README.md)：产品边界、图模型、执行、恢复和扩展机制
 - [设计规格](superpowers/specs/README.md)：Runtime 与 Workflow 的稳定契约
 
