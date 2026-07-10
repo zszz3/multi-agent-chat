@@ -1,16 +1,36 @@
+import { AcpInteractiveClient } from "../../../../agents/acp/acp-interactive-client";
 import type { RuntimeDriver } from "../../../../agents/runtime/runtime-driver";
-import { createOneShotRuntimeDriver } from "../agent-executor-driver-factories";
+import { openClawRuntimeStateCodec } from "../../../../agents/runtime/runtime-state-codec";
+import { createInteractiveRuntimeDriver } from "../agent-executor-driver-factories";
 import type { RuntimeAgentExecutorFactoryOptions } from "../agent-executor-types";
-import { getOpenClawCapabilities, openClawSurfaceSupport } from "./openclaw-capabilities";
+import {
+  getOpenClawCapabilities,
+  openClawInteractiveSessionCapabilities,
+  openClawSurfaceSupport,
+} from "./openclaw-capabilities";
 import { OpenClawAgentExecutor } from "./openclaw-executor";
+import { OpenClawInteractiveSession } from "./openclaw-session";
 import { runOpenClawChannelTest, runOpenClawWorkflow } from "./openclaw-workflow";
 
 export function createOpenClawDriver(options: RuntimeAgentExecutorFactoryOptions): RuntimeDriver {
-  return createOneShotRuntimeDriver({
+  return createInteractiveRuntimeDriver({
     runtimeId: "openclaw",
     surfaceSupport: [...openClawSurfaceSupport],
     getCapabilities: getOpenClawCapabilities,
+    runtimeStateCodec: openClawRuntimeStateCodec,
     createOneShotExecutor: (context) => new OpenClawAgentExecutor(context, options),
+    createInteractiveSession: (context) =>
+      new OpenClawInteractiveSession(context, {
+        capabilities: openClawInteractiveSessionCapabilities,
+        createClient: ({ context: interactiveContext, onEvent, onExit }) =>
+          new AcpInteractiveClient({
+            executable: interactiveContext.runtime.command || options.executables.openclaw,
+            args: ["acp"],
+            cwd: interactiveContext.workDir,
+            onEvent,
+            onExit,
+          }),
+      }),
     askWorkflow: (input) => runOpenClawWorkflow(input, options),
     testChannel: (input) => runOpenClawChannelTest(input, options),
     deleteSessionArtifacts: undefined,

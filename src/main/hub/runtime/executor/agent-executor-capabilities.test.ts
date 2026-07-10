@@ -6,7 +6,7 @@ import { claudeInteractiveSessionCapabilities, claudeSurfaceSupport } from "./cl
 import { codexInteractiveSessionCapabilities, codexSurfaceSupport } from "./codex/codex-capabilities";
 import { hermesSurfaceSupport } from "./hermes/hermes-capabilities";
 import { openCodeInteractiveSessionCapabilities, openCodeSurfaceSupport } from "./opencode/opencode-capabilities";
-import { openClawSurfaceSupport } from "./openclaw/openclaw-capabilities";
+import { openClawInteractiveSessionCapabilities, openClawSurfaceSupport } from "./openclaw/openclaw-capabilities";
 
 function buildOptions() {
   return {
@@ -193,24 +193,24 @@ describe("runtime capability declarations", () => {
 
     expect(registry.driverFor("openclaw").surfaceSupport).toEqual(openClawSurfaceSupport);
     expect(registry.driverFor("openclaw").surfaceSupport).toEqual([
-      { surface: "chat", executionModes: ["oneshot"], continuationPolicies: ["fresh"] },
+      { surface: "chat", executionModes: ["interactive"], continuationPolicies: ["fresh", "resume-preferred"] },
       { surface: "task", executionModes: ["oneshot"], continuationPolicies: ["fresh"] },
       { surface: "workflow", executionModes: ["oneshot"], continuationPolicies: ["fresh"] },
       { surface: "channel-test", executionModes: ["oneshot"], continuationPolicies: ["fresh"] },
     ]);
     expect(registry.driverFor("openclaw").getCapabilities(runtime("openclaw"))).toMatchObject({
-      chatStyle: "oneshot",
+      chatStyle: "interactive",
       taskStyle: "oneshot",
       workflowStyle: "oneshot",
       testStyle: "oneshot",
-      supportsInterrupt: false,
-      supportsContinue: false,
-      supportsApprovalRequests: false,
+      supportsInterrupt: true,
+      supportsContinue: true,
+      supportsApprovalRequests: true,
       supportsUserInputRequests: false,
       resume: {
-        supportsInProcessConversationResume: false,
-        supportsResumeAfterDetach: false,
-        supportsResumeAfterAppRestart: false,
+        supportsInProcessConversationResume: true,
+        supportsResumeAfterDetach: true,
+        supportsResumeAfterAppRestart: true,
         supportsTurnResume: false,
       },
     });
@@ -233,5 +233,10 @@ describe("runtime capability declarations", () => {
     const openCodeSession = openCodeDriver.createInteractiveSession?.(interactiveSessionContext("opencode"));
     expect(openCodeSession?.snapshot().runtimeState.capabilities).toEqual(openCodeInteractiveSessionCapabilities);
     expect(openCodeSession?.snapshot().runtimeState.capabilities).toEqual(sessionCapabilityProjection("opencode"));
+
+    const openClawDriver = registry.driverFor("openclaw");
+    const openClawSession = openClawDriver.createInteractiveSession?.(interactiveSessionContext("openclaw"));
+    expect(openClawSession?.snapshot().runtimeState.capabilities).toEqual(openClawInteractiveSessionCapabilities);
+    expect(openClawSession?.snapshot().runtimeState.capabilities).toEqual(sessionCapabilityProjection("openclaw"));
   });
 });

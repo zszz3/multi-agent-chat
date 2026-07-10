@@ -43,6 +43,7 @@ export interface AcpRuntimeConversationPayload {
 
 export type HermesRuntimeConversationPayload = AcpRuntimeConversationPayload;
 export type OpenCodeRuntimeConversationPayload = AcpRuntimeConversationPayload;
+export type OpenClawRuntimeConversationPayload = AcpRuntimeConversationPayload;
 
 export interface RuntimeStateCodec<TState> {
   runtimeId: AgentId;
@@ -262,5 +263,10 @@ export const hermesRuntimeStateCodec = createRuntimeStateCodec<HermesRuntimeConv
 
 export const openCodeRuntimeStateCodec = createRuntimeStateCodec<OpenCodeRuntimeConversationPayload>({
   runtimeId: "opencode",
+  decodePayload: decodeAcpPayload,
+});
+
+export const openClawRuntimeStateCodec = createRuntimeStateCodec<OpenClawRuntimeConversationPayload>({
+  runtimeId: "openclaw",
   decodePayload: decodeAcpPayload,
 });

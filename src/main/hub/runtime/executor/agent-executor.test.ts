@@ -209,7 +209,8 @@ describe("createRuntimeDriverRegistry", () => {
     expect(opencode.runtimeStateCodec).toBeDefined();
     expect(opencode.createInteractiveSession).toBeTypeOf("function");
     expect(opencode.deleteSessionArtifacts).toBeTypeOf("function");
-    expect(openclaw.runtimeStateCodec).toBeUndefined();
-    expect(openclaw.createInteractiveSession).toBeUndefined();
+    expect(openclaw.runtimeStateCodec).toBeDefined();
+    expect(openclaw.createInteractiveSession).toBeTypeOf("function");
+    expect(openclaw.deleteSessionArtifacts).toBeUndefined();
   });
 });

@@ -1,6 +1,6 @@
 import { describe, expect, test } from "vitest";
 import type { RuntimeConversation } from "../../../shared/types";
-import { claudeRuntimeStateCodec, codexRuntimeStateCodec, hermesRuntimeStateCodec, openCodeRuntimeStateCodec } from "./runtime-state-codec";
+import { claudeRuntimeStateCodec, codexRuntimeStateCodec, hermesRuntimeStateCodec, openClawRuntimeStateCodec, openCodeRuntimeStateCodec } from "./runtime-state-codec";
 
 function runtimeConversation(runtimeId: RuntimeConversation["runtimeId"], payload: Record<string, unknown>): RuntimeConversation {
   return {
@@ -109,5 +109,14 @@ describe("runtime state codecs", () => {
     expect(openCodeRuntimeStateCodec.restorePersistedConversation(runtimeConversation("opencode", {
       native: { sessionId: 42 },
     }))).toBeUndefined();
+  });
+
+  test("openclaw codec persists Gateway-backed ACP session identity", () => {
+    const raw = runtimeConversation("openclaw", {
+      native: { sessionId: "agent:main:acp-bridge:desktop" },
+      appContext: { cwd: "/repo", modelId: "default", transport: "acp" },
+    });
+    expect(openClawRuntimeStateCodec.restorePersistedConversation(raw)).toEqual(raw);
+    expect(openClawRuntimeStateCodec.decodeConversation(raw)?.native.sessionId).toBe("agent:main:acp-bridge:desktop");
   });
 });
