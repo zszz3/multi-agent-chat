@@ -343,6 +343,8 @@ export interface RunTaskRequest {
   configuredAgentId: string;
   modelId?: string;
   workDir?: string;
+  continuationPolicy?: RuntimeContinuationPolicy;
+  runtimeConversation?: RuntimeConversation;
 }
 
 export interface WorkflowAgentRequest extends RuntimeRequest {

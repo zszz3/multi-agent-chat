@@ -4980,6 +4980,68 @@ describe("AgentHub task runs", () => {
       ]);
   });
 
+  test("runs an internal task with an explicitly resumed runtime conversation", async () => {
+    const executorCalls: any[] = [];
+    const executorFactory: AgentExecutorFactory = {
+      create: (context: any) => ({
+        start: async () => {
+          executorCalls.push(context);
+          context.emit({ type: "delta", content: "progress report" });
+          context.emit({ type: "completed" });
+        },
+        stop: async () => undefined,
+      }),
+    };
+    const runtimeDrivers = new RuntimeDriverRegistry([
+      {
+        runtimeId: "codex",
+        surfaceSupport: [
+          support("chat", ["oneshot"], ["fresh"]),
+          support("task", ["oneshot"], ["fresh", "resume-required"]),
+        ],
+        runtimeStateCodec: codexRuntimeStateCodec,
+        getCapabilities: () => interactiveChatCapabilities("codex"),
+        createOneShotExecutor: (context: AgentExecutionContext) => executorFactory.create(context),
+      } as any,
+    ]);
+    const hub = new AgentHub(
+      { codex: "codex-for-test", claude: "missing-claude-for-test" },
+      executorFactory,
+      runtimeDrivers,
+    );
+    (hub as any).runtimes.set("codex", {
+      id: "codex",
+      label: "Codex",
+      command: "codex",
+      version: "test",
+      available: true,
+    });
+    const conversation = runtimeConversation("codex", { native: { threadId: "workflow-task-thread" } });
+
+    const snapshot = await hub.runTask({
+      prompt: "Report structured workflow progress",
+      configuredAgentId: "default-agent",
+      workDir: "/tmp/project",
+      continuationPolicy: "resume-required",
+      runtimeConversation: conversation,
+    });
+    const taskId = snapshot.activeTaskId!;
+    await waitFor(
+      () => hub.snapshot().tasks.find((item) => item.id === taskId),
+      (item) => item?.running === false,
+    );
+
+    expect(executorCalls).toHaveLength(1);
+    expect(executorCalls[0]).toMatchObject({
+      runKind: "task",
+      executionMode: "oneshot",
+      continuationPolicy: "resume-required",
+      runtimeConversation: conversation,
+      prompt: "Report structured workflow progress",
+    });
+    expect(executorCalls[0].runtimeConversation).not.toBe(conversation);
+  });
+
   test("keeps user progress separate from agent execution status", () => {
     const hub = new AgentHub();
     const task = (hub as any).createTaskState({

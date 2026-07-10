@@ -6,6 +6,7 @@ import type {
   ChatMessage,
   ChatRuntimeSessionState,
   RuntimeConversation,
+  RuntimeContinuationPolicy,
   TaskProgress,
   TaskRunStatus,
   TeamRunStatus,
@@ -42,6 +43,7 @@ export class TaskState {
   id: string = randomUUID();
   title: string;
   runtimeConversation: RuntimeConversation | undefined = undefined;
+  continuationPolicy: RuntimeContinuationPolicy = "fresh";
   running = false;
   status: TaskRunStatus = "queued";
   progress: TaskProgress = "todo";

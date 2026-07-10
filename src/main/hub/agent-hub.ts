@@ -1831,12 +1831,15 @@ export class AgentHub {
 
   private createTaskState(input: RunTaskRequest): TaskState {
     const agent = this.configuredAgentOrDefault(input.configuredAgentId);
-    return new TaskState(
+    const task = new TaskState(
       input.prompt.trim(),
       agent?.id ?? "",
       this.normalizeModelIdForConfiguredAgent(agent?.id, input.modelId ?? agent?.modelId),
       input.workDir?.trim() || this.workDir,
     );
+    task.continuationPolicy = input.continuationPolicy ?? "fresh";
+    task.runtimeConversation = this.cloneConversationForPolicy(task.continuationPolicy, input.runtimeConversation);
+    return task;
   }
 
   private createTeamState(input: CreateAgentTeamRequest): AgentTeamState {

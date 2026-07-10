@@ -63,7 +63,7 @@ export async function runAgentExecution(input: {
   const continuationPolicy =
     input.run.kind === "chat"
       ? input.defaultContinuationPolicy(input.resolved.runtimeAgentId, "chat", executionMode)
-      : "fresh";
+      : input.run.continuationPolicy;
   const runtimeConversation = input.cloneConversationForPolicy(continuationPolicy, input.run.runtimeConversation);
   const executor = input.executorFactory.create({
     runId: input.run.id,
