@@ -1,0 +1,65 @@
+name: Windows Phase 02
+
+on:
+  push:
+    branches:
+      - codex/windows-adaptation
+  pull_request:
+    paths:
+      - "src/**"
+      - "scripts/**"
+      - "package.json"
+      - "package-lock.json"
+      - "electron-builder.yml"
+      - ".github/workflows/windows-phase-02.yml"
+
+permissions:
+  contents: read
+
+jobs:
+  windows-platform-and-installed-smoke:
+    runs-on: windows-latest
+    timeout-minutes: 45
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22.13.0
+          cache: npm
+
+      - name: Install dependencies
+        run: npm ci
+
+      - name: Typecheck
+        run: npm run typecheck
+
+      - name: Run Windows platform integration
+        run: >-
+          npx vitest run
+          src/main/platform
+          src/main/agents/runtime/detect.test.ts
+          src/main/agents/runtime/executable-config-store.test.ts
+          src/main/skills/skill-installer.test.ts
+          src/main/agents/runtime/runtime-runner-lifecycle.test.ts
+
+      - name: Run full regression suite
+        run: npm test
+
+      - name: Build installer
+        run: npm run dist:win
+
+      - name: Verify installed Explorer-style startup
+        shell: pwsh
+        run: ./scripts/verify-win-installed-smoke.ps1
+
+      - name: Upload Windows artifacts
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: windows-phase-02-artifacts
+          path: |
+            dist/*.exe
+            dist/*.blockmap
+          if-no-files-found: warn
+          retention-days: 7
