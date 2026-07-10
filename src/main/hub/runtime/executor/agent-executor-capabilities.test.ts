@@ -1,5 +1,5 @@
 import { describe, expect, test } from "vitest";
-import type { AgentRuntime } from "../../../shared/types";
+import type { AgentRuntime } from "../../../../shared/types";
 import { createRuntimeDriverRegistry } from "./agent-executor";
 import { apiSurfaceSupport } from "./api/api-capabilities";
 import { claudeInteractiveSessionCapabilities, claudeSurfaceSupport } from "./claude/claude-capabilities";

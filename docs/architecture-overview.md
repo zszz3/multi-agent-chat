@@ -79,8 +79,9 @@ The key entry files are:
 
 - `src/main/index.ts`: bootstraps Electron, loads state, registers IPC, starts local services
 - `src/main/agent-hub.ts`: central in-memory state container plus orchestration logic
-- `src/main/agent-executor.ts`: runtime driver registry, one-shot execution bridge, and driver-owned workflow or runtime-test dispatch
-- `src/main/agents/runtime-driver.ts`: shared runtime capabilities, interactive session contracts, and optional workflow/test/cleanup hooks
+- `src/main/hub/runtime/executor/agent-executor.ts`: runtime registry aggregator that composes one `createXxxDriver()` builder per runtime
+- `src/main/hub/runtime/executor/codex/`, `claude/`, `api/`, `hermes/`: runtime-local bundles that own executor, workflow, cleanup, session, and capability assembly
+- `src/main/agents/runtime/runtime-driver.ts`: shared runtime capabilities, interactive session contracts, and optional workflow/test/cleanup hooks
 - `src/main/agents/interactive-session-manager.ts`: per-chat interactive queue plus central idle-detach sweep
 - `src/main/agents/codex-interactive-session.ts`: long-lived Codex chat attachment boundary
 - `src/main/agents/claude-agent-sdk.ts`: official Claude Agent SDK one-shot adapter
@@ -149,8 +150,8 @@ The app supports four runtime families:
 - `api`
 - `hermes`
 
-Execution is delegated through a thin driver registry in `src/main/agent-executor.ts`.
-That registry now owns not only one-shot executors, but also runtime-specific workflow invocation, runtime-channel testing, and session-artifact cleanup hooks.
+Execution is delegated through a thin driver registry in `src/main/hub/runtime/executor/agent-executor.ts`.
+Runtime onboarding now enters through runtime-local builder modules rather than through a single expanding central assembly file. The registry layer remains the only place that knows which runtimes exist, but runtime-specific workflow, cleanup, capability, and session wiring now stay inside runtime-owned bundle directories.
 
 The main process now supports two execution styles:
 
@@ -177,7 +178,7 @@ Upper layers now build explicit runtime requests before crossing into the router
 
 Claude SDK events are normalized in `src/main/agents/claude-stream.ts` before they reach shared chat history.
 Interactive reconfigure classification lives in `src/main/agents/session-reconfigure.ts`, and chat state can persist an optional per-chat `channelId` override instead of treating the configured-agent channel as immutable forever.
-The same `RuntimeDriver` contract now proves future-runtime onboarding by letting Hermes plug workflow, test, and cleanup behavior in at the driver layer instead of reopening `AgentHub`.
+The same `RuntimeDriver` contract now proves future-runtime onboarding by letting Hermes plug workflow, test, cleanup, and capability behavior in at the runtime-local builder layer instead of reopening `AgentHub`.
 
 The same high-level concepts are reused across chat, task, and workflow execution:
 

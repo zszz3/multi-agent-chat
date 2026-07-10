@@ -1,6 +1,6 @@
 import { describe, expect, test } from "vitest";
 import type { AgentExecutionContext, AgentExecutor } from "./agent-executor";
-import type { AgentRuntime } from "../../../shared/types";
+import type { AgentRuntime } from "../../../../shared/types";
 import type { RuntimeCapabilities } from "../../../agents/runtime/runtime-capabilities";
 import type {
   InteractiveSessionContext,

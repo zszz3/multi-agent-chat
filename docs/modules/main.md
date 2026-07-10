@@ -10,8 +10,9 @@ If a renderer feature changes the actual behavior of chats, tasks, workflows, ag
 
 - `index.ts`: Electron bootstrap, BrowserWindow creation, IPC registration, local bridge startup
 - `agent-hub.ts`: central app state container and domain orchestration layer
-- `agent-executor.ts`: runtime driver registry, one-shot execution bridge, and driver-owned workflow or runtime-test dispatch
-- `agents/runtime-driver.ts`: shared runtime capability and interactive session interfaces plus optional workflow/test/cleanup hooks
+- `hub/runtime/executor/agent-executor.ts`: runtime registry aggregator that composes one `createXxxDriver()` builder per runtime
+- `hub/runtime/executor/codex/`, `claude/`, `api/`, `hermes/`: runtime-local bundles that own executor, workflow, cleanup, session, and capability assembly for each runtime
+- `agents/runtime/runtime-driver.ts`: shared runtime capability and interactive session interfaces plus optional workflow/test/cleanup hooks
 - `agents/interactive-session-manager.ts`: per-chat queueing and idle-detach orchestration for interactive runtimes
 - `agents/codex-interactive-session.ts`: reusable Codex chat attachment
 - `agents/claude-agent-sdk.ts`: official Claude Agent SDK one-shot adapter
@@ -71,7 +72,7 @@ Runtime execution is split into two styles:
 - `oneshot`: one executor per task, workflow, or stateless API call
 - `interactive`: one logical chat session with a lazily attached runtime process
 
-The selection boundary lives in `RuntimeAgentExecutorFactory` plus the runtime driver registry.
+The selection boundary lives in `RuntimeAgentExecutorFactory` plus the runtime driver registry. The registry is now an aggregator: each runtime enters through a runtime-local `createXxxDriver()` builder, and the runtime directory owns the concrete workflow, cleanup, session, executor, and capability wiring.
 
 Backends:
 
@@ -82,13 +83,14 @@ Backends:
 
 `AgentHub` still owns snapshot state plus app-owned `runtimeState` and opaque `runtimeConversation` persistence, but interactive process lifecycle now sits behind `InteractiveSessionManager` and the runtime-specific session helpers under `src/main/agents/`.
 Before crossing into `RuntimeRouter`, upper layers in main now build explicit runtime requests with `runtimeId`, `executionMode`, `continuationPolicy`, and `runtimeConfig.model` instead of relying on generic `sessionId` semantics or runtime-native payload parsing.
-Workflow invocation, runtime-channel testing, and session-artifact cleanup now dispatch through `RuntimeDriver` hooks, so future runtimes can onboard without adding new product-level `if (runtimeId === "...")` branches in `AgentHub`.
+Workflow invocation, runtime-channel testing, and session-artifact cleanup now dispatch through `RuntimeDriver` hooks supplied by runtime-local builders, so future runtimes can onboard without adding new product-level `if (runtimeId === "...")` branches in `AgentHub`.
 
 This layer should stay runtime-agnostic from the perspective of higher-level features. Chat, task, and workflow code should not duplicate provider-specific logic.
 
 When adding runtime behavior:
 
-- prefer extending `agent-executor.ts` or the runtime-specific helper under `src/main/agents/`
+- add or update the runtime-local bundle under `src/main/hub/runtime/executor/<runtime>/`
+- register the runtime once from `hub/runtime/executor/agent-executor.ts`
 - avoid leaking provider-specific branching into unrelated task or workflow code
 
 ## IPC Registration
