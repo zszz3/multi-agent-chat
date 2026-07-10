@@ -27,6 +27,7 @@ export function createOpenClawDriver(options: RuntimeAgentExecutorFactoryOptions
             executable: interactiveContext.runtime.command || options.executables.openclaw,
             args: ["acp"],
             cwd: interactiveContext.workDir,
+            ...(options.platformServices ? { processServices: options.platformServices } : {}),
             onEvent,
             onExit,
           }),

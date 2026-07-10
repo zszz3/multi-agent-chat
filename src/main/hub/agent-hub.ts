@@ -1517,6 +1517,7 @@ export class AgentHub {
             prompt: currentPrompt,
             executable: this.executables.codex,
             workDir: this.workDir,
+            ...(this.platformServices ? { processServices: this.platformServices } : {}),
             resolveConfiguredAgent: (configuredAgentId, modelIdOverride, channelIdOverride) =>
               this.resolveConfiguredAgentForSlash(configuredAgentId, modelIdOverride, channelIdOverride),
           }),

@@ -3,6 +3,7 @@ import { createInterface, type Interface as ReadlineInterface } from "node:readl
 import { normalizeCodexNotification, createCodexStreamState } from "./codex-events";
 import type { AgentEvent } from "../../../shared/types";
 import { spawnCli } from "../../platform/cli-launcher";
+import type { PlatformProcessServices } from "../../platform/platform-services";
 
 interface RpcPending {
   resolve: (value: unknown) => void;
@@ -16,6 +17,7 @@ export interface CodexRpcClientOptions {
   cwd: string;
   extraArgs?: string[];
   env?: Record<string, string>;
+  processServices?: PlatformProcessServices;
   onEvent: (event: AgentEvent) => void;
   onRequest?: (id: number, method: string, params: Record<string, unknown>) => void;
   onStderr?: (text: string) => void;
@@ -39,7 +41,8 @@ export class CodexRpcClient {
     if (this.proc) throw new Error("Codex client already started");
 
     const args = ["--yolo", ...(this.options.extraArgs ?? []), "app-server", "--listen", "stdio://"];
-    const proc = spawnCli({
+    const launch = this.options.processServices?.processLauncher.spawn ?? spawnCli;
+    const proc = launch({
       executable: this.options.executable,
       args,
       cwd: this.options.cwd,
@@ -117,10 +120,17 @@ export class CodexRpcClient {
   async shutdown(): Promise<void> {
     this.rl?.close();
     this.rl = null;
-    if (this.proc && !this.proc.killed) {
-      this.proc.kill("SIGTERM");
-    }
+    const proc = this.proc;
     this.proc = null;
+    if (!proc || proc.killed) return;
+    if (this.options.processServices) {
+      await this.options.processServices.processTreeController.terminate({
+        process: proc,
+        reason: "app-shutdown",
+      });
+      return;
+    }
+    proc.kill("SIGTERM");
   }
 
   private write(message: Record<string, unknown>): void {

@@ -59,6 +59,7 @@ export async function runCodexWorkflow(
         ...codexWorkflowMcpArgs(options.workflowHost?.mcpBridgeDiscoveryPath()),
       ],
       env: codexEnvironmentForChannel(channel),
+      ...(options.platformServices ? { processServices: options.platformServices } : {}),
       onEvent: (event) => {
         timeout?.refresh();
         if (event.type === "delta") {

@@ -14,6 +14,7 @@ import {
 } from "./agent-hub-codex-app";
 import { asOptionalString, asRecord } from "../persisted/agent-hub-persistence";
 import type { ChatState } from "../state/agent-hub-state";
+import type { PlatformProcessServices } from "../../platform/platform-services";
 
 export interface ResolvedConfiguredAgentForSlash {
   runtimeAgentId: AgentId;
@@ -22,17 +23,20 @@ export interface ResolvedConfiguredAgentForSlash {
   reasoningEffort?: string;
 }
 
-export async function runSlashCommand(input: {
+interface SlashCommandInput {
   chat: ChatState;
   prompt: string;
   executable: string;
   workDir: string;
+  processServices?: PlatformProcessServices;
   resolveConfiguredAgent: (
     configuredAgentId: string | undefined,
     modelIdOverride?: string,
     channelIdOverride?: string,
   ) => ResolvedConfiguredAgentForSlash | undefined;
-}): Promise<string> {
+}
+
+export async function runSlashCommand(input: SlashCommandInput): Promise<string> {
   const [command = "", ...args] = input.prompt.slice(1).trim().split(/\s+/).filter(Boolean);
   switch (command.toLowerCase()) {
     case "":
@@ -57,6 +61,7 @@ export async function withCodexAppServer<T>(input: {
   chat: ChatState;
   executable: string;
   workDir: string;
+  processServices?: PlatformProcessServices;
   resolved: ResolvedConfiguredAgentForSlash | undefined;
   callback: (client: CodexRpcClient) => Promise<T>;
 }): Promise<T> {
@@ -72,6 +77,7 @@ export async function withCodexAppServer<T>(input: {
       input.resolved.reasoningEffort,
     ),
     env: codexEnvironmentForChannel(input.resolved.channel),
+    ...(input.processServices ? { processServices: input.processServices } : {}),
     onEvent: () => undefined,
     onRequest: (id, method, params) => {
       respondToCodexServerRequest(client, id, method, params);
@@ -86,16 +92,7 @@ export async function withCodexAppServer<T>(input: {
   }
 }
 
-async function slashStatus(input: {
-  chat: ChatState;
-  executable: string;
-  workDir: string;
-  resolveConfiguredAgent: (
-    configuredAgentId: string | undefined,
-    modelIdOverride?: string,
-    channelIdOverride?: string,
-  ) => ResolvedConfiguredAgentForSlash | undefined;
-}): Promise<string> {
+async function slashStatus(input: SlashCommandInput): Promise<string> {
   const resolved = input.resolveConfiguredAgent(input.chat.configuredAgentId, input.chat.modelId, input.chat.channelId);
   if (resolved?.runtimeAgentId !== "codex") return "Codex app-server status\nThis status command is only available for Codex chats.";
 
@@ -104,6 +101,7 @@ async function slashStatus(input: {
       chat: input.chat,
       executable: input.executable,
       workDir: input.workDir,
+      ...(input.processServices ? { processServices: input.processServices } : {}),
       resolved,
       callback: async (client) => {
         const configResult = asRecord(await client.request("config/read", { includeLayers: true, cwd: input.workDir })) ?? {};
@@ -119,16 +117,7 @@ async function slashStatus(input: {
   }
 }
 
-async function slashModels(input: {
-  chat: ChatState;
-  executable: string;
-  workDir: string;
-  resolveConfiguredAgent: (
-    configuredAgentId: string | undefined,
-    modelIdOverride?: string,
-    channelIdOverride?: string,
-  ) => ResolvedConfiguredAgentForSlash | undefined;
-}): Promise<string> {
+async function slashModels(input: SlashCommandInput): Promise<string> {
   const resolved = input.resolveConfiguredAgent(input.chat.configuredAgentId, input.chat.modelId, input.chat.channelId);
   if (resolved?.runtimeAgentId !== "codex") return "Codex models\nModel catalog is only available for Codex chats.";
 
@@ -137,6 +126,7 @@ async function slashModels(input: {
       chat: input.chat,
       executable: input.executable,
       workDir: input.workDir,
+      ...(input.processServices ? { processServices: input.processServices } : {}),
       resolved,
       callback: async (client) => {
         const configResult = asRecord(await client.request("config/read", { includeLayers: true, cwd: input.workDir })) ?? {};
@@ -152,16 +142,7 @@ async function slashModels(input: {
 }
 
 async function slashPlugins(
-  input: {
-    chat: ChatState;
-    executable: string;
-    workDir: string;
-    resolveConfiguredAgent: (
-      configuredAgentId: string | undefined,
-      modelIdOverride?: string,
-      channelIdOverride?: string,
-    ) => ResolvedConfiguredAgentForSlash | undefined;
-  },
+  input: SlashCommandInput,
   args: string[],
 ): Promise<string> {
   if (args.length > 0 && args[0] !== "list") {
@@ -175,6 +156,7 @@ async function slashPlugins(
       chat: input.chat,
       executable: input.executable,
       workDir: input.workDir,
+      ...(input.processServices ? { processServices: input.processServices } : {}),
       resolved,
       callback: async (client) => {
         const plugins = codexPluginSummaries(await client.request("plugin/list", { cwds: [input.workDir] }));

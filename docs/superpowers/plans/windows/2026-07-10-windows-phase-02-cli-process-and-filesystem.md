@@ -4,7 +4,7 @@
 
 ### Status
 
-In progress. Executable discovery, Main-process `PlatformServices` composition, and the shared process-tree controller were implemented on 2026-07-10. Runtime lifecycle migration, filesystem hardening, and Windows-hosted validation remain pending.
+In progress. Executable discovery, Main-process `PlatformServices` composition, the shared process-tree controller, and the first Runtime lifecycle migration were implemented on 2026-07-10. One-shot lifecycle migration, filesystem hardening, and Windows-hosted validation remain pending.
 
 ## Goal
 
@@ -30,12 +30,17 @@ Completed:
 - added a staged process-tree contract with protocol cancellation, bounded graceful termination, forced termination, deduplicated concurrent cleanup, stream closure, and classified force failures;
 - implemented Windows tree termination through structured `taskkill.exe /PID <pid> /T` invocation with `/F` escalation;
 - implemented POSIX descendant discovery through structured `ps` output and deepest-child-first `SIGTERM`/`SIGKILL` delivery;
-- added unit coverage for protocol exit, escalation, force failure, invalid PID, descendant order, and platform strategy selection.
+- added unit coverage for protocol exit, escalation, force failure, invalid PID, descendant order, and platform strategy selection;
+- injected the platform launcher/controller into Hermes, OpenCode, and OpenClaw ACP interactive clients;
+- injected the same services into Codex RPC chat, workflow, channel-test, and slash-command paths;
+- routed ACP detach, Codex shutdown, and streamed channel-test timeouts through `ProcessTreeController` in production composition;
+- added a real-child-process assertion that ACP launch and detach use the injected platform services.
 
 Pending:
 
-- migrate ACP, Codex RPC, Hermes, OpenCode, OpenClaw, and generic channel-test lifecycle code from direct `.kill(...)` calls to the shared controller;
-- pass the platform launcher/controller through Runtime builders that start long-running processes and future packaged sidecars;
+- migrate Hermes, OpenCode, and OpenClaw one-shot runners from direct `.kill(...)` calls to the shared controller;
+- remove temporary direct-kill compatibility fallbacks after all tests and non-Main construction sites inject process services;
+- pass the platform launcher/controller through future packaged sidecars;
 - add Windows parent/child integration fixtures proving both processes disappear after cancellation and app shutdown;
 - preserve environment overrides as a separately classified `environment` resolution source instead of only preselecting them in `resolveRuntimeExecutables(...)`;
 - add bounded locator caching, ambiguity handling, and classified remediation for unresolved executables;

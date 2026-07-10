@@ -26,6 +26,8 @@ export interface PlatformServices {
   resourceLocator: AppResourceLocator;
 }
 
+export type PlatformProcessServices = Pick<PlatformServices, "processLauncher" | "processTreeController">;
+
 export interface PlatformServiceDependencies {
   resourceLocator: AppResourceLocator;
   processTreeController?: ProcessTreeController;
