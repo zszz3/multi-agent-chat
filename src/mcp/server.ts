@@ -2,6 +2,7 @@ import { readFile } from "node:fs/promises";
 import os from "node:os";
 import path from "node:path";
 import { pathToFileURL } from "node:url";
+import { RUNTIME_IDS } from "../shared/runtime-catalog";
 
 interface McpToolDefinition {
   name: string;
@@ -92,7 +93,7 @@ export function mcpToolDefinitions(): McpToolDefinition[] {
           id: { type: "string" },
           name: { type: "string" },
           description: { type: "string" },
-          runtimeAgentId: { type: "string", enum: ["codex", "claude", "api"] },
+          runtimeAgentId: { type: "string", enum: RUNTIME_IDS },
           channelId: { type: "string" },
           modelId: { type: "string" },
           prompt: { type: "string" },
@@ -110,7 +111,7 @@ export function mcpToolDefinitions(): McpToolDefinition[] {
           agentId: { type: "string" },
           name: { type: "string" },
           description: { type: "string" },
-          runtimeAgentId: { type: "string", enum: ["codex", "claude", "api"] },
+          runtimeAgentId: { type: "string", enum: RUNTIME_IDS },
           channelId: { type: "string" },
           modelId: { type: "string" },
           prompt: { type: "string" },
@@ -133,13 +134,13 @@ export function mcpToolDefinitions(): McpToolDefinition[] {
     {
       name: "channels_list",
       description: "List available runtime provider channels. Secrets and HTTP authorization headers are not returned.",
-      inputSchema: objectSchema({ agentId: { type: "string", enum: ["codex", "claude", "api"] } }),
+      inputSchema: objectSchema({ agentId: { type: "string", enum: RUNTIME_IDS } }),
     },
     {
       name: "models_list",
       description: "List models available on channels, optionally filtered by channelId or agent runtime.",
       inputSchema: objectSchema({
-        agentId: { type: "string", enum: ["codex", "claude", "api"] },
+        agentId: { type: "string", enum: RUNTIME_IDS },
         channelId: { type: "string" },
       }),
     },
@@ -151,7 +152,7 @@ export function mcpToolDefinitions(): McpToolDefinition[] {
           title: { type: "string" },
           objective: { type: "string" },
           graph: workflowGraphSchema,
-          agentId: { type: "string", enum: ["codex", "claude"] },
+          agentId: { type: "string", enum: RUNTIME_IDS },
           channelId: { type: "string" },
           modelId: { type: "string" },
         },
