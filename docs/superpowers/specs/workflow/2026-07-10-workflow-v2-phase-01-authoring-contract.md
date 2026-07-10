@@ -4,7 +4,7 @@
 
 ### Status
 
-Draft on 2026-07-10.
+Implemented and verified on 2026-07-10. The canonical definition, template compiler, and structured static validator are used before plan freezing and runtime execution.
 
 ### This File Is Self-Contained
 
@@ -167,3 +167,9 @@ This phase is complete only when:
 - templates expand to explicit node definitions before runtime
 - invalid graph structure is rejected deterministically
 - later phases can rely on validated compiled definitions instead of raw authoring input
+
+### Verification Evidence
+
+- `validation.test.ts` covers duplicate ids, missing references, cycles, unsupported fields, execution-model fields, budgets, templates, leases, and hooks.
+- `templates.test.ts` covers executable expansion, rendered parameters, override precedence, and hook composition.
+- The final repository-wide typecheck and 766-test suite pass.

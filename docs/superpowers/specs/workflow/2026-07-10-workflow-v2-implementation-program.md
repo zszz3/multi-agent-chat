@@ -4,7 +4,7 @@
 
 ### Status
 
-Draft on 2026-07-10.
+Implemented and verified on 2026-07-10. All six phases are complete, the branch contains `origin/main`, and the final repository-wide typecheck and test suite pass.
 
 This file is the top-level implementation contract for Workflow V2.
 
@@ -290,6 +290,26 @@ Workflow V2 is complete only when all of the following are true:
 - review and human intervention are first-class runtime states rather than prompt conventions
 - state, events, and cache can survive process restart and support partial recovery
 - hooks extend lifecycle behavior without widening graph or edge semantics
+
+### Completion Audit
+
+The final audit checked every phase spec and plan against current source, runtime wiring, durable state, renderer/preload contracts, tests, and Git history.
+
+- Phase 01: compiled definition, template expansion, DAG/reference checks, execution-model validation, and unsupported-semantics rejection are implemented under `src/shared/workflow-v2/`.
+- Phase 02: planning freezes the graph version, acceptance criteria, role/model profiles, packetized context, and explicit graph revisions before execution.
+- Phase 03: the scheduler advances by dependencies, concurrency and locks; workers emit separate output/proposal packets; leader navigation does not mutate edges; LLM/script adapters run through the frozen-plan executor.
+- Phase 04: mechanical validation precedes independent reviewer TaskRuns; leases, progress probes, bounded supervisor decisions, and the unified durable intervention request are implemented cross-layer.
+- Phase 05: atomic file storage, append-only events, fingerprints, checkpoints, node-granular recovery, runtime conversation resume, cache reuse, and startup reconciliation are implemented.
+- Phase 06: explicit lifecycle hooks execute in the main process with stable source precedence, finite durable variables, bounded read-only `llmHook`, explicit failure policy, and routing/review guardrails.
+
+Final verification:
+
+```text
+npm run typecheck: passed
+npm test: 91 files passed, 766 tests passed
+origin/main...HEAD: 0 behind
+origin/codex/upgrade-workflow-module...HEAD: 0 ahead / 0 behind after push
+```
 
 ### Out Of Scope For This Program
 

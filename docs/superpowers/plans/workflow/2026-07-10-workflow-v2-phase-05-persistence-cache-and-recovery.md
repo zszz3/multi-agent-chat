@@ -74,9 +74,9 @@ Latest focused recovery/runtime result: 89 tests passed across the store, recove
 
 AgentHub startup reconciliation additionally passes focused pure-projection and product-level persistence tests. Durable `completed` runs repair missed public completion, while durable `running` or `paused` runs restore as `stopped` with node-level recovery progress.
 
-- [ ] **Step 2: Run typecheck**
+- [x] **Step 2: Run typecheck**
 
 Run: `npm run typecheck`
 Expected: exit code `0`
 
-Workflow V2 and workflow-runtime paths currently report no type errors. Repository-wide typecheck remains blocked by pre-existing missing agent runtime modules outside Workflow V2.
+Result on 2026-07-10: exit code `0`.

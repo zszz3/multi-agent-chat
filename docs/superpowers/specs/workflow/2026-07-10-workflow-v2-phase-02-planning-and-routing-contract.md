@@ -4,7 +4,7 @@
 
 ### Status
 
-Draft on 2026-07-10.
+Implemented and verified on 2026-07-10. Plans are compiled, validated, graph-versioned, role-aware, budgeted, approved, and frozen before runtime execution.
 
 ### This File Is Self-Contained
 
@@ -157,3 +157,10 @@ This phase is complete only when:
 - plan output is execution-ready and graph-versioned
 - role routing and budget semantics are visible before execution starts
 - graph revision is explicit instead of ad hoc runtime drift
+
+### Verification Evidence
+
+- Shared planning tests cover plan identity, role defaults, packet boundaries, graph revisions, and validation.
+- Main-process planner tests cover template compilation, acceptance criteria, routing overrides, context/cost budgets, and frozen plan construction.
+- Runtime tests prove execution consumes the approved plan and packetized direct-upstream outputs instead of reconstructing routing from transcripts.
+- The final repository-wide typecheck and 766-test suite pass.

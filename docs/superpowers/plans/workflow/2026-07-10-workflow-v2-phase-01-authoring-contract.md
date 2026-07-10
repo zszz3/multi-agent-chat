@@ -16,7 +16,7 @@
 - Create: `src/shared/workflow-v2/definition.ts`
 - Modify: `src/shared/types.ts`
 
-- [ ] **Step 1: Add explicit Workflow V2 node and edge contracts**
+- [x] **Step 1: Add explicit Workflow V2 node and edge contracts**
 
 ```ts
 export interface WorkflowV2Edge {
@@ -27,13 +27,13 @@ export interface WorkflowV2Edge {
 export type WorkflowV2Node = WorkflowV2LLMNode | WorkflowV2ScriptNode;
 ```
 
-- [ ] **Step 2: Make `llm` and `script` the only required MVP execution models**
+- [x] **Step 2: Make `llm` and `script` the only required MVP execution models**
 
 ```ts
 type WorkflowV2ExecModel = "llm" | "script";
 ```
 
-- [ ] **Step 3: Keep edge semantics minimal and reject review/control fields at the type boundary**
+- [x] **Step 3: Keep edge semantics minimal and reject review/control fields at the type boundary**
 
 ### Task 2: Compile Templates Into Executable Nodes
 
@@ -41,20 +41,20 @@ type WorkflowV2ExecModel = "llm" | "script";
 - Create: `src/shared/workflow-v2/templates.ts`
 - Modify: `src/shared/skill-templates.ts` if shared helpers are reusable
 
-- [ ] **Step 1: Add template reference, registry, and expansion helpers**
+- [x] **Step 1: Add template reference, registry, and expansion helpers**
 
 ```ts
 export function resolveWorkflowV2Template(...)
 export function compileWorkflowV2Node(...)
 ```
 
-- [ ] **Step 2: Ensure runtime consumers receive compiled nodes, not template references**
+- [x] **Step 2: Ensure runtime consumers receive compiled nodes, not template references**
 
 ```ts
 const compiledNodes = authoredNodes.map((node) => compileWorkflowV2Node(node, registry))
 ```
 
-- [ ] **Step 3: Define override precedence clearly**
+- [x] **Step 3: Define override precedence clearly**
 
 ```text
 template defaults -> rendered params -> explicit node overrides
@@ -67,11 +67,11 @@ template defaults -> rendered params -> explicit node overrides
 - Create: `src/shared/workflow-v2/validation.test.ts`
 - Modify: `src/shared/workflow-graph.ts` only if a shared DAG helper should be reused
 
-- [ ] **Step 1: Validate duplicate ids, missing references, cycles, and execution-model-specific fields**
+- [x] **Step 1: Validate duplicate ids, missing references, cycles, and execution-model-specific fields**
 
-- [ ] **Step 2: Fail fast on unsupported future semantics instead of passing unknown edge behavior through**
+- [x] **Step 2: Fail fast on unsupported future semantics instead of passing unknown edge behavior through**
 
-- [ ] **Step 3: Return structured validation results that later planner code can consume**
+- [x] **Step 3: Return structured validation results that later planner code can consume**
 
 ```ts
 export interface WorkflowV2ValidationResult {
@@ -86,7 +86,7 @@ export interface WorkflowV2ValidationResult {
 **Files:**
 - Modify: tests only as needed
 
-- [ ] **Step 1: Run focused shared tests**
+- [x] **Step 1: Run focused shared tests**
 
 Run:
 
@@ -96,7 +96,7 @@ npx vitest run src/shared/workflow-v2/validation.test.ts src/shared/workflow-gra
 
 Expected: all pass
 
-- [ ] **Step 2: Run full typecheck**
+- [x] **Step 2: Run full typecheck**
 
 Run: `npm run typecheck`
 Expected: exit code `0`

@@ -4,7 +4,7 @@
 
 ### Status
 
-Implementation complete on 2026-07-10. Layered validation, real independent reviewer TaskRuns, lease supervision, recoverable hard/probe timeouts, and one durable intervention action surface are implemented. Repository-wide typecheck is still affected by pre-existing legacy runtime wrapper imports outside Workflow V2; focused Workflow/AgentHub/preload/renderer checks and tests pass.
+Implemented and verified on 2026-07-10. Layered validation, real independent reviewer TaskRuns, lease supervision, recoverable hard/probe timeouts, and one durable cross-layer intervention action surface are implemented. The final repository-wide typecheck and test suite pass.
 
 ### This File Is Self-Contained
 

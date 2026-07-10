@@ -4,7 +4,7 @@
 
 ### Status
 
-Implementation complete on 2026-07-10. Durable storage, cache fingerprints, incremental checkpoints, node-level resume/rerun/reuse decisions, and automatic AgentHub startup reconciliation are implemented. Repository-wide typecheck is still affected by pre-existing missing agent runtime modules outside Workflow V2; focused Workflow V2 type checks and tests pass.
+Implemented and verified on 2026-07-10. Durable storage, cache fingerprints, incremental checkpoints, node-level resume/rerun/reuse decisions, resumable runtime conversations, and automatic AgentHub startup reconciliation are implemented. The final repository-wide typecheck and test suite pass.
 
 ### This File Is Self-Contained
 

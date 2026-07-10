@@ -17,7 +17,7 @@
 - Create: `src/shared/workflow-v2/planning.test.ts`
 - Modify: `src/shared/types.ts`
 
-- [ ] **Step 1: Add explicit plan result, role routing, and context budget contracts**
+- [x] **Step 1: Add explicit plan result, role routing, and context budget contracts**
 
 ```ts
 export interface WorkflowV2Plan {
@@ -28,9 +28,9 @@ export interface WorkflowV2Plan {
 }
 ```
 
-- [ ] **Step 2: Add `TaskPacket`, `ResultPacket`, and `GraphRevision` types**
+- [x] **Step 2: Add `TaskPacket`, `ResultPacket`, and `GraphRevision` types**
 
-- [ ] **Step 3: Encode role defaults explicitly**
+- [x] **Step 3: Encode role defaults explicitly**
 
 ```ts
 type WorkflowV2Role = "orchestrator" | "executor" | "reviewer";
@@ -45,15 +45,15 @@ type WorkflowV2ModelProfile = "fast" | "balanced" | "expert";
 - Modify: `src/main/hub/workflow/agent-hub-workflow-draft.ts`
 - Modify: `src/main/hub/workflow/agent-hub-workflow-execution.ts`
 
-- [ ] **Step 1: Add a dedicated planner boundary instead of mixing planning into execution helpers**
+- [x] **Step 1: Add a dedicated planner boundary instead of mixing planning into execution helpers**
 
 ```ts
 export async function buildWorkflowV2Plan(...)
 ```
 
-- [ ] **Step 2: Freeze `graphVersion` and acceptance criteria before execution starts**
+- [x] **Step 2: Freeze `graphVersion` and acceptance criteria before execution starts**
 
-- [ ] **Step 3: Keep replan/revision as explicit operations**
+- [x] **Step 3: Keep replan/revision as explicit operations**
 
 ### Task 3: Route Role And Budget Information Forward
 
@@ -62,18 +62,18 @@ export async function buildWorkflowV2Plan(...)
 - Modify: `src/preload/index.ts`
 - Modify: `src/shared/types.ts`
 
-- [ ] **Step 1: Carry role/model-profile information into runtime request surfaces**
+- [x] **Step 1: Carry role/model-profile information into runtime request surfaces**
 
-- [ ] **Step 2: Pass packetized context instead of full transcripts**
+- [x] **Step 2: Pass packetized context instead of full transcripts**
 
-- [ ] **Step 3: Keep the planner narrow and avoid absorbing execution scheduling logic**
+- [x] **Step 3: Keep the planner narrow and avoid absorbing execution scheduling logic**
 
 ### Task 4: Verification
 
 **Files:**
 - Modify: tests only as needed
 
-- [ ] **Step 1: Run focused planner tests**
+- [x] **Step 1: Run focused planner tests**
 
 Run:
 
@@ -83,7 +83,7 @@ npx vitest run src/shared/workflow-v2/planning.test.ts src/main/workflows/v2/wor
 
 Expected: all pass
 
-- [ ] **Step 2: Run typecheck**
+- [x] **Step 2: Run typecheck**
 
 Run: `npm run typecheck`
 Expected: exit code `0`

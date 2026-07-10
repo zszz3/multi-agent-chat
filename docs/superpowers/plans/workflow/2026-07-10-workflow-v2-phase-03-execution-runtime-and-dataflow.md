@@ -59,7 +59,7 @@ This plan starts by locking that baseline with regression checks, then completes
 - Modify: `src/main/workflows/v2/workflow-v2-scheduler.ts` only if a missing Phase 03 invariant is exposed by the new tests
 - Test: `src/main/workflows/v2/workflow-v2-scheduler.test.ts`
 
-- [ ] **Step 1: Add one more regression that proves the scheduler only unlocks dependents after all upstream nodes complete**
+- [x] **Step 1: Add one more regression that proves the scheduler only unlocks dependents after all upstream nodes complete**
 
 ```ts
 test("keeps a fan-in node blocked until every dependency is completed", () => {
@@ -81,7 +81,7 @@ test("keeps a fan-in node blocked until every dependency is completed", () => {
 });
 ```
 
-- [ ] **Step 2: Run the scheduler test file before touching runtime integration**
+- [x] **Step 2: Run the scheduler test file before touching runtime integration**
 
 Run:
 
@@ -91,7 +91,7 @@ npx vitest run src/main/workflows/v2/workflow-v2-scheduler.test.ts
 
 Expected: the new test fails if readiness or `blockedBy` bookkeeping is incomplete.
 
-- [ ] **Step 3: Apply the smallest scheduler or state fix needed to satisfy the regression without introducing later-phase concepts**
+- [x] **Step 3: Apply the smallest scheduler or state fix needed to satisfy the regression without introducing later-phase concepts**
 
 ```ts
 for (const nodeId of runState.nodeOrder) {
@@ -105,7 +105,7 @@ for (const nodeId of runState.nodeOrder) {
 }
 ```
 
-- [ ] **Step 4: Re-run the scheduler tests**
+- [x] **Step 4: Re-run the scheduler tests**
 
 Run:
 
@@ -115,7 +115,7 @@ npx vitest run src/main/workflows/v2/workflow-v2-scheduler.test.ts
 
 Expected: pass.
 
-- [ ] **Step 5: Commit the scheduler checkpoint**
+- [x] **Step 5: Commit the scheduler checkpoint**
 
 ```bash
 git add src/shared/workflow-v2/state.ts src/main/workflows/v2/workflow-v2-scheduler.ts src/main/workflows/v2/workflow-v2-scheduler.test.ts
@@ -131,7 +131,7 @@ git commit -m "test: lock workflow v2 scheduler readiness"
 - Modify: `src/shared/workflow-run.ts`
 - Test: `src/shared/workflow-v2/packets.test.ts`
 
-- [ ] **Step 1: Write a failing shared-contract test that proves worker data output and control proposals are separate**
+- [x] **Step 1: Write a failing shared-contract test that proves worker data output and control proposals are separate**
 
 ```ts
 import { describe, expect, test } from "vitest";
@@ -161,7 +161,7 @@ describe("workflow-v2 packets", () => {
 });
 ```
 
-- [ ] **Step 2: Run the new shared-contract test**
+- [x] **Step 2: Run the new shared-contract test**
 
 Run:
 
@@ -171,7 +171,7 @@ npx vitest run src/shared/workflow-v2/packets.test.ts
 
 Expected: fail with a missing module or missing export error.
 
-- [ ] **Step 3: Implement the minimal shared packet contract in a new module**
+- [x] **Step 3: Implement the minimal shared packet contract in a new module**
 
 ```ts
 import type { WorkflowV2ResultPacket } from "./planning";
@@ -200,7 +200,7 @@ export function cloneWorkflowV2WorkerOutput(output: WorkflowV2WorkerOutput): Wor
 }
 ```
 
-- [ ] **Step 4: Re-export the new packet types from the shared public surface and expose them to runtime prompt helpers only as read-only input**
+- [x] **Step 4: Re-export the new packet types from the shared public surface and expose them to runtime prompt helpers only as read-only input**
 
 ```ts
 export type {
@@ -222,7 +222,7 @@ export function workflowNodeRunPrompt(
 }
 ```
 
-- [ ] **Step 5: Re-run the packet test**
+- [x] **Step 5: Re-run the packet test**
 
 Run:
 
@@ -232,7 +232,7 @@ npx vitest run src/shared/workflow-v2/packets.test.ts
 
 Expected: pass.
 
-- [ ] **Step 6: Commit the shared packet contract**
+- [x] **Step 6: Commit the shared packet contract**
 
 ```bash
 git add src/shared/workflow-v2/packets.ts src/shared/workflow-v2/packets.test.ts src/shared/types.ts src/shared/workflow-run.ts
@@ -247,7 +247,7 @@ git commit -m "feat: add workflow v2 execution packets"
 - Modify: `src/main/workflows/v2/workflow-v2-scheduler.ts` only if test coverage exposes a missing pure helper
 - Test: `src/main/workflows/v2/workflow-v2-leader.test.ts`
 
-- [ ] **Step 1: Write a failing test for leader navigation assembly**
+- [x] **Step 1: Write a failing test for leader navigation assembly**
 
 ```ts
 import { describe, expect, test } from "vitest";
@@ -283,7 +283,7 @@ describe("workflow-v2 leader", () => {
 });
 ```
 
-- [ ] **Step 2: Run the leader test**
+- [x] **Step 2: Run the leader test**
 
 Run:
 
@@ -293,7 +293,7 @@ npx vitest run src/main/workflows/v2/workflow-v2-leader.test.ts
 
 Expected: fail with a missing module or missing export error.
 
-- [ ] **Step 3: Implement a pure leader overlay that reads run state and worker proposals but never edits edges**
+- [x] **Step 3: Implement a pure leader overlay that reads run state and worker proposals but never edits edges**
 
 ```ts
 import type { WorkflowV2WorkerOutput } from "../../../shared/workflow-v2/packets";
@@ -330,7 +330,7 @@ export function assembleWorkflowV2LeaderNavigation(input: {
 }
 ```
 
-- [ ] **Step 4: Re-run the leader tests**
+- [x] **Step 4: Re-run the leader tests**
 
 Run:
 
@@ -340,7 +340,7 @@ npx vitest run src/main/workflows/v2/workflow-v2-leader.test.ts
 
 Expected: pass.
 
-- [ ] **Step 5: Commit the leader overlay**
+- [x] **Step 5: Commit the leader overlay**
 
 ```bash
 git add src/main/workflows/v2/workflow-v2-leader.ts src/main/workflows/v2/workflow-v2-leader.test.ts
@@ -356,7 +356,7 @@ git commit -m "feat: add workflow v2 leader navigation"
 - Modify: `src/main/workflows/workflow-runtime.ts`
 - Test: `src/main/workflows/v2/workflow-v2-executor.test.ts`
 
-- [ ] **Step 1: Write a failing executor-level test that covers one `llm` node and one `script` node**
+- [x] **Step 1: Write a failing executor-level test that covers one `llm` node and one `script` node**
 
 ```ts
 test("runs ready nodes through model-specific adapters and preserves structured outputs", async () => {
@@ -379,7 +379,7 @@ test("runs ready nodes through model-specific adapters and preserves structured 
 });
 ```
 
-- [ ] **Step 2: Run the executor test**
+- [x] **Step 2: Run the executor test**
 
 Run:
 
@@ -389,7 +389,7 @@ npx vitest run src/main/workflows/v2/workflow-v2-executor.test.ts
 
 Expected: fail because the executor and node runners do not exist yet.
 
-- [ ] **Step 3: Implement the `llm` adapter as a thin wrapper around the existing task runtime dependency surface**
+- [x] **Step 3: Implement the `llm` adapter as a thin wrapper around the existing task runtime dependency surface**
 
 ```ts
 import type { WorkflowV2TaskPacket } from "../../../shared/workflow-v2/planning";
@@ -406,7 +406,7 @@ export async function runWorkflowV2LlmNode(input: {
 }
 ```
 
-- [ ] **Step 4: Implement the `script` adapter with explicit sandbox policy mapping and no review semantics**
+- [x] **Step 4: Implement the `script` adapter with explicit sandbox policy mapping and no review semantics**
 
 ```ts
 import type { WorkflowV2ScriptNode } from "../../../shared/workflow-v2/definition";
@@ -433,7 +433,7 @@ export async function runWorkflowV2ScriptNode(input: {
 }
 ```
 
-- [ ] **Step 5: Re-run the executor test to confirm the adapters satisfy the contract**
+- [x] **Step 5: Re-run the executor test to confirm the adapters satisfy the contract**
 
 Run:
 
@@ -443,7 +443,7 @@ npx vitest run src/main/workflows/v2/workflow-v2-executor.test.ts
 
 Expected: still failing, but now only on the missing execution loop.
 
-- [ ] **Step 6: Commit the adapter layer**
+- [x] **Step 6: Commit the adapter layer**
 
 ```bash
 git add src/main/workflows/v2/workflow-v2-llm-runner.ts src/main/workflows/v2/workflow-v2-script-runner.ts src/main/workflows/v2/workflow-v2-executor.test.ts src/main/workflows/workflow-runtime.ts
@@ -460,7 +460,7 @@ git commit -m "feat: add workflow v2 node runners"
 - Test: `src/main/workflows/v2/workflow-v2-executor.test.ts`
 - Test: `src/main/workflows/workflow-runtime.test.ts`
 
-- [ ] **Step 1: Extend the executor test so a completed upstream node unlocks the next runnable node and a failed node stops the run**
+- [x] **Step 1: Extend the executor test so a completed upstream node unlocks the next runnable node and a failed node stops the run**
 
 ```ts
 test("stops the run when a node fails and leaves downstream nodes blocked", async () => {
@@ -481,7 +481,7 @@ test("stops the run when a node fails and leaves downstream nodes blocked", asyn
 });
 ```
 
-- [ ] **Step 2: Run the executor and runtime tests**
+- [x] **Step 2: Run the executor and runtime tests**
 
 Run:
 
@@ -491,7 +491,7 @@ npx vitest run src/main/workflows/v2/workflow-v2-executor.test.ts src/main/workf
 
 Expected: fail because the loop is not wired yet.
 
-- [ ] **Step 3: Implement the execution loop with scheduler-driven batching and adapter dispatch**
+- [x] **Step 3: Implement the execution loop with scheduler-driven batching and adapter dispatch**
 
 ```ts
 export async function executeWorkflowV2Plan(input: {
@@ -538,7 +538,7 @@ export async function executeWorkflowV2Plan(input: {
 }
 ```
 
-- [ ] **Step 4: Bridge the existing runtime into the new executor through a thin V2 path instead of rewriting the legacy path**
+- [x] **Step 4: Bridge the existing runtime into the new executor through a thin V2 path instead of rewriting the legacy path**
 
 ```ts
 if (workflow.workflowV2Plan) {
@@ -550,7 +550,7 @@ if (workflow.workflowV2Plan) {
 }
 ```
 
-- [ ] **Step 5: Re-run the executor and runtime tests**
+- [x] **Step 5: Re-run the executor and runtime tests**
 
 Run:
 
@@ -560,7 +560,7 @@ npx vitest run src/main/workflows/v2/workflow-v2-executor.test.ts src/main/workf
 
 Expected: pass.
 
-- [ ] **Step 6: Commit the execution loop**
+- [x] **Step 6: Commit the execution loop**
 
 ```bash
 git add src/main/workflows/v2/workflow-v2-executor.ts src/main/workflows/v2/workflow-v2-executor.test.ts src/main/workflows/workflow-runtime.ts src/main/workflows/workflow-runtime.test.ts
@@ -572,7 +572,7 @@ git commit -m "feat: execute workflow v2 frozen graphs"
 **Files:**
 - Modify: tests only as needed
 
-- [ ] **Step 1: Run the focused Phase 03 suite**
+- [x] **Step 1: Run the focused Phase 03 suite**
 
 Run:
 
@@ -582,7 +582,7 @@ npx vitest run src/shared/workflow-v2/packets.test.ts src/main/workflows/v2/work
 
 Expected: pass.
 
-- [ ] **Step 2: Run the broader Workflow V2 regression suite**
+- [x] **Step 2: Run the broader Workflow V2 regression suite**
 
 Run:
 
@@ -592,7 +592,7 @@ npx vitest run src/shared/workflow-v2/templates.test.ts src/shared/workflow-v2/v
 
 Expected: pass.
 
-- [ ] **Step 3: Run typecheck and isolate pre-existing repo failures from new Workflow V2 regressions**
+- [x] **Step 3: Run the repository-wide typecheck and isolate any Workflow V2 regressions**
 
 Run:
 
@@ -601,12 +601,9 @@ npm run typecheck 2>&1 | tee /tmp/workflow-v2-phase-03-typecheck.log
 rg "workflow-v2|workflow-runtime|agent-hub-workflow" /tmp/workflow-v2-phase-03-typecheck.log
 ```
 
-Expected:
+Final result on 2026-07-10: the repository-wide typecheck exits `0`; no filtered exceptions remain.
 
-- the first command may still fail on the pre-existing missing-module errors outside Workflow V2
-- the second command should print no new Workflow V2 type errors
-
-- [ ] **Step 4: Inspect the final diff for accidental Phase 04 or Phase 05 spillover**
+- [x] **Step 4: Inspect the final diff for accidental Phase 04 or Phase 05 spillover**
 
 Run:
 
@@ -617,7 +614,7 @@ git diff -- docs/superpowers/specs/workflow/2026-07-10-workflow-v2-phase-03-exec
 
 Expected: changes stay inside Phase 03 boundaries.
 
-- [ ] **Step 5: Commit the verification checkpoint**
+- [x] **Step 5: Commit the verification checkpoint**
 
 ```bash
 git add docs/superpowers/plans/workflow/2026-07-10-workflow-v2-phase-03-execution-runtime-and-dataflow.md

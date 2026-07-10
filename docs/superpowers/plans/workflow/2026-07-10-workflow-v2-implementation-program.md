@@ -21,7 +21,7 @@
 - Create: `src/shared/workflow-v2/hooks.ts`
 - Modify: `src/shared/types.ts`
 
-- [ ] **Step 1: Introduce a dedicated shared module namespace for Workflow V2 contracts**
+- [x] **Step 1: Introduce a dedicated shared module namespace for Workflow V2 contracts**
 
 ```ts
 export interface WorkflowV2Definition { ... }
@@ -29,14 +29,14 @@ export interface WorkflowV2Plan { ... }
 export interface WorkflowV2RunState { ... }
 ```
 
-- [ ] **Step 2: Keep legacy workflow graph contracts isolated instead of silently mutating them in place**
+- [x] **Step 2: Keep legacy workflow graph contracts isolated instead of silently mutating them in place**
 
 ```ts
 // Existing workflow graph types stay for current UI/runtime compatibility.
 // Workflow V2 contracts live under shared/workflow-v2/.
 ```
 
-- [ ] **Step 3: Re-export only the minimal public surface needed by main/preload/renderer**
+- [x] **Step 3: Re-export only the minimal public surface needed by main/preload/renderer**
 
 Run: `npm run typecheck`
 Expected: exit code `0`
@@ -52,13 +52,13 @@ Expected: exit code `0`
   - `docs/superpowers/plans/workflow/2026-07-10-workflow-v2-phase-05-persistence-cache-and-recovery.md`
   - `docs/superpowers/plans/workflow/2026-07-10-workflow-v2-phase-06-hooks-and-extension-surface.md`
 
-- [ ] **Step 1: Do not skip phase ordering**
+- [x] **Step 1: Do not skip phase ordering**
 
 ```text
 Phase 01 -> Phase 02 -> Phase 03 -> Phase 04 -> Phase 05 -> Phase 06
 ```
 
-- [ ] **Step 2: Treat each phase plan as self-contained and avoid absorbing later-phase work early**
+- [x] **Step 2: Treat each phase plan as self-contained and avoid absorbing later-phase work early**
 
 ```text
 If a phase needs a later contract, stop and tighten the earlier boundary instead of improvising.
@@ -75,28 +75,28 @@ If a phase needs a later contract, stop and tighten the earlier boundary instead
 - Modify: `src/renderer/src/pages/workflow/WorkflowPage.tsx`
 - Modify: `src/renderer/src/pages/workflow/workflow-utils.ts`
 
-- [ ] **Step 1: Keep current workflow UX functional while adding a V2-oriented execution path**
+- [x] **Step 1: Keep current workflow UX functional while adding a V2-oriented execution path**
 
 ```ts
 // Prefer an explicit v2 entry or adapter boundary rather than rewriting the
 // current workflow runtime in one opaque pass.
 ```
 
-- [ ] **Step 2: Expose only contracts that the renderer actually needs**
+- [x] **Step 2: Expose only contracts that the renderer actually needs**
 
 ```ts
 type WorkflowV2RunSummary = { ... }
 type WorkflowV2NodeProgress = { ... }
 ```
 
-- [ ] **Step 3: Avoid coupling renderer state directly to raw persistence or hook internals**
+- [x] **Step 3: Avoid coupling renderer state directly to raw persistence or hook internals**
 
 ### Task 4: Verification And Rollout Proof
 
 **Files:**
 - Modify: tests only as needed
 
-- [ ] **Step 1: Run focused shared and runtime verification after each phase**
+- [x] **Step 1: Run focused shared and runtime verification after each phase**
 
 Run:
 
@@ -106,7 +106,7 @@ npx vitest run src/shared/workflow-graph.test.ts src/shared/workflow-run.test.ts
 
 Expected: all pass
 
-- [ ] **Step 2: Run final typed verification once all phases land**
+- [x] **Step 2: Run final typed verification once all phases land**
 
 Run:
 
@@ -117,4 +117,13 @@ npx vitest run src/main/workflows/workflow-runtime.test.ts src/preload/index.tes
 
 Expected: exit code `0` and 0 failures
 
-- [ ] **Step 3: Inspect git diff for accidental broad rewrites across unrelated hub/runtime modules**
+- [x] **Step 3: Inspect git diff for accidental broad rewrites across unrelated hub/runtime modules**
+
+Final result on 2026-07-10:
+
+```text
+npm run typecheck: passed
+npm test: 91 files passed, 766 tests passed
+```
+
+The final diff is confined to Workflow V2 contracts/runtime/product wiring/documentation plus the compatibility import-path repair required after synchronizing `origin/main`. User-local `.idea/workspace.xml` changes were not staged.

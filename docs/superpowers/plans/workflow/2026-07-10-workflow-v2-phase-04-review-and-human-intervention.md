@@ -101,11 +101,11 @@ npx vitest run src/main/workflows/v2/workflow-v2-validation.test.ts src/main/wor
 
 Expected: all pass
 
-Latest cross-layer Workflow V2 verification: 456 tests passed across shared contracts, executor/runtime, AgentHub, preload, and renderer layout.
+Final repository verification: 91 test files and 766 tests passed across shared contracts, executor/runtime, AgentHub, preload, and renderer.
 
-- [ ] **Step 2: Run typecheck**
+- [x] **Step 2: Run typecheck**
 
 Run: `npm run typecheck`
 Expected: exit code `0`
 
-Workflow V2, AgentHub, preload, and renderer paths report no type errors. Repository-wide typecheck remains blocked by pre-existing legacy runtime wrapper imports outside Workflow V2.
+Result on 2026-07-10: exit code `0`.

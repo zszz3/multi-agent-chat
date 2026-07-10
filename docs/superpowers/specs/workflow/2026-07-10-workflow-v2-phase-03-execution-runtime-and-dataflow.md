@@ -4,7 +4,7 @@
 
 ### Status
 
-Draft on 2026-07-10.
+Implemented and verified on 2026-07-10. Frozen-plan execution, dependency and lock scheduling, packetized dataflow, leader navigation, and narrow LLM/script adapters are active in the WorkflowRuntime V2 path.
 
 ### This File Is Self-Contained
 
@@ -150,3 +150,10 @@ This phase is complete only when:
 - parallelism is bounded and lock-aware
 - worker data and control proposals are distinct
 - leader or orchestrator control remains outside the edge model
+
+### Verification Evidence
+
+- Scheduler tests cover fan-in readiness, concurrency ceilings, resource-lock exclusion, failure, and skipped-dependency propagation.
+- Packet and leader tests prove worker data/proposals remain separate and navigation does not mutate graph edges.
+- Executor/runtime tests cover parallel batches, dependency order, direct-upstream packet budgets, LLM/script dispatch, validation/review boundaries, checkpoint resume, failure, pause, skip, and hook lifecycle integration.
+- The final repository-wide typecheck and 766-test suite pass.
