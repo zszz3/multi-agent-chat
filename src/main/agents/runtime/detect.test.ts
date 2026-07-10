@@ -1,5 +1,19 @@
 import { afterEach, describe, expect, test, vi } from "vitest";
+import type { ExecutableLocator } from "../../platform/cli-locator";
 import { parseCliVersion } from "./detect";
+
+function identityExecutableLocator(): ExecutableLocator {
+  return {
+    async resolve({ executable }) {
+      return {
+        requested: executable,
+        resolvedPath: executable,
+        source: "explicit",
+        kind: executable.toLowerCase().endsWith(".cmd") ? "cmd" : "script",
+      };
+    },
+  };
+}
 
 afterEach(() => {
   vi.restoreAllMocks();
@@ -33,7 +47,10 @@ describe("detectAgentRuntimes", () => {
     vi.doMock("../../platform/cli-launcher", () => ({ execCli }));
     const { detectAgentRuntimes } = await import("./detect");
 
-    const runtimes = await detectAgentRuntimes();
+    const runtimes = await detectAgentRuntimes(undefined, {
+      execute: execCli,
+      executableLocator: identityExecutableLocator(),
+    });
     const codex = runtimes.find((runtime) => runtime.id === "codex");
 
     expect(codex).toMatchObject({
@@ -64,7 +81,10 @@ describe("detectAgentRuntimes", () => {
     vi.doMock("../../platform/cli-launcher", () => ({ execCli }));
     const { detectAgentRuntimes } = await import("./detect");
 
-    const runtimes = await detectAgentRuntimes();
+    const runtimes = await detectAgentRuntimes(undefined, {
+      execute: execCli,
+      executableLocator: identityExecutableLocator(),
+    });
     expect(runtimes.find((runtime) => runtime.id === "hermes")).toMatchObject({
       id: "hermes",
       command: "C:\\Users\\demo\\AppData\\Local\\Programs\\Hermes\\hermes.cmd",
@@ -82,7 +102,10 @@ describe("detectAgentRuntimes", () => {
     });
     vi.doMock("../../platform/cli-launcher", () => ({ execCli }));
     const { detectAgentRuntimes } = await import("./detect");
-    const runtimes = await detectAgentRuntimes();
+    const runtimes = await detectAgentRuntimes(undefined, {
+      execute: execCli,
+      executableLocator: identityExecutableLocator(),
+    });
     expect(runtimes.find((runtime) => runtime.id === "opencode")).toMatchObject({
       id: "opencode",
       command: "C:\\Users\\demo\\AppData\\Roaming\\npm\\opencode.cmd",
@@ -100,7 +123,10 @@ describe("detectAgentRuntimes", () => {
     });
     vi.doMock("../../platform/cli-launcher", () => ({ execCli }));
     const { detectAgentRuntimes } = await import("./detect");
-    const runtimes = await detectAgentRuntimes();
+    const runtimes = await detectAgentRuntimes(undefined, {
+      execute: execCli,
+      executableLocator: identityExecutableLocator(),
+    });
     expect(runtimes.find((runtime) => runtime.id === "openclaw")).toMatchObject({
       id: "openclaw",
       command: "C:\\Users\\demo\\AppData\\Roaming\\npm\\openclaw.cmd",

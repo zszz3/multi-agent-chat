@@ -11,6 +11,13 @@ Execute them in order. A phase may start only after the preceding phase satisfie
 5. [Phase 04: Runtime Certification](2026-07-10-windows-phase-04-runtime-certification.md)
 6. [Phase 05: CI, Signing, And Release](2026-07-10-windows-phase-05-ci-signing-and-release.md)
 
+## Progress Snapshot
+
+- Phase 00: planning baseline defined; Windows-hosted compatibility evidence is still required.
+- Phase 01: in progress; cross-platform window/resources and cross-built NSIS artifacts are implemented, while Windows install/upgrade/uninstall validation is pending.
+- Phase 02: in progress; the executable locator and Runtime detection integration are implemented, while process-tree, path-policy, junction, and full platform composition work is pending.
+- Phases 03-05: proposed and dependent on the earlier phase contracts and Windows evidence.
+
 ## Program Rule
 
 - Windows-specific behavior belongs in platform adapters, packaging configuration, or runtime-local integration code.

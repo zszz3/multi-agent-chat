@@ -18,6 +18,8 @@ export interface CliExecRequest extends Omit<ExecFileOptionsWithStringEncoding, 
   args?: string[];
 }
 
+export type ExecCli = (request: CliExecRequest) => Promise<{ stdout: string; stderr: string }>;
+
 function shouldUseWindowsCmd(executable: string, platform = process.platform): boolean {
   if (platform !== "win32") return false;
   const normalized = executable.trim().toLowerCase();

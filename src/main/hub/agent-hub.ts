@@ -731,7 +731,7 @@ export class AgentHub {
   }
 
   async refreshAgents(): Promise<AppSnapshot> {
-    const runtimes = await detectAgentRuntimes();
+    const runtimes = await detectAgentRuntimes(this.executables);
     for (const runtime of runtimes) {
       this.runtimes.set(runtime.id, runtime);
     }

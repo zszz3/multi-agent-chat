@@ -4,11 +4,35 @@
 
 ### Status
 
-Proposed. May prototype after Phase 00; final validation uses the Phase 01 installed artifact.
+In progress. The first executable-discovery slice was implemented on 2026-07-10. Process-tree control, filesystem hardening, full `PlatformServices` composition, and Windows-hosted validation remain pending.
 
 ## Goal
 
 Provide one reliable Windows platform layer for executable discovery, structured CLI invocation, cancellation, process-tree cleanup, and filesystem authorization. Runtime drivers consume this layer without introducing Windows branches in `AgentHub`, Chat, Task, or Workflow.
+
+## Implementation Progress
+
+Completed:
+
+- introduced the independently testable `ExecutableResolver` and `ExecutableLocator` contracts;
+- added an ordered locator chain for explicit paths, Windows `where.exe`, the user npm shim under `%APPDATA%`, and the existing non-Windows command fallback;
+- represented resolved executable path, discovery source, and executable kind as structured data;
+- routed Runtime version detection through the locator before invocation;
+- kept `detectAgentRuntimes(...)` backward compatible while allowing locator and launcher injection in tests and future platform composition;
+- preserved constructor and environment executable overrides when `AgentHub.refreshAgents()` reruns detection;
+- added host-independent tests for Windows path normalization, `where.exe` results, npm-shim fallback, and non-Windows behavior;
+- verified Codex, Hermes, OpenCode, and OpenClaw detection with injected executable resolution.
+
+Pending:
+
+- compose the locator, process launcher, process-tree controller, path policy, and Phase 01 resource locator behind `createPlatformServices(...)`;
+- preserve environment overrides as a separately classified `environment` resolution source instead of only preselecting them in `resolveRuntimeExecutables(...)`;
+- add bounded locator caching, ambiguity handling, and classified remediation for unresolved executables;
+- replace the remaining hand-written Windows command quoting with the selected mature spawn adapter and complete metacharacter/Unicode fixtures;
+- implement process-tree cancellation and forced cleanup for Windows and POSIX;
+- harden local-file containment and skill-junction ownership;
+- add configuration file-picking and actionable detection states;
+- run the integration suite from the Phase 01 installed artifact on Windows.
 
 ## Target Files
 
@@ -20,6 +44,7 @@ Modify:
 - `src/main/platform/local-file-preview.test.ts`
 - `src/main/agents/runtime/detect.ts`
 - `src/main/agents/runtime/detect.test.ts`
+- `src/main/hub/agent-hub.ts`
 - `src/main/skills/skill-installer.ts`
 - relevant Runtime runners only to consume the shared process API
 
