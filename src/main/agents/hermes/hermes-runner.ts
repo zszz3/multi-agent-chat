@@ -1,5 +1,4 @@
 import type { ChildProcess } from "node:child_process";
-import { createInterface } from "node:readline";
 import type { AgentEvent } from "../../../shared/types";
 import { spawnCli } from "../../platform/cli-launcher";
 
@@ -16,16 +15,15 @@ export interface HermesRunOptions {
 
 export class HermesRunner {
   private proc: ChildProcess | null = null;
-  private lastSessionId: string | undefined;
+  private stopping = false;
 
   constructor(private readonly options: HermesRunOptions) {}
 
   async start(): Promise<void> {
-    const args = ["run", "--json"];
+    const args = ["-z", this.options.prompt];
     if (this.options.modelId && this.options.modelId !== "default") {
       args.push("--model", this.options.modelId);
     }
-    args.push(this.options.prompt);
 
     const proc = spawnCli({
       executable: this.options.executable,
@@ -35,78 +33,61 @@ export class HermesRunner {
       stdio: ["ignore", "pipe", "pipe"],
     });
     this.proc = proc;
+    this.stopping = false;
 
     if (!proc.stdout || !proc.stderr) {
       throw new Error("Hermes runner failed to create stdout/stderr pipes");
     }
 
-    proc.stderr.on("data", (chunk: Buffer) => {
-      this.options.onStderr?.(chunk.toString());
+    let stdout = "";
+    let stderr = "";
+    proc.stdout.on("data", (chunk: Buffer) => {
+      stdout += chunk.toString();
     });
-
-    const rl = createInterface({ input: proc.stdout });
-    rl.on("line", (line) => {
-      if (!line.trim()) return;
-      this.handleLine(line);
+    proc.stderr.on("data", (chunk: Buffer) => {
+      const text = chunk.toString();
+      stderr += text;
+      this.options.onStderr?.(text);
     });
 
     return await new Promise<void>((resolve, reject) => {
-      proc.on("exit", (code) => {
-        rl.close();
-        this.options.onExit(code);
+      let settled = false;
+      const finish = (callback: () => void): void => {
+        if (settled) return;
+        settled = true;
+        this.proc = null;
+        callback();
+      };
+
+      proc.once("exit", (code) => {
+        finish(() => {
+          const content = stdout.trim();
+          if (!this.stopping && code === 0) {
+            if (content) this.options.onEvent({ type: "completed", content });
+            else this.options.onEvent({ type: "error", error: "Hermes completed without assistant text." });
+          } else if (!this.stopping) {
+            const detail = stderr.trim() || content || "no output";
+            this.options.onEvent({ type: "error", error: `Hermes exited with ${code ?? "unknown"}: ${detail.slice(0, 800)}` });
+          }
+          this.options.onExit(this.stopping ? null : code);
+          this.stopping = false;
+        });
         resolve();
       });
 
-      proc.on("error", (error) => {
-        this.options.onEvent({ type: "error", error: error.message });
-        rl.close();
-        this.options.onExit(null);
+      proc.once("error", (error) => {
+        finish(() => {
+          this.options.onEvent({ type: "error", error: error.message });
+          this.options.onExit(null);
+          this.stopping = false;
+        });
         reject(error);
       });
     });
   }
 
   async stop(): Promise<void> {
+    this.stopping = true;
     this.proc?.kill("SIGINT");
-    this.proc = null;
-  }
-
-  private handleLine(line: string): void {
-    try {
-      const raw = JSON.parse(line) as {
-        type?: unknown;
-        content?: unknown;
-        sessionId?: unknown;
-        error?: unknown;
-      };
-      if (typeof raw.sessionId === "string" && raw.sessionId !== this.lastSessionId) {
-        this.lastSessionId = raw.sessionId;
-        this.options.onEvent({
-          type: "runtime_conversation",
-          runtimeConversation: {
-            runtimeId: "hermes",
-            codecVersion: "v1",
-            payload: { sessionId: raw.sessionId },
-          },
-        });
-      }
-      if (raw.type === "delta" && typeof raw.content === "string") {
-        this.options.onEvent({ type: "delta", content: raw.content });
-        return;
-      }
-      if (raw.type === "completed") {
-        if (typeof raw.content === "string") {
-          this.options.onEvent({ type: "completed", content: raw.content });
-        } else {
-          this.options.onEvent({ type: "completed" });
-        }
-        return;
-      }
-      if (raw.type === "error" && typeof raw.error === "string") {
-        this.options.onEvent({ type: "error", error: raw.error });
-      }
-    } catch {
-      // Ignore non-JSON noise from the CLI.
-    }
   }
 }

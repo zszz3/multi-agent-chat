@@ -160,8 +160,8 @@ export function RuntimePage({
   const runtimeTitle = language === "zh" ? "配置" : "Config";
   const runtimeDescription =
     language === "zh"
-      ? "管理 Codex / Claude / API 执行器、Provider、API Key、插件和模型。"
-      : "Manage Codex / Claude / API executors, providers, API keys, plugins, and models.";
+      ? "管理 Codex / Claude / API / Hermes / OpenCode / OpenClaw 执行器、Provider、API Key、插件和模型。"
+      : "Manage Codex / Claude / API / Hermes / OpenCode / OpenClaw executors, providers, API keys, plugins, and models.";
   const channelTitle = language === "zh" ? "配置项" : "Configs";
   const addConfigText = language === "zh" ? "新增配置" : "Add config";
   const deleteConfigText = language === "zh" ? "删除配置" : "Delete config";
@@ -303,8 +303,10 @@ export function RuntimePage({
                   onContextMenu={(event) => onOpenContextMenu(event, channel.id)}
                 >
                   <span className={`agent-badge mini ${agentAccent(channel.agentId)}`}>{agentLabel(channel.agentId)}</span>
-                  <strong>{channel.label || channel.id}</strong>
-                  <span>{channel.providerName ?? channel.modelProvider ?? channel.id}</span>
+                  <strong title={channel.label || channel.id}>{channel.label || channel.id}</strong>
+                  <span title={channel.providerName ?? channel.modelProvider ?? channel.id}>
+                    {channel.providerName ?? channel.modelProvider ?? channel.id}
+                  </span>
                 </button>
               ))
             )}
@@ -447,9 +449,10 @@ export function RuntimePage({
                       type="button"
                       key={agentId}
                       className={`agent-provider-preset ${selectedRuntime === agentId ? "is-active" : ""}`}
+                      title={agentLabel(agentId)}
                       onClick={() => selectRuntime(agentId)}
                     >
-                      <span className={`agent-badge mini ${agentAccent(agentId)}`}>{agentLabel(agentId)}</span>
+                      <span className={`runtime-choice-dot ${agentAccent(agentId)}`} aria-hidden="true" />
                       <strong>{agentLabel(agentId)}</strong>
                     </button>
                   ))}

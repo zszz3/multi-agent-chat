@@ -4,7 +4,7 @@
 
 ### Status
 
-Proposed on 2026-07-10.
+Implemented on 2026-07-10. The registry/router onboarding harness and Hermes protocol/session tests provide the current proof.
 
 This file defines how a new runtime must be validated when it is onboarded.
 
@@ -93,12 +93,14 @@ If the runtime does not declare runtime conversation persistence, validate that 
 
 ### Hermes
 
-Hermes should initially be validated as a conservative runtime:
+Hermes is validated against its two documented surfaces:
 
-- one-shot path
-- workflow one-shot path if implemented
-- channel-test if implemented
-- explicit rejection for unsupported interactive combinations
+- `hermes -z` one-shot argument construction and output/error handling
+- `hermes acp` session creation, event streaming, model selection, approvals, interrupt, detach, and resume
+- codec validation and persisted runtime conversation restoration
+- native session cleanup command construction
+
+The protocol tests use a fake ACP subprocess. A release smoke test with a real authenticated Hermes installation remains an environment-level check.
 
 ### OpenClaw
 

@@ -62,7 +62,7 @@ function createFallbackConfigChannels(): AgentChannel[] {
       agentId,
       models: FALLBACK_MODEL_OPTIONS[agentId].some((model) => model.id === DEFAULT_MODEL_ID)
         ? FALLBACK_MODEL_OPTIONS[agentId]
-        : [{ id: DEFAULT_MODEL_ID, label: "Default" }, ...FALLBACK_MODEL_OPTIONS[agentId]],
+      : [{ id: DEFAULT_MODEL_ID, label: "Default" }, ...FALLBACK_MODEL_OPTIONS[agentId]],
     };
   });
 }

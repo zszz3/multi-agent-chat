@@ -43,9 +43,33 @@ export const RUNTIME_DEFINITIONS = [
     executableEnv: "HERMES_PATH",
     detection: "cli",
     defaultChannel: {
-      id: "hermes-local",
-      label: "Hermes",
-      presetId: "hermes-local",
+      id: "hermes-default",
+      label: "Hermes Default",
+      presetId: "hermes-default",
+    },
+  },
+  {
+    id: "opencode",
+    label: "OpenCode",
+    executable: "opencode",
+    executableEnv: "OPENCODE_PATH",
+    detection: "cli",
+    defaultChannel: {
+      id: "opencode-default",
+      label: "OpenCode Default",
+      presetId: "opencode-default",
+    },
+  },
+  {
+    id: "openclaw",
+    label: "OpenClaw",
+    executable: "openclaw",
+    executableEnv: "OPENCLAW_PATH",
+    detection: "cli",
+    defaultChannel: {
+      id: "openclaw-default",
+      label: "OpenClaw Default",
+      presetId: "openclaw-default",
     },
   },
 ] as const;

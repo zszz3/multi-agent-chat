@@ -1175,6 +1175,11 @@ describe("AgentPage", () => {
     expect(html).toContain("github@openai-curated");
     expect(html).toContain("Loaded 2 plugins");
     expect(html).not.toContain("aria-label=\"Agent prompt\"");
+    expect(html).toContain('class="runtime-choice-dot agent-hermes"');
+    expect(html).toContain('class="runtime-choice-dot agent-opencode"');
+    expect(html).toContain('class="runtime-choice-dot agent-openclaw"');
+    expect(styles).toContain(".agent-provider-preset-list {\n  display: grid;\n  grid-template-columns: repeat(6, minmax(0, 1fr));");
+    expect(styles).toContain("@media (max-width: 820px) {\n  .runtime-layout {\n    grid-template-columns: 1fr;");
   });
 
   test("shows the stored channel key ahead of stale provider key cache", () => {

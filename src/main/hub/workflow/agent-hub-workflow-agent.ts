@@ -6,7 +6,10 @@ import type {
   WorkflowAgentResponse,
   WorkflowDraftState,
 } from "../../../shared/types";
-import { createWorkflowDraftAgentRequest } from "./agent-hub-workflow-draft-reply-state";
+import {
+  createWorkflowDraftInteractiveRequest,
+  type WorkflowDraftInteractiveRequest,
+} from "./agent-hub-workflow-draft-reply-state";
 
 export async function runWorkflowDraftReply(input: {
   started: {
@@ -15,11 +18,9 @@ export async function runWorkflowDraftReply(input: {
     starting: boolean;
   };
   reply: string;
-  defaultRuntimeId: AgentId;
-  resolveRuntimeId: (configuredAgentId: string, modelId: string) => AgentId | undefined;
   defaultWorkDir: string;
-  askWorkflowAgent: (
-    request: WorkflowAgentRequest,
+  askWorkflowDraftAgent: (
+    request: WorkflowDraftInteractiveRequest,
     onEvent?: (event: WorkflowAgentEvent) => void,
   ) => Promise<WorkflowAgentResponse>;
   handleEvent: (workflowId: string, event: WorkflowAgentEvent) => void;
@@ -32,12 +33,10 @@ export async function runWorkflowDraftReply(input: {
   failRequest: (workflowId: string, requestId: string, error: string) => void;
 }): Promise<void> {
   try {
-    const response = await input.askWorkflowAgent(
-      createWorkflowDraftAgentRequest({
+    const response = await input.askWorkflowDraftAgent(
+      createWorkflowDraftInteractiveRequest({
         started: input.started,
         reply: input.reply,
-        defaultRuntimeId: input.defaultRuntimeId,
-        resolveRuntimeId: input.resolveRuntimeId,
         defaultWorkDir: input.defaultWorkDir,
       }),
       (event) => input.handleEvent(input.started.next.workflowId, event),

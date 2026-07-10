@@ -28,7 +28,7 @@ export function createInteractiveRuntimeDriver(input: {
     createInteractiveSession: input.createInteractiveSession,
     ...(input.askWorkflow ? { askWorkflow: input.askWorkflow } : {}),
     ...(input.testChannel ? { testChannel: input.testChannel } : {}),
-    deleteSessionArtifacts: input.deleteSessionArtifacts ?? (async () => undefined),
+    ...(input.deleteSessionArtifacts ? { deleteSessionArtifacts: input.deleteSessionArtifacts } : {}),
   };
 }
 
@@ -50,6 +50,6 @@ export function createOneShotRuntimeDriver(input: {
     createOneShotExecutor: input.createOneShotExecutor,
     ...(input.askWorkflow ? { askWorkflow: input.askWorkflow } : {}),
     ...(input.testChannel ? { testChannel: input.testChannel } : {}),
-    deleteSessionArtifacts: input.deleteSessionArtifacts ?? (async () => undefined),
+    ...(input.deleteSessionArtifacts ? { deleteSessionArtifacts: input.deleteSessionArtifacts } : {}),
   };
 }

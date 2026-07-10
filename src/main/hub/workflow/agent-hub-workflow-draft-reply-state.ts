@@ -1,6 +1,5 @@
 import type {
-  AgentId,
-  WorkflowAgentRequest,
+  RuntimeConversation,
   WorkflowDraftState,
 } from "../../../shared/types";
 import { buildWorkflowAgentPrompt } from "../../../shared/workflow-agent";
@@ -71,26 +70,36 @@ export function abandonWorkflowDraftReplyState(input: {
   });
 }
 
-export function createWorkflowDraftAgentRequest(input: {
+export interface WorkflowDraftInteractiveRequest {
+  workflowId: string;
+  requestId: string;
+  prompt: string;
+  configuredAgentId: string;
+  modelId: string;
+  workDir: string;
+  starting: boolean;
+  runtimeConversation?: RuntimeConversation;
+}
+
+export function createWorkflowDraftInteractiveRequest(input: {
   started: {
     next: WorkflowDraftState;
     request: { requestId: string; assistantMessageId: string; content: string };
     starting: boolean;
   };
   reply: string;
-  defaultRuntimeId: AgentId;
-  resolveRuntimeId: (configuredAgentId: string, modelId: string) => AgentId | undefined;
   defaultWorkDir: string;
-}): WorkflowAgentRequest {
+}): WorkflowDraftInteractiveRequest {
   return {
+    workflowId: input.started.next.workflowId,
     requestId: input.started.request.requestId,
     prompt: input.started.starting ? buildWorkflowAgentPrompt({ objective: input.reply }) : input.reply,
     configuredAgentId: input.started.next.configuredAgentId,
-    runtimeId:
-      input.resolveRuntimeId(input.started.next.configuredAgentId, input.started.next.modelId) ?? input.defaultRuntimeId,
-    executionMode: "oneshot",
-    continuationPolicy: "fresh",
-    runtimeConfig: { model: input.started.next.modelId },
+    modelId: input.started.next.modelId,
     workDir: input.started.next.workDir || input.defaultWorkDir,
+    starting: input.started.starting,
+    ...(input.started.next.runtimeConversation
+      ? { runtimeConversation: input.started.next.runtimeConversation }
+      : {}),
   };
 }

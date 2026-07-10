@@ -22,10 +22,31 @@ describe("runtime catalog", () => {
 
   test("includes Hermes fallback models, default channel, and provider preset", () => {
     expect(FALLBACK_MODEL_OPTIONS.hermes.map((model) => model.id)).toContain("default");
-    expect(DEFAULT_CONFIG_CHANNEL_IDS.hermes).toBe("hermes-local");
-    expect(AGENT_PROVIDER_PRESETS.find((preset) => preset.id === "hermes-local")).toMatchObject({
+    expect(DEFAULT_CONFIG_CHANNEL_IDS.hermes).toBe("hermes-default");
+    expect(AGENT_PROVIDER_PRESETS.find((preset) => preset.id === "hermes-default")).toMatchObject({
       runtimeAgentId: "hermes",
-      label: "Hermes",
+      label: "Default",
+      configurableModelId: true,
+    });
+  });
+
+  test("includes OpenCode fallback models, default channel, and provider preset", () => {
+    expect(FALLBACK_MODEL_OPTIONS.opencode.map((model) => model.id)).toContain("default");
+    expect(DEFAULT_CONFIG_CHANNEL_IDS.opencode).toBe("opencode-default");
+    expect(AGENT_PROVIDER_PRESETS.find((preset) => preset.id === "opencode-default")).toMatchObject({
+      runtimeAgentId: "opencode",
+      label: "Default",
+      configurableModelId: true,
+    });
+  });
+
+  test("includes OpenClaw fallback models, default channel, and provider preset", () => {
+    expect(FALLBACK_MODEL_OPTIONS.openclaw.map((model) => model.id)).toContain("default");
+    expect(DEFAULT_CONFIG_CHANNEL_IDS.openclaw).toBe("openclaw-default");
+    expect(AGENT_PROVIDER_PRESETS.find((preset) => preset.id === "openclaw-default")).toMatchObject({
+      runtimeAgentId: "openclaw",
+      label: "Default",
+      configurableModelId: true,
     });
   });
 

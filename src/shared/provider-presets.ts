@@ -3,6 +3,9 @@ import type { AgentId, AgentModelOption, ClaudeApiKeyField, RuntimeProviderApiFo
 import { CC_SWITCH_PROVIDER_PRESETS } from "./cc-switch-provider-presets.generated";
 
 export const CODEX_DEFAULT_PRESET_ID = "codex-default";
+export const HERMES_DEFAULT_PRESET_ID = "hermes-default";
+export const OPENCODE_DEFAULT_PRESET_ID = "opencode-default";
+export const OPENCLAW_DEFAULT_PRESET_ID = "openclaw-default";
 
 export interface AgentProviderPreset {
   id: string;
@@ -544,10 +547,31 @@ const LEGACY_PROVIDER_PRESETS: AgentProviderPreset[] = [
     models: [{ id: DEFAULT_MODEL_ID, label: "Default" }],
   },
   {
-    id: "hermes-local",
-    label: "Hermes",
+    id: HERMES_DEFAULT_PRESET_ID,
+    label: "Default",
     runtimeAgentId: "hermes",
     models: FALLBACK_MODEL_OPTIONS.hermes,
+    configurableModelId: true,
+    configurableModelLabel: "Hermes model",
+    configurableModelPlaceholder: "Use Hermes profile default",
+  },
+  {
+    id: OPENCODE_DEFAULT_PRESET_ID,
+    label: "Default",
+    runtimeAgentId: "opencode",
+    models: FALLBACK_MODEL_OPTIONS.opencode,
+    configurableModelId: true,
+    configurableModelLabel: "OpenCode model",
+    configurableModelPlaceholder: "provider/model (use OpenCode default when empty)",
+  },
+  {
+    id: OPENCLAW_DEFAULT_PRESET_ID,
+    label: "Default",
+    runtimeAgentId: "openclaw",
+    models: FALLBACK_MODEL_OPTIONS.openclaw,
+    configurableModelId: true,
+    configurableModelLabel: "OpenClaw one-shot model",
+    configurableModelPlaceholder: "provider/model (ACP chat uses Gateway session model)",
   },
 ];
 
@@ -575,5 +599,7 @@ export const AGENT_PROVIDER_PRESETS: AgentProviderPreset[] = [
     usesApiKey: true,
     models: [{ id: DEFAULT_MODEL_ID, label: "Default" }],
   },
-  ...LEGACY_PROVIDER_PRESETS.filter((preset) => preset.runtimeAgentId === "api" || preset.runtimeAgentId === "hermes"),
+  ...LEGACY_PROVIDER_PRESETS.filter(
+    (preset) => preset.runtimeAgentId !== "codex" && preset.runtimeAgentId !== "claude",
+  ),
 ];

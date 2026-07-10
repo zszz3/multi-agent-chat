@@ -2,6 +2,7 @@ import { mkdtemp, readFile, writeFile } from "node:fs/promises";
 import os from "node:os";
 import path from "node:path";
 import { afterEach, describe, expect, test } from "vitest";
+import { runtimeDefinition } from "../../shared/runtime-catalog";
 import { AgentHub } from "../hub/agent-hub";
 import { startMcpBridge, type McpBridgeServer } from "./mcp-bridge";
 
@@ -120,6 +121,7 @@ describe("MCP bridge", () => {
       return new Response("not found", { status: 404 });
     };
     bridge = await startMcpBridge(hub, { discoveryPath: path.join(dir, "bridge.json"), bundledSkillsRoot, fetcher });
+    const hermesChannelId = runtimeDefinition("hermes").defaultChannel.id;
 
     const unauthorized = await fetch(`http://${bridge.host}:${bridge.port}/mcp/workflow/list`, { method: "POST" });
     expect(unauthorized.status).toBe(401);
@@ -174,7 +176,7 @@ describe("MCP bridge", () => {
     const hermesChannels = (await (await bridgeRequest("/mcp/channels/list", bridge.token, { agentId: "hermes" })).json()) as any;
     expect(hermesChannels).toMatchObject({
       ok: true,
-      channels: [expect.objectContaining({ id: "hermes-local", agentId: "hermes" })],
+      channels: [expect.objectContaining({ id: hermesChannelId, agentId: "hermes" })],
     });
 
     const models = (await (await bridgeRequest("/mcp/models/list", bridge.token, { channelId: "codex-openai" })).json()) as any;
@@ -208,7 +210,7 @@ describe("MCP bridge", () => {
       id: "hermes-reviewer",
       name: "Hermes Reviewer",
       runtimeAgentId: "hermes",
-      channelId: "hermes-local",
+      channelId: hermesChannelId,
       modelId: "default",
     })).json()) as any;
     expect(hermesAgent).toMatchObject({
@@ -216,7 +218,7 @@ describe("MCP bridge", () => {
       agent: {
         id: "hermes-reviewer",
         runtimeAgentId: "hermes",
-        channelId: "hermes-local",
+        channelId: hermesChannelId,
       },
     });
 

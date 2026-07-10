@@ -5,10 +5,12 @@ import { apiSurfaceSupport } from "./api/api-capabilities";
 import { claudeInteractiveSessionCapabilities, claudeSurfaceSupport } from "./claude/claude-capabilities";
 import { codexInteractiveSessionCapabilities, codexSurfaceSupport } from "./codex/codex-capabilities";
 import { hermesSurfaceSupport } from "./hermes/hermes-capabilities";
+import { openCodeInteractiveSessionCapabilities, openCodeSurfaceSupport } from "./opencode/opencode-capabilities";
+import { openClawInteractiveSessionCapabilities, openClawSurfaceSupport } from "./openclaw/openclaw-capabilities";
 
 function buildOptions() {
   return {
-    executables: { codex: "codex", claude: "claude", api: "api", hermes: "hermes" },
+    executables: { codex: "codex", claude: "claude", api: "api", hermes: "hermes", opencode: "opencode", openclaw: "openclaw" },
     channelById: () => ({
       id: "test-channel",
       runtimeAgentId: "api",
@@ -17,7 +19,6 @@ function buildOptions() {
       modelId: "default",
       settings: {},
     }),
-    respondToCodexServerRequest: () => undefined,
   } as any;
 }
 
@@ -121,7 +122,6 @@ describe("runtime capability declarations", () => {
       { surface: "task", executionModes: ["oneshot"], continuationPolicies: ["fresh"] },
       { surface: "workflow", executionModes: ["oneshot"], continuationPolicies: ["fresh"] },
       { surface: "channel-test", executionModes: ["oneshot"], continuationPolicies: ["fresh"] },
-      { surface: "cleanup", executionModes: ["oneshot"], continuationPolicies: ["fresh"] },
     ]);
     expect(registry.driverFor("api").getCapabilities(runtime("api"))).toMatchObject({
       chatStyle: "oneshot",
@@ -142,25 +142,74 @@ describe("runtime capability declarations", () => {
 
     expect(registry.driverFor("hermes").surfaceSupport).toEqual(hermesSurfaceSupport);
     expect(registry.driverFor("hermes").surfaceSupport).toEqual([
-      { surface: "chat", executionModes: ["oneshot"], continuationPolicies: ["fresh"] },
+      { surface: "chat", executionModes: ["interactive"], continuationPolicies: ["fresh", "resume-preferred"] },
       { surface: "task", executionModes: ["oneshot"], continuationPolicies: ["fresh"] },
       { surface: "workflow", executionModes: ["oneshot"], continuationPolicies: ["fresh"] },
       { surface: "channel-test", executionModes: ["oneshot"], continuationPolicies: ["fresh"] },
-      { surface: "cleanup", executionModes: ["oneshot"], continuationPolicies: ["fresh"] },
+      { surface: "cleanup", executionModes: ["oneshot"], continuationPolicies: ["fresh", "resume-preferred"] },
     ]);
     expect(registry.driverFor("hermes").getCapabilities(runtime("hermes"))).toMatchObject({
-      chatStyle: "oneshot",
+      chatStyle: "interactive",
       taskStyle: "oneshot",
       workflowStyle: "oneshot",
       testStyle: "oneshot",
-      supportsInterrupt: false,
-      supportsContinue: false,
-      supportsApprovalRequests: false,
+      supportsInterrupt: true,
+      supportsContinue: true,
+      supportsApprovalRequests: true,
       supportsUserInputRequests: false,
       resume: {
-        supportsInProcessConversationResume: false,
-        supportsResumeAfterDetach: false,
-        supportsResumeAfterAppRestart: false,
+        supportsInProcessConversationResume: true,
+        supportsResumeAfterDetach: true,
+        supportsResumeAfterAppRestart: true,
+        supportsTurnResume: false,
+      },
+    });
+
+    expect(registry.driverFor("opencode").surfaceSupport).toEqual(openCodeSurfaceSupport);
+    expect(registry.driverFor("opencode").surfaceSupport).toEqual([
+      { surface: "chat", executionModes: ["interactive"], continuationPolicies: ["fresh", "resume-preferred"] },
+      { surface: "task", executionModes: ["oneshot"], continuationPolicies: ["fresh"] },
+      { surface: "workflow", executionModes: ["oneshot"], continuationPolicies: ["fresh"] },
+      { surface: "channel-test", executionModes: ["oneshot"], continuationPolicies: ["fresh"] },
+      { surface: "cleanup", executionModes: ["oneshot"], continuationPolicies: ["fresh", "resume-preferred"] },
+    ]);
+    expect(registry.driverFor("opencode").getCapabilities(runtime("opencode"))).toMatchObject({
+      chatStyle: "interactive",
+      taskStyle: "oneshot",
+      workflowStyle: "oneshot",
+      testStyle: "oneshot",
+      supportsInterrupt: true,
+      supportsContinue: true,
+      supportsApprovalRequests: true,
+      supportsUserInputRequests: false,
+      resume: {
+        supportsInProcessConversationResume: true,
+        supportsResumeAfterDetach: true,
+        supportsResumeAfterAppRestart: true,
+        supportsTurnResume: false,
+      },
+    });
+
+    expect(registry.driverFor("openclaw").surfaceSupport).toEqual(openClawSurfaceSupport);
+    expect(registry.driverFor("openclaw").surfaceSupport).toEqual([
+      { surface: "chat", executionModes: ["interactive"], continuationPolicies: ["fresh", "resume-preferred"] },
+      { surface: "task", executionModes: ["oneshot"], continuationPolicies: ["fresh"] },
+      { surface: "workflow", executionModes: ["oneshot"], continuationPolicies: ["fresh"] },
+      { surface: "channel-test", executionModes: ["oneshot"], continuationPolicies: ["fresh"] },
+    ]);
+    expect(registry.driverFor("openclaw").getCapabilities(runtime("openclaw"))).toMatchObject({
+      chatStyle: "interactive",
+      taskStyle: "oneshot",
+      workflowStyle: "oneshot",
+      testStyle: "oneshot",
+      supportsInterrupt: true,
+      supportsContinue: true,
+      supportsApprovalRequests: true,
+      supportsUserInputRequests: false,
+      resume: {
+        supportsInProcessConversationResume: true,
+        supportsResumeAfterDetach: true,
+        supportsResumeAfterAppRestart: true,
         supportsTurnResume: false,
       },
     });
@@ -178,5 +227,15 @@ describe("runtime capability declarations", () => {
     const claudeSession = claudeDriver.createInteractiveSession?.(interactiveSessionContext("claude"));
     expect(claudeSession?.snapshot().runtimeState.capabilities).toEqual(claudeInteractiveSessionCapabilities);
     expect(claudeSession?.snapshot().runtimeState.capabilities).toEqual(sessionCapabilityProjection("claude"));
+
+    const openCodeDriver = registry.driverFor("opencode");
+    const openCodeSession = openCodeDriver.createInteractiveSession?.(interactiveSessionContext("opencode"));
+    expect(openCodeSession?.snapshot().runtimeState.capabilities).toEqual(openCodeInteractiveSessionCapabilities);
+    expect(openCodeSession?.snapshot().runtimeState.capabilities).toEqual(sessionCapabilityProjection("opencode"));
+
+    const openClawDriver = registry.driverFor("openclaw");
+    const openClawSession = openClawDriver.createInteractiveSession?.(interactiveSessionContext("openclaw"));
+    expect(openClawSession?.snapshot().runtimeState.capabilities).toEqual(openClawInteractiveSessionCapabilities);
+    expect(openClawSession?.snapshot().runtimeState.capabilities).toEqual(sessionCapabilityProjection("openclaw"));
   });
 });

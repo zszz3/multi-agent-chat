@@ -45,7 +45,12 @@ export const FALLBACK_MODEL_OPTIONS: Record<AgentId, AgentModelOption[]> = {
   ],
   hermes: [
     { id: DEFAULT_MODEL_ID, label: "Default" },
-    { id: "hermes-default", label: "Hermes Default" },
+  ],
+  opencode: [
+    { id: DEFAULT_MODEL_ID, label: "Default" },
+  ],
+  openclaw: [
+    { id: DEFAULT_MODEL_ID, label: "Default" },
   ],
 };
 

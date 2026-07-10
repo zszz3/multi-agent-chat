@@ -20,6 +20,9 @@
   --on-accent: #ffffff;
   --codex: #15966b;
   --claude: #c47e1d;
+  --hermes: #8b5cf6;
+  --opencode: #2563eb;
+  --openclaw: #f5654a;
   --ok: #15966b;
   --ok-strong: #0b7f59;
   --ok-tint: #f0faf6;
@@ -58,6 +61,9 @@
   --on-accent: #ffffff;
   --codex: #4cb782;
   --claude: #d9913d;
+  --hermes: #a78bfa;
+  --opencode: #60a5fa;
+  --openclaw: #fb806b;
   --ok: #4cb782;
   --ok-strong: #5fcf96;
   --ok-tint: #14211b;
@@ -339,6 +345,18 @@ textarea:focus-visible {
 
 .agent-api {
   background: var(--accent);
+}
+
+.agent-hermes {
+  background: var(--hermes);
+}
+
+.agent-opencode {
+  background: var(--opencode);
+}
+
+.agent-openclaw {
+  background: var(--openclaw);
 }
 
 .runtime-meta {
@@ -4471,8 +4489,19 @@ textarea:focus-visible {
   white-space: nowrap;
 }
 
+.runtime-channel-row strong {
+  grid-column: 1 / -1;
+  grid-row: 1;
+}
+
+.runtime-channel-row > .agent-badge {
+  grid-column: 1;
+  grid-row: 2;
+}
+
 .runtime-channel-row > span:last-child {
   grid-column: 2;
+  grid-row: 2;
   color: var(--muted);
   font-size: 11px;
 }
@@ -5839,22 +5868,25 @@ textarea:focus-visible {
 }
 
 .agent-provider-preset-list {
-  display: flex;
-  flex-wrap: wrap;
-  gap: 8px;
+  display: grid;
+  grid-template-columns: repeat(6, minmax(0, 1fr));
+  gap: 6px;
 }
 
 .agent-provider-preset {
-  display: inline-flex;
+  display: flex;
   align-items: center;
-  gap: 8px;
+  justify-content: center;
+  gap: 5px;
+  min-width: 0;
+  width: 100%;
   min-height: 34px;
-  padding: 0 11px;
+  padding: 0 5px;
   border: 1px solid var(--line);
   border-radius: 8px;
   background: var(--panel);
   color: var(--text);
-  font-size: 12px;
+  font-size: 11px;
 }
 
 .agent-provider-preset:hover {
@@ -5868,8 +5900,45 @@ textarea:focus-visible {
 }
 
 .agent-provider-preset strong {
-  font-size: 12px;
+  min-width: 0;
+  overflow: hidden;
+  font-size: 11px;
+  text-overflow: ellipsis;
   white-space: nowrap;
+}
+
+.runtime-choice-dot {
+  flex: 0 0 auto;
+  width: 7px;
+  height: 7px;
+  border-radius: 999px;
+  background: var(--accent);
+  box-shadow: 0 0 0 2px color-mix(in srgb, var(--accent) 12%, transparent);
+}
+
+.runtime-choice-dot.agent-codex {
+  background: var(--codex);
+  box-shadow: 0 0 0 2px color-mix(in srgb, var(--codex) 12%, transparent);
+}
+
+.runtime-choice-dot.agent-claude {
+  background: var(--claude);
+  box-shadow: 0 0 0 2px color-mix(in srgb, var(--claude) 12%, transparent);
+}
+
+.runtime-choice-dot.agent-hermes {
+  background: var(--hermes);
+  box-shadow: 0 0 0 2px color-mix(in srgb, var(--hermes) 12%, transparent);
+}
+
+.runtime-choice-dot.agent-opencode {
+  background: var(--opencode);
+  box-shadow: 0 0 0 2px color-mix(in srgb, var(--opencode) 12%, transparent);
+}
+
+.runtime-choice-dot.agent-openclaw {
+  background: var(--openclaw);
+  box-shadow: 0 0 0 2px color-mix(in srgb, var(--openclaw) 12%, transparent);
 }
 
 .agent-provider-catalog {
@@ -6762,14 +6831,6 @@ textarea:focus-visible {
     grid-template-columns: 1fr;
   }
 
-  .runtime-layout {
-    grid-template-columns: 1fr;
-  }
-
-  .runtime-channel-panel {
-    max-height: 300px;
-  }
-
   .skill-list-panel {
     max-height: 360px;
   }
@@ -6935,6 +6996,16 @@ textarea:focus-visible {
 
   .composer-select {
     max-width: 42vw;
+  }
+}
+
+@media (max-width: 820px) {
+  .runtime-layout {
+    grid-template-columns: 1fr;
+  }
+
+  .runtime-channel-panel {
+    max-height: 300px;
   }
 }
 
@@ -7520,6 +7591,24 @@ textarea:focus-visible {
   border-color: color-mix(in srgb, var(--accent) 30%, transparent);
   background: color-mix(in srgb, var(--accent) 10%, transparent);
   color: var(--accent);
+}
+
+.agent-badge.mini.agent-hermes {
+  border-color: color-mix(in srgb, var(--hermes) 30%, transparent);
+  background: color-mix(in srgb, var(--hermes) 10%, transparent);
+  color: var(--hermes);
+}
+
+.agent-badge.mini.agent-opencode {
+  border-color: color-mix(in srgb, var(--opencode) 30%, transparent);
+  background: color-mix(in srgb, var(--opencode) 10%, transparent);
+  color: var(--opencode);
+}
+
+.agent-badge.mini.agent-openclaw {
+  border-color: color-mix(in srgb, var(--openclaw) 30%, transparent);
+  background: color-mix(in srgb, var(--openclaw) 10%, transparent);
+  color: var(--openclaw);
 }
 
 /* ---- chat surface: flat, centered reading column ---- */

@@ -7,10 +7,16 @@ import { DEFAULT_MODEL_ID } from "../../shared/models";
 import { projectNodeStates } from "../../shared/workflow-run";
 import type { AgentChannel, AgentId, ChatRuntimeSessionState, ConfiguredAgent, RuntimeConversation } from "../../shared/types";
 import { createRuntimeDriverRegistry, RuntimeDriverRegistry } from "./runtime/executor/agent-executor";
-import type { AgentExecutionContext, AgentExecutorFactory } from "./runtime/executor/agent-executor";
+import type {
+  AgentExecutionContext,
+  AgentExecutorFactory,
+  RuntimeAgentExecutorFactoryOptions,
+} from "./runtime/executor/agent-executor";
+import { createClaudeDriver } from "./runtime/executor/claude/create-claude-driver";
 import { claudeCliModelForChannel } from "../agents/claude/claude-env";
 import { ClaudeInteractiveSession } from "../agents/claude/claude-interactive-session";
-import { claudeRuntimeStateCodec, codexRuntimeStateCodec, hermesRuntimeStateCodec } from "../agents/runtime/runtime-state-codec";
+import { claudeRuntimeStateCodec } from "../agents/claude/claude-runtime-state-codec";
+import { codexRuntimeStateCodec } from "../agents/codex/codex-runtime-state-codec";
 import { writeNodeCliLauncher } from "../platform/test-cli-fixtures";
 
 function configuredAgent(
@@ -121,6 +127,44 @@ function support(
   };
 }
 
+function createHubWithClaudeOneShot(
+  runOneShot: (input: any) => Promise<void>,
+  executables: Partial<Record<AgentId, string>> = {},
+): AgentHub {
+  let hub: AgentHub;
+  const resolvedExecutables = {
+    codex: executables.codex ?? "missing-codex-for-test",
+    claude: executables.claude ?? "missing-claude-for-test",
+    api: executables.api ?? "api",
+    hermes: executables.hermes ?? "missing-hermes-for-test",
+    opencode: executables.opencode ?? "missing-opencode-for-test",
+    openclaw: executables.openclaw ?? "missing-openclaw-for-test",
+  };
+  const options: RuntimeAgentExecutorFactoryOptions = {
+    executables: resolvedExecutables,
+    channelById: (channelId) => (hub as any).channelById(channelId),
+    workflowHost: {
+      mcpBridgeDiscoveryPath: () => (hub as any).mcpBridgeDiscoveryPath,
+      tools: {
+        createWorkflow: (request) => hub.createWorkflow(request),
+        getWorkflow: (workflowId) => (hub as any).workflowStore.getWorkflow(workflowId),
+        appendWorkflowContext: (request) => hub.appendWorkflowContext(request),
+      },
+    },
+  };
+  const defaultDrivers = createRuntimeDriverRegistry(options);
+  const runtimeDrivers = new RuntimeDriverRegistry([
+    defaultDrivers.driverFor("codex"),
+    createClaudeDriver(options, { runOneShot }),
+    defaultDrivers.driverFor("api"),
+    defaultDrivers.driverFor("hermes"),
+    defaultDrivers.driverFor("opencode"),
+    defaultDrivers.driverFor("openclaw"),
+  ]);
+  hub = new AgentHub(executables, undefined, runtimeDrivers);
+  return hub;
+}
+
 function createHubWithTwoCodexChannels(): AgentHub {
   const hub = new AgentHub({ codex: "missing-codex-for-test", claude: "missing-claude-for-test" });
   (hub as any).channels = [
@@ -179,9 +223,8 @@ test("ignores legacy CLAUDE_INTERACTIVE_TRANSPORT selectors and keeps Claude res
   process.env.CLAUDE_INTERACTIVE_TRANSPORT = "runner";
   try {
     const capabilities = createRuntimeDriverRegistry({
-      executables: { codex: "codex", claude: "claude", api: "api", hermes: "hermes" },
+      executables: { codex: "codex", claude: "claude", api: "api", hermes: "hermes", opencode: "opencode", openclaw: "openclaw" },
       channelById: () => undefined,
-      respondToCodexServerRequest: () => undefined,
     }).driverFor("claude").getCapabilities({
       id: "claude",
       label: "Claude",
@@ -203,9 +246,8 @@ test("ignores legacy CLAUDE_INTERACTIVE_TRANSPORT selectors and keeps Claude res
 
 test("api runtime advertises oneshot chat style", () => {
   const capabilities = createRuntimeDriverRegistry({
-    executables: { codex: "codex", claude: "claude", api: "api", hermes: "hermes" },
+    executables: { codex: "codex", claude: "claude", api: "api", hermes: "hermes", opencode: "opencode", openclaw: "openclaw" },
     channelById: () => undefined,
-    respondToCodexServerRequest: () => undefined,
   }).driverFor("api").getCapabilities({
     id: "api",
     label: "API",
@@ -220,7 +262,6 @@ test("api runtime advertises oneshot chat style", () => {
 test("askWorkflowAgent delegates to the registered runtime driver hook", async () => {
   const workflow = vi.fn(async () => ({
     content: "hermes workflow",
-    runtimeConversation: runtimeConversation("hermes", { sessionId: "hermes-session-1" }),
   }));
   const hub = new AgentHub(
     { codex: "missing-codex-for-test", claude: "missing-claude-for-test", hermes: "missing-hermes-for-test" } as any,
@@ -229,7 +270,6 @@ test("askWorkflowAgent delegates to the registered runtime driver hook", async (
       {
         runtimeId: "hermes",
         surfaceSupport: [support("workflow", ["oneshot"], ["fresh"])],
-        runtimeStateCodec: hermesRuntimeStateCodec,
         getCapabilities: () => oneshotChatCapabilities("hermes"),
         createOneShotExecutor: () => ({ start: async () => undefined, stop: async () => undefined }),
         askWorkflow: workflow,
@@ -266,7 +306,6 @@ test("askWorkflowAgent delegates to the registered runtime driver hook", async (
 
   expect(response).toEqual({
     content: "hermes workflow",
-    runtimeConversation: runtimeConversation("hermes", { sessionId: "hermes-session-1" }),
   });
   expect(workflow).toHaveBeenCalled();
 });
@@ -607,10 +646,11 @@ process.stdout.write(JSON.stringify({ type: "item.completed", item: { type: "age
 }
 
 async function waitFor<T>(read: () => T, predicate: (value: T) => boolean): Promise<T> {
+  const timeoutMs = 4_000;
   const startedAt = Date.now();
   let value = read();
   while (!predicate(value)) {
-    if (Date.now() - startedAt > 2000) {
+    if (Date.now() - startedAt > timeoutMs) {
       throw new Error(`Timed out waiting for condition. Last value: ${JSON.stringify(value)}`);
     }
     await new Promise((resolve) => setTimeout(resolve, 20));
@@ -1888,7 +1928,7 @@ describe("AgentHub chat sessions", () => {
     expect(activeChat?.runtimeState?.activeTurnId).toBeUndefined();
   });
 
-  test("disposes interactive sessions when deleting a chat after completion", async () => {
+  test("disposes interactive sessions and deletes chats when a runtime has no cleanup surface", async () => {
     const session = {
       reconfigure: vi.fn(),
       ensureAttached: vi.fn(async () => undefined),
@@ -1922,7 +1962,6 @@ describe("AgentHub chat sessions", () => {
         runtimeId: "codex",
         surfaceSupport: [
           support("chat", ["interactive"], ["fresh", "resume-preferred", "resume-required"]),
-          support("cleanup", ["oneshot"], ["fresh", "resume-preferred"]),
         ],
         getCapabilities: () => interactiveChatCapabilities("codex"),
         createOneShotExecutor: () => ({
@@ -1931,7 +1970,6 @@ describe("AgentHub chat sessions", () => {
           },
           stop: async () => undefined,
         }),
-        deleteSessionArtifacts: async () => undefined,
         createInteractiveSession: (context: any) => {
           interactiveContext = context;
           return session;
@@ -1960,6 +1998,7 @@ describe("AgentHub chat sessions", () => {
     await hub.deleteChat(chatId);
 
     expect(session.detach).toHaveBeenCalledWith("app_shutdown");
+    expect(hub.snapshot().chats.some((chat) => chat.id === chatId)).toBe(false);
   });
 
   test("deletes Codex sessions created while testing configured agents", async () => {
@@ -2076,7 +2115,15 @@ describe("AgentHub chat sessions", () => {
     await mkdir(sessionDir, { recursive: true });
     await writeFile(sessionPath, "{}\n", "utf8");
     vi.stubEnv("HOME", homeDir);
-    const hub = new AgentHub({ codex: "missing-codex-for-test", claude: "missing-claude-for-test" });
+    const runOneShot = vi.fn(async (input: any) => {
+      input.onEvent({
+        type: "runtime_conversation",
+        runtimeConversation: runtimeConversation("claude", { native: { sessionId } }),
+      });
+      input.onEvent({ type: "delta", content: "SDK ok" });
+      input.onEvent({ type: "completed", content: "SDK ok" });
+    });
+    const hub = createHubWithClaudeOneShot(runOneShot);
     await hub.loadModelChannels(path.join(homeDir, "claude-model-channels.json"));
     await hub.saveModelChannels([
       {
@@ -2108,16 +2155,6 @@ describe("AgentHub chat sessions", () => {
       version: "test",
       available: true,
     });
-
-    const runOneShot = vi.fn(async (input: any) => {
-      input.onEvent({
-        type: "runtime_conversation",
-        runtimeConversation: runtimeConversation("claude", { native: { sessionId } }),
-      });
-      input.onEvent({ type: "delta", content: "SDK ok" });
-      input.onEvent({ type: "completed", content: "SDK ok" });
-    });
-    (hub as any).claudeSdkAdapter = { runOneShot };
 
     try {
       const result = await hub.testConfiguredAgent("claude-agent");
@@ -2924,16 +2961,6 @@ fs.writeFileSync(${JSON.stringify(argsPath)}, process.argv.slice(2).join("\\n") 
 
   test("asks a Claude workflow agent through the official SDK one-shot path without resuming when continuationPolicy is fresh", async () => {
     const dir = await mkdtemp(path.join(os.tmpdir(), "multi-agent-chat-claude-workflow-sdk-"));
-    const hub = new AgentHub({ codex: "missing-codex-for-test", claude: "missing-claude-for-test" });
-    addConfiguredAgents(hub, [configuredAgent("claude-agent", { runtimeAgentId: "claude", name: "Claude Agent" })]);
-    (hub as any).runtimes.set("claude", {
-      id: "claude",
-      label: "Claude",
-      command: "claude",
-      version: "test",
-      available: true,
-    });
-
     const runOneShot = vi.fn(async (input: any) => {
       input.onEvent({
         type: "runtime_conversation",
@@ -2942,7 +2969,15 @@ fs.writeFileSync(${JSON.stringify(argsPath)}, process.argv.slice(2).join("\\n") 
       input.onEvent({ type: "delta", content: "workflow-sdk" });
       input.onEvent({ type: "completed", content: "workflow-sdk" });
     });
-    (hub as any).claudeSdkAdapter = { runOneShot };
+    const hub = createHubWithClaudeOneShot(runOneShot);
+    addConfiguredAgents(hub, [configuredAgent("claude-agent", { runtimeAgentId: "claude", name: "Claude Agent" })]);
+    (hub as any).runtimes.set("claude", {
+      id: "claude",
+      label: "Claude",
+      command: "claude",
+      version: "test",
+      available: true,
+    });
 
     const events: any[] = [];
     const response = await (hub as any).askWorkflowAgent(
@@ -2984,7 +3019,11 @@ fs.writeFileSync(${JSON.stringify(argsPath)}, process.argv.slice(2).join("\\n") 
 
   test("passes the local workflow MCP server to Claude workflow SDK runs", async () => {
     const dir = await mkdtemp(path.join(os.tmpdir(), "multi-agent-chat-claude-workflow-mcp-"));
-    const hub = new AgentHub({ codex: "missing-codex-for-test", claude: "missing-claude-for-test" });
+    const runOneShot = vi.fn(async (input: any) => {
+      input.onEvent({ type: "delta", content: "workflow-sdk" });
+      input.onEvent({ type: "completed", content: "workflow-sdk" });
+    });
+    const hub = createHubWithClaudeOneShot(runOneShot);
     hub.setMcpBridgeDiscoveryPath(path.join(dir, "mcp-bridge.json"));
     addConfiguredAgents(hub, [configuredAgent("claude-agent", { runtimeAgentId: "claude", name: "Claude Agent" })]);
     (hub as any).runtimes.set("claude", {
@@ -2994,12 +3033,6 @@ fs.writeFileSync(${JSON.stringify(argsPath)}, process.argv.slice(2).join("\\n") 
       version: "test",
       available: true,
     });
-
-    const runOneShot = vi.fn(async (input: any) => {
-      input.onEvent({ type: "delta", content: "workflow-sdk" });
-      input.onEvent({ type: "completed", content: "workflow-sdk" });
-    });
-    (hub as any).claudeSdkAdapter = { runOneShot };
 
     await (hub as any).askWorkflowAgent({
       requestId: "claude-workflow-mcp-test",
@@ -3025,7 +3058,11 @@ fs.writeFileSync(${JSON.stringify(argsPath)}, process.argv.slice(2).join("\\n") 
 
   test("resumes a Claude workflow agent through the official SDK one-shot path when continuationPolicy is resume-preferred", async () => {
     const dir = await mkdtemp(path.join(os.tmpdir(), "multi-agent-chat-claude-workflow-sdk-resume-"));
-    const hub = new AgentHub({ codex: "missing-codex-for-test", claude: "missing-claude-for-test" });
+    const runOneShot = vi.fn(async (input: any) => {
+      input.onEvent({ type: "delta", content: "workflow-resumed" });
+      input.onEvent({ type: "completed", content: "workflow-resumed" });
+    });
+    const hub = createHubWithClaudeOneShot(runOneShot);
     addConfiguredAgents(hub, [configuredAgent("claude-agent", { runtimeAgentId: "claude", name: "Claude Agent" })]);
     (hub as any).runtimes.set("claude", {
       id: "claude",
@@ -3034,12 +3071,6 @@ fs.writeFileSync(${JSON.stringify(argsPath)}, process.argv.slice(2).join("\\n") 
       version: "test",
       available: true,
     });
-
-    const runOneShot = vi.fn(async (input: any) => {
-      input.onEvent({ type: "delta", content: "workflow-resumed" });
-      input.onEvent({ type: "completed", content: "workflow-resumed" });
-    });
-    (hub as any).claudeSdkAdapter = { runOneShot };
 
     const priorConversation = runtimeConversation("claude", { native: { sessionId: "claude-session-9" } });
     const response = await (hub as any).askWorkflowAgent({
@@ -3135,10 +3166,11 @@ fs.writeFileSync(${JSON.stringify(argsPath)}, process.argv.slice(2).join("\\n") 
     expect(calls.filter((call) => call.method === "thread/resume" && call.params.threadId === "thread-7")).toHaveLength(1);
   });
 
-  test("keeps workflow draft replies in main-owned snapshot state", async () => {
+  test("keeps workflow draft replies in one interactive session without creating chats or tasks", async () => {
     const dir = await mkdtemp(path.join(os.tmpdir(), "multi-agent-chat-workflow-draft-reply-"));
     const fake = await writeSequentialCodexFake(dir);
     const hub = new AgentHub({ codex: fake.executable, claude: "missing-claude-for-test" });
+    hub.setMcpBridgeDiscoveryPath(path.join(dir, "mcp-bridge.json"));
     (hub as any).runtimes.set("codex", {
       id: "codex",
       label: "Codex",
@@ -3192,8 +3224,40 @@ fs.writeFileSync(${JSON.stringify(argsPath)}, process.argv.slice(2).join("\\n") 
     expect(second.tasks).toHaveLength(before.tasks.length);
 
     const calls = (await readFile(fake.callsPath, "utf8")).trim().split("\n").map((line) => JSON.parse(line) as any);
-    expect(calls.filter((call) => call.method === "thread/start")).toHaveLength(2);
+    expect(calls.filter((call) => call.method === "process/argv")).toHaveLength(1);
+    expect(calls.filter((call) => call.method === "thread/start")).toHaveLength(1);
     expect(calls.filter((call) => call.method === "thread/resume")).toHaveLength(0);
+    expect(calls.filter((call) => call.method === "turn/start")).toHaveLength(2);
+    expect((calls.find((call) => call.method === "process/argv")?.params.args as string[]).join("\n"))
+      .toContain("mcp_servers.multi_agent_chat.command");
+  });
+
+  test("rejects one-shot-only runtimes in the Workflow planning dialog", async () => {
+    const hub = new AgentHub({
+      codex: "missing-codex-for-test",
+      claude: "missing-claude-for-test",
+      api: "api",
+    });
+    addConfiguredAgents(hub, [configuredAgent("api-agent", { runtimeAgentId: "api" })]);
+    (hub as any).runtimes.set("api", {
+      id: "api",
+      label: "API",
+      command: "api",
+      version: "test",
+      available: true,
+    });
+    const workflowId = hub.createWorkflowDraft({ configuredAgentId: "api-agent" }).workflowDraft!.workflowId;
+
+    const snapshot = await hub.sendWorkflowDraftReply({ workflowId, reply: "Plan this task." });
+
+    expect(snapshot.workflowDraft?.messages).toEqual([
+      expect.objectContaining({ role: "user", content: "Plan this task." }),
+      expect.objectContaining({
+        role: "assistant",
+        content: expect.stringContaining("does not support interactive workflow planning"),
+      }),
+    ]);
+    expect(snapshot.workflowDraft?.runtimeConversation).toBeUndefined();
   });
 
   test("uses the workflow-selected model for workflow agent API requests", async () => {
@@ -4127,7 +4191,7 @@ fs.writeFileSync(${JSON.stringify(argsPath)}, process.argv.slice(2).join("\\n") 
     expect(updatedNodes.get("start").position).toEqual({ x: 12, y: 34 });
   });
 
-  test("deletes a workflow draft with its runs and selects the next remaining workflow", () => {
+  test("deletes a workflow draft with its runs and selects the next remaining workflow", async () => {
     const hub = new AgentHub();
     const first = (hub as any).createWorkflow({
       title: "First workflow",
@@ -4166,7 +4230,7 @@ fs.writeFileSync(${JSON.stringify(argsPath)}, process.argv.slice(2).join("\\n") 
     });
     (hub as any).selectWorkflow(first.workflowId);
 
-    const snapshot = (hub as any).deleteWorkflow(first.workflowId);
+    const snapshot = await (hub as any).deleteWorkflow(first.workflowId);
 
     expect(snapshot.workflowStore.workflows.map((workflow: any) => workflow.workflowId)).toEqual([second.workflowId]);
     expect(snapshot.workflowStore.runs.some((item: any) => item.runId === run.runId || item.workflowId === first.workflowId)).toBe(false);
@@ -4174,7 +4238,7 @@ fs.writeFileSync(${JSON.stringify(argsPath)}, process.argv.slice(2).join("\\n") 
     expect(snapshot.workflowDraft.workflowId).toBe(second.workflowId);
   });
 
-  test("resets one workflow draft session without dropping other drafts", () => {
+  test("resets one workflow draft session without dropping other drafts", async () => {
     const hub = new AgentHub();
     const first = hub.createWorkflowDraft({ title: "First draft" }).workflowDraft!;
     const patched = hub.patchWorkflowDraft({
@@ -4200,7 +4264,7 @@ fs.writeFileSync(${JSON.stringify(argsPath)}, process.argv.slice(2).join("\\n") 
     });
     const second = hub.createWorkflowDraft({ title: "Second draft" }).workflowDraft!;
 
-    const reset = hub.resetWorkflowDraftSession(first.workflowId);
+    const reset = await hub.resetWorkflowDraftSession(first.workflowId);
     const resetFirst = reset.workflowStore.workflows.find((workflow) => workflow.workflowId === first.workflowId);
     const preservedSecond = reset.workflowStore.workflows.find((workflow) => workflow.workflowId === second.workflowId);
 
