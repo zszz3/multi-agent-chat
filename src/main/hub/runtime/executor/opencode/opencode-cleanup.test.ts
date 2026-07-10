@@ -2,7 +2,7 @@ import { mkdtemp, readFile } from "node:fs/promises";
 import os from "node:os";
 import path from "node:path";
 import { describe, expect, test } from "vitest";
-import { openCodeRuntimeStateCodec } from "../../../../agents/runtime/runtime-state-codec";
+import { openCodeRuntimeStateCodec } from "../../../../agents/opencode/opencode-runtime-state-codec";
 import { writeNodeCliLauncher } from "../../../../platform/test-cli-fixtures";
 import { deleteOpenCodeSessionArtifacts } from "./opencode-cleanup";
 

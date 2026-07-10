@@ -3,7 +3,8 @@ import type { AcpInteractiveClient } from "./acp-interactive-client";
 import { ProcessLease } from "../shared/process-lease";
 import type { InteractiveSession, InteractiveSessionContext, InteractiveSessionSnapshot } from "../runtime/runtime-driver";
 import { planSessionReconfigure } from "../runtime/session-reconfigure";
-import type { AcpRuntimeConversationPayload, RuntimeStateCodec } from "../runtime/runtime-state-codec";
+import type { RuntimeStateCodec } from "../runtime/runtime-state-codec";
+import type { AcpRuntimeConversationPayload } from "./acp-runtime-state-codec";
 
 type AcpClientBinding = Pick<AcpInteractiveClient, "isAttached" | "attach" | "prompt" | "interrupt" | "detach">;
 

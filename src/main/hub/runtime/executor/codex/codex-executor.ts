@@ -1,7 +1,7 @@
 import { runtimeModelId } from "../../../../../shared/models";
 import { codexEnvironmentForChannel } from "../../../../agents/codex/codex-env";
 import { CodexRpcClient } from "../../../../agents/codex/codex-rpc";
-import { codexRuntimeStateCodec } from "../../../../agents/runtime/runtime-state-codec";
+import { codexRuntimeStateCodec } from "../../../../agents/codex/codex-runtime-state-codec";
 import { codexAppServerConfigArgs } from "../../../../channels/model-config";
 import { codexThreadIdFromConversation } from "../agent-executor-conversation";
 import type {
@@ -10,6 +10,7 @@ import type {
   RuntimeAgentExecutorFactoryOptions,
 } from "../agent-executor-types";
 import { modelFromRuntimeConfig, reasoningEffortFromRuntimeConfig } from "../agent-executor-types";
+import { respondToCodexRuntimeServerRequest } from "./codex-server-request";
 
 export class CodexAgentExecutor implements AgentExecutor {
   private client: CodexRpcClient | undefined;
@@ -36,7 +37,7 @@ export class CodexAgentExecutor implements AgentExecutor {
       env: codexEnvironmentForChannel(channel),
       onEvent: this.context.emit,
       onRequest: (id, method, params) => {
-        this.options.respondToCodexServerRequest(client, id, method, params);
+        respondToCodexRuntimeServerRequest(this.options, client, id, method, params);
       },
       onExit: (code) => {
         this.context.onExit(code);

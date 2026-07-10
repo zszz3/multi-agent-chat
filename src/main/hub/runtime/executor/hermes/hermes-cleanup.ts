@@ -1,6 +1,6 @@
 import { execCli } from "../../../../platform/cli-launcher";
 import type { RuntimeSessionCleanupContext } from "../../../../agents/runtime/runtime-driver";
-import { hermesRuntimeStateCodec } from "../../../../agents/runtime/runtime-state-codec";
+import { hermesRuntimeStateCodec } from "../../../../agents/hermes/hermes-runtime-state-codec";
 
 export async function deleteHermesSessionArtifacts(
   executable: string,

@@ -78,7 +78,6 @@ import { createWorkflowGraphFromObjective, validateWorkflowGraph } from "../../s
 import { defaultWorkflowWorkDirSuffix } from "../../shared/workflow-run";
 import { detectAgentRuntimes, resolveRuntimeExecutables } from "../agents/runtime/detect";
 import { InteractiveSessionManager } from "../agents/runtime/interactive-session-manager";
-import { ClaudeAgentSdkAdapter } from "../agents/claude/claude-agent-sdk";
 import type { CodexRpcClient } from "../agents/codex/codex-rpc";
 import type { RuntimeCapabilities } from "../agents/runtime/runtime-capabilities";
 import type { InteractiveSessionContext, InteractiveSessionSnapshot, RuntimeDriverRegistry, RuntimeSurface } from "../agents/runtime/runtime-driver";
@@ -146,12 +145,7 @@ import {
   defaultContinuationPolicy as defaultContinuationPolicyValue,
   selectExecutionMode as selectExecutionModeValue,
 } from "./runtime/run/agent-hub-runtime-policy";
-import {
-  codexPluginSummaries,
-  respondToCodexServerRequest,
-  type CodexServerRequestOptions,
-} from "./codex/agent-hub-codex-app";
-import { handleCodexWorkflowToolCall } from "./codex/agent-hub-codex-workflow-tools";
+import { codexPluginSummaries } from "./codex/agent-hub-codex-app";
 import {
   agentLabel,
   cloneAgentChannel,
@@ -234,7 +228,6 @@ import {
   restoreWorkflowDraft as restoreWorkflowDraftValue,
   restoreWorkflowRun as restoreWorkflowRunValue,
 } from "./workflow/agent-hub-workflow-restore";
-import { claudeWorkflowMcpServers, codexWorkflowMcpArgs } from "./workflow/agent-hub-workflow-mcp";
 import {
   runScheduledWorkflowEvent as runScheduledWorkflowEventValue,
   waitForWorkflowRunToSettle as waitForWorkflowRunToSettleValue,
@@ -393,7 +386,6 @@ export class AgentHub {
   private readonly executables: Record<AgentId, string>;
   private readonly workflowRuntime: WorkflowRuntime;
   private readonly workflowStore: WorkflowStore;
-  private readonly claudeSdkAdapter: Pick<ClaudeAgentSdkAdapter, "runOneShot">;
   private readonly modelCatalogDiscoverer: ModelCatalogDiscoverer;
 
   constructor(
@@ -403,19 +395,20 @@ export class AgentHub {
     modelCatalogDiscoverer: ModelCatalogDiscoverer = discoverChannelModels,
   ) {
     this.executables = resolveRuntimeExecutables(executables);
-    this.claudeSdkAdapter = new ClaudeAgentSdkAdapter();
     this.modelCatalogDiscoverer = modelCatalogDiscoverer;
     this.runtimeDrivers =
       runtimeDrivers ??
       createRuntimeDriverRegistry({
         executables: this.executables,
         channelById: (channelId) => this.channelById(channelId),
-        respondToCodexServerRequest: (client, id, method, params, options) => {
-          this.respondToCodexServerRequest(client, id, method, params, options);
+        workflowHost: {
+          mcpBridgeDiscoveryPath: () => this.mcpBridgeDiscoveryPath,
+          tools: {
+            createWorkflow: (request) => this.createWorkflow(request),
+            getWorkflow: (workflowId) => this.workflowStore.getWorkflow(workflowId),
+            appendWorkflowContext: (request) => this.appendWorkflowContext(request),
+          },
         },
-        codexWorkflowExtraArgs: () => codexWorkflowMcpArgs(this.mcpBridgeDiscoveryPath),
-        claudeWorkflowMcpServers: () => claudeWorkflowMcpServers(this.mcpBridgeDiscoveryPath),
-        runClaudeOneShot: (input) => this.claudeSdkAdapter.runOneShot(input),
       });
     this.runtimeRouter = new RuntimeRouter(this.runtimeDrivers);
     this.workflowStore = new WorkflowStore({
@@ -495,23 +488,6 @@ export class AgentHub {
 
   setMcpBridgeDiscoveryPath(discoveryPath: string | undefined): void {
     this.mcpBridgeDiscoveryPath = discoveryPath;
-  }
-
-  private respondToCodexServerRequest(
-    client: CodexRpcClient,
-    id: number,
-    method: string,
-    params: Record<string, unknown>,
-    options: CodexServerRequestOptions = {},
-  ): void {
-    respondToCodexServerRequest(client, id, method, params, {
-      ...options,
-      handleWorkflowToolCall: (toolParams) => handleCodexWorkflowToolCall(toolParams, {
-        createWorkflow: (request) => this.createWorkflow(request),
-        getWorkflow: (workflowId) => this.workflowStore.getWorkflow(workflowId),
-        appendWorkflowContext: (request) => this.appendWorkflowContext(request),
-      }),
-    });
   }
 
   async saveModelChannels(channels: AgentChannel[]): Promise<AppSnapshot> {

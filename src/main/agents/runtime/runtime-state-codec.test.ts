@@ -1,6 +1,10 @@
 import { describe, expect, test } from "vitest";
 import type { RuntimeConversation } from "../../../shared/types";
-import { claudeRuntimeStateCodec, codexRuntimeStateCodec, hermesRuntimeStateCodec, openClawRuntimeStateCodec, openCodeRuntimeStateCodec } from "./runtime-state-codec";
+import { claudeRuntimeStateCodec } from "../claude/claude-runtime-state-codec";
+import { codexRuntimeStateCodec } from "../codex/codex-runtime-state-codec";
+import { hermesRuntimeStateCodec } from "../hermes/hermes-runtime-state-codec";
+import { openClawRuntimeStateCodec } from "../openclaw/openclaw-runtime-state-codec";
+import { openCodeRuntimeStateCodec } from "../opencode/opencode-runtime-state-codec";
 
 function runtimeConversation(runtimeId: RuntimeConversation["runtimeId"], payload: Record<string, unknown>): RuntimeConversation {
   return {

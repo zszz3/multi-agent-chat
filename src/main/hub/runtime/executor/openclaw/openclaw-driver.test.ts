@@ -3,7 +3,7 @@ import os from "node:os";
 import path from "node:path";
 import { describe, expect, test, vi } from "vitest";
 import type { AgentEvent, RuntimeConversation } from "../../../../../shared/types";
-import { openClawRuntimeStateCodec } from "../../../../agents/runtime/runtime-state-codec";
+import { openClawRuntimeStateCodec } from "../../../../agents/openclaw/openclaw-runtime-state-codec";
 import { writeNodeCliLauncher } from "../../../../platform/test-cli-fixtures";
 import { createOpenClawDriver } from "./create-openclaw-driver";
 
@@ -54,7 +54,6 @@ describe("createOpenClawDriver interactive integration", () => {
         label: "OpenClaw Default",
         models: [{ id: "openai/gpt-5.4", label: "GPT-5.4" }],
       }),
-      respondToCodexServerRequest: () => undefined,
     });
     const events: AgentEvent[] = [];
     const createContext = (runtimeConversation: RuntimeConversation | undefined = undefined) => ({

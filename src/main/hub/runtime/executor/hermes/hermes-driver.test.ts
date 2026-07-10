@@ -4,7 +4,7 @@ import path from "node:path";
 import { describe, expect, test, vi } from "vitest";
 import type { AgentEvent, RuntimeConversation } from "../../../../../shared/types";
 import { writeNodeCliLauncher } from "../../../../platform/test-cli-fixtures";
-import { hermesRuntimeStateCodec } from "../../../../agents/runtime/runtime-state-codec";
+import { hermesRuntimeStateCodec } from "../../../../agents/hermes/hermes-runtime-state-codec";
 import { createHermesDriver } from "./create-hermes-driver";
 
 async function createHermesAcpFake(dir: string): Promise<{ executable: string; callsPath: string }> {
@@ -47,7 +47,6 @@ describe("createHermesDriver interactive integration", () => {
         label: "Hermes Default",
         models: [{ id: "default", label: "Default" }],
       }),
-      respondToCodexServerRequest: () => undefined,
     });
     const events: AgentEvent[] = [];
     const createContext = (runtimeConversation: RuntimeConversation | undefined = undefined) => ({

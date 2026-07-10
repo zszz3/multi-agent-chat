@@ -2,7 +2,7 @@ import type { WorkflowAgentResponse } from "../../../../../shared/types";
 import { runtimeModelId } from "../../../../../shared/models";
 import { codexEnvironmentForChannel } from "../../../../agents/codex/codex-env";
 import { CodexRpcClient } from "../../../../agents/codex/codex-rpc";
-import { codexRuntimeStateCodec } from "../../../../agents/runtime/runtime-state-codec";
+import { codexRuntimeStateCodec } from "../../../../agents/codex/codex-runtime-state-codec";
 import type { RuntimeWorkflowRequestContext } from "../../../../agents/runtime/runtime-driver";
 import { codexAppServerConfigArgs } from "../../../../channels/model-config";
 import {
@@ -17,6 +17,8 @@ import {
   WORKFLOW_DEVELOPER_INSTRUCTIONS,
 } from "../workflow/agent-executor-workflow-shared";
 import { reasoningEffortFromRuntimeConfig } from "../agent-executor-types";
+import { respondToCodexRuntimeServerRequest } from "./codex-server-request";
+import { codexWorkflowMcpArgs } from "./codex-workflow-mcp";
 
 export async function runCodexWorkflow(
   input: RuntimeWorkflowRequestContext,
@@ -54,7 +56,7 @@ export async function runCodexWorkflow(
           modelFromRuntimeConfig(input.runtimeConfig),
           reasoningEffortFromRuntimeConfig(input.runtimeConfig),
         ),
-        ...(options.codexWorkflowExtraArgs?.() ?? []),
+        ...codexWorkflowMcpArgs(options.workflowHost?.mcpBridgeDiscoveryPath()),
       ],
       env: codexEnvironmentForChannel(channel),
       onEvent: (event) => {
@@ -82,7 +84,7 @@ export async function runCodexWorkflow(
       },
       onRequest: (id, method, params) => {
         if (client) {
-          options.respondToCodexServerRequest(client, id, method, params, {
+          respondToCodexRuntimeServerRequest(options, client, id, method, params, {
             onWorkflowGraph: ({ graph, workflowId, revision }) => {
               input.onEvent?.({
                 requestId: input.requestId,

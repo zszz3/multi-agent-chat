@@ -132,7 +132,7 @@ The implementation now follows the documented CLI and ACP surfaces:
 - `src/main/agents/acp/acp-interactive-client.ts` implements the reusable official ACP client boundary over stdio.
 - `src/main/hub/runtime/executor/hermes/hermes-session.ts` owns Hermes attach, prompt, interrupt, detach, and resume lifecycle.
 - `src/main/hub/runtime/executor/hermes/create-hermes-driver.ts` assembles one-shot, interactive, workflow, test, codec, and cleanup behavior behind one runtime-local builder.
-- `src/main/agents/runtime/runtime-state-codec.ts` validates the persisted ACP session id and app-owned context.
+- `src/main/agents/hermes/hermes-runtime-state-codec.ts` owns the Hermes codec and reuses the shared ACP payload validator for the persisted session id and app-owned context.
 - `src/main/hub/runtime/executor/hermes/hermes-cleanup.ts` deletes native session artifacts with the documented CLI command.
 
 The chosen mapping is intentionally split:

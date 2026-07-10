@@ -2,7 +2,7 @@ import type { ChatRuntimeSessionState, RuntimeConversation } from "../../../shar
 import type { InteractiveSession, InteractiveSessionContext, InteractiveSessionSnapshot } from "../runtime/runtime-driver";
 import { ClaudeAgentSdkInteractive } from "./claude-agent-sdk-interactive";
 import { ProcessLease } from "../shared/process-lease";
-import { claudeRuntimeStateCodec } from "../runtime/runtime-state-codec";
+import { claudeRuntimeStateCodec } from "./claude-runtime-state-codec";
 import { planSessionReconfigure } from "../runtime/session-reconfigure";
 
 type ClaudeInteractiveSdkBinding = Pick<

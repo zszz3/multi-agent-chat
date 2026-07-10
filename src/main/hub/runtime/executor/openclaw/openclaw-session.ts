@@ -1,6 +1,6 @@
 import { AcpInteractiveSession, type AcpInteractiveSessionOptions } from "../../../../agents/acp/acp-interactive-session";
 import type { InteractiveSessionContext } from "../../../../agents/runtime/runtime-driver";
-import { openClawRuntimeStateCodec } from "../../../../agents/runtime/runtime-state-codec";
+import { openClawRuntimeStateCodec } from "../../../../agents/openclaw/openclaw-runtime-state-codec";
 
 type OpenClawInteractiveSessionOptions = Omit<AcpInteractiveSessionOptions, "runtimeLabel" | "runtimeStateCodec">;
 

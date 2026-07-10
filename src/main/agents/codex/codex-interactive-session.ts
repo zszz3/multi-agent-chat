@@ -3,7 +3,7 @@ import type { AgentEvent, ChatRuntimeSessionState, RuntimeConversation } from ".
 import type { InteractiveSession, InteractiveSessionContext, InteractiveSessionSnapshot } from "../runtime/runtime-driver";
 import { ProcessLease } from "../shared/process-lease";
 import { CodexRpcClient } from "./codex-rpc";
-import { codexRuntimeStateCodec } from "../runtime/runtime-state-codec";
+import { codexRuntimeStateCodec } from "./codex-runtime-state-codec";
 import { planSessionReconfigure } from "../runtime/session-reconfigure";
 
 interface CodexInteractiveSessionOptions {

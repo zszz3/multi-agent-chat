@@ -3,7 +3,7 @@ import os from "node:os";
 import path from "node:path";
 import { describe, expect, test, vi } from "vitest";
 import type { AgentEvent, RuntimeConversation } from "../../../../../shared/types";
-import { openCodeRuntimeStateCodec } from "../../../../agents/runtime/runtime-state-codec";
+import { openCodeRuntimeStateCodec } from "../../../../agents/opencode/opencode-runtime-state-codec";
 import { writeNodeCliLauncher } from "../../../../platform/test-cli-fixtures";
 import { createOpenCodeDriver } from "./create-opencode-driver";
 
@@ -47,7 +47,6 @@ describe("createOpenCodeDriver interactive integration", () => {
         label: "OpenCode Default",
         models: [{ id: "openai/gpt-5", label: "GPT-5" }],
       }),
-      respondToCodexServerRequest: () => undefined,
     });
     const events: AgentEvent[] = [];
     const createContext = (runtimeConversation: RuntimeConversation | undefined = undefined) => ({

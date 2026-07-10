@@ -1,7 +1,7 @@
 import { describe, expect, test, vi } from "vitest";
 import type { AgentEvent, ChatRuntimeSessionState } from "../../../../../shared/types";
 import type { InteractiveSessionContext } from "../../../../agents/runtime/runtime-driver";
-import { hermesRuntimeStateCodec } from "../../../../agents/runtime/runtime-state-codec";
+import { hermesRuntimeStateCodec } from "../../../../agents/hermes/hermes-runtime-state-codec";
 import { HermesInteractiveSession } from "./hermes-session";
 
 const capabilities: ChatRuntimeSessionState["capabilities"] = {

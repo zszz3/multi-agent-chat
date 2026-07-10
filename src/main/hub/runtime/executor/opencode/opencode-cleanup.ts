@@ -1,6 +1,6 @@
 import { execCli } from "../../../../platform/cli-launcher";
 import type { RuntimeSessionCleanupContext } from "../../../../agents/runtime/runtime-driver";
-import { openCodeRuntimeStateCodec } from "../../../../agents/runtime/runtime-state-codec";
+import { openCodeRuntimeStateCodec } from "../../../../agents/opencode/opencode-runtime-state-codec";
 
 export async function deleteOpenCodeSessionArtifacts(
   executable: string,

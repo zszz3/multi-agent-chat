@@ -19,7 +19,6 @@ function buildOptions() {
       modelId: "default",
       settings: {},
     }),
-    respondToCodexServerRequest: () => undefined,
   } as any;
 }
 

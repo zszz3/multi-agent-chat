@@ -2,7 +2,7 @@ import { codexEnvironmentForChannel } from "../../../../agents/codex/codex-env";
 import { CodexInteractiveSession } from "../../../../agents/codex/codex-interactive-session";
 import { CodexRpcClient } from "../../../../agents/codex/codex-rpc";
 import type { RuntimeDriver } from "../../../../agents/runtime/runtime-driver";
-import { codexRuntimeStateCodec } from "../../../../agents/runtime/runtime-state-codec";
+import { codexRuntimeStateCodec } from "../../../../agents/codex/codex-runtime-state-codec";
 import { codexAppServerConfigArgs } from "../../../../channels/model-config";
 import { createInteractiveRuntimeDriver } from "../agent-executor-driver-factories";
 import {
@@ -17,6 +17,7 @@ import {
 } from "./codex-capabilities";
 import { deleteCodexSessionArtifacts } from "./codex-cleanup";
 import { CodexAgentExecutor } from "./codex-executor";
+import { respondToCodexRuntimeServerRequest } from "./codex-server-request";
 import { runCodexChannelTest } from "./codex-test";
 import { runCodexWorkflow } from "./codex-workflow";
 
@@ -48,7 +49,7 @@ export function createCodexDriver(options: RuntimeAgentExecutorFactoryOptions): 
             env: codexEnvironmentForChannel(channel),
             onEvent,
             onRequest: (id, method, params) => {
-              options.respondToCodexServerRequest(client, id, method, params);
+              respondToCodexRuntimeServerRequest(options, client, id, method, params);
             },
             onExit,
           });

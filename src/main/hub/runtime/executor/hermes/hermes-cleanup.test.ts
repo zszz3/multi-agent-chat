@@ -2,7 +2,7 @@ import { mkdtemp, readFile } from "node:fs/promises";
 import os from "node:os";
 import path from "node:path";
 import { describe, expect, test } from "vitest";
-import { hermesRuntimeStateCodec } from "../../../../agents/runtime/runtime-state-codec";
+import { hermesRuntimeStateCodec } from "../../../../agents/hermes/hermes-runtime-state-codec";
 import { writeNodeCliLauncher } from "../../../../platform/test-cli-fixtures";
 import { deleteHermesSessionArtifacts } from "./hermes-cleanup";
 

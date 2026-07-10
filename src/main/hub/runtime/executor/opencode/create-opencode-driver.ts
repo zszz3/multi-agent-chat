@@ -1,6 +1,6 @@
 import { AcpInteractiveClient } from "../../../../agents/acp/acp-interactive-client";
 import type { RuntimeDriver } from "../../../../agents/runtime/runtime-driver";
-import { openCodeRuntimeStateCodec } from "../../../../agents/runtime/runtime-state-codec";
+import { openCodeRuntimeStateCodec } from "../../../../agents/opencode/opencode-runtime-state-codec";
 import { createInteractiveRuntimeDriver } from "../agent-executor-driver-factories";
 import type { RuntimeAgentExecutorFactoryOptions } from "../agent-executor-types";
 import {

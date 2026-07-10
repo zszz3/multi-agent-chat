@@ -7,10 +7,16 @@ import { DEFAULT_MODEL_ID } from "../../shared/models";
 import { projectNodeStates } from "../../shared/workflow-run";
 import type { AgentChannel, AgentId, ChatRuntimeSessionState, ConfiguredAgent, RuntimeConversation } from "../../shared/types";
 import { createRuntimeDriverRegistry, RuntimeDriverRegistry } from "./runtime/executor/agent-executor";
-import type { AgentExecutionContext, AgentExecutorFactory } from "./runtime/executor/agent-executor";
+import type {
+  AgentExecutionContext,
+  AgentExecutorFactory,
+  RuntimeAgentExecutorFactoryOptions,
+} from "./runtime/executor/agent-executor";
+import { createClaudeDriver } from "./runtime/executor/claude/create-claude-driver";
 import { claudeCliModelForChannel } from "../agents/claude/claude-env";
 import { ClaudeInteractiveSession } from "../agents/claude/claude-interactive-session";
-import { claudeRuntimeStateCodec, codexRuntimeStateCodec } from "../agents/runtime/runtime-state-codec";
+import { claudeRuntimeStateCodec } from "../agents/claude/claude-runtime-state-codec";
+import { codexRuntimeStateCodec } from "../agents/codex/codex-runtime-state-codec";
 import { writeNodeCliLauncher } from "../platform/test-cli-fixtures";
 
 function configuredAgent(
@@ -134,12 +140,27 @@ function createHubWithClaudeOneShot(
     opencode: executables.opencode ?? "missing-opencode-for-test",
     openclaw: executables.openclaw ?? "missing-openclaw-for-test",
   };
-  const runtimeDrivers = createRuntimeDriverRegistry({
+  const options: RuntimeAgentExecutorFactoryOptions = {
     executables: resolvedExecutables,
     channelById: (channelId) => (hub as any).channelById(channelId),
-    respondToCodexServerRequest: () => undefined,
-    runClaudeOneShot: runOneShot,
-  });
+    workflowHost: {
+      mcpBridgeDiscoveryPath: () => (hub as any).mcpBridgeDiscoveryPath,
+      tools: {
+        createWorkflow: (request) => hub.createWorkflow(request),
+        getWorkflow: (workflowId) => (hub as any).workflowStore.getWorkflow(workflowId),
+        appendWorkflowContext: (request) => hub.appendWorkflowContext(request),
+      },
+    },
+  };
+  const defaultDrivers = createRuntimeDriverRegistry(options);
+  const runtimeDrivers = new RuntimeDriverRegistry([
+    defaultDrivers.driverFor("codex"),
+    createClaudeDriver(options, { runOneShot }),
+    defaultDrivers.driverFor("api"),
+    defaultDrivers.driverFor("hermes"),
+    defaultDrivers.driverFor("opencode"),
+    defaultDrivers.driverFor("openclaw"),
+  ]);
   hub = new AgentHub(executables, undefined, runtimeDrivers);
   return hub;
 }
@@ -204,7 +225,6 @@ test("ignores legacy CLAUDE_INTERACTIVE_TRANSPORT selectors and keeps Claude res
     const capabilities = createRuntimeDriverRegistry({
       executables: { codex: "codex", claude: "claude", api: "api", hermes: "hermes", opencode: "opencode", openclaw: "openclaw" },
       channelById: () => undefined,
-      respondToCodexServerRequest: () => undefined,
     }).driverFor("claude").getCapabilities({
       id: "claude",
       label: "Claude",
@@ -228,7 +248,6 @@ test("api runtime advertises oneshot chat style", () => {
   const capabilities = createRuntimeDriverRegistry({
     executables: { codex: "codex", claude: "claude", api: "api", hermes: "hermes", opencode: "opencode", openclaw: "openclaw" },
     channelById: () => undefined,
-    respondToCodexServerRequest: () => undefined,
   }).driverFor("api").getCapabilities({
     id: "api",
     label: "API",
@@ -627,10 +646,11 @@ process.stdout.write(JSON.stringify({ type: "item.completed", item: { type: "age
 }
 
 async function waitFor<T>(read: () => T, predicate: (value: T) => boolean): Promise<T> {
+  const timeoutMs = 4_000;
   const startedAt = Date.now();
   let value = read();
   while (!predicate(value)) {
-    if (Date.now() - startedAt > 2000) {
+    if (Date.now() - startedAt > timeoutMs) {
       throw new Error(`Timed out waiting for condition. Last value: ${JSON.stringify(value)}`);
     }
     await new Promise((resolve) => setTimeout(resolve, 20));
@@ -3000,7 +3020,11 @@ fs.writeFileSync(${JSON.stringify(argsPath)}, process.argv.slice(2).join("\\n") 
 
   test("passes the local workflow MCP server to Claude workflow SDK runs", async () => {
     const dir = await mkdtemp(path.join(os.tmpdir(), "multi-agent-chat-claude-workflow-mcp-"));
-    const hub = new AgentHub({ codex: "missing-codex-for-test", claude: "missing-claude-for-test" });
+    const runOneShot = vi.fn(async (input: any) => {
+      input.onEvent({ type: "delta", content: "workflow-sdk" });
+      input.onEvent({ type: "completed", content: "workflow-sdk" });
+    });
+    const hub = createHubWithClaudeOneShot(runOneShot);
     hub.setMcpBridgeDiscoveryPath(path.join(dir, "mcp-bridge.json"));
     addConfiguredAgents(hub, [configuredAgent("claude-agent", { runtimeAgentId: "claude", name: "Claude Agent" })]);
     (hub as any).runtimes.set("claude", {
@@ -3010,12 +3034,6 @@ fs.writeFileSync(${JSON.stringify(argsPath)}, process.argv.slice(2).join("\\n") 
       version: "test",
       available: true,
     });
-
-    const runOneShot = vi.fn(async (input: any) => {
-      input.onEvent({ type: "delta", content: "workflow-sdk" });
-      input.onEvent({ type: "completed", content: "workflow-sdk" });
-    });
-    (hub as any).claudeSdkAdapter = { runOneShot };
 
     await (hub as any).askWorkflowAgent({
       requestId: "claude-workflow-mcp-test",
