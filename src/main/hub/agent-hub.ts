@@ -165,6 +165,12 @@ import {
   finishTeamStepFromTask as finishTeamStepFromTaskValue,
 } from "./team/agent-hub-team-run";
 import {
+  createTeamState as createTeamStateValue,
+  normalizeTeamMembers as normalizeTeamMembersValue,
+  normalizeWorkflowTarget as normalizeWorkflowTargetValue,
+  teamMembersFromRunSteps as teamMembersFromRunStepsValue,
+} from "./team/agent-hub-team-state";
+import {
   cloneChannels,
   serializeChat,
   serializeTask,
@@ -1766,56 +1772,19 @@ export class AgentHub {
   }
 
   private createTeamState(input: CreateAgentTeamRequest): AgentTeamState {
-    const name = input.name.trim() || "New Agent Team";
-    const mode = isAgentTeamMode(input.mode) ? input.mode : "pipeline";
-    return new AgentTeamState(name, mode, input.sharedContext ?? "", this.normalizeTeamMembers(input.members ?? []));
+    return createTeamStateValue(input, (members) => this.normalizeTeamMembers(members));
   }
 
   private normalizeWorkflowTarget(target: AgentWorkflowTarget | undefined): AgentWorkflowTarget | undefined {
-    if (!isAgentWorkflowTarget(target)) return undefined;
-    const label = target.label.trim();
-    const value = target.value.trim();
-    if (!label && !value) return undefined;
-    return {
-      kind: target.kind,
-      label: label || target.kind,
-      value,
-    };
-  }
-
-  private normalizeCanvasPosition(position: AgentTeamMember["canvasPosition"]): AgentTeamMember["canvasPosition"] {
-    if (!position || typeof position !== "object") return undefined;
-    const x = Math.max(0, Math.round(asNumber(position.x, Number.NaN)));
-    const y = Math.max(0, Math.round(asNumber(position.y, Number.NaN)));
-    if (!Number.isFinite(x) || !Number.isFinite(y)) return undefined;
-    return { x, y };
+    return normalizeWorkflowTargetValue(target);
   }
 
   private normalizeTeamMembers(members: Array<Partial<Omit<AgentTeamMember, "id">> & { id?: string }>): AgentTeamMember[] {
-    return members.map((member, index) => {
-      const configuredAgent = this.configuredAgentOrDefault(member.configuredAgentId);
-      const canvasPosition = this.normalizeCanvasPosition(member.canvasPosition);
-      return {
-        id: member.id || randomUUID(),
-        roleName: member.roleName?.trim() || `Agent ${index + 1}`,
-        prompt: member.prompt?.trim() ?? "",
-        configuredAgentId: configuredAgent?.id ?? "",
-        ...(canvasPosition ? { canvasPosition } : {}),
-      };
-    });
+    return normalizeTeamMembersValue(members, (configuredAgentId) => this.configuredAgentOrDefault(configuredAgentId)?.id ?? "");
   }
 
   private teamMembersFromRunSteps(steps: TeamRunStep[]): AgentTeamMember[] {
-    return this.normalizeTeamMembers(
-      steps
-        .filter((step) => !step.teamMemberId.endsWith(":synthesis"))
-        .map((step) => ({
-          id: step.teamMemberId,
-          roleName: step.roleName,
-          prompt: step.prompt,
-          configuredAgentId: step.configuredAgentId,
-        })),
-    );
+    return teamMembersFromRunStepsValue(steps, (members) => this.normalizeTeamMembers(members));
   }
 
   private cloneWorkflowGraphNode(node: WorkflowGraphNode): WorkflowGraphNode {
