@@ -6,6 +6,7 @@ import type { AgentChannel } from "../../shared/types";
 import { setCodexChatRouterBaseUrl } from "../bridges/codex-chat-router";
 import {
   codexAppServerConfigArgs,
+  createDefaultChannels,
   generateCodexConfigs,
   importCodexConfigs,
   loadCodexDefaultConfig,
@@ -16,6 +17,16 @@ import {
 } from "./model-config";
 
 describe("model channel config", () => {
+  test("creates a Hermes Default channel for a fresh installation", () => {
+    expect(createDefaultChannels().find((channel) => channel.agentId === "hermes")).toEqual({
+      id: "hermes-default",
+      agentId: "hermes",
+      label: "Hermes Default",
+      presetId: "hermes-default",
+      models: [{ id: "default", label: "Default" }],
+    });
+  });
+
   test("parses visible Codex models from the debug catalog", () => {
     const models = parseCodexModelCatalog(
       JSON.stringify({

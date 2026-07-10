@@ -344,6 +344,13 @@ export function createDefaultChannels(codexModels = FALLBACK_MODEL_OPTIONS.codex
       baseUrl: "https://api.openai.com/v1",
       models: FALLBACK_MODEL_OPTIONS.api,
     },
+    {
+      id: "hermes-default",
+      agentId: "hermes",
+      label: "Hermes Default",
+      presetId: "hermes-default",
+      models: FALLBACK_MODEL_OPTIONS.hermes,
+    },
   ];
 }
 
