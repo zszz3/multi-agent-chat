@@ -11,6 +11,7 @@ import { ScheduledWorkflowCloudClient, type ScheduledWorkflowCloudEventConnectio
 import { importOnlineSkillToLibrary, installBundledSkill, listImportedSkillTemplates, uninstallBundledSkill } from "../skills/skill-installer";
 import { loadBundledWorkflows } from "../workflows/bundled-workflows";
 import { centeredWindowBounds } from "../platform/window-bounds";
+import { resolvePreloadBundlePath } from "./app-paths";
 import { fetchOnlineSkills, ONLINE_SKILL_SOURCES } from "../../shared/online-skills";
 import { DEFAULT_SCHEDULED_WORKFLOW_CLOUD_BASE_URL } from "../../shared/types";
 import type {
@@ -66,7 +67,7 @@ const scheduledWorkflowCloudClient = new ScheduledWorkflowCloudClient();
 let scheduledWorkflowEventConnection: ScheduledWorkflowCloudEventConnection | undefined;
 
 function createWindow(): BrowserWindow {
-  const preloadPath = path.join(__dirname, "../../preload/index.mjs");
+  const preloadPath = resolvePreloadBundlePath(__dirname);
   const bounds = preferredWindowBounds();
   const window = new BrowserWindow({
     ...bounds,
