@@ -4652,6 +4652,55 @@ textarea:focus-visible {
   text-align: center;
 }
 
+.skill-library-search {
+  display: grid;
+  grid-template-columns: auto minmax(0, 1fr) auto;
+  align-items: center;
+  min-height: 34px;
+  padding: 0 9px;
+  border: 1px solid var(--line);
+  border-radius: 7px;
+  background: var(--panel-soft);
+  color: var(--muted);
+}
+
+.skill-library-search:focus-within {
+  border-color: color-mix(in srgb, var(--accent) 46%, var(--line));
+  box-shadow: 0 0 0 2px var(--accent-soft);
+}
+
+.skill-library-search input,
+.skill-library-search button {
+  border: 0;
+  background: transparent;
+  color: inherit;
+}
+
+.skill-library-search input {
+  min-width: 0;
+  padding: 7px;
+  outline: none;
+  font: inherit;
+}
+
+.skill-library-search button {
+  display: grid;
+  place-items: center;
+  padding: 4px;
+  cursor: pointer;
+}
+
+.skill-category-filter {
+  width: 100%;
+  min-height: 32px;
+  padding: 0 9px;
+  border: 1px solid var(--line);
+  border-radius: 7px;
+  background: var(--panel);
+  color: var(--text);
+  font: inherit;
+}
+
 .skill-list-scroll {
   display: grid;
   align-content: start;
@@ -4911,6 +4960,33 @@ textarea:focus-visible {
   justify-content: flex-end;
   flex-wrap: wrap;
   gap: 8px;
+}
+
+.skill-category-editor,
+.skill-category-create {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+}
+
+.skill-category-editor select,
+.skill-category-create input {
+  min-height: 30px;
+  border: 1px solid var(--line);
+  border-radius: 7px;
+  background: var(--panel);
+  color: var(--text);
+  font: inherit;
+}
+
+.skill-category-editor select {
+  max-width: 150px;
+  padding: 0 8px;
+}
+
+.skill-category-create input {
+  width: min(180px, 28vw);
+  padding: 0 9px;
 }
 
 .skill-install-feedback {

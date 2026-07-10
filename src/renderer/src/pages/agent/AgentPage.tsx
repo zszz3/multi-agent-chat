@@ -100,7 +100,6 @@ export function AgentPage({
               <div className="configured-agent-toolbar">
                 <div>
                   <h3>Agents</h3>
-                  <span>{configuredAgents.length}</span>
                 </div>
                 <button className="icon-btn" type="button" onClick={() => void onAddConfiguredAgent()} aria-label={configText.newAgent}>
                   <Plus size={14} />

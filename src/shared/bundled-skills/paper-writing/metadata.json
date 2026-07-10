@@ -5,5 +5,6 @@
     "writing"
   ],
   "sourceLabel": "bundled custom skill",
+  "categoryId": "writing",
   "sourceUrl": "https://github.com/zszz3/multi-agent-chat/tree/main/src/shared/bundled-skills/paper-writing"
 }

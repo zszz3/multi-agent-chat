@@ -32,14 +32,14 @@ describe("OfficialCatalogStore", () => {
           },
         },
       ],
-      [{ id: "review", sourceType: "official", name: "Review", description: "Review code", prompt: "review", tags: ["code"] }],
+      [{ id: "review", sourceType: "official", name: "Review", description: "Review code", prompt: "review", tags: ["code"], categoryId: "coding" }],
     );
 
     expect(await store.listWorkflows()).toEqual([
       expect.objectContaining({ workflowId: "official-release", graph: expect.objectContaining({ nodes: expect.any(Array), edges: expect.any(Array) }) }),
     ]);
     expect(await store.listSkills()).toEqual([
-      expect.objectContaining({ id: "review", sourceType: "official", prompt: "review" }),
+      expect.objectContaining({ id: "review", sourceType: "official", prompt: "review", categoryId: "coding" }),
     ]);
     store.close();
   });

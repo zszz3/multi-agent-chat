@@ -97,6 +97,20 @@ export interface SkillTemplate {
   sourceUrl?: string;
   translationZh?: string;
   sourceType?: ResourceSourceType;
+  categoryId?: string;
+}
+
+export interface SkillCategory {
+  id: string;
+  name: string;
+  system: boolean;
+  sequence: number;
+}
+
+export interface AssignSkillCategoryRequest {
+  sourceType: ResourceSourceType;
+  skillId: string;
+  categoryId: string;
 }
 
 export type SkillInstallTarget = "codex" | "claude" | "trae";

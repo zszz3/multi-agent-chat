@@ -1788,6 +1788,9 @@ describe("AgentPage", () => {
   test("includes the requested built-in skill templates first", () => {
     expect(SKILL_TEMPLATES.map((template) => template.id)).toEqual([
       "brainstorming",
+      "frontend-design",
+      "handoff",
+      "skill-creator",
       "systematic-debugging",
       "personal-finance-planning",
       "resume-optimization",
@@ -2232,6 +2235,31 @@ describe("SkillsPage", () => {
     expect(html).toContain("我的技能");
     expect(html).toContain("Official");
     expect(html).toContain("User");
+  });
+
+  test("renders shared search, category filtering, and category assignment controls", () => {
+    const html = renderToStaticMarkup(
+      <SkillsPage
+        language="zh"
+        categories={[
+          { id: "explore", name: "Explore", system: true, sequence: 0 },
+          { id: "coding", name: "Coding", system: true, sequence: 1 },
+          { id: "category-research", name: "研究", system: false, sequence: 5 },
+        ]}
+        officialSkills={[{ id: "official", sourceType: "official", name: "Official", description: "Official", prompt: "official", tags: [], categoryId: "coding" }]}
+        userSkills={[{ id: "user", sourceType: "user", name: "User", description: "User", prompt: "user", tags: [], categoryId: "category-research" }]}
+        onAssignCategory={async () => undefined}
+        onCreateCategory={async (name) => ({ id: "new", name, system: false, sequence: 6 })}
+      />,
+    );
+
+    expect(html).toContain("aria-label=\"搜索名称、描述或标签\"");
+    expect(html).toContain("aria-label=\"按分类筛选\"");
+    expect(html).toContain(">探索<");
+    expect(html).toContain(">编程<");
+    expect(html).toContain(">研究<");
+    expect(html).toContain("aria-label=\"技能分类\"");
+    expect(html).toContain("aria-label=\"新建分类\"");
   });
 
   test("renders the built-in skill library as a sourced reader", () => {
