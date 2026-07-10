@@ -4,7 +4,7 @@
 
 ### Status
 
-In progress. Executable discovery with bounded refreshable caching, Main-process `PlatformServices` composition, shared process-tree control, production Runtime lifecycle injection, local-file containment, and managed skill-link ownership are implemented. Compatibility cleanup, classified remediation, and Windows-hosted validation remain pending.
+Complete. Executable discovery, structured invocation, process-tree lifecycle, hardened path authorization, managed junction ownership, classified Runtime remediation, executable-path configuration, and Windows-hosted installed-artifact validation satisfy the Phase 02 exit criteria. Phase 03 may now consume these platform services for the packaged MCP sidecar.
 
 ## Goal
 
@@ -57,18 +57,18 @@ Completed:
 - kept executable and arguments as separate values through the shared launcher and prohibited `shell` and caller-supplied `windowsVerbatimArguments` at type and runtime boundaries;
 - implemented structured exec collection with bounded buffers, timeout termination, UTF-8 output, and classified spawn/command failures;
 - added adapter contract coverage for `.exe`, `.cmd`, `.bat`, bare commands, spaces, quotes, trailing backslashes, shell metacharacters, CRLF, and Unicode;
-- added a Windows-only integration fixture using the real npm `tsx.cmd` shim with a missing COMSPEC fallback.
+- added a Windows-only integration fixture using the real npm `tsx.cmd` shim with a missing COMSPEC fallback;
+- added typed `not-installed`, `not-discoverable`, `execution-denied`, and `version-command-failed` detection reasons with actionable remediation text;
+- added a Runtime executable file picker, atomic user-data persistence, reset-to-auto-detection behavior, and configuration status UI;
+- removed direct spawn/kill fallbacks from Runtime runners, ACP, Codex RPC, and streamed channel tests so lifecycle always consumes `PlatformProcessServices`;
+- added an idempotent application shutdown barrier that awaits active one-shot stops, interactive detach, process-tree cleanup, and persistence before Electron exits;
+- added a real Windows parent/child fixture proving `/T` plus `/F` escalation removes the complete owned tree;
+- added `windows-latest` validation for the real `.cmd` fixture, junction ownership, full regression suite, NSIS construction, installed-artifact startup, and graceful close;
+- disabled electron-builder publishing explicitly so validation builds never require a GitHub token or create a release.
 
-Pending:
+Deferred to the next phase:
 
-- remove temporary direct-kill compatibility fallbacks after all tests and non-Main construction sites inject process services;
-- pass the platform launcher/controller through future packaged sidecars;
-- add Windows parent/child integration fixtures proving both processes disappear after cancellation and app shutdown;
-- add ambiguity handling and classified remediation for unresolved or non-runnable executables;
-- execute the real `.cmd` metacharacter/Unicode fixture on `windows-latest`;
-- run the managed-junction suite on Windows without Developer Mode or administrator privileges;
-- add configuration file-picking and actionable detection states;
-- run the integration suite from the Phase 01 installed artifact on Windows.
+- Phase 03 passes the same launcher/controller and resource locator into the packaged MCP sidecar. This is a consumer of the completed Phase 02 boundary, not unfinished Phase 02 platform work.
 
 ## Target Files
 
@@ -310,6 +310,15 @@ npm test
 ```
 
 Windows integration tests must run on `windows-latest` and include a `.cmd` fixture plus a parent/child process-tree fixture.
+
+## Completion Evidence
+
+- Local macOS regression: `npm test` passed with the Windows-only `.cmd` and process-tree fixtures skipped by platform guard; `npm run build`, `npm run verify:package-inputs`, and `npm audit --omit=dev` passed.
+- Windows-hosted run: [Windows Phase 02 run 29111566679](https://github.com/zszz3/multi-agent-chat/actions/runs/29111566679) passed typecheck, the focused platform integration suite, and the complete regression suite.
+- The same Windows run built and verified the x64 NSIS artifact without publishing, installed it per-user into a path containing spaces and Chinese characters, launched it with a system-only PATH and unrelated working directory, observed it remain running, and closed it through the main window.
+- `src/main/platform/process-tree.windows.test.ts` spawned a real Node parent and child and verified both PIDs disappeared after the shared application-shutdown termination path.
+- `src/main/platform/managed-directory-link.test.ts` ran on Windows using directory junctions without an elevated shell or Developer Mode setup.
+- Production-source audit found no direct `.kill(...)`, raw `cmd /c`, PowerShell command template, or `shell: true` under Runtime and Hub process consumers.
 
 ## Exit Criteria
 
