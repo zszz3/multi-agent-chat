@@ -8,6 +8,13 @@
 - 一个模块一个文件
 - 每个文件控制在可单次阅读的体量内
 
+文档层级：
+
+- 本目录：稳定设计说明，解释系统为什么这样设计
+- `superpowers/specs/workflow/`：现行规范、不可变约束和完成证据
+- `superpowers/plans/workflow/`：实施顺序、任务清单和验证命令
+- 2026-06-17 的 Workflow Settings Cleanup plan/spec：V2 之前的 renderer UI 历史，不定义 V2 运行语义
+
 当前模块：
 
 1. [概览与边界](overview-and-boundaries.md)
