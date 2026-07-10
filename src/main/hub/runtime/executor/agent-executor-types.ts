@@ -19,6 +19,7 @@ export interface AgentExecutionContext extends RuntimeRequest {
   runKind: "chat" | "task";
   runtime: AgentRuntime;
   channelId: string;
+  channel?: AgentChannel;
   prompt: string;
   workDir: string;
   developerInstructions: string;

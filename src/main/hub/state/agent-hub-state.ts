@@ -6,6 +6,7 @@ import type {
   ChatMessage,
   ChatRuntimeSessionState,
   RuntimeConversation,
+  RuntimeBindingSnapshot,
   TaskProgress,
   TaskRunStatus,
   TeamRunStatus,
@@ -21,6 +22,7 @@ export class ChatState {
   channelId: string | undefined = undefined;
   runtimeState: ChatRuntimeSessionState | undefined = undefined;
   runtimeConversation: RuntimeConversation | undefined = undefined;
+  runtimeBinding: RuntimeBindingSnapshot | undefined = undefined;
   running = false;
   messages: ChatMessage[] = [];
   pendingAssistantMessageId: string | undefined = undefined;

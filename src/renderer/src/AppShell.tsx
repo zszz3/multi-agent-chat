@@ -909,6 +909,7 @@ export function AppShell() {
             onQueryBalance={queryRuntimeChannelBalance}
             onUpdateProviderKey={updateProviderKey}
             onLoadCodexDefaultConfig={() => window.multiAgentChat.loadCodexDefaultConfig()}
+            onLoadClaudeDefaultConfig={() => window.multiAgentChat.loadClaudeDefaultConfig()}
             onReplaceChannelAndPersist={replaceConfigChannelAndPersist}
             onStatusChange={setConfigStatus}
           />

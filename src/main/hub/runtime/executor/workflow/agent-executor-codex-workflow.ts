@@ -22,7 +22,7 @@ export async function runCodexWorkflow(
   options: RuntimeWorkflowExecutionOptions,
 ): Promise<WorkflowAgentResponse> {
   const executable = input.runtime.command || options.executables.codex;
-  const channel = options.channelById(input.channelId);
+  const channel = input.channel ?? options.channelById(input.channelId);
   const model = runtimeModelId(modelFromRuntimeConfig(input.runtimeConfig));
   let settled = false;
   let content = "";

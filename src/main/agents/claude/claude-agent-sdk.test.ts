@@ -46,6 +46,7 @@ describe("ClaudeAgentSdkAdapter", () => {
           cwd: "C:/repo",
           model: "claude-opus",
           resume: "claude-session-1",
+          env: { PATH: "/bin", ANTHROPIC_BASE_URL: "https://example.com/anthropic" },
           systemPrompt: {
             type: "preset",
             preset: "claude_code",
@@ -62,6 +63,7 @@ describe("ClaudeAgentSdkAdapter", () => {
       modelId: "claude-opus",
       developerInstructions: "Keep answers short.",
       resumeSessionId: "claude-session-1",
+      env: { PATH: "/bin", ANTHROPIC_BASE_URL: "https://example.com/anthropic" },
       onEvent: () => undefined,
     });
 

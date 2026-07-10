@@ -57,6 +57,13 @@ export interface ConfiguredAgent {
   updatedAt: number;
 }
 
+export interface RuntimeBindingSnapshot {
+  configuredAgent: ConfiguredAgent;
+  runtimeAgentId: AgentId;
+  channel: AgentChannel;
+  modelId: string;
+}
+
 export interface SkillTemplate {
   id: string;
   name: string;
@@ -181,6 +188,12 @@ export interface CodexDefaultConfig {
   modelCatalogJson: string | null;
   modelReasoningEffort: string | null;
   plugins: AgentPluginConfig[] | null;
+}
+
+export interface ClaudeDefaultConfig {
+  baseUrl: string | null;
+  apiKey: string | null;
+  modelId: string | null;
 }
 
 export type ExecutionStyle = "oneshot" | "interactive";
@@ -336,6 +349,7 @@ export interface WorkflowAgentRequest extends RuntimeRequest {
   prompt: string;
   configuredAgentId: string;
   workDir?: string;
+  runtimeBinding?: RuntimeBindingSnapshot;
 }
 
 export interface WorkflowAgentResponse {
@@ -633,6 +647,7 @@ export interface WorkflowDraftState {
   finalReport?: string;
   runIds: string[];
   runtimeConversation?: RuntimeConversation;
+  runtimeBinding?: RuntimeBindingSnapshot;
   createdAt: number;
   updatedAt: number;
 }

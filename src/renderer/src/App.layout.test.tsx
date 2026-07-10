@@ -18,6 +18,7 @@ import {
   applySkillTemplate,
   applyProviderPresetToChannel,
   applyCodexDefaultConfigToChannel,
+  applyClaudeDefaultConfigToChannel,
   applyProviderPresetToConfiguredAgent,
   applyProviderModelIdToAgentConfig,
   rememberProviderKeyFromChannel,
@@ -68,7 +69,7 @@ import {
 } from "./App";
 import { DEFAULT_MODEL_ID } from "../../shared/models";
 import { generatedConfigChannels, normalizeConfigChannelsForStorage, selectConfigChannelsForDisplay } from "../../shared/config-channels";
-import { AGENT_PROVIDER_PRESETS, CODEX_DEFAULT_PRESET_ID } from "../../shared/provider-presets";
+import { AGENT_PROVIDER_PRESETS, CLAUDE_DEFAULT_PRESET_ID, CODEX_DEFAULT_PRESET_ID } from "../../shared/provider-presets";
 import { SKILL_TEMPLATES } from "../../shared/skill-templates";
 import { firstWorkflowQuestionForObjective } from "../../shared/workflow-agent";
 import { formatTime } from "./app/format";
@@ -1325,6 +1326,23 @@ describe("ConfigPage", () => {
       { id: DEFAULT_MODEL_ID, label: "Default" },
       { id: "gpt-5.5", label: "gpt-5.5" },
     ]);
+  });
+
+  test("maps Claude Code Default values onto a Claude channel", () => {
+    const mapped = applyClaudeDefaultConfigToChannel(channels[1]!, {
+      baseUrl: "https://claude.example/anthropic",
+      apiKey: "claude-token",
+      modelId: "claude-sonnet-4-6",
+    });
+
+    expect(mapped).toMatchObject({
+      agentId: "claude",
+      presetId: CLAUDE_DEFAULT_PRESET_ID,
+      modelProvider: "claude-default-anthropic",
+      baseUrl: "https://claude.example/anthropic",
+      httpHeaders: { Authorization: "Bearer claude-token" },
+    });
+    expect(mapped.models).toContainEqual({ id: "claude-sonnet-4-6", label: "claude-sonnet-4-6" });
   });
 
   test("renders all stored execution configs without legacy cleanup controls", () => {

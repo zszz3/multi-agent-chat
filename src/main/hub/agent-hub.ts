@@ -30,6 +30,7 @@ import type {
   GeneratedConfigFile,
   ImportedCodexConfig,
   CodexDefaultConfig,
+  ClaudeDefaultConfig,
   PatchWorkflowDraftRequest,
   PauseWorkflowNodeRequest,
   ProviderBalanceResult,
@@ -37,6 +38,7 @@ import type {
   RunAgentTeamRequest,
   RuntimeContinuationPolicy,
   RuntimeConversation,
+  RuntimeBindingSnapshot,
   RuntimeExecutionMode,
   RunTaskRequest,
   SendWorkflowDraftReplyRequest,
@@ -82,6 +84,7 @@ import type { CodexRpcClient } from "../agents/codex/codex-rpc";
 import type { RuntimeCapabilities } from "../agents/runtime/runtime-capabilities";
 import type { InteractiveSessionContext, InteractiveSessionSnapshot, RuntimeDriverRegistry, RuntimeSurface } from "../agents/runtime/runtime-driver";
 import { RuntimeRouter } from "../agents/runtime/runtime-router";
+import { createRuntimeBindingSnapshot } from "./runtime/runtime-binding";
 import { createRuntimeDriverRegistry, RuntimeAgentExecutorFactory, type AgentExecutorFactory } from "./runtime/executor/agent-executor";
 import {
   askApiWorkflowAgent as askApiWorkflowAgentValue,
@@ -93,6 +96,7 @@ import {
   generateCodexConfigs as writeCodexConfigs,
   importCodexConfigs as readCodexConfigs,
   loadCodexDefaultConfig as readCodexDefaultConfig,
+  loadClaudeDefaultConfig as readClaudeDefaultConfig,
   loadModelChannels as readModelChannels,
   normalizeChannels,
   saveModelChannels as writeModelChannels,
@@ -424,6 +428,7 @@ export class AgentHub {
               requestId: input.requestId,
               prompt: input.prompt,
               channelId: input.channelId,
+              channel: input.channel,
               modelId: input.runtimeConfig.model,
               runtimeConversation: input.runtimeConversation,
               onEvent: input.onEvent,
@@ -532,6 +537,10 @@ export class AgentHub {
     return readCodexDefaultConfig();
   }
 
+  async loadClaudeDefaultConfig(): Promise<ClaudeDefaultConfig> {
+    return readClaudeDefaultConfig();
+  }
+
   async listCodexPluginCatalog(): Promise<CodexPluginCatalogItem[]> {
     const runtime = this.runtimes.get("codex");
     if (runtime && !runtime.available) {
@@ -610,6 +619,30 @@ export class AgentHub {
       modelId,
       runtime: this.runtimes.get(runtimeAgentId),
     };
+  }
+
+  private resolveRuntimeBinding(binding: RuntimeBindingSnapshot): ResolvedConfiguredAgent {
+    return {
+      agent: { ...binding.configuredAgent, tags: [...binding.configuredAgent.tags] },
+      runtimeAgentId: binding.runtimeAgentId,
+      channel: {
+        ...binding.channel,
+        models: binding.channel.models.map((model) => ({ ...model })),
+        ...(binding.channel.httpHeaders ? { httpHeaders: { ...binding.channel.httpHeaders } } : {}),
+        ...(binding.channel.plugins ? { plugins: binding.channel.plugins.map((plugin) => ({ ...plugin })) } : {}),
+      },
+      modelId: binding.modelId,
+      runtime: this.runtimes.get(binding.runtimeAgentId),
+    };
+  }
+
+  private resolveChatAgent(chat: ChatState): ResolvedConfiguredAgent | undefined {
+    if (chat.runtimeBinding) return this.resolveRuntimeBinding(chat.runtimeBinding);
+    return this.resolveConfiguredAgent(chat.configuredAgentId, chat.modelId, chat.channelId);
+  }
+
+  private chatConfigurationLocked(chat: ChatState): boolean {
+    return chat.running || Boolean(chat.runtimeBinding || chat.runtimeConversation || hasAgentConversationMessages(chat.messages));
   }
 
   private channelOrThrow(channelId: string): AgentChannel {
@@ -762,7 +795,7 @@ export class AgentHub {
     const chat = this.chats.get(chatId);
     const configuredAgent = this.configuredAgentOrDefault(configuredAgentId);
     if (!configuredAgent) return;
-    if (!chat) return;
+    if (!chat || this.chatConfigurationLocked(chat)) return;
 
     const before = this.resolveConfiguredAgent(chat.configuredAgentId, chat.modelId, chat.channelId);
     const after = this.resolveConfiguredAgent(configuredAgent.id, configuredAgent.modelId, undefined);
@@ -792,7 +825,7 @@ export class AgentHub {
 
   setChatModel(chatId: string, modelId: string): void {
     const chat = this.chats.get(chatId);
-    if (!chat) return;
+    if (!chat || this.chatConfigurationLocked(chat)) return;
     const normalizedModelId = this.normalizeModelIdForConfiguredAgent(chat.configuredAgentId, modelId, chat.channelId);
     if (chat.modelId === normalizedModelId) return;
     chat.modelId = normalizedModelId;
@@ -805,7 +838,7 @@ export class AgentHub {
     const chat = this.chats.get(chatId);
     const configuredAgent = chat ? this.configuredAgentOrDefault(chat.configuredAgentId) : undefined;
     const channel = this.channelById(channelId);
-    if (!chat || !configuredAgent || !channel || channel.agentId !== configuredAgent.runtimeAgentId) return;
+    if (!chat || this.chatConfigurationLocked(chat) || !configuredAgent || !channel || channel.agentId !== configuredAgent.runtimeAgentId) return;
     chat.channelId = channel.id;
     chat.modelId = this.normalizeModelIdForConfiguredAgent(chat.configuredAgentId, chat.modelId, chat.channelId);
     chat.updatedAt = Date.now();
@@ -888,6 +921,13 @@ export class AgentHub {
   patchWorkflowDraft(input: PatchWorkflowDraftRequest): AppSnapshot {
     const current = this.workflows.get(input.workflowId);
     if (!current) return this.snapshot();
+    if (
+      current.messages.length > 0 &&
+      ((input.configuredAgentId !== undefined && input.configuredAgentId !== current.configuredAgentId) ||
+        (input.modelId !== undefined && input.modelId !== current.modelId))
+    ) {
+      throw new Error("Workflow base agent and model cannot change after planning starts.");
+    }
     const next = this.applyWorkflowDraftPatch(current, input);
     this.workflows.set(next.workflowId, next);
     this.activeWorkflowId = next.workflowId;
@@ -910,6 +950,13 @@ export class AgentHub {
   }
 
   async sendWorkflowDraftReply(input: SendWorkflowDraftReplyRequest): Promise<AppSnapshot> {
+    const current = this.workflows.get(input.workflowId);
+    if (current && current.messages.length === 0 && !current.runtimeBinding) {
+      const resolved = this.resolveConfiguredAgent(current.configuredAgentId, current.modelId);
+      if (resolved) {
+        current.runtimeBinding = createRuntimeBindingSnapshot(resolved);
+      }
+    }
     await dispatchWorkflowDraftReplyValue({
       workflow: this.workflows.get(input.workflowId),
       reply: input.reply,
@@ -1052,6 +1099,13 @@ export class AgentHub {
     const current = this.workflows.get(input.workflowId);
     if (!current) return { ok: false, error: `Workflow ${input.workflowId} was not found.` };
     if (current.status === "running") return { ok: false, error: "Cannot modify workflow graph while it is running." };
+    if (
+      current.messages.length > 0 &&
+      ((input.configuredAgentId !== undefined && input.configuredAgentId !== current.configuredAgentId) ||
+        (input.modelId !== undefined && input.modelId !== current.modelId))
+    ) {
+      return { ok: false, error: "Workflow base agent and model cannot change after planning starts." };
+    }
     if (input.expectedRevision !== undefined && input.expectedRevision !== current.revision) {
       return { ok: false, workflowId: current.workflowId, revision: current.revision, error: "Workflow changed since you read it. Call workflow_get and retry." };
     }
@@ -1483,7 +1537,9 @@ export class AgentHub {
       chat,
       prompt: trimmedPrompt,
       resolveConfiguredAgent: (configuredAgentId, modelIdOverride, channelIdOverride) =>
-        this.resolveConfiguredAgent(configuredAgentId, modelIdOverride, channelIdOverride),
+        chat.runtimeBinding
+          ? this.resolveChatAgent(chat)
+          : this.resolveConfiguredAgent(configuredAgentId, modelIdOverride, channelIdOverride),
       selectExecutionMode: (runtimeId, surface, preferred) => this.selectExecutionMode(runtimeId, surface, preferred),
       capabilitiesForRuntime: (runtime) => this.runtimeRouter.capabilitiesFor(runtime),
       hasAgentConversationMessages: (messages) => hasAgentConversationMessages(messages),
@@ -1495,6 +1551,13 @@ export class AgentHub {
         this.activeChatId = nextChatId;
       },
       emit: () => this.emit(),
+      onPrepared: (resolved) => {
+        if (!chat.runtimeBinding) {
+          chat.runtimeBinding = createRuntimeBindingSnapshot(resolved);
+          chat.channelId = resolved.channel.id;
+          chat.modelId = resolved.modelId;
+        }
+      },
       dispatchInteractivePrompt: async (currentChat, currentPrompt, preparedResolved) => {
         await dispatchInteractiveChatPromptValue({
           chat: currentChat,
@@ -1559,6 +1622,7 @@ export class AgentHub {
         request: input,
         resolveConfiguredAgent: (configuredAgentId, modelId, channelId) =>
           this.resolveConfiguredAgent(configuredAgentId, modelId, channelId),
+        resolveRuntimeBinding: (binding) => this.resolveRuntimeBinding(binding),
         cloneConversationForPolicy: (continuationPolicy, runtimeConversation) =>
           this.cloneConversationForPolicy(continuationPolicy, runtimeConversation),
         defaultWorkDir: this.workDir,
@@ -1977,6 +2041,12 @@ export class AgentHub {
 
   private normalizeRunSelections(): void {
     for (const chat of this.chats.values()) {
+      if (chat.runtimeBinding) {
+        chat.configuredAgentId = chat.runtimeBinding.configuredAgent.id;
+        chat.channelId = chat.runtimeBinding.channel.id;
+        chat.modelId = chat.runtimeBinding.modelId;
+        continue;
+      }
       chat.configuredAgentId = this.configuredAgentOrDefault(chat.configuredAgentId)?.id ?? this.defaultConfiguredAgentId();
       if (chat.channelId && this.channelById(chat.channelId)?.agentId !== this.configuredAgentOrDefault(chat.configuredAgentId)?.runtimeAgentId) {
         chat.channelId = undefined;
@@ -2145,11 +2215,12 @@ export class AgentHub {
     requestId: string;
     prompt: string;
     channelId: string;
+    channel?: AgentChannel;
     modelId: string;
     runtimeConversation: RuntimeConversation | undefined;
     onEvent: ((event: WorkflowAgentEvent) => void) | undefined;
   }): Promise<WorkflowAgentResponse> {
-    const channel = this.channelById(input.channelId);
+    const channel = input.channel ?? this.channelById(input.channelId);
     if (!channel) throw new Error("API workflow agent requires a provider base URL");
     return askApiWorkflowAgentValue({
       requestId: input.requestId,
@@ -2247,6 +2318,28 @@ export class AgentHub {
     if (this.configuredAgents.size === 0) {
       const agent = createDefaultConfiguredAgent(this.channels, now);
       this.configuredAgents.set(agent.id, agent);
+    }
+    for (const channel of this.channels) {
+      if (channel.agentId !== "codex" && channel.agentId !== "claude" && channel.agentId !== "api") continue;
+      if ([...this.configuredAgents.values()].some((agent) => agent.channelId === channel.id && agent.runtimeAgentId === channel.agentId)) continue;
+      const baseId = `channel-agent-${channel.id}`;
+      let id = baseId;
+      let suffix = 2;
+      while (this.configuredAgents.has(id)) {
+        id = `${baseId}-${suffix}`;
+        suffix += 1;
+      }
+      this.configuredAgents.set(id, {
+        id,
+        name: channel.label || channel.id,
+        description: "",
+        runtimeAgentId: channel.agentId,
+        channelId: channel.id,
+        modelId: DEFAULT_MODEL_ID,
+        tags: [],
+        createdAt: now,
+        updatedAt: now,
+      });
     }
   }
 

@@ -7,6 +7,7 @@ import type {
   AckScheduledWorkflowEventRequest,
   AppSnapshot,
   CodexDefaultConfig,
+  ClaudeDefaultConfig,
   CodexPluginCatalogItem,
   ConfiguredAgent,
   CreateWorkflowDraftRequest,
@@ -63,6 +64,7 @@ const api = {
   testRuntimeChannel: (channelId: string): Promise<AgentTestResult> => ipcRenderer.invoke("runtime-channels:test", channelId),
   queryRuntimeChannelBalance: (channelId: string): Promise<ProviderBalanceResult> => ipcRenderer.invoke("runtime-channels:balance", channelId),
   loadCodexDefaultConfig: (): Promise<CodexDefaultConfig> => ipcRenderer.invoke("runtime-channels:load-codex-default"),
+  loadClaudeDefaultConfig: (): Promise<ClaudeDefaultConfig> => ipcRenderer.invoke("runtime-channels:load-claude-default"),
   onAgentTestEvent: (callback: (event: AgentTestEvent) => void): (() => void) => {
     const listener = (_event: Electron.IpcRendererEvent, event: AgentTestEvent) => callback(event);
     ipcRenderer.on("configured-agents:test-event", listener);

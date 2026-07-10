@@ -11,6 +11,7 @@ import {
   type ChatRuntimeSessionState,
   type ConfiguredAgent,
   type RuntimeConversation,
+  type RuntimeBindingSnapshot,
   type RuntimeInteractionCapabilities,
   type RuntimeResumeCapabilities,
   type ScheduledWorkflowFrequency,
@@ -35,6 +36,7 @@ export interface PersistedChatSessionRecord {
   channelId?: string;
   runtimeState?: ChatRuntimeSessionState;
   runtimeConversation?: RuntimeConversation;
+  runtimeBinding?: RuntimeBindingSnapshot;
   lastError: string | undefined;
   createdAt: number;
   updatedAt: number;

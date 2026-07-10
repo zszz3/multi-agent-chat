@@ -2,6 +2,7 @@ import { DEFAULT_MODEL_ID, FALLBACK_MODEL_OPTIONS } from "./models";
 import type { AgentId, AgentModelOption } from "./types";
 
 export const CODEX_DEFAULT_PRESET_ID = "codex-default";
+export const CLAUDE_DEFAULT_PRESET_ID = "claude-code";
 
 export interface AgentProviderPreset {
   id: string;
@@ -32,7 +33,7 @@ export const AGENT_PROVIDER_PRESETS: AgentProviderPreset[] = [
     models: FALLBACK_MODEL_OPTIONS.codex,
   },
   {
-    id: "claude-code",
+    id: CLAUDE_DEFAULT_PRESET_ID,
     label: "Claude Code",
     runtimeAgentId: "claude",
     models: FALLBACK_MODEL_OPTIONS.claude,

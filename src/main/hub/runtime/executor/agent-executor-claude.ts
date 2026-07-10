@@ -1,6 +1,7 @@
 import { ClaudeAgentSdkAdapter } from "../../../agents/claude/claude-agent-sdk";
 import { claudeSessionIdFromConversation } from "./agent-executor-conversation";
 import type { AgentExecutionContext, AgentExecutor } from "./agent-executor-types";
+import { claudeEnvironmentForChannel } from "../../../agents/claude/claude-env";
 
 export class ClaudeAgentExecutor implements AgentExecutor {
   private abortController: AbortController | undefined;
@@ -25,6 +26,7 @@ export class ClaudeAgentExecutor implements AgentExecutor {
         abortController,
         ...(this.resolvedModelId ? { modelId: this.resolvedModelId } : {}),
         ...(resumeSessionId ? { resumeSessionId } : {}),
+        env: claudeEnvironmentForChannel(this.context.channel, this.context.runtimeConfig.model),
       });
       this.context.onExit(0);
     } catch (error) {

@@ -1,6 +1,6 @@
 import { DEFAULT_MODEL_ID } from "../../../../shared/models";
-import type { AgentChannel, AgentModelOption, AgentPluginConfig, CodexDefaultConfig, ProviderBalanceResult } from "../../../../shared/types";
-import { CODEX_DEFAULT_PRESET_ID, type AgentProviderPreset } from "../../../../shared/provider-presets";
+import type { AgentChannel, AgentModelOption, AgentPluginConfig, ClaudeDefaultConfig, CodexDefaultConfig, ProviderBalanceResult } from "../../../../shared/types";
+import { CLAUDE_DEFAULT_PRESET_ID, CODEX_DEFAULT_PRESET_ID, type AgentProviderPreset } from "../../../../shared/provider-presets";
 import type { Language } from "../../app/language";
 import { missingAppCapabilityMessage } from "../../app/shell";
 import type { AgentTestUiState } from "./runtime-types";
@@ -118,6 +118,26 @@ export function applyCodexDefaultConfigToChannel(channel: AgentChannel, config: 
   const plugins = cloneOptionalPlugins(config.plugins);
   if (plugins && plugins.length > 0) next.plugins = plugins;
 
+  return next;
+}
+
+export function applyClaudeDefaultConfigToChannel(channel: AgentChannel, config: ClaudeDefaultConfig): AgentChannel {
+  const next: AgentChannel = {
+    ...channel,
+    agentId: "claude",
+    presetId: CLAUDE_DEFAULT_PRESET_ID,
+    models: defaultModelsForCodexConfig(config.modelId),
+  };
+  delete next.modelProvider;
+  delete next.providerName;
+  delete next.baseUrl;
+  delete next.httpHeaders;
+  if (config.baseUrl || config.apiKey) {
+    next.modelProvider = "claude-default-anthropic";
+    next.providerName = "Claude Code Default";
+  }
+  if (config.baseUrl) next.baseUrl = config.baseUrl;
+  if (config.apiKey) next.httpHeaders = { Authorization: `Bearer ${config.apiKey}` };
   return next;
 }
 

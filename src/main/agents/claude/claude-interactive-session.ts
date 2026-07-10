@@ -14,6 +14,7 @@ interface ClaudeInteractiveSessionOptions {
   sdkInteractive: ClaudeInteractiveSdkBinding;
   capabilities: ChatRuntimeSessionState["capabilities"];
   resolveModelId?: (context: InteractiveSessionContext) => string | undefined;
+  resolveEnv?: (context: InteractiveSessionContext) => NodeJS.ProcessEnv;
   now?: () => number;
 }
 
@@ -97,6 +98,7 @@ export class ClaudeInteractiveSession implements InteractiveSession {
       modelId,
       developerInstructions: this.context.developerInstructions,
       ...(resumeSessionId ? { resumeSessionId } : {}),
+      ...(this.options.resolveEnv ? { env: this.options.resolveEnv(this.context) } : {}),
       onEvent: (event) => {
         if (!this.lease.matchesAttachment(generation)) return;
         if (event.type !== "runtime_conversation" && this.activeTurnId === undefined) return;

@@ -32,6 +32,7 @@ export { SettingsPage } from "./pages/settings/SettingsPage";
 export { RuntimePage } from "./pages/runtime/RuntimePage";
 export {
   applyCodexDefaultConfigToChannel,
+  applyClaudeDefaultConfigToChannel,
   applyProviderPresetToChannel,
   rememberProviderKeyFromChannel,
   resolveProviderPresetId,

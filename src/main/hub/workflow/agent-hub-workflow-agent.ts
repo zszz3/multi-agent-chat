@@ -1,5 +1,6 @@
 import type {
   AgentId,
+  RuntimeBindingSnapshot,
   RuntimeConversation,
   WorkflowAgentEvent,
   WorkflowAgentRequest,
@@ -65,6 +66,7 @@ export function buildWorkflowAgentExecution<TResolved extends {
 }>(input: {
   request: WorkflowAgentRequest;
   resolveConfiguredAgent: (configuredAgentId: string, modelId?: string, channelId?: string) => TResolved | undefined;
+  resolveRuntimeBinding: (binding: RuntimeBindingSnapshot) => TResolved;
   cloneConversationForPolicy: (
     continuationPolicy: WorkflowAgentRequest["continuationPolicy"],
     runtimeConversation: RuntimeConversation | undefined,
@@ -81,12 +83,15 @@ export function buildWorkflowAgentExecution<TResolved extends {
   prompt: string;
   runtime: NonNullable<TResolved["runtime"]>;
   channelId: string;
+  channel: TResolved["channel"];
   workDir: string;
 } {
   const prompt = input.request.prompt.trim();
   if (!prompt) throw new Error("Workflow agent prompt is required");
 
-  const resolved = input.resolveConfiguredAgent(input.request.configuredAgentId, input.request.runtimeConfig.model);
+  const resolved = input.request.runtimeBinding
+    ? input.resolveRuntimeBinding(input.request.runtimeBinding)
+    : input.resolveConfiguredAgent(input.request.configuredAgentId, input.request.runtimeConfig.model);
   if (!resolved) throw new Error("No configured agent is selected.");
   if (resolved.runtimeAgentId !== input.request.runtimeId) {
     throw new Error(`Configured agent ${resolved.agent.id} does not match runtime ${input.request.runtimeId}.`);
@@ -110,6 +115,7 @@ export function buildWorkflowAgentExecution<TResolved extends {
     prompt,
     runtime: resolved.runtime,
     channelId: resolved.channel.id,
+    channel: resolved.channel,
     workDir: input.request.workDir?.trim() || input.defaultWorkDir,
   };
 }

@@ -23,6 +23,7 @@ import {
   type PersistedTaskRunRecord,
   type PersistedTeamRunRecord,
 } from "./agent-hub-persistence";
+import { cloneRuntimeBindingSnapshot } from "../runtime/runtime-binding";
 
 export function buildPersistedPayload(input: {
   activeChatId: string | undefined;
@@ -59,6 +60,7 @@ export function buildPersistedPayload(input: {
       ...(chat.channelId ? { channelId: chat.channelId } : {}),
       ...(chat.runtimeState ? { runtimeState: cloneRuntimeState(chat.runtimeState) } : {}),
       ...(chat.runtimeConversation ? { runtimeConversation: input.cloneConversation(chat.runtimeConversation) } : {}),
+      ...(chat.runtimeBinding ? { runtimeBinding: cloneRuntimeBindingSnapshot(chat.runtimeBinding) } : {}),
       lastError: chat.lastError,
       createdAt: chat.createdAt,
       updatedAt: chat.updatedAt,

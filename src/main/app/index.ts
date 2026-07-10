@@ -19,6 +19,7 @@ import type {
   AckScheduledWorkflowEventRequest,
   AppSnapshot,
   CodexDefaultConfig,
+  ClaudeDefaultConfig,
   ConfiguredAgent,
   CreateWorkflowDraftRequest,
   CreateScheduledWorkflowScheduleRequest,
@@ -305,6 +306,7 @@ function registerIpcHandlers(): void {
   );
   ipcMain.handle("runtime-channels:balance", async (_event, channelId: string) => hub.queryRuntimeChannelBalance(channelId));
   ipcMain.handle("runtime-channels:load-codex-default", async (): Promise<CodexDefaultConfig> => hub.loadCodexDefaultConfig());
+  ipcMain.handle("runtime-channels:load-claude-default", async (): Promise<ClaudeDefaultConfig> => hub.loadClaudeDefaultConfig());
   ipcMain.handle("model-channels:generate", async () => hub.generateCodexConfigs());
   ipcMain.handle("model-channels:import-codex", async () => hub.importCodexConfigs());
   ipcMain.handle("codex:plugins:list", async () => hub.listCodexPluginCatalog());

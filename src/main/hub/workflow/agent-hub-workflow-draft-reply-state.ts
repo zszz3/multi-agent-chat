@@ -92,5 +92,6 @@ export function createWorkflowDraftAgentRequest(input: {
     continuationPolicy: "fresh",
     runtimeConfig: { model: input.started.next.modelId },
     workDir: input.started.next.workDir || input.defaultWorkDir,
+    ...(input.started.next.runtimeBinding ? { runtimeBinding: input.started.next.runtimeBinding } : {}),
   };
 }

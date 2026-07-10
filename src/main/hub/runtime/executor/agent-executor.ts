@@ -4,7 +4,7 @@ import type {
   WorkflowAgentResponse,
 } from "../../../../shared/types";
 import { codexEnvironmentForChannel } from "../../../agents/codex/codex-env";
-import { claudeCliModelForChannel } from "../../../agents/claude/claude-env";
+import { claudeCliModelForChannel, claudeEnvironmentForChannel } from "../../../agents/claude/claude-env";
 import { ClaudeAgentSdkAdapter, type ClaudeAgentSdkRunInput } from "../../../agents/claude/claude-agent-sdk";
 import { ClaudeAgentSdkInteractive } from "../../../agents/claude/claude-agent-sdk-interactive";
 import { ClaudeInteractiveSession } from "../../../agents/claude/claude-interactive-session";
@@ -77,7 +77,7 @@ export function createRuntimeDriverRegistry(options: RuntimeAgentExecutorFactory
           supportsUserInputRequests: true,
         },
         createCodexClient: ({ onEvent, onExit }) => {
-          const channel = options.channelById(context.channelId);
+          const channel = context.channel ?? options.channelById(context.channelId);
           let client: CodexRpcClient;
           client = new CodexRpcClient({
             executable: context.runtime.command || options.executables.codex,
@@ -112,7 +112,7 @@ export function createRuntimeDriverRegistry(options: RuntimeAgentExecutorFactory
       new ClaudeAgentExecutor(
         context,
         claudeSdkAdapter,
-        claudeCliModelForChannel(options.channelById(context.channelId), modelFromRuntimeConfig(context.runtimeConfig)),
+        claudeCliModelForChannel(context.channel ?? options.channelById(context.channelId), modelFromRuntimeConfig(context.runtimeConfig)),
       ),
     createInteractiveSession: (context) =>
       new ClaudeInteractiveSession(
@@ -130,9 +130,14 @@ export function createRuntimeDriverRegistry(options: RuntimeAgentExecutorFactory
           },
           resolveModelId: (interactiveContext) =>
             claudeCliModelForChannel(
-              options.channelById(interactiveContext.channelId),
+              interactiveContext.channel ?? options.channelById(interactiveContext.channelId),
               modelFromRuntimeConfig(interactiveContext.runtimeConfig),
             ) ?? modelFromRuntimeConfig(interactiveContext.runtimeConfig),
+          resolveEnv: (interactiveContext) =>
+            claudeEnvironmentForChannel(
+              interactiveContext.channel ?? options.channelById(interactiveContext.channelId),
+              modelFromRuntimeConfig(interactiveContext.runtimeConfig),
+            ),
           sdkInteractive: new ClaudeAgentSdkInteractive(),
         },
       ),

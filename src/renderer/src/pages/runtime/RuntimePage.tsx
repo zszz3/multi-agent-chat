@@ -2,9 +2,10 @@ import { useMemo, type MouseEvent } from "react";
 import { CheckCircle2, Cpu, Plus, RefreshCw, Save, Trash2 } from "lucide-react";
 import { configChannelForSelection, selectConfigChannelsForDisplay } from "../../../../shared/config-channels";
 import { DEFAULT_MODEL_ID } from "../../../../shared/models";
-import { AGENT_PROVIDER_PRESETS, CODEX_DEFAULT_PRESET_ID, type AgentProviderPreset } from "../../../../shared/provider-presets";
+import { AGENT_PROVIDER_PRESETS, CLAUDE_DEFAULT_PRESET_ID, CODEX_DEFAULT_PRESET_ID, type AgentProviderPreset } from "../../../../shared/provider-presets";
 import type {
   AgentChannel,
+  ClaudeDefaultConfig,
   AgentId,
   AgentModelOption,
   CodexDefaultConfig,
@@ -19,6 +20,7 @@ import {
   addPluginToChannel,
   agentTestEventLabel,
   applyCodexDefaultConfigToChannel,
+  applyClaudeDefaultConfigToChannel,
   applyProviderApiKeyToChannel,
   apiKeyFromChannelHeaders,
   applyProviderPresetToChannel,
@@ -103,6 +105,7 @@ interface RuntimePageProps {
   onQueryBalance?: (channelId: string) => Promise<void>;
   onUpdateProviderKey: (presetId: string, value: string) => void;
   onLoadCodexDefaultConfig?: () => Promise<CodexDefaultConfig>;
+  onLoadClaudeDefaultConfig?: () => Promise<ClaudeDefaultConfig>;
   onReplaceChannelAndPersist?: (channelId: string, nextChannel: AgentChannel) => Promise<void>;
   status?: string;
   onStatusChange?: (message: string) => void;
@@ -135,6 +138,7 @@ export function RuntimePage({
   onQueryBalance,
   onUpdateProviderKey,
   onLoadCodexDefaultConfig,
+  onLoadClaudeDefaultConfig,
   onReplaceChannelAndPersist,
   status = "",
   onStatusChange,
@@ -207,6 +211,21 @@ export function RuntimePage({
         } else {
           updateSelectedRuntimeChannel(() => nextChannel);
         }
+      } catch (error) {
+        onStatusChange?.(error instanceof Error ? error.message : String(error));
+      }
+      return;
+    }
+    if (preset.id === CLAUDE_DEFAULT_PRESET_ID) {
+      try {
+        onStatusChange?.("");
+        const config = onLoadClaudeDefaultConfig
+          ? await onLoadClaudeDefaultConfig()
+          : await window.multiAgentChat.loadClaudeDefaultConfig();
+        onUpdateProviderKey(CLAUDE_DEFAULT_PRESET_ID, config.apiKey ?? "");
+        const nextChannel = applyClaudeDefaultConfigToChannel(selectedRuntimeChannelRecord, config);
+        if (onReplaceChannelAndPersist) await onReplaceChannelAndPersist(selectedRuntimeChannelRecord.id, nextChannel);
+        else updateSelectedRuntimeChannel(() => nextChannel);
       } catch (error) {
         onStatusChange?.(error instanceof Error ? error.message : String(error));
       }

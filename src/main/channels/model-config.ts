@@ -8,6 +8,7 @@ import type {
   AgentModelOption,
   AgentPluginConfig,
   CodexDefaultConfig,
+  ClaudeDefaultConfig,
   GeneratedConfigFile,
   ImportedCodexConfig,
 } from "../../shared/types";
@@ -566,6 +567,44 @@ export async function loadCodexDefaultConfig(home = codexHome()): Promise<CodexD
   }
 
   return parseCodexDefaultConfig(rawConfigToml, rawAuthJson);
+}
+
+export function claudeHome(): string {
+  return process.env.CLAUDE_CONFIG_DIR ?? path.join(os.homedir(), ".claude");
+}
+
+export function parseClaudeDefaultConfig(
+  rawSettingsJson: string | undefined,
+  env: NodeJS.ProcessEnv = process.env,
+): ClaudeDefaultConfig {
+  let settings: Record<string, unknown> = {};
+  if (rawSettingsJson) {
+    try {
+      const parsed = JSON.parse(rawSettingsJson) as unknown;
+      if (parsed && typeof parsed === "object" && !Array.isArray(parsed)) settings = parsed as Record<string, unknown>;
+    } catch {
+      settings = {};
+    }
+  }
+  const settingsEnv = settings.env && typeof settings.env === "object" && !Array.isArray(settings.env)
+    ? settings.env as Record<string, unknown>
+    : {};
+  const value = (key: string): string | null => asString(env[key]) ?? asString(settingsEnv[key]) ?? null;
+  return {
+    baseUrl: value("ANTHROPIC_BASE_URL"),
+    apiKey: value("ANTHROPIC_AUTH_TOKEN") ?? value("ANTHROPIC_API_KEY"),
+    modelId: value("ANTHROPIC_MODEL") ?? asString(settings.model) ?? null,
+  };
+}
+
+export async function loadClaudeDefaultConfig(home = claudeHome(), env: NodeJS.ProcessEnv = process.env): Promise<ClaudeDefaultConfig> {
+  let rawSettingsJson: string | undefined;
+  try {
+    rawSettingsJson = await readFile(path.join(home, "settings.json"), "utf8");
+  } catch {
+    rawSettingsJson = undefined;
+  }
+  return parseClaudeDefaultConfig(rawSettingsJson, env);
 }
 
 export async function importCodexConfigs(home = codexHome()): Promise<ImportedCodexConfig[]> {
