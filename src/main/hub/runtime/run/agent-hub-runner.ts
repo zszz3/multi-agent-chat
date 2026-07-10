@@ -1,0 +1,99 @@
+import type {
+  AgentEvent,
+  AgentId,
+  AgentRuntime,
+  ConfiguredAgent,
+  RuntimeContinuationPolicy,
+  RuntimeConversation,
+  RuntimeExecutionMode,
+} from "../../../../shared/types";
+import type { AgentExecutorFactory } from "../executor/agent-executor";
+import type { ChatState, TaskState } from "../../state/agent-hub-state";
+
+export type HubRunState = ChatState | TaskState;
+
+export interface ResolvedHubRunAgent {
+  agent: ConfiguredAgent;
+  runtimeAgentId: AgentId;
+  channel: { id: string };
+  modelId: string;
+  runtime: AgentRuntime | undefined;
+}
+
+export async function runAgentExecution(input: {
+  run: HubRunState;
+  prompt: string;
+  resolved: ResolvedHubRunAgent;
+  workDir: string;
+  chatDeveloperInstructions: string;
+  taskDeveloperInstructions: string;
+  executorFactory: AgentExecutorFactory;
+  selectExecutionMode: (
+    runtimeId: AgentId,
+    surface: "chat" | "task",
+    preferred: RuntimeExecutionMode,
+  ) => RuntimeExecutionMode;
+  defaultContinuationPolicy: (
+    runtimeId: AgentId,
+    surface: "chat" | "task",
+    executionMode: RuntimeExecutionMode,
+  ) => RuntimeContinuationPolicy;
+  cloneConversationForPolicy: (
+    continuationPolicy: RuntimeContinuationPolicy,
+    runtimeConversation: RuntimeConversation | undefined,
+  ) => RuntimeConversation | undefined;
+  handleAgentEvent: (run: HubRunState, event: AgentEvent) => void;
+  markRunExited: (run: HubRunState) => void;
+  markRunFailed: (run: HubRunState, error: string) => void;
+  registerStop: (runId: string, stop: () => Promise<void> | void) => void;
+  clearStop: (runId: string) => void;
+  emit: () => void;
+}): Promise<void> {
+  const runtime = input.resolved.runtime;
+  if (!runtime?.available) {
+    input.markRunFailed(input.run, `${input.resolved.agent.name || input.resolved.agent.id} is not available on this machine.`);
+    return;
+  }
+  const developerInstructions =
+    input.run.kind === "task" ? input.taskDeveloperInstructions : input.chatDeveloperInstructions;
+  const executionMode =
+    input.run.kind === "chat"
+      ? input.selectExecutionMode(input.resolved.runtimeAgentId, "chat", "oneshot")
+      : "oneshot";
+  const continuationPolicy =
+    input.run.kind === "chat"
+      ? input.defaultContinuationPolicy(input.resolved.runtimeAgentId, "chat", executionMode)
+      : "fresh";
+  const runtimeConversation = input.cloneConversationForPolicy(continuationPolicy, input.run.runtimeConversation);
+  const executor = input.executorFactory.create({
+    runId: input.run.id,
+    runKind: input.run.kind,
+    runtimeId: input.resolved.runtimeAgentId,
+    executionMode,
+    continuationPolicy,
+    runtimeConfig: { model: input.resolved.modelId },
+    ...(runtimeConversation ? { runtimeConversation } : {}),
+    runtime,
+    channelId: input.resolved.channel.id,
+    prompt: input.prompt,
+    workDir: input.workDir,
+    developerInstructions,
+    emit: (event) => input.handleAgentEvent(input.run, event),
+    onExit: (code) => {
+      if (input.resolved.runtimeAgentId === "claude" && typeof code === "number" && code !== 0) {
+        input.run.lastError = `Claude exited with code ${code}`;
+      }
+      input.markRunExited(input.run);
+      input.run.updatedAt = Date.now();
+      input.clearStop(input.run.id);
+      input.emit();
+    },
+  });
+  input.registerStop(input.run.id, () => executor.stop());
+
+  try {
+    await executor.start();
+  } catch (error) {
+    input.markRunFailed(input.run, error instanceof Error ? error.message : String(error));
+  }
+}
