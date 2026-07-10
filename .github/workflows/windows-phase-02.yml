@@ -53,7 +53,17 @@ jobs:
         run: npm run verify:package-inputs
 
       - name: Package NSIS installer
-        run: npx electron-builder --win nsis --x64
+        shell: pwsh
+        run: |
+          $BuilderOutput = & npx electron-builder --win nsis --x64 2>&1
+          $BuilderExitCode = $LASTEXITCODE
+          $BuilderOutput | ForEach-Object { Write-Host $_ }
+          if ($BuilderExitCode -ne 0) {
+            $Tail = (($BuilderOutput | Select-Object -Last 40) -join "`n")
+            $Tail = $Tail.Replace("%", "%25").Replace("`r", "%0D").Replace("`n", "%0A")
+            Write-Host "::error title=electron-builder failed::$Tail"
+            exit $BuilderExitCode
+          }
 
       - name: Verify NSIS installer
         run: npm run verify:win-installer
