@@ -57,3 +57,21 @@ export function prepareTaskRunExecution<TResolved extends TaskRunResolvedAgent>(
   beginTaskRun({ task: input.task, ...(input.now !== undefined ? { now: input.now } : {}) });
   return input.resolved;
 }
+
+export function prepareTaskPromptExecution<TResolved extends TaskRunResolvedAgent>(input: {
+  task: TaskState;
+  resolved: TResolved | undefined;
+  createUserMessage: (content: string) => ChatMessage;
+  createErrorMessage: (content: string) => ChatMessage;
+  onUnavailable?: (error: string) => void;
+  now?: number;
+}): TResolved | undefined {
+  input.task.messages.push(input.createUserMessage(input.task.prompt));
+  return prepareTaskRunExecution({
+    task: input.task,
+    resolved: input.resolved,
+    createErrorMessage: input.createErrorMessage,
+    ...(input.onUnavailable ? { onUnavailable: input.onUnavailable } : {}),
+    ...(input.now !== undefined ? { now: input.now } : {}),
+  });
+}

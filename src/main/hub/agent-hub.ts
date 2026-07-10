@@ -148,7 +148,7 @@ import {
 import { runAgentExecution as runAgentExecutionValue } from "./runtime/agent-hub-runner";
 import { runRuntimeChannelTest as runRuntimeChannelTestValue } from "./runtime/agent-hub-runtime-test";
 import {
-  prepareTaskRunExecution as prepareTaskRunExecutionValue,
+  prepareTaskPromptExecution as prepareTaskPromptExecutionValue,
 } from "./runtime/agent-hub-task-run";
 import {
   codexPluginSummaries,
@@ -223,7 +223,11 @@ import {
   restoreWorkflowDraft as restoreWorkflowDraftValue,
   restoreWorkflowRun as restoreWorkflowRunValue,
 } from "./workflow/agent-hub-workflow-restore";
-import { updateWorkflowRunState as updateWorkflowRunStateValue } from "./workflow/agent-hub-workflow-run-state";
+import {
+  finishWorkflowRunState as finishWorkflowRunStateValue,
+  startWorkflowRunState as startWorkflowRunStateValue,
+  updateWorkflowRunState as updateWorkflowRunStateValue,
+} from "./workflow/agent-hub-workflow-run-state";
 import {
   cloneScheduledWorkflowRun as cloneScheduledWorkflowRunValue,
   cloneScheduledWorkflowRunnerConfig as cloneScheduledWorkflowRunnerConfigValue,
@@ -1089,29 +1093,15 @@ export class AgentHub {
     if (workflow.status === "running") return { ok: false, error: "Workflow is already running." };
     this.activeWorkflowDraftRequests.delete(workflow.workflowId);
     const runId = `run_${randomUUID()}`;
-    const run: WorkflowRunState = {
+    const next = startWorkflowRunStateValue({
+      workflow,
+      request: input,
       runId,
-      workflowId: workflow.workflowId,
-      status: "running",
-      graphSnapshot: this.cloneWorkflowGraph(workflow.graph),
-      progress: [],
-      events: [],
-      contextDocument: input.contextDocument ?? workflow.contextDocument,
-      startedAt: Date.now(),
-      finishedAt: undefined,
-      lastError: undefined,
-    };
-    this.workflowRuns.set(runId, run);
-    const { finalReport: _workflowFinalReport, ...workflowWithoutFinalReport } = workflow;
-    this.workflows.set(workflow.workflowId, this.cloneWorkflowDraft({
-      ...workflowWithoutFinalReport,
-      status: "running",
-      runIds: [...workflow.runIds, runId],
-      error: undefined,
-      runProgress: [],
-      runContextDocument: input.contextDocument ?? workflow.runContextDocument,
-      updatedAt: Date.now(),
-    }));
+      cloneGraph: (graph) => this.cloneWorkflowGraph(graph),
+      cloneDraft: (draft) => this.cloneWorkflowDraft(draft),
+    });
+    this.workflowRuns.set(runId, next.nextRun);
+    this.workflows.set(workflow.workflowId, next.nextWorkflow);
     this.emit();
     return { ok: true, workflowId: workflow.workflowId, runId, revision: workflow.revision };
   }
@@ -1121,26 +1111,14 @@ export class AgentHub {
     const run = this.workflowRuns.get(input.runId);
     if (!workflow) return { ok: false, error: `Workflow ${input.workflowId} was not found.` };
     if (!run || run.workflowId !== input.workflowId) return { ok: false, error: `Workflow run ${input.runId} was not found.` };
-    const nextRun: WorkflowRunState = {
-      ...run,
-      status: input.status,
-      progress: input.progress ?? run.progress,
-      events: input.appendEvents && input.appendEvents.length > 0 ? [...run.events, ...input.appendEvents] : run.events,
-      contextDocument: input.contextDocument ?? run.contextDocument,
-      ...((input.finalReport ?? run.finalReport) !== undefined ? { finalReport: input.finalReport ?? run.finalReport } : {}),
-      finishedAt: Date.now(),
-      lastError: input.lastError,
-    };
-    this.workflowRuns.set(run.runId, nextRun);
-    this.workflows.set(workflow.workflowId, this.cloneWorkflowDraft({
-      ...workflow,
-      status: input.status,
-      runProgress: input.progress ?? workflow.runProgress,
-      runContextDocument: input.contextDocument ?? workflow.runContextDocument,
-      ...((input.finalReport ?? workflow.finalReport) !== undefined ? { finalReport: input.finalReport ?? workflow.finalReport } : {}),
-      error: input.lastError,
-      updatedAt: Date.now(),
-    }));
+    const next = finishWorkflowRunStateValue({
+      workflow,
+      run,
+      request: input,
+      cloneDraft: (draft) => this.cloneWorkflowDraft(draft),
+    });
+    this.workflowRuns.set(run.runId, next.nextRun);
+    this.workflows.set(workflow.workflowId, next.nextWorkflow);
     this.emit();
     return { ok: true, workflowId: workflow.workflowId, runId: run.runId, revision: workflow.revision };
   }
@@ -1683,11 +1661,10 @@ export class AgentHub {
     this.activeTaskId = task.id;
 
     const resolved = this.resolveConfiguredAgent(task.configuredAgentId, task.modelId);
-    task.messages.push(createUserMessage(task.prompt));
-
-    const preparedResolved = prepareTaskRunExecutionValue({
+    const preparedResolved = prepareTaskPromptExecutionValue({
       task,
       resolved,
+      createUserMessage: (content) => createUserMessage(content),
       createErrorMessage: (content) => createErrorMessage(content),
     });
     if (!preparedResolved) {
@@ -2257,11 +2234,10 @@ export class AgentHub {
     this.activeTaskId = task.id;
 
     const resolved = this.resolveConfiguredAgent(task.configuredAgentId, task.modelId);
-    task.messages.push(createUserMessage(task.prompt));
-
-    const preparedResolved = prepareTaskRunExecutionValue({
+    const preparedResolved = prepareTaskPromptExecutionValue({
       task,
       resolved,
+      createUserMessage: (content) => createUserMessage(content),
       createErrorMessage: (content) => createErrorMessage(content),
       onUnavailable: (error) => this.failTeamStepFromTask(task, error),
     });

@@ -24,14 +24,13 @@ import {
 } from "../../agents/runtime/runtime-state-codec";
 import type {
   RuntimeChannelTestContext,
-  RuntimeDriver,
   RuntimeSessionCleanupContext,
   RuntimeWorkflowRequestContext,
 } from "../../agents/runtime/runtime-driver";
 import { RuntimeDriverRegistry } from "../../agents/runtime/runtime-driver";
 import { codexAppServerConfigArgs } from "../../channels/model-config";
 import { apiRequestBody, apiRequestUrl, extractApiContent, resolveApiModel } from "../api/agent-hub-api";
-import { defaultInteractiveCapabilities, defaultOneShotCapabilities, support } from "./agent-executor-capabilities";
+import { createInteractiveRuntimeDriver, createOneShotRuntimeDriver } from "./agent-executor-driver-factories";
 import { deleteClaudeSessionArtifacts, deleteCodexSessionArtifacts } from "./agent-executor-session-cleanup";
 
 export { RuntimeDriverRegistry } from "../../agents/runtime/runtime-driver";
@@ -382,25 +381,15 @@ export function createRuntimeDriverRegistry(options: RuntimeAgentExecutorFactory
   const deleteSessionArtifactsByRuntime = options.deleteSessionArtifactsByRuntime ?? {};
   const claudeSdkAdapter = new ClaudeAgentSdkAdapter();
   const runClaudeOneShot = options.runClaudeOneShot ?? ((input: ClaudeAgentSdkRunInput) => claudeSdkAdapter.runOneShot(input));
-  const codexDriver: RuntimeDriver = {
+  const codexDriver = createInteractiveRuntimeDriver({
     runtimeId: "codex",
-    surfaceSupport: [
-      support("chat", ["interactive"], ["fresh", "resume-preferred"]),
-      support("task", ["oneshot"], ["fresh", "resume-preferred"]),
-      support("workflow", ["oneshot"], ["fresh", "resume-preferred"]),
-      support("channel-test", ["oneshot"], ["fresh"]),
-      support("cleanup", ["oneshot"], ["fresh", "resume-preferred"]),
-    ],
     runtimeStateCodec: codexRuntimeStateCodec,
-    getCapabilities: () => ({
-      ...defaultInteractiveCapabilities("codex"),
-      resume: {
-        supportsInProcessConversationResume: true,
-        supportsResumeAfterDetach: true,
-        supportsResumeAfterAppRestart: true,
-        supportsTurnResume: false,
-      },
-    }),
+    resume: {
+      supportsInProcessConversationResume: true,
+      supportsResumeAfterDetach: true,
+      supportsResumeAfterAppRestart: true,
+      supportsTurnResume: false,
+    },
     createOneShotExecutor: (context) => new CodexAgentExecutor(context, options),
     createInteractiveSession: (context) =>
       new CodexInteractiveSession(context, {
@@ -436,26 +425,16 @@ export function createRuntimeDriverRegistry(options: RuntimeAgentExecutorFactory
     deleteSessionArtifacts:
       deleteSessionArtifactsByRuntime.codex ??
       ((input) => deleteCodexSessionArtifacts(options.executables.codex, input.runtimeConversation)),
-  };
-  const claudeDriver: RuntimeDriver = {
+  });
+  const claudeDriver = createInteractiveRuntimeDriver({
     runtimeId: "claude",
-    surfaceSupport: [
-      support("chat", ["interactive"], ["fresh", "resume-preferred"]),
-      support("task", ["oneshot"], ["fresh", "resume-preferred"]),
-      support("workflow", ["oneshot"], ["fresh", "resume-preferred"]),
-      support("channel-test", ["oneshot"], ["fresh"]),
-      support("cleanup", ["oneshot"], ["fresh", "resume-preferred"]),
-    ],
     runtimeStateCodec: claudeRuntimeStateCodec,
-    getCapabilities: () => ({
-      ...defaultInteractiveCapabilities("claude"),
-      resume: {
-        supportsInProcessConversationResume: true,
-        supportsResumeAfterDetach: true,
-        supportsResumeAfterAppRestart: true,
-        supportsTurnResume: false,
-      },
-    }),
+    resume: {
+      supportsInProcessConversationResume: true,
+      supportsResumeAfterDetach: true,
+      supportsResumeAfterAppRestart: true,
+      supportsTurnResume: false,
+    },
     createOneShotExecutor: (context) =>
       new ClaudeAgentExecutor(
         context,
@@ -489,38 +468,22 @@ export function createRuntimeDriverRegistry(options: RuntimeAgentExecutorFactory
     deleteSessionArtifacts:
       deleteSessionArtifactsByRuntime.claude ??
       ((input) => deleteClaudeSessionArtifacts(input.workDir, input.runtimeConversation)),
-  };
-  const apiDriver: RuntimeDriver = {
+  });
+  const apiDriver = createOneShotRuntimeDriver({
     runtimeId: "api",
-    surfaceSupport: [
-      support("chat", ["oneshot"], ["fresh"]),
-      support("task", ["oneshot"], ["fresh"]),
-      support("workflow", ["oneshot"], ["fresh"]),
-      support("channel-test", ["oneshot"], ["fresh"]),
-      support("cleanup", ["oneshot"], ["fresh"]),
-    ],
-    getCapabilities: () => defaultOneShotCapabilities("api"),
     createOneShotExecutor: (context) => new ApiAgentExecutor(context, options),
     askWorkflow: askWorkflowByRuntime.api,
     testChannel: testChannelByRuntime.api,
-    deleteSessionArtifacts: deleteSessionArtifactsByRuntime.api ?? (async () => undefined),
-  };
-  const hermesDriver: RuntimeDriver = {
+    deleteSessionArtifacts: deleteSessionArtifactsByRuntime.api,
+  });
+  const hermesDriver = createOneShotRuntimeDriver({
     runtimeId: "hermes",
-    surfaceSupport: [
-      support("chat", ["oneshot"], ["fresh"]),
-      support("task", ["oneshot"], ["fresh"]),
-      support("workflow", ["oneshot"], ["fresh"]),
-      support("channel-test", ["oneshot"], ["fresh"]),
-      support("cleanup", ["oneshot"], ["fresh"]),
-    ],
     runtimeStateCodec: hermesRuntimeStateCodec,
-    getCapabilities: () => defaultOneShotCapabilities("hermes"),
     createOneShotExecutor: (context) => new HermesAgentExecutor(context, options),
     askWorkflow: (input) => runHermesWorkflow(input, options),
     testChannel: (input) => runHermesChannelTest(input, options),
-    deleteSessionArtifacts: async () => undefined,
-  };
+    deleteSessionArtifacts: undefined,
+  });
   return new RuntimeDriverRegistry([codexDriver, claudeDriver, apiDriver, hermesDriver]);
 }
 
