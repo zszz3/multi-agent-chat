@@ -2,7 +2,7 @@ import type { ChatRuntimeSessionState, RuntimeConversation } from "../../../shar
 import type { InteractiveSession, InteractiveSessionContext, InteractiveSessionSnapshot } from "../runtime/runtime-driver";
 import { ClaudeAgentSdkInteractive } from "./claude-agent-sdk-interactive";
 import { ProcessLease } from "../shared/process-lease";
-import { claudeRuntimeStateCodec } from "../runtime/runtime-state-codec";
+import { claudeRuntimeStateCodec } from "./claude-runtime-state-codec";
 import { planSessionReconfigure } from "../runtime/session-reconfigure";
 
 type ClaudeInteractiveSdkBinding = Pick<
@@ -14,6 +14,7 @@ interface ClaudeInteractiveSessionOptions {
   sdkInteractive: ClaudeInteractiveSdkBinding;
   capabilities: ChatRuntimeSessionState["capabilities"];
   resolveModelId?: (context: InteractiveSessionContext) => string | undefined;
+  resolveEnvironment?: (context: InteractiveSessionContext) => NodeJS.ProcessEnv;
   now?: () => number;
 }
 
@@ -96,6 +97,7 @@ export class ClaudeInteractiveSession implements InteractiveSession {
       cwd: this.context.workDir,
       modelId,
       developerInstructions: this.context.developerInstructions,
+      ...(this.options.resolveEnvironment ? { env: this.options.resolveEnvironment(this.context) } : {}),
       ...(resumeSessionId ? { resumeSessionId } : {}),
       onEvent: (event) => {
         if (!this.lease.matchesAttachment(generation)) return;

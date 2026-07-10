@@ -29,6 +29,12 @@ export class RuntimeRouter {
     return this.registry.driverFor(runtime.id).getCapabilities(runtime);
   }
 
+  supportsSurface(runtimeId: AgentId, surface: RuntimeSurface): boolean {
+    return this.registry
+      .maybeDriverFor(runtimeId)
+      ?.surfaceSupport.some((item) => item.surface === surface) ?? false;
+  }
+
   createOneShotExecutor(context: AgentExecutionContext): AgentExecutor {
     const surface: RuntimeSurface = context.runKind === "chat" ? "chat" : "task";
     const { driver, input } = this.validateRequest(surface, context);

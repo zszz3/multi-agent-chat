@@ -1,10 +1,31 @@
 import type { AgentChannel, AgentId, AgentModelOption } from "./types";
 
 export const DEFAULT_MODEL_ID = "default";
+export const CURRENT_CODEX_MODELS: AgentModelOption[] = [
+  {
+    id: "gpt-5.6-sol",
+    label: "GPT-5.6-Sol",
+    reasoningEfforts: ["low", "medium", "high", "xhigh", "max", "ultra"],
+    defaultReasoningEffort: "low",
+  },
+  {
+    id: "gpt-5.6-terra",
+    label: "GPT-5.6-Terra",
+    reasoningEfforts: ["low", "medium", "high", "xhigh", "max", "ultra"],
+    defaultReasoningEffort: "medium",
+  },
+  {
+    id: "gpt-5.6-luna",
+    label: "GPT-5.6-Luna",
+    reasoningEfforts: ["low", "medium", "high", "xhigh", "max"],
+    defaultReasoningEffort: "medium",
+  },
+];
 
 export const FALLBACK_MODEL_OPTIONS: Record<AgentId, AgentModelOption[]> = {
   codex: [
     { id: DEFAULT_MODEL_ID, label: "Default" },
+    ...CURRENT_CODEX_MODELS,
     { id: "gpt-5.5", label: "GPT-5.5" },
     { id: "gpt-5.4", label: "GPT-5.4" },
     { id: "gpt-5.4-mini", label: "GPT-5.4-Mini" },
@@ -24,7 +45,12 @@ export const FALLBACK_MODEL_OPTIONS: Record<AgentId, AgentModelOption[]> = {
   ],
   hermes: [
     { id: DEFAULT_MODEL_ID, label: "Default" },
-    { id: "hermes-default", label: "Hermes Default" },
+  ],
+  opencode: [
+    { id: DEFAULT_MODEL_ID, label: "Default" },
+  ],
+  openclaw: [
+    { id: DEFAULT_MODEL_ID, label: "Default" },
   ],
 };
 

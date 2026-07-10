@@ -276,6 +276,27 @@ describe("RuntimeRouter", () => {
     );
   });
 
+  test("reports optional runtime surfaces without throwing", () => {
+    const router = new RuntimeRouter(
+      new RuntimeDriverRegistry([
+        createDriver({
+          runtimeId: "api",
+          surfaceSupport: [
+            {
+              surface: "task",
+              executionModes: ["oneshot"],
+              continuationPolicies: ["fresh"],
+            },
+          ],
+        }),
+      ]),
+    );
+
+    expect(router.supportsSurface("api", "task")).toBe(true);
+    expect(router.supportsSurface("api", "cleanup")).toBe(false);
+    expect(router.supportsSurface("openclaw", "cleanup")).toBe(false);
+  });
+
   test("rejects cleanup requests that use runtimeConversation owned by another runtime", async () => {
     const deleteSessionArtifacts = vi.fn(async () => undefined);
     const router = new RuntimeRouter(
@@ -587,6 +608,83 @@ describe("RuntimeRouter", () => {
       } satisfies AgentExecutionContext),
     ).toThrow(/codex cannot use runtimeConversation owned by claude/i);
     expect(createOneShotExecutor).not.toHaveBeenCalled();
+  });
+
+  test("rejects non-fresh one-shot requests for stateless runtimes from declared support before inferring runtime conversations", async () => {
+    const executor = {
+      start: async () => undefined,
+      stop: async () => undefined,
+    } satisfies AgentExecutor;
+    const createOneShotExecutor = vi.fn((_context: AgentExecutionContext) => executor);
+    const askWorkflow = vi.fn(async (_input: RuntimeWorkflowRequestContext) => ({ content: "workflow ok" }));
+    const router = new RuntimeRouter(
+      new RuntimeDriverRegistry([
+        createDriver({
+          runtimeId: "api",
+          surfaceSupport: [
+            {
+              surface: "chat",
+              executionModes: ["oneshot"],
+              continuationPolicies: ["fresh"],
+            },
+            {
+              surface: "task",
+              executionModes: ["oneshot"],
+              continuationPolicies: ["fresh"],
+            },
+            {
+              surface: "workflow",
+              executionModes: ["oneshot"],
+              continuationPolicies: ["fresh"],
+            },
+          ],
+          getCapabilities: () => oneshotCapabilities("api"),
+          createOneShotExecutor,
+          askWorkflow,
+        }),
+      ]),
+    );
+    const runtimeConversation = {
+      runtimeId: "api",
+      codecVersion: "v1",
+      payload: { requestId: "api-request-1" },
+    } as const;
+
+    expect(() =>
+      router.createOneShotExecutor({
+        runId: "task-api-resume-required-1",
+        runKind: "task",
+        prompt: "Inspect the repo",
+        runtimeId: "api",
+        executionMode: "oneshot",
+        continuationPolicy: "resume-required",
+        runtimeConversation,
+        runtimeConfig: { model: "default" },
+        runtime,
+        channelId: "api-default",
+        workDir: "C:/repo",
+        developerInstructions: "",
+        emit: () => undefined,
+        onExit: () => undefined,
+      } satisfies AgentExecutionContext),
+    ).toThrow(/api does not support task oneshot with continuation policy resume-required/i);
+    expect(createOneShotExecutor).not.toHaveBeenCalled();
+
+    await expect(
+      router.askWorkflow({
+        requestId: "wf-api-resume-preferred-1",
+        prompt: "Plan it",
+        runtimeId: "api",
+        executionMode: "oneshot",
+        continuationPolicy: "resume-preferred",
+        runtimeConversation,
+        runtimeConfig: { model: "default" },
+        runtime,
+        channelId: "api-default",
+        workDir: "C:/repo",
+      } satisfies RuntimeWorkflowRequestContext),
+    ).rejects.toThrow(/api does not support workflow oneshot with continuation policy resume-preferred/i);
+    expect(askWorkflow).not.toHaveBeenCalled();
   });
 
   test("rejects resume-required workflow requests when runtimeConversation is missing", async () => {

@@ -17,6 +17,7 @@ export interface ResolvedHubRunAgent {
   runtimeAgentId: AgentId;
   channel: { id: string };
   modelId: string;
+  reasoningEffort?: string;
   runtime: AgentRuntime | undefined;
 }
 
@@ -71,7 +72,10 @@ export async function runAgentExecution(input: {
     runtimeId: input.resolved.runtimeAgentId,
     executionMode,
     continuationPolicy,
-    runtimeConfig: { model: input.resolved.modelId },
+    runtimeConfig: {
+      model: input.resolved.modelId,
+      ...(input.resolved.reasoningEffort ? { reasoningEffort: input.resolved.reasoningEffort } : {}),
+    },
     ...(runtimeConversation ? { runtimeConversation } : {}),
     runtime,
     channelId: input.resolved.channel.id,
@@ -79,10 +83,7 @@ export async function runAgentExecution(input: {
     workDir: input.workDir,
     developerInstructions,
     emit: (event) => input.handleAgentEvent(input.run, event),
-    onExit: (code) => {
-      if (input.resolved.runtimeAgentId === "claude" && typeof code === "number" && code !== 0) {
-        input.run.lastError = `Claude exited with code ${code}`;
-      }
+    onExit: () => {
       input.markRunExited(input.run);
       input.run.updatedAt = Date.now();
       input.clearStop(input.run.id);

@@ -1,6 +1,10 @@
 import { describe, expect, test } from "vitest";
 import type { RuntimeConversation } from "../../../shared/types";
-import { claudeRuntimeStateCodec, codexRuntimeStateCodec, hermesRuntimeStateCodec } from "./runtime-state-codec";
+import { claudeRuntimeStateCodec } from "../claude/claude-runtime-state-codec";
+import { codexRuntimeStateCodec } from "../codex/codex-runtime-state-codec";
+import { hermesRuntimeStateCodec } from "../hermes/hermes-runtime-state-codec";
+import { openClawRuntimeStateCodec } from "../openclaw/openclaw-runtime-state-codec";
+import { openCodeRuntimeStateCodec } from "../opencode/opencode-runtime-state-codec";
 
 function runtimeConversation(runtimeId: RuntimeConversation["runtimeId"], payload: Record<string, unknown>): RuntimeConversation {
   return {
@@ -75,14 +79,48 @@ describe("runtime state codecs", () => {
     ).toBeUndefined();
   });
 
-  test("hermes codec validates its bounded session payload", () => {
-    const raw = runtimeConversation("hermes", { sessionId: "hermes-session-1" });
+  test("hermes codec persists ACP session identity and rejects unsupported transports", () => {
+    const raw = runtimeConversation("hermes", {
+      native: { sessionId: "hermes-session-1" },
+      appContext: { cwd: "/repo", modelId: "default", transport: "acp" },
+    });
 
     expect(hermesRuntimeStateCodec.restorePersistedConversation(raw)).toEqual(raw);
-    expect(hermesRuntimeStateCodec.decodeConversation(raw)).toEqual({ sessionId: "hermes-session-1" });
-    expect(hermesRuntimeStateCodec.encodeConversation({ sessionId: "hermes-session-2" })).toEqual(
-      runtimeConversation("hermes", { sessionId: "hermes-session-2" }),
-    );
-    expect(hermesRuntimeStateCodec.restorePersistedConversation(runtimeConversation("hermes", {}))).toBeUndefined();
+    expect(hermesRuntimeStateCodec.decodeConversation(raw)).toEqual({
+      native: { sessionId: "hermes-session-1" },
+      appContext: { cwd: "/repo", modelId: "default", transport: "acp" },
+    });
+    expect(
+      hermesRuntimeStateCodec.restorePersistedConversation(
+        runtimeConversation("hermes", {
+          native: { sessionId: "hermes-session-1" },
+          appContext: { transport: "gateway" },
+        }),
+      ),
+    ).toBeUndefined();
+  });
+
+  test("opencode codec persists ACP session identity and rejects malformed native state", () => {
+    const raw = runtimeConversation("opencode", {
+      native: { sessionId: "ses_opencode_1" },
+      appContext: { cwd: "/repo", modelId: "openai/gpt-5", transport: "acp" },
+    });
+    expect(openCodeRuntimeStateCodec.restorePersistedConversation(raw)).toEqual(raw);
+    expect(openCodeRuntimeStateCodec.decodeConversation(raw)).toEqual({
+      native: { sessionId: "ses_opencode_1" },
+      appContext: { cwd: "/repo", modelId: "openai/gpt-5", transport: "acp" },
+    });
+    expect(openCodeRuntimeStateCodec.restorePersistedConversation(runtimeConversation("opencode", {
+      native: { sessionId: 42 },
+    }))).toBeUndefined();
+  });
+
+  test("openclaw codec persists Gateway-backed ACP session identity", () => {
+    const raw = runtimeConversation("openclaw", {
+      native: { sessionId: "agent:main:acp-bridge:desktop" },
+      appContext: { cwd: "/repo", modelId: "default", transport: "acp" },
+    });
+    expect(openClawRuntimeStateCodec.restorePersistedConversation(raw)).toEqual(raw);
+    expect(openClawRuntimeStateCodec.decodeConversation(raw)?.native.sessionId).toBe("agent:main:acp-bridge:desktop");
   });
 });

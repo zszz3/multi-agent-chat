@@ -1,4 +1,4 @@
-import { mkdtemp } from "node:fs/promises";
+import { mkdtemp, readFile } from "node:fs/promises";
 import os from "node:os";
 import path from "node:path";
 import { describe, expect, test } from "vitest";
@@ -7,13 +7,14 @@ import { writeNodeCliLauncher } from "../../platform/test-cli-fixtures";
 import { HermesRunner } from "./hermes-runner";
 
 describe("HermesRunner", () => {
-  test("streams Hermes JSON lines into AgentEvent values", async () => {
+  test("uses the documented scripted one-shot command and emits final text", async () => {
     const dir = await mkdtemp(path.join(os.tmpdir(), "multi-agent-chat-hermes-runner-"));
+    const argsPath = path.join(dir, "args.json");
     const executable = await writeNodeCliLauncher(
       dir,
       "hermes-fake",
-      `process.stdout.write(JSON.stringify({ type: "delta", content: "Hello" }) + "\\n");
-process.stdout.write(JSON.stringify({ type: "completed", content: "Hello", sessionId: "hermes-session-1" }) + "\\n");
+      `require("node:fs").writeFileSync(${JSON.stringify(argsPath)}, JSON.stringify(process.argv.slice(2)));
+process.stdout.write("Hello from Hermes\\n");
 `,
     );
 
@@ -22,24 +23,48 @@ process.stdout.write(JSON.stringify({ type: "completed", content: "Hello", sessi
       executable,
       cwd: dir,
       prompt: "hello",
-      modelId: "default",
+      modelId: "nous/hermes-4",
       onEvent: (event) => emitted.push(event),
       onExit: () => undefined,
     });
 
     await runner.start();
 
-    expect(emitted).toEqual([
-      { type: "delta", content: "Hello" },
-      {
-        type: "runtime_conversation",
-        runtimeConversation: {
-          runtimeId: "hermes",
-          codecVersion: "v1",
-          payload: { sessionId: "hermes-session-1" },
-        },
+    expect(JSON.parse(await readFile(argsPath, "utf8"))).toEqual([
+      "-z",
+      "hello",
+      "--model",
+      "nous/hermes-4",
+    ]);
+    expect(emitted).toEqual([{ type: "completed", content: "Hello from Hermes" }]);
+  });
+
+  test("reports a non-zero Hermes exit with bounded stderr context", async () => {
+    const dir = await mkdtemp(path.join(os.tmpdir(), "multi-agent-chat-hermes-runner-error-"));
+    const executable = await writeNodeCliLauncher(
+      dir,
+      "hermes-fake-error",
+      `process.stderr.write("authentication failed\\n");
+process.exit(7);
+`,
+    );
+    const emitted: AgentEvent[] = [];
+    let exitCode: number | null | undefined;
+    const runner = new HermesRunner({
+      executable,
+      cwd: dir,
+      prompt: "hello",
+      onEvent: (event) => emitted.push(event),
+      onExit: (code) => {
+        exitCode = code;
       },
-      { type: "completed", content: "Hello" },
+    });
+
+    await runner.start();
+
+    expect(exitCode).toBe(7);
+    expect(emitted).toEqual([
+      { type: "error", error: "Hermes exited with 7: authentication failed" },
     ]);
   });
 });

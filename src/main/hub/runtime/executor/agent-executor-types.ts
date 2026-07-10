@@ -3,11 +3,13 @@ import type {
   AgentEvent,
   AgentId,
   AgentRuntime,
+  AppendWorkflowContextRequest,
+  CreateWorkflowRequest,
   RuntimeRequest,
+  WorkflowDraftState,
   WorkflowAgentResponse,
+  WorkflowOperationResult,
 } from "../../../../shared/types";
-import type { ClaudeAgentSdkRunInput } from "../../../agents/claude/claude-agent-sdk";
-import type { CodexRpcClient } from "../../../agents/codex/codex-rpc";
 import type {
   RuntimeChannelTestContext,
   RuntimeSessionCleanupContext,
@@ -35,16 +37,19 @@ export interface AgentExecutorFactory {
   create(context: AgentExecutionContext): AgentExecutor;
 }
 
+export interface RuntimeWorkflowHost {
+  mcpBridgeDiscoveryPath: () => string | undefined;
+  tools: {
+    createWorkflow: (request: CreateWorkflowRequest) => WorkflowOperationResult;
+    getWorkflow: (workflowId: string) => WorkflowDraftState | undefined;
+    appendWorkflowContext: (request: AppendWorkflowContextRequest) => WorkflowOperationResult;
+  };
+}
+
 export interface RuntimeAgentExecutorFactoryOptions {
   executables: Record<AgentId, string>;
   channelById: (channelId: string) => AgentChannel | undefined;
-  respondToCodexServerRequest: (
-    client: CodexRpcClient,
-    id: number,
-    method: string,
-    params: Record<string, unknown>,
-  ) => void;
-  runClaudeOneShot?: (input: ClaudeAgentSdkRunInput) => Promise<void>;
+  workflowHost?: RuntimeWorkflowHost;
   askWorkflowByRuntime?: Partial<Record<AgentId, (input: RuntimeWorkflowRequestContext) => Promise<WorkflowAgentResponse>>>;
   testChannelByRuntime?: Partial<Record<AgentId, (input: RuntimeChannelTestContext) => Promise<string>>>;
   deleteSessionArtifactsByRuntime?: Partial<Record<AgentId, (input: RuntimeSessionCleanupContext) => Promise<void>>>;
@@ -52,4 +57,10 @@ export interface RuntimeAgentExecutorFactoryOptions {
 
 export function modelFromRuntimeConfig(runtimeConfig: RuntimeRequest["runtimeConfig"]): string {
   return runtimeConfig.model;
+}
+
+export function reasoningEffortFromRuntimeConfig(
+  runtimeConfig: RuntimeRequest["runtimeConfig"],
+): string | undefined {
+  return typeof runtimeConfig.reasoningEffort === "string" ? runtimeConfig.reasoningEffort : undefined;
 }

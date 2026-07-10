@@ -8,11 +8,14 @@ import { setCodexChatRouterBaseUrl, startCodexChatRouter, type CodexChatRouterSe
 import { createLocalTextFilePreviewUnderRoots } from "../platform/local-file-preview";
 import { startMcpBridge, type McpBridgeServer } from "../bridges/mcp-bridge";
 import { ScheduledWorkflowCloudClient, type ScheduledWorkflowCloudEventConnection } from "../workflows/scheduled-workflow-cloud";
-import { importOnlineSkillToLibrary, installBundledSkill, listImportedSkillTemplates, uninstallBundledSkill } from "../skills/skill-installer";
+import { deleteImportedSkillFromLibrary, importOnlineSkillToLibrary, installBundledSkill, uninstallBundledSkill } from "../skills/skill-installer";
 import { loadBundledWorkflows } from "../workflows/bundled-workflows";
+import { OfficialCatalogStore } from "../official-catalog-store";
+import { UserSkillStore } from "../user-skill-store";
 import { centeredWindowBounds } from "../platform/window-bounds";
 import { resolvePreloadBundlePath } from "./app-paths";
 import { fetchOnlineSkills, ONLINE_SKILL_SOURCES } from "../../shared/online-skills";
+import { SKILL_TEMPLATES } from "../../shared/skill-templates";
 import { DEFAULT_SCHEDULED_WORKFLOW_CLOUD_BASE_URL } from "../../shared/types";
 import type {
   AgentChannel,
@@ -52,6 +55,7 @@ import type {
 const __dirname = path.dirname(fileURLToPath(import.meta.url));
 const PRODUCT_NAME = "Multi Agent Chat";
 const APP_DATABASE_FILE = "app.db";
+const OFFICIAL_CATALOG_DATABASE_FILE = "official-catalog.db";
 const MODEL_CHANNELS_FILE = "model-channels.json";
 const MCP_BRIDGE_FILE = "mcp-bridge.json";
 const DEFAULT_WINDOW_WIDTH = 1360;
@@ -59,6 +63,8 @@ const DEFAULT_WINDOW_HEIGHT = 860;
 const MIN_WINDOW_WIDTH = 980;
 const MIN_WINDOW_HEIGHT = 680;
 const hub = new AgentHub();
+const officialCatalog = new OfficialCatalogStore(path.join(app.getPath("userData"), OFFICIAL_CATALOG_DATABASE_FILE));
+const userSkillStore = new UserSkillStore(path.join(app.getPath("userData"), APP_DATABASE_FILE));
 
 let mainWindow: BrowserWindow | null = null;
 let ipcRegistered = false;
@@ -96,7 +102,7 @@ function createWindow(): BrowserWindow {
   if (process.env.ELECTRON_RENDERER_URL) {
     void window.loadURL(process.env.ELECTRON_RENDERER_URL);
   } else {
-    void window.loadFile(path.join(__dirname, "../../renderer/index.html"));
+    void window.loadFile(path.join(__dirname, "../renderer/index.html"));
   }
 
   return window;
@@ -252,19 +258,23 @@ async function bootstrap(): Promise<void> {
   await app.whenReady();
   await hub.loadModelChannels(path.join(app.getPath("userData"), MODEL_CHANNELS_FILE));
   await hub.loadPersistedState(path.join(app.getPath("userData"), APP_DATABASE_FILE));
-  hub.ensureBundledWorkflows(await loadBundledWorkflows(path.join(__dirname, "../../shared/bundled-workflows")));
+  const bundledWorkflows = await loadBundledWorkflows(path.join(__dirname, "../../shared/bundled-workflows"));
+  await officialCatalog.rebuild(bundledWorkflows, SKILL_TEMPLATES);
+  hub.ensureBundledWorkflows(await officialCatalog.listWorkflows());
   codexChatRouter = await startCodexChatRouter({ channels: () => hub.snapshot().channels });
   setCodexChatRouterBaseUrl(codexChatRouter.baseUrl);
   mcpBridge = await startMcpBridge(hub, {
     discoveryPath: process.env.MULTI_AGENT_CHAT_MCP_BRIDGE || path.join(app.getPath("appData"), "multi-agent-chat", MCP_BRIDGE_FILE),
     bundledSkillsRoot: path.join(app.getPath("userData"), "bundled-skills"),
   });
+  hub.setMcpBridgeDiscoveryPath(mcpBridge.discoveryPath);
 
   registerIpcHandlers();
   hub.onChange((snapshot) => mainWindow?.webContents.send("snapshot:changed", snapshot));
 
   mainWindow = createWindow();
   await hub.initialize();
+  void hub.refreshDiscoverableModelCatalogs();
 
   app.on("activate", () => {
     if (BrowserWindow.getAllWindows().length === 0) mainWindow = createWindow();
@@ -307,6 +317,7 @@ function registerIpcHandlers(): void {
   );
   ipcMain.handle("runtime-channels:balance", async (_event, channelId: string) => hub.queryRuntimeChannelBalance(channelId));
   ipcMain.handle("runtime-channels:load-codex-default", async (): Promise<CodexDefaultConfig> => hub.loadCodexDefaultConfig());
+  ipcMain.handle("runtime-channels:refresh-models", async (_event, channelId: string) => hub.refreshModelCatalog(channelId));
   ipcMain.handle("model-channels:generate", async () => hub.generateCodexConfigs());
   ipcMain.handle("model-channels:import-codex", async () => hub.importCodexConfigs());
   ipcMain.handle("codex:plugins:list", async () => hub.listCodexPluginCatalog());
@@ -351,10 +362,18 @@ function registerIpcHandlers(): void {
   ipcMain.handle("power:get-keep-awake", () => getKeepAwake());
   ipcMain.handle("power:set-keep-awake", (_event, enabled: boolean) => setKeepAwake(Boolean(enabled)));
   ipcMain.handle("skills:search-online", async (_event, query: string) => fetchOnlineSkills(String(query ?? ""), ONLINE_SKILL_SOURCES));
-  ipcMain.handle("skills:list-imported", async () => listImportedSkillTemplates(path.join(app.getPath("userData"), "bundled-skills")));
-  ipcMain.handle("skills:import-online", async (_event, request: ImportOnlineSkillRequest) =>
-    importOnlineSkillToLibrary(request, path.join(app.getPath("userData"), "bundled-skills")),
-  );
+  ipcMain.handle("skills:list-official", async () => officialCatalog.listSkills());
+  ipcMain.handle("skills:list-imported", async () => userSkillStore.list());
+  ipcMain.handle("skills:import-online", async (_event, request: ImportOnlineSkillRequest) => {
+    const result = await importOnlineSkillToLibrary(request, path.join(app.getPath("userData"), "bundled-skills"));
+    await userSkillStore.upsert(result.template);
+    return result;
+  });
+  ipcMain.handle("skills:delete-user", async (_event, templateId: string) => {
+    const removed = await userSkillStore.delete(templateId);
+    if (removed) await deleteImportedSkillFromLibrary(templateId, path.join(app.getPath("userData"), "bundled-skills"));
+    return { templateId, removed };
+  });
   ipcMain.handle("skills:install", async (_event, request: InstallSkillRequest) =>
     installBundledSkill(request, app.getPath("home"), path.join(app.getPath("userData"), "bundled-skills")),
   );
@@ -509,6 +528,8 @@ app.on("before-quit", () => {
   scheduledWorkflowEventConnection?.close();
   void codexChatRouter?.stop();
   void mcpBridge?.stop();
+  officialCatalog.close();
+  userSkillStore.close();
 });
 
 app.on("window-all-closed", () => {

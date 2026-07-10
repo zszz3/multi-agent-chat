@@ -47,13 +47,12 @@ import {
   skillDisplayDescription,
   skillDisplayName,
 } from "./pages/skills/find-skill";
-import { ConfigPage } from "./pages/config/ConfigPage";
-import { useConfiguredAgentsManager } from "./pages/config/hooks/useConfiguredAgentsManager";
+import { AgentPage } from "./pages/agent/AgentPage";
+import { useConfiguredAgentsManager } from "./pages/agent/hooks/useConfiguredAgentsManager";
 import { ChatPage } from "./pages/chat/ChatPage";
 import { chatConfigLocked, SlashCommandSuggestions, slashCommandSuggestionsFor } from "./pages/chat/chat-utils";
 export { chatConfigLocked, SlashCommandSuggestions, slashCommandSuggestionsFor } from "./pages/chat/chat-utils";
 import { SkillsPage } from "./pages/skills/SkillsPage";
-import { SettingsPage } from "./pages/settings/SettingsPage";
 import { RuntimePage } from "./pages/runtime/RuntimePage";
 export { RuntimePage } from "./pages/runtime/RuntimePage";
 import { useRuntimeConfigManager } from "./pages/runtime/hooks/useRuntimeConfigManager";
@@ -76,7 +75,6 @@ export type { ScheduledWorkflowDraft } from "./pages/schedules/schedule-utils";
 import { selectConfigChannelsForDisplay } from "../../shared/config-channels";
 import { DEFAULT_MODEL_ID, modelsForChannel } from "../../shared/models";
 import { AGENT_PROVIDER_PRESETS } from "../../shared/provider-presets";
-import { SKILL_TEMPLATES } from "../../shared/skill-templates";
 import {
   fetchOnlineSkills,
   ONLINE_SKILL_SOURCES,
@@ -88,7 +86,6 @@ import {
 } from "../../shared/online-skills";
 import type {
   AgentChannel,
-  AgentId,
   AgentModelOption,
   AgentRuntime,
   SkillTemplate,
@@ -139,11 +136,10 @@ export type { ActiveFeature } from "./app/shell";
 export { loadStoredTheme } from "./app/storage";
 export { shouldSendComposerKey } from "./app/composer";
 export { resolveConfiguredAgentChannel, resolveFindSkillConfiguredAgentId } from "./app/agents";
-export { ConfigPage } from "./pages/config/ConfigPage";
+export { AgentPage } from "./pages/agent/AgentPage";
 export { ChatPage } from "./pages/chat/ChatPage";
 export { ChatControls } from "./pages/chat/ChatControls";
 export { ChatHistoryPanel } from "./pages/chat/ChatHistoryPanel";
-export { SettingsPage } from "./pages/settings/SettingsPage";
 export { TaskStatusFilter } from "./pages/tasks/task-status";
 export type { TaskStatusFilterValue } from "./pages/tasks/task-status";
 export { TaskPage } from "./pages/tasks/TaskPage";
@@ -159,7 +155,6 @@ export {
   workflowRunProgressSummary,
 } from "./pages/workflow/workflow-utils";
 
-const AGENTS: AgentId[] = ["codex", "claude", "api"];
 const SKILL_INSTALL_TARGETS: Array<{ id: SkillInstallTarget; label: string; path: string }> = [
   { id: "codex", label: "Codex", path: "~/.codex/skills" },
   { id: "claude", label: "Claude", path: "~/.claude/skills" },
@@ -196,12 +191,24 @@ export function applySkillTemplate(agent: ConfiguredAgent, template: SkillTempla
   };
 }
 
+export async function navigateWithRuntimeSave(
+  activeFeature: ActiveFeature,
+  nextFeature: ActiveFeature,
+  confirmSave: () => Promise<boolean>,
+  navigate: (feature: ActiveFeature) => void,
+): Promise<void> {
+  if (activeFeature === nextFeature) return;
+  if (activeFeature === "runtimes" && !(await confirmSave())) return;
+  navigate(nextFeature);
+}
+
 export function AppShell() {
   const chatApi = useMemo(() => multiAgentChatService(), []);
   const snapshots = useMemo(() => snapshotService(), []);
   const workflows = useMemo(() => workflowService(), []);
   const [snapshot, setSnapshot] = useState<AppSnapshot>(DEFAULT_SNAPSHOT);
-  const [importedSkillTemplates, setImportedSkillTemplates] = useState<SkillTemplate[]>([]);
+  const [officialSkillTemplates, setOfficialSkillTemplates] = useState<SkillTemplate[]>([]);
+  const [userSkillTemplates, setUserSkillTemplates] = useState<SkillTemplate[]>([]);
   const [prompt, setPrompt] = useState("");
   const [slashCommandIndex, setSlashCommandIndex] = useState(0);
   const [taskPrompt, setTaskPrompt] = useState("");
@@ -249,12 +256,26 @@ export function AppShell() {
     loadCodexPluginCatalog,
     testRuntimeChannel,
     queryRuntimeChannelBalance,
+    refreshModelCatalog,
+    confirmSaveBeforeSwitch,
   } = useRuntimeConfigManager({
     chatApi,
     snapshot,
     setSnapshot,
     runtimeViewActive: activeFeature === "runtimes",
   });
+  const navigateToFeature = useCallback((feature: ActiveFeature): void => {
+    void navigateWithRuntimeSave(
+      activeFeature,
+      feature,
+      () => confirmSaveBeforeSwitch(
+        language === "zh"
+          ? "当前 Runtime 配置尚未保存，离开前保存吗？"
+          : "This Runtime config has unsaved changes. Save before leaving?",
+      ),
+      setActiveFeature,
+    );
+  }, [activeFeature, confirmSaveBeforeSwitch, language]);
   const {
     selectedConfiguredAgentId,
     configuredAgentStatus,
@@ -281,7 +302,7 @@ export function AppShell() {
     onChooseWorkDir: chooseWorkDir,
     onRefresh: refresh,
     onReadOutputFile: readLocalFile,
-    onEnterWorkflow: () => setActiveFeature("workflow"),
+    onEnterWorkflow: () => navigateToFeature("workflow"),
   });
   const menuCoordinator = useShellMenuCoordinator({
     hasChatContextMenu: chatContextMenu !== undefined,
@@ -318,7 +339,7 @@ export function AppShell() {
     chatApi,
     snapshot,
     setSnapshot,
-    onEnterSchedules: () => setActiveFeature("schedules"),
+    onEnterSchedules: () => navigateToFeature("schedules"),
   });
 
   useEffect(() => {
@@ -348,10 +369,11 @@ export function AppShell() {
 
   useEffect(() => {
     const api = chatApi as typeof chatApi & {
+      listOfficialSkills?: () => Promise<SkillTemplate[]>;
       listImportedSkills?: () => Promise<SkillTemplate[]>;
     };
-    if (!api.listImportedSkills) return;
-    void api.listImportedSkills().then(setImportedSkillTemplates).catch(() => undefined);
+    if (api.listOfficialSkills) void api.listOfficialSkills().then(setOfficialSkillTemplates).catch(() => undefined);
+    if (api.listImportedSkills) void api.listImportedSkills().then(setUserSkillTemplates).catch(() => undefined);
   }, [chatApi]);
 
   useEffect(() => {
@@ -386,10 +408,6 @@ export function AppShell() {
     () => (taskStatusFilter === "all" ? snapshot.tasks : snapshot.tasks.filter((task) => task.progress === taskStatusFilter)),
     [snapshot.tasks, taskStatusFilter],
   );
-  const skillTemplates = useMemo(() => {
-    const importedIds = new Set(importedSkillTemplates.map((template) => template.id));
-    return [...importedSkillTemplates, ...SKILL_TEMPLATES.filter((template) => !importedIds.has(template.id))];
-  }, [importedSkillTemplates]);
   const activeChatConfiguredAgent = activeChat ? configuredAgentById(activeChat.configuredAgentId, snapshot.configuredAgents) : undefined;
   const activeChatChannel = resolveConfiguredAgentChannel(activeChatConfiguredAgent, snapshot.channels);
   const activeChatRuntimeId = configuredAgentRuntimeId(activeChatConfiguredAgent, activeChatChannel);
@@ -435,7 +453,8 @@ export function AppShell() {
         mode: scheduledWorkflowMode,
       },
       skills: {
-        skillTemplates,
+        officialSkills: officialSkillTemplates,
+        userSkills: userSkillTemplates,
       },
     }),
     [
@@ -452,7 +471,8 @@ export function AppShell() {
       taskStatusFilter,
       coordinatedWorkflowSidebarController,
       scheduledWorkflowMode,
-      skillTemplates,
+      officialSkillTemplates,
+      userSkillTemplates,
     ],
   );
 
@@ -491,7 +511,7 @@ export function AppShell() {
         const feature = navMap[event.key.toLowerCase()];
         if (feature) {
           event.preventDefault();
-          setActiveFeature(feature);
+          navigateToFeature(feature);
         }
         gChordRef.current = 0;
       }
@@ -523,7 +543,7 @@ export function AppShell() {
         }),
         theme,
         language,
-        onNavigate: setActiveFeature,
+        onNavigate: navigateToFeature,
         onSelectChat: (chatId) => void selectChat(chatId),
         onNewChat: () => void createChat(),
         onToggleTheme: toggleTheme,
@@ -621,7 +641,7 @@ export function AppShell() {
     };
     if (!api.listImportedSkills) return [];
     const templates = await api.listImportedSkills();
-    setImportedSkillTemplates(templates);
+    setUserSkillTemplates(templates);
     return templates;
   }
 
@@ -635,12 +655,21 @@ export function AppShell() {
     return result;
   }
 
-  async function installSkill(templateId: string, target: SkillInstallTarget): Promise<InstalledSkillResult> {
+  async function deleteUserSkill(templateId: string): Promise<void> {
+    const api = chatApi as typeof chatApi & {
+      deleteUserSkill?: (id: string) => Promise<{ removed: boolean }>;
+    };
+    if (!api.deleteUserSkill) throw new Error("技能删除能力需要重启应用后生效。");
+    await api.deleteUserSkill(templateId);
+    await refreshImportedSkills();
+  }
+
+  async function installSkill(templateId: string, target: SkillInstallTarget, sourceType: "official" | "user"): Promise<InstalledSkillResult> {
     const api = chatApi as typeof chatApi & {
       installSkill?: (request: { templateId: string; target: SkillInstallTarget }) => Promise<InstalledSkillResult>;
     };
     if (!api.installSkill) throw new Error("技能安装能力需要重启应用后生效。");
-    return api.installSkill({ templateId, target });
+    return api.installSkill({ templateId, target, sourceType });
   }
 
   async function uninstallSkill(templateId: string, target: SkillInstallTarget): Promise<UninstalledSkillResult> {
@@ -753,7 +782,7 @@ export function AppShell() {
       ],
     });
     setSnapshot(next);
-    setActiveFeature("workflow");
+    navigateToFeature("workflow");
   }
 
   async function updateTeam(
@@ -803,14 +832,14 @@ export function AppShell() {
     [theme, language, keepAwake, providerKeys],
   );
   const providerNavigation = useMemo(
-    () => ({ activeFeature, setActiveFeature, paletteOpen, setPaletteOpen }),
-    [activeFeature, paletteOpen],
+    () => ({ activeFeature, setActiveFeature: navigateToFeature, paletteOpen, setPaletteOpen }),
+    [activeFeature, navigateToFeature, paletteOpen],
   );
 
   return (
     <AppProviders snapshot={providerSnapshot} preferences={providerPreferences} navigation={providerNavigation}>
       <div className={appShellClass(activeFeature)}>
-        <FeatureRail activeFeature={activeFeature} theme={theme} text={text} onSelectFeature={setActiveFeature} onToggleTheme={toggleTheme} />
+        <FeatureRail activeFeature={activeFeature} theme={theme} text={text} onSelectFeature={navigateToFeature} onToggleTheme={toggleTheme} />
 
         <ResourceSidebar
           activeFeature={activeFeature}
@@ -873,12 +902,14 @@ export function AppShell() {
         ) : activeFeature === "skills" ? (
           <SkillsPage
             language={language}
-            templates={skillTemplates}
+            officialSkills={officialSkillTemplates}
+            userSkills={userSkillTemplates}
             configuredAgents={snapshot.configuredAgents}
             onImportOnlineSkill={importOnlineSkill}
             onRevealSkillInFinder={revealSkillInFinder}
             onInstallSkill={installSkill}
             onUninstallSkill={uninstallSkill}
+            onDeleteUserSkill={deleteUserSkill}
           />
         ) : activeFeature === "runtimes" ? (
           <RuntimePage
@@ -907,13 +938,14 @@ export function AppShell() {
             onDeleteConfig={deleteConfigChannel}
             onTestChannel={testRuntimeChannel}
             onQueryBalance={queryRuntimeChannelBalance}
+            onRefreshModels={refreshModelCatalog}
             onUpdateProviderKey={updateProviderKey}
             onLoadCodexDefaultConfig={() => window.multiAgentChat.loadCodexDefaultConfig()}
             onReplaceChannelAndPersist={replaceConfigChannelAndPersist}
             onStatusChange={setConfigStatus}
           />
-        ) : activeFeature === "configuration" ? (
-          <ConfigPage
+        ) : activeFeature === "agent" ? (
+          <AgentPage
             language={language}
             channels={snapshot.channels}
             configuredAgents={snapshot.configuredAgents}
@@ -924,8 +956,6 @@ export function AppShell() {
             onSelectConfiguredAgent={setSelectedConfiguredAgentId}
             onUpdateConfiguredAgent={updateConfiguredAgent}
           />
-        ) : activeFeature === "settings" ? (
-          <SettingsPage language={language} keepAwake={keepAwake} onLanguageChange={setLanguage} onKeepAwakeChange={setKeepAwake} />
         ) : (
           <ChatPage
             activeChat={activeChat}

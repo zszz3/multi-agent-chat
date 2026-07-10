@@ -1,5 +1,5 @@
 import type { AgentChannel, AgentId, RuntimeRequest } from "../../../../../shared/types";
-import type { CodexRpcClient } from "../../../../agents/codex/codex-rpc";
+import type { RuntimeWorkflowHost } from "../agent-executor-types";
 
 export const WORKFLOW_AGENT_IDLE_TIMEOUT_MS = 10 * 60_000;
 export const WORKFLOW_DEVELOPER_INSTRUCTIONS =
@@ -8,12 +8,7 @@ export const WORKFLOW_DEVELOPER_INSTRUCTIONS =
 export interface RuntimeWorkflowExecutionOptions {
   executables: Record<AgentId, string>;
   channelById: (channelId: string) => AgentChannel | undefined;
-  respondToCodexServerRequest: (
-    client: CodexRpcClient,
-    id: number,
-    method: string,
-    params: Record<string, unknown>,
-  ) => void;
+  workflowHost?: RuntimeWorkflowHost;
 }
 
 export function modelFromRuntimeConfig(runtimeConfig: RuntimeRequest["runtimeConfig"]): string {

@@ -3,57 +3,184 @@ import os from "node:os";
 import path from "node:path";
 import { describe, expect, test } from "vitest";
 import type { AgentChannel } from "../../shared/types";
+import { RUNTIME_IDS } from "../../shared/runtime-catalog";
 import { setCodexChatRouterBaseUrl } from "../bridges/codex-chat-router";
 import {
   codexAppServerConfigArgs,
+  createDefaultChannels,
   generateCodexConfigs,
   importCodexConfigs,
+  loadModelChannels,
   loadCodexDefaultConfig,
   normalizeChannels,
   parseCodexDefaultConfig,
   parseCodexModelCatalog,
   parseCodexProfileConfig,
+  saveModelChannels,
 } from "./model-config";
 
 describe("model channel config", () => {
+  test("creates a Hermes Default channel for a fresh installation", () => {
+    expect(createDefaultChannels().find((channel) => channel.agentId === "hermes")).toEqual({
+      id: "hermes-default",
+      agentId: "hermes",
+      label: "Hermes Default",
+      presetId: "hermes-default",
+      models: [{ id: "default", label: "Default" }],
+    });
+    expect(createDefaultChannels().find((channel) => channel.agentId === "opencode")).toEqual({
+      id: "opencode-default",
+      agentId: "opencode",
+      label: "OpenCode Default",
+      presetId: "opencode-default",
+      models: [{ id: "default", label: "Default" }],
+    });
+    expect(createDefaultChannels().find((channel) => channel.agentId === "openclaw")).toEqual({
+      id: "openclaw-default",
+      agentId: "openclaw",
+      label: "OpenClaw Default",
+      presetId: "openclaw-default",
+      models: [{ id: "default", label: "Default" }],
+    });
+  });
+
+  test("round-trips custom channels for every registered runtime", async () => {
+    const dir = await mkdtemp(path.join(os.tmpdir(), "multi-agent-chat-runtime-channels-"));
+    const configPath = path.join(dir, "model-channels.json");
+    const channels: AgentChannel[] = RUNTIME_IDS.map((agentId) => ({
+      id: `${agentId}-custom`,
+      agentId,
+      label: `${agentId} custom`,
+      models: [{ id: "default", label: "Default" }],
+    }));
+
+    await saveModelChannels(configPath, channels);
+    const restored = await loadModelChannels(configPath);
+
+    expect(restored.map((channel) => channel.id)).toEqual(channels.map((channel) => channel.id));
+    expect(restored.map((channel) => channel.agentId)).toEqual(RUNTIME_IDS);
+  });
+
+  test("preserves CC Switch compatible runtime provider fields", () => {
+    const [channel] = normalizeChannels([
+      {
+        id: "claude-custom",
+        agentId: "claude",
+        label: "Claude Custom",
+        models: [{ id: "default", label: "Default" }],
+        apiFormat: "anthropic",
+        apiKeyField: "ANTHROPIC_API_KEY",
+        isFullUrl: true,
+        customUserAgent: "multi-agent-chat/test",
+        environment: { ANTHROPIC_DEFAULT_OPUS_MODEL: "provider-opus" },
+        requestOverrides: {
+          headers: { "x-provider": "test" },
+          body: { service_tier: "priority" },
+        },
+      },
+    ]);
+
+    expect(channel).toMatchObject({
+      apiFormat: "anthropic",
+      apiKeyField: "ANTHROPIC_API_KEY",
+      isFullUrl: true,
+      customUserAgent: "multi-agent-chat/test",
+      environment: { ANTHROPIC_DEFAULT_OPUS_MODEL: "provider-opus" },
+      requestOverrides: {
+        headers: { "x-provider": "test" },
+        body: { service_tier: "priority" },
+      },
+    });
+  });
+
   test("parses visible Codex models from the debug catalog", () => {
     const models = parseCodexModelCatalog(
       JSON.stringify({
         models: [
           { slug: "codex-auto-review", display_name: "Auto Review", visibility: "hidden", priority: 1 },
-          { slug: "gpt-5.5", display_name: "GPT-5.5", visibility: "list", priority: 2 },
+          {
+            slug: "gpt-5.5",
+            display_name: "GPT-5.5",
+            visibility: "list",
+            priority: 2,
+            default_reasoning_level: "medium",
+            supported_reasoning_levels: [
+              { effort: "low", description: "Fast" },
+              { effort: "medium", description: "Balanced" },
+              { effort: "xhigh", description: "Deep" },
+            ],
+          },
           { slug: "gpt-5.4-mini", display_name: "GPT-5.4 Mini", visibility: "list", priority: 3 },
         ],
       }),
     );
 
     expect(models).toEqual([
-      { id: "gpt-5.5", label: "GPT-5.5" },
+      {
+        id: "gpt-5.5",
+        label: "GPT-5.5",
+        reasoningEfforts: ["low", "medium", "xhigh"],
+        defaultReasoningEffort: "medium",
+      },
       { id: "gpt-5.4-mini", label: "GPT-5.4 Mini" },
     ]);
   });
 
-  test("migrates DeepSeek Claude Code channels to Claude model names", () => {
+  test("adds the current Codex models to persisted official channels with stale provider metadata", () => {
+    const [channel] = normalizeChannels([
+      {
+        id: "codex-official",
+        agentId: "codex",
+        label: "Codex Official",
+        modelProvider: "custom",
+        models: [
+          { id: "default", label: "Default" },
+          { id: "gpt-5.6-sol", label: "GPT-5.6-Sol" },
+          { id: "gpt-5.5", label: "GPT-5.5" },
+        ],
+      },
+    ]);
+
+    expect(channel?.models).toEqual(expect.arrayContaining([
+      expect.objectContaining({
+        id: "gpt-5.6-sol",
+        label: "GPT-5.6-Sol",
+        reasoningEfforts: ["low", "medium", "high", "xhigh", "max", "ultra"],
+        defaultReasoningEffort: "low",
+      }),
+      expect.objectContaining({ id: "gpt-5.6-terra", label: "GPT-5.6-Terra" }),
+      expect.objectContaining({ id: "gpt-5.6-luna", label: "GPT-5.6-Luna" }),
+      { id: "gpt-5.5", label: "GPT-5.5" },
+    ]));
+  });
+
+  test("collapses persisted Claude provider role models to the primary model", () => {
     const [channel] = normalizeChannels([
       {
         id: "claude-code-deepseek",
         agentId: "claude",
         label: "Claude Code DeepSeek",
+        presetId: "claude-code-deepseek",
         providerName: "DeepSeek",
         modelProvider: "deepseek-anthropic",
         baseUrl: "https://api.deepseek.com/anthropic",
+        environment: {
+          ANTHROPIC_MODEL: "deepseek-v4-pro",
+          ANTHROPIC_DEFAULT_HAIKU_MODEL: "deepseek-v4-flash",
+          ANTHROPIC_DEFAULT_SONNET_MODEL: "deepseek-v4-pro",
+          ANTHROPIC_DEFAULT_OPUS_MODEL: "deepseek-v4-pro",
+        },
         models: [
           { id: "default", label: "Default" },
-          { id: "deepseek-v4-pro[1m]", label: "DeepSeek V4 Pro 1M" },
+          { id: "deepseek-v4-pro", label: "DeepSeek V4 Pro" },
           { id: "deepseek-v4-flash", label: "DeepSeek V4 Flash" },
         ],
       },
     ]);
 
     expect(channel?.models).toEqual([
-      { id: "default", label: "Default (DeepSeek Flash)" },
-      { id: "claude-haiku-4-5", label: "DeepSeek V4 Flash" },
-      { id: "claude-opus-4-8", label: "DeepSeek V4 Pro" },
+      { id: "default", label: "Default" },
+      { id: "deepseek-v4-pro", label: "DeepSeek V4 Pro" },
     ]);
   });
 
@@ -90,6 +217,9 @@ describe("model channel config", () => {
 
     expect(generated.map((item) => item.profileName)).toEqual([
       "multi-agent-codex-openai-default",
+      "multi-agent-codex-openai-gpt-5-6-sol",
+      "multi-agent-codex-openai-gpt-5-6-terra",
+      "multi-agent-codex-openai-gpt-5-6-luna",
       "multi-agent-codex-openai-gpt-5-5",
     ]);
 
@@ -141,6 +271,22 @@ describe("model channel config", () => {
     ]);
     expect(codexAppServerConfigArgs(channel, "gpt-5.5")).not.toContain("--profile");
     expect(codexAppServerConfigArgs(channel, "gpt-5.5").join("\n")).not.toContain("model_providers.openai");
+  });
+
+  test("uses an agent reasoning effort override for Codex app-server", () => {
+    const channel: AgentChannel = {
+      id: "codex-openai",
+      agentId: "codex",
+      label: "Codex OpenAI",
+      modelProvider: "openai",
+      modelReasoningEffort: "high",
+      models: [{ id: "gpt-5.6-sol", label: "GPT-5.6-Sol" }],
+    };
+
+    const args = codexAppServerConfigArgs(channel, "gpt-5.6-sol", "xhigh");
+
+    expect(args).toContain('model_reasoning_effort="xhigh"');
+    expect(args).not.toContain('model_reasoning_effort="high"');
   });
 
   test("builds app-server provider overrides for custom providers", () => {
