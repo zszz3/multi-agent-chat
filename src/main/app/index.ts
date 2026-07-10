@@ -18,6 +18,8 @@ import type {
   AgentChannel,
   AckScheduledWorkflowEventRequest,
   AppSnapshot,
+  BuildWorkflowV2GraphRevisionRequest,
+  BuildWorkflowV2PlanRequest,
   CodexDefaultConfig,
   ConfiguredAgent,
   CreateWorkflowDraftRequest,
@@ -372,6 +374,8 @@ function registerIpcHandlers(): void {
   );
   ipcMain.handle("workflow:draft:create", (_event, request?: CreateWorkflowDraftRequest) => hub.createWorkflowDraft(request));
   ipcMain.handle("workflow:draft:patch", (_event, request: PatchWorkflowDraftRequest) => hub.patchWorkflowDraft(request));
+  ipcMain.handle("workflow-v2:plan", (_event, request: BuildWorkflowV2PlanRequest) => hub.buildWorkflowV2Plan(request));
+  ipcMain.handle("workflow-v2:graph-revision", (_event, request: BuildWorkflowV2GraphRevisionRequest) => hub.buildWorkflowV2GraphRevision(request));
   ipcMain.handle("workflow:draft:reset-session", (_event, workflowId: string) => hub.resetWorkflowDraftSession(workflowId));
   ipcMain.handle("workflow:draft:send-reply", async (_event, request: SendWorkflowDraftReplyRequest) => hub.sendWorkflowDraftReply(request));
   ipcMain.handle("workflow:draft:abandon", (_event, workflowId: string) => hub.abandonWorkflowDraftReply(workflowId));

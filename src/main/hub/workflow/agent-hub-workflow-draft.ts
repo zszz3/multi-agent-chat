@@ -7,6 +7,7 @@ import type {
   WorkflowDraftState,
   WorkflowGraph,
 } from "../../../shared/types";
+import { cloneWorkflowV2Plan } from "../../../shared/workflow-v2/planning";
 import { createWorkflowGraphFromObjective, parseWorkflowGraphUpsert } from "../../../shared/workflow-graph";
 
 export function applyWorkflowDraftPatch(input: {
@@ -21,9 +22,11 @@ export function applyWorkflowDraftPatch(input: {
 }): WorkflowDraftState {
   const { current, patch } = input;
   const now = input.now ?? Date.now();
+  const resetRunState = Boolean(patch.resetRunState && current.status !== "running");
   const {
     finalReport: _currentFinalReport,
     runtimeConversation: _currentRuntimeConversation,
+    workflowV2Plan: _currentWorkflowV2Plan,
     ...currentWithoutOptionalRuntimeFields
   } = current;
   const nextConfiguredAgentId =
@@ -34,11 +37,23 @@ export function applyWorkflowDraftPatch(input: {
     patch.configuredAgentId !== undefined || patch.modelId !== undefined
       ? input.normalizeModelId(nextConfiguredAgentId, patch.modelId ?? current.modelId)
       : current.modelId;
+  const routeChanged = nextConfiguredAgentId !== current.configuredAgentId || nextModelId !== current.modelId;
   const nextGraph = patch.graph ? input.cloneGraph(patch.graph) : current.graph;
+  const nextStatus = current.status === "running" ? "running" : patch.status ?? current.status;
+  const nextWorkflowV2Plan =
+    patch.workflowV2Plan === null
+      ? undefined
+      : patch.workflowV2Plan !== undefined
+        ? cloneWorkflowV2Plan(patch.workflowV2Plan)
+        : patch.graph !== undefined || patch.objective !== undefined || resetRunState || routeChanged
+          ? undefined
+          : current.workflowV2Plan
+            ? cloneWorkflowV2Plan(current.workflowV2Plan)
+            : undefined;
   const next = input.cloneDraft({
     ...currentWithoutOptionalRuntimeFields,
     title: patch.title ?? current.title,
-    status: patch.status ?? current.status,
+    status: nextStatus,
     revision: current.revision + 1,
     configuredAgentId: nextConfiguredAgentId,
     modelId: nextModelId,
@@ -55,19 +70,20 @@ export function applyWorkflowDraftPatch(input: {
     messages: patch.messages ?? current.messages,
     reply: patch.reply ?? current.reply,
     error: patch.error === null ? undefined : patch.error ?? current.error,
-    runProgress: patch.resetRunState ? [] : patch.runProgress ?? current.runProgress,
-    runContextDocument: patch.resetRunState ? "" : patch.runContextDocument ?? current.runContextDocument,
+    runProgress: resetRunState ? [] : patch.runProgress ?? current.runProgress,
+    runContextDocument: resetRunState ? "" : patch.runContextDocument ?? current.runContextDocument,
     contextDocument: patch.contextDocument ?? current.contextDocument,
+    ...(nextWorkflowV2Plan ? { workflowV2Plan: nextWorkflowV2Plan } : {}),
     ...(patch.finalReport === null
       ? {}
       : patch.finalReport !== undefined
         ? { finalReport: patch.finalReport }
-        : patch.resetRunState
+        : resetRunState
           ? {}
           : current.finalReport !== undefined
             ? { finalReport: current.finalReport }
             : {}),
-    runIds: patch.resetRunState ? [] : [...current.runIds],
+    runIds: resetRunState ? [] : [...current.runIds],
     ...(patch.runtimeConversation === null
       ? {}
       : patch.runtimeConversation !== undefined
@@ -78,7 +94,7 @@ export function applyWorkflowDraftPatch(input: {
     createdAt: current.createdAt,
     updatedAt: now,
   });
-  if (patch.resetRunState) next.status = "draft";
+  if (resetRunState) next.status = "draft";
   return next;
 }
 
@@ -108,6 +124,7 @@ export function createWorkflowDraftState(input: {
     runProgress: input.request.runProgress ?? [],
     runContextDocument: input.request.runContextDocument ?? "",
     contextDocument: input.request.contextDocument ?? "",
+    ...(input.request.workflowV2Plan ? { workflowV2Plan: cloneWorkflowV2Plan(input.request.workflowV2Plan) } : {}),
     ...(input.request.finalReport !== undefined ? { finalReport: input.request.finalReport } : {}),
     runIds: input.request.runIds ?? [],
     ...(input.request.runtimeConversation ? { runtimeConversation: input.request.runtimeConversation } : {}),
@@ -125,8 +142,23 @@ export function updateWorkflowDraftState(input: {
   cloneDraft: (draft: WorkflowDraftState) => WorkflowDraftState;
   now?: number;
 }): WorkflowDraftState {
+  const {
+    workflowV2Plan: _currentWorkflowV2Plan,
+    ...currentWithoutWorkflowV2Plan
+  } = input.current;
+  const routeChanged = input.configuredAgentId !== input.current.configuredAgentId || input.modelId !== input.current.modelId;
+  const nextWorkflowV2Plan =
+    input.request.workflowV2Plan === null
+      ? undefined
+      : input.request.workflowV2Plan !== undefined
+        ? cloneWorkflowV2Plan(input.request.workflowV2Plan)
+        : input.request.graph !== undefined || input.request.objective !== undefined || routeChanged
+          ? undefined
+          : input.current.workflowV2Plan
+            ? cloneWorkflowV2Plan(input.current.workflowV2Plan)
+            : undefined;
   return input.cloneDraft({
-    ...input.current,
+    ...currentWithoutWorkflowV2Plan,
     title: input.request.title ?? input.current.title,
     objective: input.request.objective ?? input.current.objective,
     graph: input.graph,
@@ -139,6 +171,7 @@ export function updateWorkflowDraftState(input: {
     runProgress: input.request.runProgress ?? input.current.runProgress,
     runContextDocument: input.request.runContextDocument ?? input.current.runContextDocument,
     contextDocument: input.request.contextDocument ?? input.current.contextDocument,
+    ...(nextWorkflowV2Plan ? { workflowV2Plan: nextWorkflowV2Plan } : {}),
     ...((input.request.finalReport ?? input.current.finalReport) !== undefined
       ? { finalReport: input.request.finalReport ?? input.current.finalReport }
       : {}),
@@ -173,7 +206,11 @@ export function completeWorkflowDraftRequest(input: {
 }): WorkflowDraftState {
   const finalContent = (input.content.trim() || input.activeRequest.content.trim() || input.thinkingMessage).trim();
   const parsedGraph = parseWorkflowGraphUpsert(finalContent);
-  const { finalReport: _workflowFinalReport, ...workflowWithoutFinalReport } = input.workflow;
+  const {
+    finalReport: _workflowFinalReport,
+    workflowV2Plan: _workflowV2Plan,
+    ...workflowWithoutFinalReport
+  } = input.workflow;
   return input.cloneDraft({
     ...(parsedGraph ? workflowWithoutFinalReport : input.workflow),
     title: parsedGraph?.title ?? input.workflow.title,
@@ -188,6 +225,7 @@ export function completeWorkflowDraftRequest(input: {
     runProgress: parsedGraph ? [] : input.workflow.runProgress,
     runContextDocument: parsedGraph ? "" : input.workflow.runContextDocument,
     contextDocument: input.workflow.contextDocument,
+    ...(parsedGraph ? {} : input.workflow.workflowV2Plan ? { workflowV2Plan: cloneWorkflowV2Plan(input.workflow.workflowV2Plan) } : {}),
     runIds: parsedGraph ? [] : input.workflow.runIds,
     ...(parsedGraph ? {} : input.workflow.finalReport !== undefined ? { finalReport: input.workflow.finalReport } : {}),
     ...(input.runtimeConversation !== undefined
@@ -229,6 +267,7 @@ export function resetWorkflowDraftSessionState(input: {
   const {
     finalReport: _currentFinalReport,
     runtimeConversation: _currentRuntimeConversation,
+    workflowV2Plan: _currentWorkflowV2Plan,
     ...workflowWithoutFinalReportOrConversation
   } = input.workflow;
   return input.cloneDraft({

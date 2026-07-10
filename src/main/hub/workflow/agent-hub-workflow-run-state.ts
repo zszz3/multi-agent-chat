@@ -5,6 +5,7 @@ import type {
   WorkflowGraph,
   WorkflowRunState,
 } from "../../../shared/types";
+import { cloneWorkflowV2Plan } from "../../../shared/workflow-v2/planning";
 import type { WorkflowRunStateUpdate } from "../../workflows/workflow-runtime";
 
 export function startWorkflowRunState(input: {
@@ -25,6 +26,7 @@ export function startWorkflowRunState(input: {
       workflowId: input.workflow.workflowId,
       status: "running",
       graphSnapshot: input.cloneGraph(input.workflow.graph),
+      ...(input.workflow.workflowV2Plan ? { workflowV2Plan: cloneWorkflowV2Plan(input.workflow.workflowV2Plan) } : {}),
       progress: [],
       events: [],
       contextDocument,

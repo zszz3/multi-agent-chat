@@ -22,6 +22,7 @@ import {
   normalizeScheduledWorkflowTimeOfDay,
   normalizeScheduledWorkflowWeekdays,
 } from "../persisted/agent-hub-persistence";
+import { cloneWorkflowV2Plan } from "../../../shared/workflow-v2/planning";
 
 export function cloneWorkflowGraphNode(node: WorkflowGraphNode): WorkflowGraphNode {
   const cloned: WorkflowGraphNode = {
@@ -71,6 +72,7 @@ export function cloneWorkflowRun(run: WorkflowRunState): WorkflowRunState {
     workflowId: run.workflowId,
     status: run.status,
     graphSnapshot: cloneWorkflowGraph(run.graphSnapshot),
+    ...(run.workflowV2Plan ? { workflowV2Plan: cloneWorkflowV2Plan(run.workflowV2Plan) } : {}),
     progress: run.progress.map((item) => ({
       nodeId: item.nodeId,
       title: item.title,
@@ -178,6 +180,7 @@ export function cloneWorkflowDraft(input: {
     })),
     runContextDocument: draft.runContextDocument,
     contextDocument: draft.contextDocument,
+    ...(draft.workflowV2Plan ? { workflowV2Plan: cloneWorkflowV2Plan(draft.workflowV2Plan) } : {}),
     ...(draft.finalReport !== undefined ? { finalReport: draft.finalReport } : {}),
     runIds: draft.runIds.map((runId) => runId),
     ...(draft.runtimeConversation ? { runtimeConversation: cloneConversation(draft.runtimeConversation) } : {}),

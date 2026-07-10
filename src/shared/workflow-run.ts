@@ -6,6 +6,7 @@ import type {
   WorkflowGraphNode,
   WorkflowRunNodeStatus,
   WorkflowRunProgressItem,
+  WorkflowV2TaskPacket,
 } from "./types";
 
 export const WORKFLOW_TASK_POLL_MS = 1000;
@@ -248,6 +249,7 @@ export function workflowNodeRunPrompt(
   upstreamArtifacts: Array<{ node: WorkflowGraphNode; artifact: string }>,
   contextDocument: string,
   storagePlan?: WorkflowStoragePlan,
+  workflowV2TaskPacket?: WorkflowV2TaskPacket,
 ): string {
   const upstreamSection =
     upstreamArtifacts.length > 0
@@ -272,6 +274,7 @@ export function workflowNodeRunPrompt(
     `Workflow: ${graph.title}`,
     `Objective: ${graph.objective}`,
     "",
+    ...(workflowV2TaskPacket ? [workflowV2TaskPacketPrompt(workflowV2TaskPacket), ""] : []),
     `Current node: ${node.title}`,
     "",
     "Node instructions:",
@@ -306,6 +309,47 @@ export function workflowNodeRunPrompt(
     "This report will be appended to the shared Workflow Context document, so make it useful as one-way handoff context.",
     "",
     "If you genuinely cannot proceed safely without a human decision (ambiguous requirements, a risky or irreversible action, or a choice only a person should make), do not guess. Instead output a single line `workflowGate.ask(\"<your concrete question>\")` and stop. A human will answer and you will be resumed with their decision in the workflow context.",
+  ].join("\n");
+}
+
+export function workflowV2TaskPacketPrompt(packet: WorkflowV2TaskPacket): string {
+  const acceptanceCriteriaSection =
+    packet.acceptanceCriteria.length > 0
+      ? packet.acceptanceCriteria.map((criterion) => `- ${criterion.description}`).join("\n")
+      : "- No explicit acceptance criteria.";
+  const constraintsSection =
+    packet.constraints.length > 0
+      ? packet.constraints.map((constraint) => `- ${constraint.description}`).join("\n")
+      : "- No additional constraints.";
+  const upstreamDigestSection =
+    packet.upstreamDigest.length > 0
+      ? packet.upstreamDigest
+          .map((item) => `- ${item.title}: ${item.summary}${item.outputKeys?.length ? ` (outputs: ${item.outputKeys.join(", ")})` : ""}`)
+          .join("\n")
+      : "- No upstream digest.";
+
+  return [
+    "Workflow V2 Execution Contract",
+    `Planned role: ${packet.role}`,
+    `Planned execution model: ${packet.execModel}`,
+    `Planned model profile: ${packet.modelProfile}`,
+    "",
+    "Task objective:",
+    packet.objective,
+    "",
+    "Acceptance criteria:",
+    acceptanceCriteriaSection,
+    "",
+    "Planning constraints:",
+    constraintsSection,
+    "",
+    "Planned upstream digest:",
+    upstreamDigestSection,
+    "",
+    "Context budget:",
+    `- maxContextTokens: ${packet.budget.context.maxContextTokens}`,
+    ...(packet.budget.context.maxEvidenceItems !== undefined ? [`- maxEvidenceItems: ${packet.budget.context.maxEvidenceItems}`] : []),
+    ...(packet.budget.context.maxUpstreamNodes !== undefined ? [`- maxUpstreamNodes: ${packet.budget.context.maxUpstreamNodes}`] : []),
   ].join("\n");
 }
 

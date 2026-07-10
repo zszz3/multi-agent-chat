@@ -3643,6 +3643,38 @@ fs.writeFileSync(${JSON.stringify(argsPath)}, process.argv.slice(2).join("\\n") 
       createdAt: 1710000000000,
       updatedAt: 1710002000000,
     });
+    const planned = await (hub as any).buildWorkflowV2Plan({
+      approvedBy: "planner-agent",
+      definition: {
+        workflowId: first.workflowId,
+        graphVersion: 4,
+        objective: "Persist workflow v2 planning metadata with the draft",
+        nodes: [
+          {
+            id: "plan",
+            kind: "planner",
+            title: "Plan",
+            execModel: "llm",
+            role: "orchestrator",
+            prompt: "Plan the review",
+            outputFields: [{ key: "planDoc", required: true }],
+          },
+          {
+            id: "inventory",
+            kind: "implementation",
+            title: "Inventory",
+            execModel: "llm",
+            prompt: "Map repo.",
+            outputFields: [{ key: "inventoryDoc", required: true }],
+          },
+        ],
+        edges: [{ fromNodeId: "plan", toNodeId: "inventory" }],
+      },
+    });
+    hub.patchWorkflowDraft({
+      workflowId: first.workflowId,
+      workflowV2Plan: planned.plan!,
+    });
     const second = (hub as any).createWorkflow({
       title: "release workflow",
       objective: "Prepare release",
@@ -3678,10 +3710,18 @@ fs.writeFileSync(${JSON.stringify(argsPath)}, process.argv.slice(2).join("\\n") 
     expect(persisted.workflowStore.workflows[1]).toMatchObject({
       title: "sample repo review",
       objective: "Review sample repo",
-      revision: 2,
+      revision: 3,
       graphReady: true,
       contextDocument: expect.stringContaining("Added architecture note."),
       runProgress: [{ nodeId: "inventory", status: "completed" }],
+      workflowV2Plan: {
+        workflowId: first.workflowId,
+        graphVersion: 4,
+        roleDefaults: {
+          orchestrator: { role: "orchestrator", modelProfile: "expert" },
+          executor: { role: "executor", modelProfile: "fast" },
+        },
+      },
     });
 
     const restored = new AgentHub();
@@ -3695,7 +3735,7 @@ fs.writeFileSync(${JSON.stringify(argsPath)}, process.argv.slice(2).join("\\n") 
       workflowId: first.workflowId,
       title: "sample repo review",
       objective: "Review sample repo",
-      revision: 2,
+      revision: 3,
       status: "draft",
       graphReady: true,
       graph: { title: "sample repo review" },
@@ -3703,6 +3743,13 @@ fs.writeFileSync(${JSON.stringify(argsPath)}, process.argv.slice(2).join("\\n") 
       runProgress: [{ nodeId: "inventory", status: "completed", detail: "Output captured" }],
       runContextDocument: "# Workflow Context\n\n## Inventory (inventory)\nMapped repo.",
       contextDocument: expect.stringContaining("Architecture note."),
+      workflowV2Plan: {
+        workflowId: first.workflowId,
+        graphVersion: 4,
+        roleDefaults: {
+          reviewer: { role: "reviewer", modelProfile: "expert" },
+        },
+      },
     });
   });
 
@@ -3900,6 +3947,101 @@ fs.writeFileSync(${JSON.stringify(argsPath)}, process.argv.slice(2).join("\\n") 
     expect(patched.contextDocument).toBe("# Context");
   });
 
+  test("patchWorkflowDraft stores a workflow-v2 plan and clears it when the draft objective changes", async () => {
+    const hub = new AgentHub();
+    const workflow = hub.createWorkflowDraft({ title: "V2 draft" }).workflowDraft!;
+    const planned = await (hub as any).buildWorkflowV2Plan({
+      approvedBy: "planner-agent",
+      definition: {
+        workflowId: workflow.workflowId,
+        graphVersion: 1,
+        objective: "Route planning metadata before execution",
+        nodes: [
+          {
+            id: "plan",
+            kind: "planner",
+            title: "Plan",
+            execModel: "llm",
+            role: "orchestrator",
+            prompt: "Plan the work",
+            outputFields: [{ key: "planDoc", required: true }],
+          },
+          {
+            id: "execute",
+            kind: "implementation",
+            title: "Execute",
+            execModel: "llm",
+            prompt: "Implement the plan",
+            outputFields: [{ key: "diff", required: true }],
+          },
+        ],
+        edges: [{ fromNodeId: "plan", toNodeId: "execute" }],
+      },
+    });
+
+    expect(planned.ok).toBe(true);
+    const stored = hub.patchWorkflowDraft({
+      workflowId: workflow.workflowId,
+      workflowV2Plan: planned.plan!,
+    }).workflowDraft!;
+    expect(stored.workflowV2Plan).toMatchObject({
+      workflowId: workflow.workflowId,
+      graphVersion: 1,
+      roleDefaults: {
+        executor: { role: "executor", modelProfile: "fast" },
+      },
+    });
+
+    const cleared = hub.patchWorkflowDraft({
+      workflowId: workflow.workflowId,
+      objective: "A changed objective invalidates the frozen plan",
+    }).workflowDraft!;
+    expect(cleared.workflowV2Plan).toBeUndefined();
+  });
+
+  test("keeps a running workflow status and rejects a duplicate graph run after a draft patch", () => {
+    const hub = new AgentHub();
+    const created = (hub as any).createWorkflow({
+      title: "Duplicate guard workflow",
+      objective: "Do not start twice",
+      graph: {
+        title: "Duplicate guard workflow",
+        objective: "Do not start twice",
+        nodes: [
+          { id: "start", kind: "start", title: "Start", prompt: "" },
+          { id: "work", kind: "agent", title: "Work", prompt: "Work." },
+          { id: "end", kind: "end", title: "End", prompt: "" },
+        ],
+        edges: [
+          { id: "start->work", fromNodeId: "start", toNodeId: "work" },
+          { id: "work->end", fromNodeId: "work", toNodeId: "end" },
+        ],
+      },
+    });
+    const started = hub.startWorkflowRun({ workflowId: created.workflowId });
+
+    const patched = hub.patchWorkflowDraft({
+      workflowId: created.workflowId,
+      status: "draft",
+      title: "Still running",
+      resetRunState: true,
+    });
+    const duplicate = hub.runWorkflowGraph({ workflowId: created.workflowId });
+
+    expect(patched.workflowStore.workflows.find((workflow) => workflow.workflowId === created.workflowId)).toMatchObject({
+      status: "running",
+      title: "Still running",
+      runIds: [started.runId],
+    });
+    expect(duplicate).toEqual({
+      ok: false,
+      workflowId: created.workflowId,
+      error: "Workflow is already running.",
+    });
+    expect(hub.snapshot().workflowStore.runs.filter((run) => run.workflowId === created.workflowId)).toHaveLength(1);
+    expect(started.ok).toBe(true);
+  });
+
   test("rejects invalid workflow creation with validation reasons", () => {
     const hub = new AgentHub();
 
@@ -3956,7 +4098,7 @@ fs.writeFileSync(${JSON.stringify(argsPath)}, process.argv.slice(2).join("\\n") 
     expect((hub.snapshot() as any).workflowStore.workflows).toHaveLength(0);
   });
 
-  test("tracks workflow runs separately from editable workflow drafts", () => {
+  test("tracks workflow runs separately from editable workflow drafts", async () => {
     const hub = new AgentHub();
     const created = (hub as any).createWorkflow({
       title: "Run tracked workflow",
@@ -3974,6 +4116,39 @@ fs.writeFileSync(${JSON.stringify(argsPath)}, process.argv.slice(2).join("\\n") 
           { id: "work->end", fromNodeId: "work", toNodeId: "end" },
         ],
       },
+    });
+    const planned = await (hub as any).buildWorkflowV2Plan({
+      approvedBy: "planner-agent",
+      contextBudget: { maxContextTokens: 2800, maxEvidenceItems: 5, maxUpstreamNodes: 2 },
+      definition: {
+        workflowId: created.workflowId,
+        graphVersion: 2,
+        objective: "Carry planning metadata into the workflow run surface",
+        nodes: [
+          {
+            id: "plan",
+            kind: "planner",
+            title: "Plan",
+            execModel: "llm",
+            role: "orchestrator",
+            prompt: "Plan the work",
+            outputFields: [{ key: "planDoc", required: true }],
+          },
+          {
+            id: "work",
+            kind: "implementation",
+            title: "Work",
+            execModel: "llm",
+            prompt: "Work.",
+            outputFields: [{ key: "diff", required: true }],
+          },
+        ],
+        edges: [{ fromNodeId: "plan", toNodeId: "work" }],
+      },
+    });
+    hub.patchWorkflowDraft({
+      workflowId: created.workflowId,
+      workflowV2Plan: planned.plan!,
     });
 
     const started = (hub as any).startWorkflowRun({
@@ -4003,7 +4178,7 @@ fs.writeFileSync(${JSON.stringify(argsPath)}, process.argv.slice(2).join("\\n") 
       workflowId: created.workflowId,
       status: "completed",
       runIds: [started.runId],
-      revision: 1,
+      revision: 2,
       finalReport: "## Final User Report\nThe workflow completed successfully.",
     });
     expect(snapshot.workflowStore.runs[0]).toMatchObject({
@@ -4012,11 +4187,30 @@ fs.writeFileSync(${JSON.stringify(argsPath)}, process.argv.slice(2).join("\\n") 
       status: "completed",
       contextDocument: expect.stringContaining("Finished the work."),
       progress: [{ nodeId: "work", status: "completed" }],
+      workflowV2Plan: {
+        workflowId: created.workflowId,
+        graphVersion: 2,
+        budget: {
+          context: { maxContextTokens: 2800, maxEvidenceItems: 5, maxUpstreamNodes: 2 },
+        },
+        roleDefaults: {
+          orchestrator: { role: "orchestrator", modelProfile: "expert" },
+          executor: { role: "executor", modelProfile: "fast" },
+        },
+      },
       finalReport: "## Final User Report\nThe workflow completed successfully.",
+    });
+    expect(snapshot.workflowStore.runs[0].workflowV2Plan.nodes[1].taskPacket).toMatchObject({
+      nodeId: "work",
+      role: "executor",
+      modelProfile: "fast",
+      budget: {
+        context: { maxContextTokens: 2800, maxEvidenceItems: 5, maxUpstreamNodes: 2 },
+      },
     });
   });
 
-  test("runs a workflow graph from the main process runtime", async () => {
+  test("runs a frozen Workflow V2 plan from the main process runtime without legacy judge or final review", async () => {
     const contexts: AgentExecutionContext[] = [];
     const hub = new AgentHub(
       { codex: "codex-for-test", claude: "missing-claude-for-test" },
@@ -4025,11 +4219,13 @@ fs.writeFileSync(${JSON.stringify(argsPath)}, process.argv.slice(2).join("\\n") 
           contexts.push(context);
           return {
             start: async () => {
-              const content = context.prompt.includes("workflow judge")
-                ? 'workflowEvaluation.submit({ complete: true, reason: "good enough", retryPrompt: "" })'
-                : context.prompt.includes("main workflow agent")
-                  ? "## Final User Report\nWorkflow completed from main runtime."
-                  : "### Work Completion Report\nWorker finished.\n\n### Handoff\nReady for downstream work.";
+              const content = JSON.stringify({
+                nodeId: "work",
+                summary: "Worker finished through the V2 runtime.",
+                outputs: { diff: "Implemented the approved change." },
+                evidence: ["main runtime V2 evidence"],
+                proposals: [],
+              });
               context.emit({ type: "completed", content });
             },
             stop: async () => undefined,
@@ -4061,6 +4257,31 @@ fs.writeFileSync(${JSON.stringify(argsPath)}, process.argv.slice(2).join("\\n") 
         ],
       },
     });
+    const planned = await (hub as any).buildWorkflowV2Plan({
+      approvedBy: "planner-agent",
+      contextBudget: { maxContextTokens: 2600, maxEvidenceItems: 4, maxUpstreamNodes: 1 },
+      definition: {
+        workflowId: created.workflowId,
+        graphVersion: 3,
+        objective: "Surface V2 task packets before runtime execution begins",
+        nodes: [
+          {
+            id: "work",
+            kind: "implementation",
+            title: "Work",
+            execModel: "llm",
+            prompt: "Do the work.",
+            outputFields: [{ key: "diff", required: true }],
+            constraints: [{ key: "stay_scoped", description: "Do not invent execution behavior outside the approved plan." }],
+          },
+        ],
+        edges: [],
+      },
+    });
+    hub.patchWorkflowDraft({
+      workflowId: created.workflowId,
+      workflowV2Plan: planned.plan!,
+    });
 
     expect(typeof (hub as any).runWorkflowGraph).toBe("function");
     const started = await (hub as any).runWorkflowGraph({
@@ -4078,28 +4299,93 @@ fs.writeFileSync(${JSON.stringify(argsPath)}, process.argv.slice(2).join("\\n") 
       status: "completed",
       progress: [
         expect.objectContaining({ nodeId: "work", status: "completed" }),
-        expect.objectContaining({ nodeId: "__final_review__", status: "completed" }),
       ],
-      contextDocument: expect.stringContaining("Worker finished."),
-      finalReport: "## Final User Report\nWorkflow completed from main runtime.",
+      contextDocument: expect.stringContaining("# Initial context"),
+      finalReport: expect.stringContaining("# Workflow V2 Run Summary"),
     });
     expect(snapshot.workflowStore.workflows.find((item: any) => item.workflowId === created.workflowId)).toMatchObject({
       status: "completed",
-      finalReport: "## Final User Report\nWorkflow completed from main runtime.",
+      finalReport: expect.stringContaining("Worker finished through the V2 runtime."),
     });
-    expect(contexts.map((context) => context.runKind)).toEqual(["task", "task", "task"]);
+    expect(contexts.map((context) => context.runKind)).toEqual(["task"]);
+    expect(contexts[0]?.prompt).toContain("Workflow V2 task packet");
+    expect(contexts[0]?.prompt).toContain('"role": "executor"');
+    expect(contexts[0]?.prompt).toContain('"modelProfile": "fast"');
+    expect(contexts[0]?.prompt).toContain("Do not invent execution behavior outside the approved plan.");
+    expect(contexts[0]?.prompt).toContain('"maxContextTokens": 2600');
+    expect(contexts[0]?.prompt).toContain("Do the work.");
+    expect(contexts[0]?.prompt).toContain('"upstreamOutputs": []');
+    expect(contexts[0]?.prompt).not.toContain("workflow judge");
+    expect(contexts[0]?.prompt).not.toContain("main workflow agent");
 
     const eventTypesForWork = run.events.filter((event: any) => event.nodeId === "work").map((event: any) => event.type);
-    expect(eventTypesForWork).toEqual(["node_started", "node_output", "node_judged", "node_completed"]);
-    expect(run.events.some((event: any) => event.nodeId === "__final_review__" && event.type === "node_completed")).toBe(true);
-    const projected = projectNodeStates(
-      run.events,
-      [{ nodeId: "work", title: "Work" }],
-      [{ nodeId: "__final_review__", title: "Main agent review" }],
-    );
+    expect(eventTypesForWork).toEqual(["node_started", "node_output", "node_completed"]);
+    expect(run.events.some((event: any) => event.nodeId === "__final_review__")).toBe(false);
+    const projected = projectNodeStates(run.events, [{ nodeId: "work", title: "Work" }]);
     expect(projected.map((item) => ({ nodeId: item.nodeId, status: item.status }))).toEqual(
       run.progress.map((item: any) => ({ nodeId: item.nodeId, status: item.status })),
     );
+  });
+
+  test("fails a Workflow V2 script node through the AgentHub product sandbox policy", async () => {
+    const hub = new AgentHub({ codex: "codex-for-test", claude: "missing-claude-for-test" });
+    const created = (hub as any).createWorkflow({
+      title: "Script policy workflow",
+      objective: "Fail closed without an isolation backend",
+      graph: {
+        title: "Legacy graph is not executed",
+        objective: "Legacy graph is not executed",
+        nodes: [
+          { id: "start", kind: "start", title: "Start", prompt: "" },
+          { id: "legacy", kind: "agent", title: "Legacy", prompt: "Must not run." },
+          { id: "end", kind: "end", title: "Done", prompt: "" },
+        ],
+        edges: [
+          { id: "start->legacy", fromNodeId: "start", toNodeId: "legacy" },
+          { id: "legacy->end", fromNodeId: "legacy", toNodeId: "end" },
+        ],
+      },
+    });
+    const planned = await (hub as any).buildWorkflowV2Plan({
+      approvedBy: "planner-agent",
+      definition: {
+        workflowId: created.workflowId,
+        graphVersion: 1,
+        objective: "Exercise the product script policy",
+        nodes: [{
+          id: "script",
+          kind: "verification",
+          title: "Script",
+          execModel: "script",
+          sandboxMode: "workspace",
+          script: { language: "bash", code: "printf unsafe", timeoutMs: 1_000 },
+          outputFields: [{ key: "stdout", required: true }],
+        }],
+        edges: [],
+      },
+    });
+    hub.patchWorkflowDraft({ workflowId: created.workflowId, workflowV2Plan: planned.plan! });
+
+    const started = await (hub as any).runWorkflowGraph({ workflowId: created.workflowId });
+    const snapshot = await waitFor(
+      () => hub.snapshot() as any,
+      (value) => value.workflowStore.runs.some((run: any) => run.workflowId === created.workflowId && run.status === "failed"),
+    );
+    const run = snapshot.workflowStore.runs.find((item: any) => item.runId === started.runId);
+
+    expect(run).toMatchObject({
+      status: "failed",
+      progress: [{
+        nodeId: "script",
+        status: "failed",
+        detail: expect.stringContaining("Workflow V2 workspace sandbox policy is unavailable"),
+      }],
+      lastError: expect.stringContaining("Workflow V2 workspace sandbox policy is unavailable"),
+    });
+    expect(run.events.filter((event: any) => event.nodeId === "script").map((event: any) => event.type)).toEqual([
+      "node_started",
+      "node_failed",
+    ]);
   });
 
   test("pauses a running workflow node without evaluating it or starting downstream nodes", async () => {

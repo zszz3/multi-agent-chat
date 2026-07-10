@@ -1,3 +1,17 @@
+import type {
+  WorkflowV2AcceptanceCriterion,
+  WorkflowV2CostBudget,
+  WorkflowV2GraphRevision,
+  WorkflowV2Plan,
+} from "./workflow-v2/planning";
+import type {
+  WorkflowV2ContextBudget,
+  WorkflowV2Definition,
+  WorkflowV2ModelProfile,
+  WorkflowV2NodeRole,
+  WorkflowV2ValidationResult,
+} from "./workflow-v2/definition";
+
 export type AgentId = "codex" | "claude" | "api" | "hermes";
 
 export interface AgentRuntime {
@@ -630,6 +644,7 @@ export interface WorkflowDraftState {
   runProgress: WorkflowRunProgressItem[];
   runContextDocument: string;
   contextDocument: string;
+  workflowV2Plan?: WorkflowV2Plan;
   finalReport?: string;
   runIds: string[];
   runtimeConversation?: RuntimeConversation;
@@ -642,6 +657,7 @@ export interface WorkflowRunState {
   workflowId: string;
   status: WorkflowStatus;
   graphSnapshot: WorkflowGraph;
+  workflowV2Plan?: WorkflowV2Plan;
   progress: WorkflowRunProgressItem[];
   events: WorkflowEvent[];
   contextDocument: string;
@@ -780,6 +796,7 @@ export interface CreateWorkflowRequest {
   runProgress?: WorkflowRunProgressItem[];
   runContextDocument?: string;
   contextDocument?: string;
+  workflowV2Plan?: WorkflowV2Plan;
   finalReport?: string;
   runIds?: string[];
   runtimeConversation?: RuntimeConversation;
@@ -809,6 +826,7 @@ export interface PatchWorkflowDraftRequest {
   runProgress?: WorkflowRunProgressItem[];
   runContextDocument?: string;
   contextDocument?: string;
+  workflowV2Plan?: WorkflowV2Plan | null;
   finalReport?: string | null;
   runtimeConversation?: RuntimeConversation | null;
   resetRunState?: boolean;
@@ -834,6 +852,7 @@ export interface UpdateWorkflowRequest {
   runProgress?: WorkflowRunProgressItem[];
   runContextDocument?: string;
   contextDocument?: string;
+  workflowV2Plan?: WorkflowV2Plan | null;
   finalReport?: string;
   runtimeConversation?: RuntimeConversation;
 }
@@ -858,6 +877,38 @@ export interface StartWorkflowRunRequest {
 export interface RunWorkflowGraphRequest {
   workflowId: string;
   contextDocument?: string;
+}
+
+export interface BuildWorkflowV2PlanRequest {
+  definition: WorkflowV2Definition;
+  objective?: string;
+  approvedBy: string;
+  acceptanceCriteria?: WorkflowV2AcceptanceCriterion[];
+  contextBudget?: WorkflowV2ContextBudget;
+  costBudget?: WorkflowV2CostBudget;
+  roleModelProfiles?: Partial<Record<WorkflowV2NodeRole, WorkflowV2ModelProfile>>;
+}
+
+export interface BuildWorkflowV2PlanResult {
+  ok: boolean;
+  plan?: WorkflowV2Plan;
+  error?: string;
+  validation?: WorkflowV2ValidationResult;
+}
+
+export interface BuildWorkflowV2GraphRevisionRequest {
+  basedOnGraphVersion: number;
+  nextGraphVersion?: number;
+  reason: string;
+  changesSummary: string;
+  approvedBy: string;
+  now?: number;
+}
+
+export interface BuildWorkflowV2GraphRevisionResult {
+  ok: boolean;
+  revision?: WorkflowV2GraphRevision;
+  error?: string;
 }
 
 export interface PauseWorkflowNodeRequest {
@@ -905,3 +956,57 @@ export interface AppSnapshot {
   workflowDraft: WorkflowDraftState | undefined;
   artifacts: RegisteredArtifact[];
 }
+
+export type {
+  WorkflowV2AuthoredDefinition,
+  WorkflowV2AuthoredNode,
+  WorkflowV2BaseNode,
+  WorkflowV2ConstraintDef,
+  WorkflowV2ContextBudget,
+  WorkflowV2Definition,
+  WorkflowV2Edge,
+  WorkflowV2ExecModel,
+  WorkflowV2ExhaustedPolicy,
+  WorkflowV2HookActionDef,
+  WorkflowV2JudgeDimensionDef,
+  WorkflowV2LLMNode,
+  WorkflowV2LLMNodeTemplate,
+  WorkflowV2ModelProfile,
+  WorkflowV2Node,
+  WorkflowV2NodeHooks,
+  WorkflowV2NodeRole,
+  WorkflowV2NodeTemplate,
+  WorkflowV2OutputFieldDef,
+  WorkflowV2PassThreshold,
+  WorkflowV2ScriptLanguage,
+  WorkflowV2ScriptNode,
+  WorkflowV2ScriptNodeTemplate,
+  WorkflowV2ScriptSandboxMode,
+  WorkflowV2ScriptSpec,
+  WorkflowV2TemplateNodeDraft,
+  WorkflowV2TemplateNodeOverrides,
+  WorkflowV2TemplateParamValue,
+  WorkflowV2ValidationResult,
+} from "./workflow-v2/definition";
+export type {
+  WorkflowV2AcceptanceCriterion,
+  WorkflowV2BudgetEnvelope,
+  WorkflowV2CostBudget,
+  WorkflowV2GraphRevision,
+  WorkflowV2Plan,
+  WorkflowV2PlanNode,
+  WorkflowV2ResultPacket,
+  WorkflowV2RoleRoute,
+  WorkflowV2TaskPacket,
+  WorkflowV2UpstreamDigest,
+} from "./workflow-v2/planning";
+export type {
+  WorkflowV2WorkProposal,
+  WorkflowV2WorkerOutput,
+} from "./workflow-v2/packets";
+export type {
+  WorkflowV2NodeExecutionState,
+  WorkflowV2RunExecutionStatus,
+  WorkflowV2RunNodeState,
+  WorkflowV2RunState,
+} from "./workflow-v2/state";

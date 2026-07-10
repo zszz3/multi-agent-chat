@@ -10,6 +10,7 @@ import type {
   WorkflowEvent,
   WorkflowRunProgressItem,
   WorkflowRunState,
+  WorkflowV2Plan,
   WorkflowStoreState,
 } from "../../../shared/types";
 import {
@@ -31,6 +32,20 @@ import {
   restoreWorkflowRunProgressItem,
   restoreWorkflowRunStatus,
 } from "../state/agent-hub-restore";
+import { cloneWorkflowV2Plan } from "../../../shared/workflow-v2/planning";
+
+function restoreWorkflowV2Plan(raw: unknown): WorkflowV2Plan | undefined {
+  const record = asRecord(raw);
+  if (!record) return undefined;
+  if (!asOptionalString(record.workflowId) || !asOptionalString(record.objective) || typeof record.graphVersion !== "number") {
+    return undefined;
+  }
+  try {
+    return cloneWorkflowV2Plan(record as unknown as WorkflowV2Plan);
+  } catch {
+    return undefined;
+  }
+}
 
 export function restoreScheduledWorkflowRunnerConfig(
   raw: unknown,
@@ -126,6 +141,9 @@ export function restoreWorkflowDraft(
   const restoredRuntimeConversation =
     record.runtimeConversation === undefined ? undefined : deps.restoreRuntimeConversation(record.runtimeConversation);
   if (record.runtimeConversation !== undefined && !restoredRuntimeConversation) return undefined;
+  const restoredWorkflowV2Plan =
+    record.workflowV2Plan === undefined ? undefined : restoreWorkflowV2Plan(record.workflowV2Plan);
+  if (record.workflowV2Plan !== undefined && !restoredWorkflowV2Plan) return undefined;
   return deps.cloneWorkflowDraft({
     workflowId: asOptionalString(record.workflowId) ?? `wf_${randomUUID()}`,
     title: asOptionalString(record.title) ?? graph.title,
@@ -155,6 +173,7 @@ export function restoreWorkflowDraft(
       .filter((item): item is WorkflowRunProgressItem => Boolean(item)),
     runContextDocument: asOptionalString(record.runContextDocument) ?? "",
     contextDocument: asOptionalString(record.contextDocument) ?? "",
+    ...(restoredWorkflowV2Plan ? { workflowV2Plan: restoredWorkflowV2Plan } : {}),
     ...(finalReport !== undefined ? { finalReport } : {}),
     runIds: asArray(record.runIds).map((item) => asOptionalString(item)).filter((item): item is string => Boolean(item)),
     ...(restoredRuntimeConversation ? { runtimeConversation: restoredRuntimeConversation } : {}),
@@ -171,11 +190,15 @@ export function restoreWorkflowRun(raw: unknown): WorkflowRunState | undefined {
   const graphSnapshot = restoreWorkflowGraph(record.graphSnapshot);
   if (!runId || !workflowId || !graphSnapshot) return undefined;
   const finalReport = asOptionalString(record.finalReport);
+  const restoredWorkflowV2Plan =
+    record.workflowV2Plan === undefined ? undefined : restoreWorkflowV2Plan(record.workflowV2Plan);
+  if (record.workflowV2Plan !== undefined && !restoredWorkflowV2Plan) return undefined;
   return {
     runId,
     workflowId,
     status: restoreWorkflowRunStatus(record.status),
     graphSnapshot,
+    ...(restoredWorkflowV2Plan ? { workflowV2Plan: restoredWorkflowV2Plan } : {}),
     progress: asArray(record.progress)
       .map((item) => restoreWorkflowRunProgressItem(item))
       .filter((item): item is WorkflowRunProgressItem => Boolean(item)),

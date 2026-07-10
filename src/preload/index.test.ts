@@ -1,7 +1,13 @@
 import { mkdtemp, writeFile } from "node:fs/promises";
 import os from "node:os";
 import path from "node:path";
-import type { AppSnapshot, ChatRuntimeSessionState, ChatSession } from "../shared/types";
+import type {
+  AppSnapshot,
+  BuildWorkflowV2GraphRevisionResult,
+  BuildWorkflowV2PlanResult,
+  ChatRuntimeSessionState,
+  ChatSession,
+} from "../shared/types";
 import type { MultiAgentChatApi } from "./index";
 import { describe, expect, expectTypeOf, test, vi } from "vitest";
 
@@ -41,6 +47,8 @@ describe("preload skill API", () => {
     expect(electronState.exposedApi).toHaveProperty("setKeepAwake");
     expect(electronState.exposedApi).toHaveProperty("createWorkflowDraft");
     expect(electronState.exposedApi).toHaveProperty("patchWorkflowDraft");
+    expect(electronState.exposedApi).toHaveProperty("buildWorkflowV2Plan");
+    expect(electronState.exposedApi).toHaveProperty("buildWorkflowV2GraphRevision");
     expect(electronState.exposedApi).toHaveProperty("resetWorkflowDraftSession");
     expect(electronState.exposedApi).toHaveProperty("sendWorkflowDraftReply");
     expect(electronState.exposedApi).toHaveProperty("abandonWorkflowDraftReply");
@@ -64,6 +72,8 @@ describe("preload skill API", () => {
 
   test("keeps runtime session typing stable across the preload snapshot surface", () => {
     expectTypeOf<Awaited<ReturnType<MultiAgentChatApi["getSnapshot"]>>>().toEqualTypeOf<AppSnapshot>();
+    expectTypeOf<Awaited<ReturnType<MultiAgentChatApi["buildWorkflowV2Plan"]>>>().toEqualTypeOf<BuildWorkflowV2PlanResult>();
+    expectTypeOf<Awaited<ReturnType<MultiAgentChatApi["buildWorkflowV2GraphRevision"]>>>().toEqualTypeOf<BuildWorkflowV2GraphRevisionResult>();
     expectTypeOf<ChatSession["runtimeState"]>().toEqualTypeOf<ChatRuntimeSessionState | undefined>();
     expectTypeOf<ChatSession["channelId"]>().toEqualTypeOf<string | undefined>();
   });

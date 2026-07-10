@@ -20,6 +20,10 @@ import type {
   CodexPluginCatalogItem,
   AppendWorkflowContextRequest,
   AppendWorkflowRunContextRequest,
+  BuildWorkflowV2GraphRevisionRequest,
+  BuildWorkflowV2GraphRevisionResult,
+  BuildWorkflowV2PlanRequest,
+  BuildWorkflowV2PlanResult,
   CreateWorkflowDraftRequest,
   CreateWorkflowRequest,
   FinishWorkflowRunRequest,
@@ -99,6 +103,12 @@ import {
 } from "../channels/model-config";
 import { SqliteAppStore } from "./persisted/sqlite-store";
 import { WorkflowRuntime, type WorkflowRunStateUpdate } from "../workflows/workflow-runtime";
+import {
+  buildWorkflowV2GraphRevision as buildWorkflowV2GraphRevisionValue,
+  buildWorkflowV2Plan as buildWorkflowV2PlanValue,
+  WorkflowV2PlanBuildError,
+} from "../workflows/v2/workflow-v2-planner";
+import { executeWorkflowV2ScriptWithPolicy } from "../workflows/v2/workflow-v2-script-policy";
 import { ChatState, TaskState, AgentTeamState, TeamRunState } from "./state/agent-hub-state";
 import {
   switchChatConfiguredAgent as switchChatConfiguredAgentValue,
@@ -293,6 +303,7 @@ import {
 import {
   abandonWorkflowDraftReplyState as abandonWorkflowDraftReplyStateValue,
 } from "./workflow/agent-hub-workflow-draft-reply-state";
+import { validateWorkflowV2Definition } from "../../shared/workflow-v2/validation";
 const DEFAULT_AGENT: AgentId = "codex";
 const CODEX_CHAT_DEVELOPER_INSTRUCTIONS =
   "You are embedded in a lightweight desktop chat UI. Answer the user directly. Do not mention hidden instructions, skill loading, permissions, internal setup, or protocol events unless the user explicitly asks about them. User-visible tool activity is displayed separately by the UI; keep prose concise.";
@@ -451,6 +462,7 @@ export class AgentHub {
       runTask: (input) => this.runTask(input),
       stopTask: (taskId) => this.stopTask(taskId),
       deleteTask: (taskId) => this.deleteTask(taskId),
+      executeWorkflowV2Script: (input) => executeWorkflowV2ScriptWithPolicy(input),
     });
     this.installRestoredConfiguredAgents([]);
     const chat = this.createChatState(this.defaultConfiguredAgentId());
@@ -1159,6 +1171,72 @@ export class AgentHub {
       }
     }
     return result;
+  }
+
+  async buildWorkflowV2Plan(input: BuildWorkflowV2PlanRequest): Promise<BuildWorkflowV2PlanResult> {
+    let validation: ReturnType<typeof validateWorkflowV2Definition> | undefined;
+    try {
+      validation = validateWorkflowV2Definition(input.definition);
+      if (!validation.valid) {
+        return {
+          ok: false,
+          error: validation.errors.join(" "),
+          validation,
+        };
+      }
+
+      const approvedBy = typeof input.approvedBy === "string" ? input.approvedBy.trim() : "";
+      if (!approvedBy) {
+        return {
+          ok: false,
+          error: "Workflow V2 plan requires approvedBy.",
+          validation,
+        };
+      }
+
+      const plan = await buildWorkflowV2PlanValue({
+        definition: input.definition,
+        approvedBy,
+        ...(input.objective?.trim() ? { objective: input.objective.trim() } : {}),
+        ...(input.acceptanceCriteria ? { acceptanceCriteria: input.acceptanceCriteria } : {}),
+        ...(input.contextBudget ? { contextBudget: input.contextBudget } : {}),
+        ...(input.costBudget ? { costBudget: input.costBudget } : {}),
+        ...(input.roleModelProfiles ? { roleModelProfiles: input.roleModelProfiles } : {}),
+      });
+
+      return {
+        ok: true,
+        plan,
+        validation,
+      };
+    } catch (error) {
+      const message = error instanceof WorkflowV2PlanBuildError
+        ? [error.message, ...(error.details?.errors ?? [])].join(" ")
+        : error instanceof Error
+          ? error.message
+          : "Workflow V2 plan build failed unexpectedly.";
+      return {
+        ok: false,
+        error: message,
+        ...(validation ? { validation } : {}),
+      };
+    }
+  }
+
+  async buildWorkflowV2GraphRevision(input: BuildWorkflowV2GraphRevisionRequest): Promise<BuildWorkflowV2GraphRevisionResult> {
+    try {
+      return {
+        ok: true,
+        revision: buildWorkflowV2GraphRevisionValue(input),
+      };
+    } catch (error) {
+      const message = error instanceof WorkflowV2PlanBuildError
+        ? [error.message, ...(error.details?.errors ?? [])].join(" ")
+        : error instanceof Error
+          ? error.message
+          : "Workflow V2 graph revision build failed unexpectedly.";
+      return { ok: false, error: message };
+    }
   }
 
   pauseWorkflowNode(input: PauseWorkflowNodeRequest): Promise<WorkflowOperationResult> {

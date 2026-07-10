@@ -13,10 +13,35 @@ import type {
   WorkflowOperationResult,
   WorkflowRunProgressItem,
 } from "../../shared/types";
+import type {
+  WorkflowV2ContextBudget,
+  WorkflowV2LLMNode,
+  WorkflowV2ScriptNode,
+} from "../../shared/workflow-v2/definition";
+import type { WorkflowV2WorkerOutput, WorkflowV2WorkProposal } from "../../shared/workflow-v2/packets";
+import type {
+  WorkflowV2Plan,
+  WorkflowV2ResultPacket,
+  WorkflowV2TaskPacket,
+} from "../../shared/workflow-v2/planning";
 import { mkdir } from "node:fs/promises";
 import path from "node:path";
+import { isDeepStrictEqual } from "node:util";
 import { DEFAULT_MODEL_ID } from "../../shared/models";
 import { validateWorkflowGraph, workflowGraphExecutionLevels } from "../../shared/workflow-graph";
+import {
+  isNonNegativeSafeInteger,
+  isValidWorkflowV2AcceptanceCriteria,
+  isValidWorkflowV2BudgetEnvelope,
+  isValidWorkflowV2ContextBudget,
+  isValidWorkflowV2CostBudget,
+  isWorkflowV2ModelProfile,
+  validateWorkflowV2Definition,
+} from "../../shared/workflow-v2/validation";
+import {
+  createWorkflowV2TaskPacket,
+  deriveWorkflowV2DirectUpstreamDigest,
+} from "../../shared/workflow-v2/planning";
 import {
   WORKFLOW_FINAL_REVIEW_NODE_ID,
   WORKFLOW_NODE_MAX_ATTEMPTS,
@@ -37,6 +62,7 @@ import {
   workflowStoragePlanFor,
   type WorkflowJudgeResult,
 } from "../../shared/workflow-run";
+import { executeWorkflowV2Plan } from "./v2/workflow-v2-executor";
 
 export interface WorkflowRunStateUpdate {
   workflowId: string;
@@ -49,6 +75,15 @@ export interface WorkflowRunStateUpdate {
   lastError?: string;
 }
 
+export interface ExecuteWorkflowV2ScriptRequest {
+  node: WorkflowV2ScriptNode;
+  workDir: string;
+  sandboxMode: WorkflowV2ScriptNode["sandboxMode"];
+  upstreamOutputs: readonly WorkflowV2ResultPacket[];
+  signal: AbortSignal;
+  timeoutMs: number;
+}
+
 interface WorkflowRuntimeDependencies {
   snapshot: () => AppSnapshot;
   startWorkflowRun: (input: { workflowId: string; contextDocument?: string }) => WorkflowOperationResult;
@@ -57,7 +92,12 @@ interface WorkflowRuntimeDependencies {
   runTask: (input: RunTaskRequest) => Promise<AppSnapshot>;
   stopTask: (taskId: string) => Promise<void>;
   deleteTask: (taskId: string) => Promise<AppSnapshot>;
+  executeWorkflowV2Script: (input: ExecuteWorkflowV2ScriptRequest) => Promise<WorkflowV2WorkerOutput>;
 }
+
+const WORKFLOW_V2_MAX_PARALLEL_NODES = 4;
+const WORKFLOW_V2_INTERVENTION_PHASE04_ERROR = "Workflow V2 intervention requires Phase 04.";
+const MAX_NODE_TIMER_DELAY_MS = 2_147_483_647;
 
 function delay(ms: number): Promise<void> {
   return new Promise((resolve) => setTimeout(resolve, ms));
@@ -66,6 +106,301 @@ function delay(ms: number): Promise<void> {
 function configuredAgentModelId(workflow: WorkflowDraftState, snapshot: AppSnapshot): string {
   const agent = snapshot.configuredAgents.find((item) => item.id === workflow.configuredAgentId);
   return workflow.modelId || agent?.modelId || DEFAULT_MODEL_ID;
+}
+
+function workflowV2PlanValidationError(workflow: WorkflowDraftState, plan: WorkflowV2Plan): string | undefined {
+  if (!isRecord(plan)) return "Workflow V2 frozen plan must be an object.";
+  if (typeof plan.approvedBy !== "string" || !plan.approvedBy.trim()) {
+    return "Workflow V2 frozen plan requires a non-empty approvedBy.";
+  }
+  if (!isNonNegativeSafeInteger(plan.frozenAt)) {
+    return "Workflow V2 frozen plan requires a finite non-negative frozenAt timestamp.";
+  }
+  if (typeof plan.objective !== "string" || !plan.objective.trim()) {
+    return "Workflow V2 frozen plan requires a non-empty objective.";
+  }
+  if (!isRecord(plan.definition) || !Array.isArray(plan.definition.nodes) || !Array.isArray(plan.definition.edges)) {
+    return "Workflow V2 frozen plan definition is malformed.";
+  }
+  if (plan.workflowId !== workflow.workflowId) {
+    return `Workflow V2 plan ${plan.workflowId} does not belong to workflow ${workflow.workflowId}.`;
+  }
+  if (plan.definition.workflowId !== workflow.workflowId) {
+    return `Workflow V2 definition ${plan.definition.workflowId} does not belong to workflow ${workflow.workflowId}.`;
+  }
+  if (plan.graphVersion !== plan.definition.graphVersion) {
+    return `Workflow V2 plan graph version ${plan.graphVersion} does not match definition version ${plan.definition.graphVersion}.`;
+  }
+  const validation = (() => {
+    try {
+      return validateWorkflowV2Definition(plan.definition);
+    } catch {
+      return undefined;
+    }
+  })();
+  if (!validation) return "Workflow V2 frozen plan definition is malformed.";
+  if (!validation.valid) return validation.errors.join(" ");
+
+  if (!isValidWorkflowV2AcceptanceCriteria(plan.acceptanceCriteria)) {
+    return "Workflow V2 frozen plan acceptance criteria are malformed.";
+  }
+  if (!isWorkflowV2Budget(plan.budget)) return "Workflow V2 frozen plan budget is malformed.";
+  if (!isWorkflowV2RoleDefaults(plan.roleDefaults)) return "Workflow V2 frozen plan role defaults are malformed.";
+  if (!Array.isArray(plan.nodes)) return "Workflow V2 frozen plan nodes are malformed.";
+
+  const definitionNodeById = new Map(plan.definition.nodes.map((node) => [node.id, node]));
+  const planNodeIds = new Set<string>();
+  if (plan.nodes.length !== definitionNodeById.size) return "Workflow V2 plan nodes do not match the frozen definition.";
+  for (const planNode of plan.nodes) {
+    if (!isRecord(planNode) || typeof planNode.nodeId !== "string") {
+      return "Workflow V2 frozen plan nodes are malformed.";
+    }
+    const definitionNode = definitionNodeById.get(planNode.nodeId);
+    if (!definitionNode || planNodeIds.has(planNode.nodeId)) {
+      return "Workflow V2 plan nodes do not match the frozen definition.";
+    }
+    planNodeIds.add(planNode.nodeId);
+  }
+  if (!isDeepStrictEqual(plan.nodes.map((node) => node.nodeId), validation.topologicalNodeIds)) {
+    return "Workflow V2 plan node order does not match the frozen definition topological order.";
+  }
+
+  for (const planNode of plan.nodes) {
+    const definitionNode = definitionNodeById.get(planNode.nodeId)!;
+    try {
+      const expectedTaskPacket = createWorkflowV2TaskPacket({
+        node: definitionNode,
+        workflowObjective: plan.objective,
+        acceptanceCriteria: plan.acceptanceCriteria,
+        roleRoutes: plan.roleDefaults,
+        defaultContextBudget: plan.budget.context,
+        upstreamDigest: deriveWorkflowV2DirectUpstreamDigest(plan.definition, definitionNode.id),
+        ...(plan.budget.cost ? { costBudget: plan.budget.cost } : {}),
+      });
+      if (
+        planNode.title !== definitionNode.title
+        || planNode.execModel !== definitionNode.execModel
+        || planNode.role !== expectedTaskPacket.role
+        || planNode.modelProfile !== expectedTaskPacket.modelProfile
+        || !isDeepStrictEqual(planNode.acceptanceCriteria, expectedTaskPacket.acceptanceCriteria)
+        || !isDeepStrictEqual(planNode.budget, expectedTaskPacket.budget)
+        || !isDeepStrictEqual(planNode.taskPacket, expectedTaskPacket)
+      ) {
+        return `Workflow V2 plan node ${planNode.nodeId} does not match the frozen definition and task packet.`;
+      }
+    } catch {
+      return `Workflow V2 plan node ${planNode.nodeId} does not match the frozen definition and task packet.`;
+    }
+  }
+  return undefined;
+}
+
+function isWorkflowV2Budget(value: unknown): value is WorkflowV2Plan["budget"] {
+  return isValidWorkflowV2BudgetEnvelope(value);
+}
+
+function isWorkflowV2RoleDefaults(value: unknown): value is WorkflowV2Plan["roleDefaults"] {
+  if (!isRecord(value)) return false;
+  const roles = ["orchestrator", "executor", "reviewer"] as const;
+  if (Object.keys(value).some((role) => !roles.includes(role as typeof roles[number]))) return false;
+  return roles.every((role) => {
+    const route = value[role];
+    return isRecord(route) && route.role === role && isWorkflowV2ModelProfile(route.modelProfile);
+  });
+}
+
+export function workflowV2LlmNodePrompt(input: {
+  node: WorkflowV2LLMNode;
+  taskPacket: WorkflowV2TaskPacket;
+  upstreamOutputs: readonly WorkflowV2ResultPacket[];
+  baseWorkflowContextDocument: string;
+  storagePlanDocument: string;
+}): string {
+  if (!isValidWorkflowV2ContextBudget(input.taskPacket.budget.context)) {
+    throw new Error(`Workflow V2 LLM node ${input.node.id} received an invalid context budget.`);
+  }
+  if (input.taskPacket.budget.cost !== undefined && !isValidWorkflowV2CostBudget(input.taskPacket.budget.cost)) {
+    throw new Error(`Workflow V2 LLM node ${input.node.id} received an invalid cost budget.`);
+  }
+  const taskPacketDocument = JSON.stringify(input.taskPacket, null, 2);
+  const dynamicContextSource = [
+    "Actual direct upstream worker outputs:",
+    JSON.stringify({ upstreamOutputs: input.upstreamOutputs }, null, 2),
+    "",
+    "Base workflow context:",
+    input.baseWorkflowContextDocument.trim() || "No base workflow context.",
+  ].join("\n");
+  const contextCharacterBudget = input.taskPacket.budget.context.maxContextTokens * 4;
+  if (taskPacketDocument.length > contextCharacterBudget) {
+    throw new Error(
+      `Workflow V2 LLM node ${input.node.id} fixed context exceeds maxContextTokens approximate budget; this is not an exact tokenizer count.`,
+    );
+  }
+  const dynamicCharacterBudget = contextCharacterBudget - taskPacketDocument.length;
+  const truncatedDynamicContext = dynamicContextSource.slice(0, dynamicCharacterBudget);
+  const buildPrompt = (dynamicContext: string): string => [
+    "Execute exactly one node from a frozen Workflow V2 plan.",
+    "Do not infer graph navigation, run a judge, request a retry, or perform final review.",
+    "",
+    "Workflow V2 task packet:",
+    taskPacketDocument,
+    "",
+    "Node prompt:",
+    input.node.prompt,
+    "",
+    `Dynamic execution context (approximate character budget: ${dynamicCharacterBudget}; this is not an exact tokenizer count):`,
+    dynamicContext || "[dynamic context omitted by budget]",
+    "",
+    "Workflow storage plan:",
+    input.storagePlanDocument,
+    "",
+    "Return only one structured JSON worker-output packet with this shape:",
+    JSON.stringify({
+      nodeId: input.node.id,
+      summary: "concise summary",
+      outputs: Object.fromEntries(input.node.outputFields.map((field) => [field.key, "value"])),
+      evidence: ["optional evidence"],
+      risks: ["optional risk"],
+      nextStepSuggestions: ["optional suggestion"],
+      proposals: [],
+    }, null, 2),
+    "Worker proposals are data for the leader only; they must not mutate downstream behavior.",
+    // RunTask currently has no completion-token option. maxCompletionTokens remains visible in the task packet,
+    // but this runtime does not claim to enforce it.
+  ].join("\n");
+  // Preserve the existing full-prompt fail-fast before applying a fallback policy that may itself reject overflow.
+  const promptForBudgetCheck = buildPrompt(truncatedDynamicContext);
+  const maxPromptTokens = input.taskPacket.budget.cost?.maxPromptTokens;
+  if (maxPromptTokens !== undefined && promptForBudgetCheck.length > maxPromptTokens * 4) {
+    throw new Error(
+      `Workflow V2 LLM node ${input.node.id} prompt budget exceeded maxPromptTokens; this is an approximate character check, not an exact tokenizer count.`,
+    );
+  }
+  const dynamicContext = selectWorkflowV2DynamicContext({
+    nodeId: input.node.id,
+    source: dynamicContextSource,
+    characterBudget: dynamicCharacterBudget,
+    fallbackPolicy: input.taskPacket.budget.context.summaryFallbackPolicy,
+  });
+  return dynamicContext === truncatedDynamicContext ? promptForBudgetCheck : buildPrompt(dynamicContext);
+}
+
+function selectWorkflowV2DynamicContext(input: {
+  nodeId: string;
+  source: string;
+  characterBudget: number;
+  fallbackPolicy: WorkflowV2ContextBudget["summaryFallbackPolicy"];
+}): string {
+  if (input.source.length <= input.characterBudget) return input.source;
+  if (input.fallbackPolicy === "summarize") {
+    throw new Error(`Workflow V2 LLM node ${input.nodeId} summarize fallback is unavailable.`);
+  }
+  if (input.fallbackPolicy === "ask_human") {
+    throw new Error(`Workflow V2 LLM node ${input.nodeId} ask_human fallback requires Phase 04 human intervention.`);
+  }
+  return input.source.slice(0, input.characterBudget);
+}
+
+export function parseWorkflowV2WorkerArtifact(node: WorkflowV2LLMNode, artifact: string): WorkflowV2WorkerOutput {
+  const normalized = artifact.trim();
+  if (!normalized) throw new Error(`Workflow V2 LLM node ${node.id} returned an empty artifact.`);
+  const jsonCandidate = unwrapJsonFence(normalized);
+
+  try {
+    const parsed: unknown = JSON.parse(jsonCandidate);
+    return parseStructuredWorkflowV2WorkerOutput(node.id, parsed);
+  } catch (error) {
+    if (jsonCandidate.startsWith("{") || jsonCandidate.startsWith("[")) {
+      const message = error instanceof Error ? error.message : String(error);
+      throw new Error(`Workflow V2 LLM node ${node.id} returned an invalid structured worker-output packet: ${message}`);
+    }
+  }
+
+  if (node.outputFields.length !== 1) {
+    throw new Error(`Workflow V2 LLM node ${node.id} must return structured JSON for multiple output fields.`);
+  }
+  const outputField = node.outputFields[0]!;
+  return {
+    nodeId: node.id,
+    summary: truncateWorkflowContext(normalized, 240),
+    outputs: { [outputField.key]: normalized },
+    proposals: [],
+  };
+}
+
+function unwrapJsonFence(content: string): string {
+  const fenced = content.match(/^```(?:json)?\s*\n([\s\S]*?)\n```$/i);
+  return fenced?.[1]?.trim() ?? content;
+}
+
+function parseStructuredWorkflowV2WorkerOutput(expectedNodeId: string, value: unknown): WorkflowV2WorkerOutput {
+  if (!isRecord(value)) throw new Error("the packet must be a JSON object");
+  if (typeof value.nodeId !== "string" || !value.nodeId.trim()) throw new Error("nodeId must be a non-empty string");
+  if (typeof value.summary !== "string" || !value.summary.trim()) throw new Error("summary must be a non-empty string");
+  if (!isRecord(value.outputs)) throw new Error("outputs must be a JSON object");
+  if (!Array.isArray(value.proposals) || !value.proposals.every(isWorkflowV2WorkProposal)) {
+    throw new Error("proposals must be an array of valid worker proposals");
+  }
+  if (value.nodeId !== expectedNodeId) {
+    throw new Error(`nodeId ${value.nodeId} does not match expected node ${expectedNodeId}`);
+  }
+  const evidence = parseOptionalStringArray(value.evidence, "evidence");
+  const risks = parseOptionalStringArray(value.risks, "risks");
+  const nextStepSuggestions = parseOptionalStringArray(value.nextStepSuggestions, "nextStepSuggestions");
+
+  return {
+    nodeId: value.nodeId,
+    summary: value.summary,
+    outputs: value.outputs,
+    ...(evidence !== undefined ? { evidence } : {}),
+    ...(risks !== undefined ? { risks } : {}),
+    ...(nextStepSuggestions !== undefined ? { nextStepSuggestions } : {}),
+    proposals: value.proposals as WorkflowV2WorkProposal[],
+  };
+}
+
+function parseOptionalStringArray(value: unknown, field: string): string[] | undefined {
+  if (value === undefined) return undefined;
+  if (!Array.isArray(value) || !value.every((item) => typeof item === "string")) {
+    throw new Error(`${field} must be an array of strings`);
+  }
+  return value;
+}
+
+function isWorkflowV2WorkProposal(value: unknown): value is WorkflowV2WorkProposal {
+  if (!isRecord(value) || typeof value.kind !== "string" || typeof value.reason !== "string") return false;
+  if (value.kind === "continue") {
+    return value.targetNodeIds === undefined || (Array.isArray(value.targetNodeIds) && value.targetNodeIds.every((item) => typeof item === "string"));
+  }
+  if (value.kind === "retry") return value.targetNodeId === undefined || typeof value.targetNodeId === "string";
+  return value.kind === "escalate" || value.kind === "graph-revision";
+}
+
+function isRecord(value: unknown): value is Record<string, unknown> {
+  return typeof value === "object" && value !== null && !Array.isArray(value);
+}
+
+function workflowV2FinalReport(
+  plan: WorkflowV2Plan,
+  workerOutputs: readonly WorkflowV2WorkerOutput[],
+  status: "completed" | "failed" | "running",
+): string {
+  const outputByNodeId = new Map(workerOutputs.map((output) => [output.nodeId, output]));
+  return [
+    "# Workflow V2 Run Summary",
+    "",
+    `- Workflow: ${plan.objective}`,
+    `- Graph version: ${plan.graphVersion}`,
+    `- Status: ${status}`,
+    "",
+    "## Node outputs",
+    ...plan.definition.nodes.map((node) => {
+      const output = outputByNodeId.get(node.id);
+      if (!output) return `- ${node.title} (${node.id}): no output`;
+      const outputKeys = Object.keys(output.outputs).sort();
+      return `- ${node.title} (${node.id}): ${output.summary} [outputs: ${outputKeys.join(", ") || "none"}]`;
+    }),
+  ].join("\n");
 }
 
 
@@ -113,7 +448,47 @@ export class WorkflowRuntime {
     const snapshot = this.deps.snapshot();
     const workflow = snapshot.workflowStore.workflows.find((item) => item.workflowId === input.workflowId);
     if (!workflow) return { ok: false, error: `Workflow ${input.workflowId} was not found.` };
-    if (workflow.status === "running") return { ok: false, workflowId: workflow.workflowId, error: "Workflow is already running." };
+    const hasRunningRun = snapshot.workflowStore.runs.some(
+      (run) => run.workflowId === workflow.workflowId && run.status === "running",
+    );
+    if (workflow.status === "running" || hasRunningRun) {
+      return { ok: false, workflowId: workflow.workflowId, error: "Workflow is already running." };
+    }
+
+    if (workflow.workflowV2Plan) {
+      const planError = workflowV2PlanValidationError(workflow, workflow.workflowV2Plan);
+      if (planError) return { ok: false, workflowId: workflow.workflowId, error: planError };
+
+      const storagePlan = workflowStoragePlanFor(workflow.workflowId);
+      const baseWorkflowContextDocument = [input.contextDocument ?? workflow.contextDocument, workflowStoragePlanDocument(storagePlan)]
+        .map((item) => item.trim())
+        .filter(Boolean)
+        .join("\n\n");
+      const started = this.deps.startWorkflowRun({
+        workflowId: workflow.workflowId,
+        contextDocument: baseWorkflowContextDocument,
+      });
+      if (!started.ok || !started.runId) return started;
+
+      this.activeRuns.set(started.runId, {
+        workflowId: workflow.workflowId,
+        runId: started.runId,
+        pausedNodeIds: new Set(),
+        pausedTaskIds: new Set(),
+        gatedNodeIds: new Set(),
+        taskIdByNodeId: new Map(),
+      });
+      void this.executeWorkflowV2Run({
+        workflow,
+        plan: workflow.workflowV2Plan,
+        runId: started.runId,
+        baseWorkflowContextDocument,
+        storagePlanDocument: workflowStoragePlanDocument(storagePlan),
+      }).finally(() => {
+        this.activeRuns.delete(started.runId!);
+      });
+      return started;
+    }
 
     const validation = validateWorkflowGraph(workflow.graph);
     if (!validation.valid) {
@@ -173,6 +548,14 @@ export class WorkflowRuntime {
     const snapshot = this.deps.snapshot();
     const run = snapshot.workflowStore.runs.find((item) => item.runId === input.runId && item.workflowId === input.workflowId);
     if (!run) return { ok: false, error: `Workflow run ${input.runId} was not found.` };
+    if (run.workflowV2Plan) {
+      return {
+        ok: false,
+        workflowId: input.workflowId,
+        runId: input.runId,
+        error: WORKFLOW_V2_INTERVENTION_PHASE04_ERROR,
+      };
+    }
     if (run.status !== "running") return { ok: false, workflowId: input.workflowId, runId: input.runId, error: "Workflow run is not running." };
     const progressItem = run.progress.find((item) => item.nodeId === input.nodeId);
     if (!progressItem) return { ok: false, workflowId: input.workflowId, runId: input.runId, error: `Workflow node ${input.nodeId} was not found in this run.` };
@@ -237,6 +620,14 @@ export class WorkflowRuntime {
     const run = snapshot.workflowStore.runs.find((item) => item.runId === input.runId && item.workflowId === input.workflowId);
     if (!workflow) return { ok: false, error: `Workflow ${input.workflowId} was not found.` };
     if (!run) return { ok: false, workflowId: input.workflowId, error: `Workflow run ${input.runId} was not found.` };
+    if (run.workflowV2Plan) {
+      return {
+        ok: false,
+        workflowId: input.workflowId,
+        runId: input.runId,
+        error: WORKFLOW_V2_INTERVENTION_PHASE04_ERROR,
+      };
+    }
     if (run.status !== "running" && run.status !== "stopped") {
       return { ok: false, workflowId: input.workflowId, runId: input.runId, error: "Workflow run is not resumable." };
     }
@@ -314,6 +705,14 @@ export class WorkflowRuntime {
     const run = snapshot.workflowStore.runs.find((item) => item.runId === input.runId && item.workflowId === input.workflowId);
     if (!workflow) return { ok: false, error: `Workflow ${input.workflowId} was not found.` };
     if (!run) return { ok: false, workflowId: input.workflowId, error: `Workflow run ${input.runId} was not found.` };
+    if (run.workflowV2Plan) {
+      return {
+        ok: false,
+        workflowId: input.workflowId,
+        runId: input.runId,
+        error: WORKFLOW_V2_INTERVENTION_PHASE04_ERROR,
+      };
+    }
     if (run.status !== "running" && run.status !== "stopped") {
       return { ok: false, workflowId: input.workflowId, runId: input.runId, error: "Workflow run is not resumable." };
     }
@@ -376,6 +775,258 @@ export class WorkflowRuntime {
       if (!currentActiveRun || (currentActiveRun.pausedNodeIds.size === 0 && currentActiveRun.gatedNodeIds.size === 0)) this.activeRuns.delete(input.runId);
     });
     return { ok: true, workflowId: input.workflowId, runId: input.runId };
+  }
+
+  private async executeWorkflowV2Run(input: {
+    workflow: WorkflowDraftState;
+    plan: WorkflowV2Plan;
+    runId: string;
+    baseWorkflowContextDocument: string;
+    storagePlanDocument: string;
+  }): Promise<void> {
+    const { workflow, plan, runId, baseWorkflowContextDocument, storagePlanDocument } = input;
+    const executionStartedAt = Date.now();
+    const maxWallClockMs = plan.budget.cost?.maxWallClockMs;
+    const maxModelCalls = plan.budget.cost?.maxModelCalls;
+    let startedModelCalls = 0;
+    let latestSnapshot = this.deps.snapshot();
+    let latestProgress = plan.definition.nodes.map((node): WorkflowRunProgressItem => ({
+      nodeId: node.id,
+      title: node.title,
+      status: "queued",
+      detail: "Queued",
+    }));
+    const workflowWorkDir = workflow.workDir || latestSnapshot.workDir;
+    const configuredAgentId = workflow.configuredAgentId || latestSnapshot.configuredAgents[0]?.id || "default-agent";
+    const modelId = configuredAgentModelId(workflow, latestSnapshot);
+
+    const remainingWallClockMs = (): number => maxWallClockMs === undefined
+      ? Number.POSITIVE_INFINITY
+      : maxWallClockMs - (Date.now() - executionStartedAt);
+    const assertWallClockBudget = (nodeId: string): number => {
+      const remainingMs = remainingWallClockMs();
+      if (remainingMs <= 0) {
+        throw new Error(`Workflow V2 wall-clock budget exhausted before node ${nodeId}.`);
+      }
+      return remainingMs;
+    };
+    const consumeModelCallBudget = (nodeId: string): void => {
+      if (maxModelCalls !== undefined && startedModelCalls >= maxModelCalls) {
+        throw new Error(`Workflow V2 model-call budget exhausted before node ${nodeId}.`);
+      }
+      startedModelCalls += 1;
+    };
+
+    const updateNode = (
+      nodeId: string,
+      update: Partial<WorkflowRunProgressItem>,
+      event?: Omit<WorkflowEvent, "at">,
+      clearTaskId = false,
+    ): void => {
+      latestProgress = latestProgress.map((item) => {
+        if (item.nodeId !== nodeId) return item;
+        const next = { ...item, ...update };
+        if (clearTaskId) delete next.taskId;
+        return next;
+      });
+      this.deps.updateWorkflowRunState({
+        workflowId: workflow.workflowId,
+        runId,
+        status: "running",
+        progress: latestProgress,
+        ...(event ? { appendEvents: [{ ...event, at: Date.now() }] } : {}),
+        contextDocument: baseWorkflowContextDocument,
+      });
+    };
+
+    const startWorkflowTask = async (request: RunTaskRequest): Promise<TaskRun> => {
+      const existingTaskIds = new Set(latestSnapshot.tasks.map((task) => task.id));
+      latestSnapshot = await this.deps.runTask(request);
+      const task = latestSnapshot.tasks
+        .filter((item) => !existingTaskIds.has(item.id))
+        .sort((left, right) => right.createdAt - left.createdAt)
+        .find((item) => item.prompt === request.prompt && item.configuredAgentId === request.configuredAgentId);
+      if (task) return task;
+      const fallbackTask = latestSnapshot.tasks
+        .filter((item) => !existingTaskIds.has(item.id))
+        .sort((left, right) => right.createdAt - left.createdAt)[0];
+      if (!fallbackTask) throw new Error("Workflow V2 task creation did not return a new task.");
+      return fallbackTask;
+    };
+
+    const waitForTask = async (taskId: string, nodeId: string): Promise<TaskRun> => {
+      const startedAt = Date.now();
+      while (true) {
+        assertWallClockBudget(nodeId);
+        const remainingTaskMs = WORKFLOW_TASK_TIMEOUT_MS - (Date.now() - startedAt);
+        if (remainingTaskMs <= 0) throw new Error(`Workflow V2 task ${taskId} timed out.`);
+        latestSnapshot = this.deps.snapshot();
+        const task = latestSnapshot.tasks.find((item) => item.id === taskId);
+        if (!task) throw new Error(`Workflow V2 task ${taskId} was deleted before completion.`);
+        if (task.status === "completed") return task;
+        if (task.status === "failed" || task.status === "stopped") {
+          throw new Error(task.lastError || `Workflow V2 task ${task.title} ${task.status}.`);
+        }
+        updateNode(nodeId, { status: "running", detail: taskArtifact(task), taskId });
+        await delay(Math.min(WORKFLOW_TASK_POLL_MS, remainingTaskMs, remainingWallClockMs()));
+      }
+    };
+
+    const runLlmNode = async (request: {
+      node: WorkflowV2LLMNode;
+      taskPacket: WorkflowV2TaskPacket;
+      upstreamOutputs: readonly WorkflowV2ResultPacket[];
+    }): Promise<WorkflowV2WorkerOutput> => {
+      assertWallClockBudget(request.node.id);
+      const prompt = workflowV2LlmNodePrompt({
+        node: request.node,
+        taskPacket: request.taskPacket,
+        upstreamOutputs: request.upstreamOutputs,
+        baseWorkflowContextDocument,
+        storagePlanDocument,
+      });
+      consumeModelCallBudget(request.node.id);
+      const task = await startWorkflowTask({
+        prompt,
+        configuredAgentId,
+        modelId,
+        workDir: workflowWorkDir,
+      });
+      updateNode(request.node.id, { status: "running", detail: "Task running", taskId: task.id });
+
+      try {
+        const completedTask = await waitForTask(task.id, request.node.id);
+        const artifact = taskArtifact(completedTask);
+        const output = parseWorkflowV2WorkerArtifact(request.node, artifact);
+        updateNode(request.node.id, { status: "running", detail: output.summary, taskId: task.id }, {
+          type: "node_output",
+          nodeId: request.node.id,
+          taskId: task.id,
+          attempt: 1,
+          summary: output.summary,
+        });
+        return output;
+      } finally {
+        latestSnapshot = await this.deps.deleteTask(task.id);
+      }
+    };
+
+    const runScriptNode = async (request: {
+      node: WorkflowV2ScriptNode;
+      upstreamOutputs: readonly WorkflowV2ResultPacket[];
+    }): Promise<WorkflowV2WorkerOutput> => {
+      const remainingScriptMs = assertWallClockBudget(request.node.id);
+      const timeoutMs = Math.min(
+        request.node.script.timeoutMs ?? WORKFLOW_TASK_TIMEOUT_MS,
+        remainingScriptMs,
+        MAX_NODE_TIMER_DELAY_MS,
+      );
+      const controller = new AbortController();
+      let timeoutHandle: ReturnType<typeof setTimeout> | undefined;
+      const deadline = new Promise<never>((_resolve, reject) => {
+        timeoutHandle = setTimeout(() => {
+          const timeoutError = new Error(`Workflow V2 script node ${request.node.id} timed out after ${timeoutMs}ms.`);
+          reject(timeoutError);
+          controller.abort(timeoutError);
+        }, timeoutMs);
+      });
+      let output: WorkflowV2WorkerOutput;
+      try {
+        const execution = this.deps.executeWorkflowV2Script({
+          node: request.node,
+          workDir: workflowWorkDir,
+          sandboxMode: request.node.sandboxMode,
+          upstreamOutputs: request.upstreamOutputs,
+          signal: controller.signal,
+          timeoutMs,
+        });
+        output = await Promise.race([execution, deadline]);
+      } finally {
+        if (timeoutHandle !== undefined) clearTimeout(timeoutHandle);
+      }
+      updateNode(request.node.id, { status: "running", detail: output.summary }, {
+        type: "node_output",
+        nodeId: request.node.id,
+        attempt: 1,
+        summary: output.summary,
+      });
+      return output;
+    };
+
+    try {
+      this.deps.updateWorkflowRunState({
+        workflowId: workflow.workflowId,
+        runId,
+        status: "running",
+        progress: latestProgress,
+        contextDocument: baseWorkflowContextDocument,
+      });
+      const result = await executeWorkflowV2Plan({
+        plan,
+        maxParallelNodes: WORKFLOW_V2_MAX_PARALLEL_NODES,
+        runLlmNode,
+        executeScript: runScriptNode,
+        onNodeStateTransition: (transition) => {
+          if (transition.status === "running") {
+            updateNode(transition.nodeId, { status: "running", detail: "Starting" }, {
+              type: "node_started",
+              nodeId: transition.nodeId,
+              attempt: 1,
+              detail: "Starting",
+            });
+          } else if (transition.status === "completed") {
+            updateNode(transition.nodeId, { status: "completed", detail: transition.output.summary }, {
+              type: "node_completed",
+              nodeId: transition.nodeId,
+              detail: transition.output.summary,
+            }, true);
+          } else {
+            updateNode(transition.nodeId, { status: "failed", detail: transition.error }, {
+              type: "node_failed",
+              nodeId: transition.nodeId,
+              error: transition.error,
+            }, true);
+          }
+        },
+      });
+
+      const finalReport = workflowV2FinalReport(plan, result.workerOutputs, result.runState.status);
+      if (result.runState.status === "completed") {
+        this.deps.finishWorkflowRun({
+          workflowId: workflow.workflowId,
+          runId,
+          status: "completed",
+          progress: latestProgress,
+          contextDocument: baseWorkflowContextDocument,
+          finalReport,
+        });
+        return;
+      }
+
+      const lastError = result.runState.nodeOrder
+        .map((nodeId) => result.runState.nodes[nodeId])
+        .find((node) => node?.status === "failed")?.lastError ?? "Workflow V2 execution failed.";
+      this.deps.finishWorkflowRun({
+        workflowId: workflow.workflowId,
+        runId,
+        status: "failed",
+        progress: latestProgress,
+        contextDocument: baseWorkflowContextDocument,
+        finalReport,
+        lastError,
+      });
+    } catch (error) {
+      const message = error instanceof Error ? error.message : String(error);
+      latestProgress = workflowProgressAfterFailure(latestProgress, message);
+      this.deps.finishWorkflowRun({
+        workflowId: workflow.workflowId,
+        runId,
+        status: "failed",
+        progress: latestProgress,
+        contextDocument: baseWorkflowContextDocument,
+        lastError: message,
+      });
+    }
   }
 
   private async executeRun(input: {
@@ -502,7 +1153,15 @@ export class WorkflowRuntime {
           .filter((item): item is { node: WorkflowGraphNode; artifact: string } => Boolean(item));
 
       const nodeAttemptPrompt = (node: WorkflowGraphNode, attempt: number, retryPrompt: string, contextDocument: string): string => {
-        const basePrompt = workflowNodeRunPrompt(runGraph, node, upstreamArtifactsForNode(node), contextDocument, storagePlan);
+        const workflowV2PlanNode = workflow.workflowV2Plan?.nodes.find((item) => item.nodeId === node.id);
+        const basePrompt = workflowNodeRunPrompt(
+          runGraph,
+          node,
+          upstreamArtifactsForNode(node),
+          contextDocument,
+          storagePlan,
+          workflowV2PlanNode?.taskPacket,
+        );
         if (!retryPrompt.trim()) return basePrompt;
         return [
           basePrompt,
