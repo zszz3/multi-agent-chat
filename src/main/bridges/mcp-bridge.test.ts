@@ -171,6 +171,12 @@ describe("MCP bridge", () => {
     expect(JSON.stringify(channels)).not.toContain("httpHeaders");
     expect(JSON.stringify(channels)).not.toContain("Bearer");
 
+    const hermesChannels = (await (await bridgeRequest("/mcp/channels/list", bridge.token, { agentId: "hermes" })).json()) as any;
+    expect(hermesChannels).toMatchObject({
+      ok: true,
+      channels: [expect.objectContaining({ id: "hermes-local", agentId: "hermes" })],
+    });
+
     const models = (await (await bridgeRequest("/mcp/models/list", bridge.token, { channelId: "codex-openai" })).json()) as any;
     expect(models).toMatchObject({
       ok: true,
@@ -197,6 +203,22 @@ describe("MCP bridge", () => {
       },
     });
     expect(createdAgent.agent).not.toHaveProperty("prompt");
+
+    const hermesAgent = (await (await bridgeRequest("/mcp/agents/create", bridge.token, {
+      id: "hermes-reviewer",
+      name: "Hermes Reviewer",
+      runtimeAgentId: "hermes",
+      channelId: "hermes-local",
+      modelId: "default",
+    })).json()) as any;
+    expect(hermesAgent).toMatchObject({
+      ok: true,
+      agent: {
+        id: "hermes-reviewer",
+        runtimeAgentId: "hermes",
+        channelId: "hermes-local",
+      },
+    });
 
     const updatedAgent = (await (await bridgeRequest("/mcp/agents/update", bridge.token, {
       agentId: "doc-writer",

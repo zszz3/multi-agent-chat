@@ -2,6 +2,7 @@ import { mkdir, readdir, readFile, writeFile } from "node:fs/promises";
 import os from "node:os";
 import path from "node:path";
 import { CURRENT_CODEX_MODELS, DEFAULT_MODEL_ID, FALLBACK_MODEL_OPTIONS, runtimeModelId } from "../../shared/models";
+import { isRuntimeId, RUNTIME_DEFINITIONS } from "../../shared/runtime-catalog";
 import type {
   AgentChannel,
   AgentId,
@@ -22,10 +23,6 @@ interface ModelChannelsFile {
 
 interface CodexAuthFile {
   OPENAI_API_KEY?: unknown;
-}
-
-function isAgentId(value: unknown): value is AgentId {
-  return value === "codex" || value === "claude" || value === "api";
 }
 
 function asString(value: unknown): string | undefined {
@@ -284,7 +281,7 @@ function normalizeChannel(raw: unknown): AgentChannel | null {
   if (!raw || typeof raw !== "object") return null;
   const record = raw as Record<string, unknown>;
   const id = asString(record.id);
-  if (!id || !isAgentId(record.agentId)) return null;
+  if (!id || !isRuntimeId(record.agentId)) return null;
 
   const channel: AgentChannel = {
     id,
@@ -400,31 +397,13 @@ export async function detectCodexModels(command = "codex"): Promise<AgentModelOp
 }
 
 export function createDefaultChannels(codexModels = FALLBACK_MODEL_OPTIONS.codex.filter((model) => model.id !== DEFAULT_MODEL_ID)): AgentChannel[] {
-  return [
-    {
-      id: "codex-openai",
-      agentId: "codex",
-      label: "Codex OpenAI",
-      modelProvider: "openai",
-      providerName: "OpenAI",
-      models: normalizeModels(codexModels, FALLBACK_MODEL_OPTIONS.codex),
-    },
-    {
-      id: "claude-code",
-      agentId: "claude",
-      label: "Claude Code",
-      models: FALLBACK_MODEL_OPTIONS.claude,
-    },
-    {
-      id: "api-openai",
-      agentId: "api",
-      label: "OpenAI API",
-      providerName: "OpenAI",
-      modelProvider: "openai-api",
-      baseUrl: "https://api.openai.com/v1",
-      models: FALLBACK_MODEL_OPTIONS.api,
-    },
-  ];
+  return RUNTIME_DEFINITIONS.map((definition) => ({
+    ...definition.defaultChannel,
+    agentId: definition.id,
+    models: definition.id === "codex"
+      ? normalizeModels(codexModels, FALLBACK_MODEL_OPTIONS.codex)
+      : FALLBACK_MODEL_OPTIONS[definition.id],
+  }));
 }
 
 export async function loadModelChannels(configPath: string, codexCommand = "codex"): Promise<AgentChannel[]> {

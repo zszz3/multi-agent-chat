@@ -4,7 +4,8 @@ import http from "node:http";
 import path from "node:path";
 import type { AddressInfo } from "node:net";
 import type { AgentHub } from "../hub/agent-hub";
-import type { AgentChannel, AgentId, ConfiguredAgent, CreateWorkflowRequest, RegisterArtifactRequest, UpdateWorkflowRequest, WorkflowArtifactReference, WorkflowGraph, AppendWorkflowRunContextRequest, ImportOnlineSkillRequest } from "../../shared/types";
+import { isRuntimeId } from "../../shared/runtime-catalog";
+import type { AgentChannel, ConfiguredAgent, CreateWorkflowRequest, RegisterArtifactRequest, UpdateWorkflowRequest, WorkflowArtifactReference, WorkflowGraph, AppendWorkflowRunContextRequest, ImportOnlineSkillRequest } from "../../shared/types";
 import { SKILL_TEMPLATES } from "../../shared/skill-templates";
 import { importOnlineSkillToLibrary, listImportedSkillTemplates } from "../skills/skill-installer";
 import { fetchOnlineSkills, ONLINE_SKILL_SOURCES } from "../../shared/online-skills";
@@ -53,10 +54,6 @@ function asRecord(value: unknown): Record<string, unknown> {
 
 function asString(value: unknown): string | undefined {
   return typeof value === "string" && value.trim() ? value.trim() : undefined;
-}
-
-function isAgentId(value: unknown): value is AgentId {
-  return value === "codex" || value === "claude" || value === "api";
 }
 
 function asTags(value: unknown, fallback: string[] = []): string[] {
@@ -123,7 +120,7 @@ function agentListPayload(hub: AgentHub): unknown {
 }
 
 function channelsListPayload(hub: AgentHub, record: Record<string, unknown>): unknown {
-  const agentId = isAgentId(record.agentId) ? record.agentId : undefined;
+  const agentId = isRuntimeId(record.agentId) ? record.agentId : undefined;
   return {
     ok: true,
     channels: hub.snapshot().channels.filter((channel) => !agentId || channel.agentId === agentId).map(publicChannel),
@@ -131,7 +128,7 @@ function channelsListPayload(hub: AgentHub, record: Record<string, unknown>): un
 }
 
 function modelsListPayload(hub: AgentHub, record: Record<string, unknown>): unknown {
-  const agentId = isAgentId(record.agentId) ? record.agentId : undefined;
+  const agentId = isRuntimeId(record.agentId) ? record.agentId : undefined;
   const channelId = asString(record.channelId);
   const channels = hub.snapshot().channels.filter((channel) => (!agentId || channel.agentId === agentId) && (!channelId || channel.id === channelId));
   return {
@@ -195,7 +192,7 @@ function normalizeAgentInput(hub: AgentHub, record: Record<string, unknown>, exi
   const snapshot = hub.snapshot();
   const now = Date.now();
   const template = templatePatch(asString(record.templateId));
-  const runtimeAgentId = isAgentId(record.runtimeAgentId) ? record.runtimeAgentId : (existing?.runtimeAgentId ?? "codex");
+  const runtimeAgentId = isRuntimeId(record.runtimeAgentId) ? record.runtimeAgentId : (existing?.runtimeAgentId ?? "codex");
   const channelIdInput = asString(record.channelId) ?? existing?.channelId;
   const channelId =
     channelIdInput && snapshot.channels.some((channel) => channel.id === channelIdInput && channel.agentId === runtimeAgentId)

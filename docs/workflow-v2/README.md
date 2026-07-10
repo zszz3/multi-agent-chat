@@ -32,5 +32,4 @@
 5. [Phase 04: Review And Human Intervention](/Users/pengjie.zhai/multi-agent-chat/docs/superpowers/specs/workflow/2026-07-10-workflow-v2-phase-04-review-and-human-intervention.md)
 6. [Phase 05: Persistence, Cache, And Recovery](/Users/pengjie.zhai/multi-agent-chat/docs/superpowers/specs/workflow/2026-07-10-workflow-v2-phase-05-persistence-cache-and-recovery.md)
 7. [Phase 06: Hooks And Extension Surface](/Users/pengjie.zhai/multi-agent-chat/docs/superpowers/specs/workflow/2026-07-10-workflow-v2-phase-06-hooks-and-extension-surface.md)
-
 如果后续需要补 schema、状态机、事件协议，建议继续在本目录新增独立文档，而不是回填到总纲。

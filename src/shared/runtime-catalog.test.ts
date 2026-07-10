@@ -2,8 +2,24 @@ import { describe, expect, test } from "vitest";
 import { DEFAULT_CONFIG_CHANNEL_IDS } from "./config-channels";
 import { FALLBACK_MODEL_OPTIONS } from "./models";
 import { AGENT_PROVIDER_PRESETS } from "./provider-presets";
+import { isRuntimeId, RUNTIME_DEFINITIONS, RUNTIME_IDS, runtimeDefinition } from "./runtime-catalog";
 
 describe("runtime catalog", () => {
+  test("provides one canonical definition for every runtime", () => {
+    expect(new Set(RUNTIME_IDS).size).toBe(RUNTIME_IDS.length);
+    expect(RUNTIME_DEFINITIONS.map((definition) => definition.id)).toEqual(RUNTIME_IDS);
+    for (const runtimeId of RUNTIME_IDS) {
+      expect(isRuntimeId(runtimeId)).toBe(true);
+      expect(runtimeDefinition(runtimeId)).toMatchObject({
+        id: runtimeId,
+        label: expect.any(String),
+        executable: expect.any(String),
+        defaultChannel: { id: DEFAULT_CONFIG_CHANNEL_IDS[runtimeId] },
+      });
+    }
+    expect(isRuntimeId("unknown-runtime")).toBe(false);
+  });
+
   test("includes Hermes fallback models, default channel, and provider preset", () => {
     expect(FALLBACK_MODEL_OPTIONS.hermes.map((model) => model.id)).toContain("default");
     expect(DEFAULT_CONFIG_CHANNEL_IDS.hermes).toBe("hermes-local");
