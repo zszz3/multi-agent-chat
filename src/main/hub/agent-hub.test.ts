@@ -1,4 +1,4 @@
-import { mkdir, mkdtemp, readFile, writeFile } from "node:fs/promises";
+import { mkdir, mkdtemp, readFile, realpath, writeFile } from "node:fs/promises";
 import os from "node:os";
 import path from "node:path";
 import { describe, expect, test, vi } from "vitest";
@@ -3996,7 +3996,7 @@ fs.writeFileSync(${JSON.stringify(argsPath)}, process.argv.slice(2).join("\\n") 
     const ok = await (hub as any).registerArtifact({ target: "chat-1", path: "report.md", description: "final report" });
     expect(ok).toMatchObject({ ok: true });
     expect(ok.artifact).toMatchObject({ target: "chat-1", kind: "file", title: "report.md", description: "final report" });
-    expect(ok.artifact.path).toBe(path.join(dir, "report.md"));
+    expect(ok.artifact.path).toBe(await realpath(path.join(dir, "report.md")));
 
     const snapshot = hub.snapshot() as any;
     expect(snapshot.artifacts).toHaveLength(1);

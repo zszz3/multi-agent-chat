@@ -354,7 +354,12 @@ function registerIpcHandlers(): void {
   });
   ipcMain.handle("workflow:outputs:list", (_event, workflowId: string) => hub.listWorkflowOutputs(workflowId));
   ipcMain.handle("file:read-text", async (_event, filePath: string) =>
-    createLocalTextFilePreviewUnderRoots(filePath, hub.allowedFileRoots(), app.getPath("home")),
+    createLocalTextFilePreviewUnderRoots(
+      filePath,
+      hub.allowedFileRoots(),
+      app.getPath("home"),
+      platformServices.pathPolicy,
+    ),
   );
   ipcMain.handle("file:reveal", async (_event, filePath: string) => {
     const targetPath = String(filePath ?? "").trim();

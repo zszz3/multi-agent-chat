@@ -4,7 +4,7 @@
 
 ### Status
 
-In progress. Executable discovery, Main-process `PlatformServices` composition, the shared process-tree controller, and production Runtime lifecycle injection were implemented on 2026-07-10. Compatibility fallback removal, filesystem hardening, and Windows-hosted validation remain pending.
+In progress. Executable discovery, Main-process `PlatformServices` composition, shared process-tree control, production Runtime lifecycle injection, and local-file containment hardening were implemented on 2026-07-10. Compatibility cleanup, skill-junction ownership, and Windows-hosted validation remain pending.
 
 ## Goal
 
@@ -37,7 +37,11 @@ Completed:
 - added a real-child-process assertion that ACP launch and detach use the injected platform services;
 - injected the platform launcher/controller into Hermes, OpenCode, and OpenClaw one-shot executor, workflow, and channel-test construction;
 - routed all three one-shot runner `stop()` paths through tree termination with a classified `user-cancel` reason;
-- added a parameterized lifecycle contract test covering all three one-shot runners.
+- added a parameterized lifecycle contract test covering all three one-shot runners;
+- extracted a focused path policy with Windows drive normalization, case-insensitive containment, UNC support, device-path rejection, and `~/`/`~\\` expansion;
+- routed Main-process local-file previews through the composed path policy;
+- changed file authorization to compare both lexical paths and canonical `realpath` results before reading;
+- added pure Windows/POSIX path fixtures and a filesystem test proving symlink/junction escape is rejected.
 
 Pending:
 
@@ -47,8 +51,7 @@ Pending:
 - preserve environment overrides as a separately classified `environment` resolution source instead of only preselecting them in `resolveRuntimeExecutables(...)`;
 - add bounded locator caching, ambiguity handling, and classified remediation for unresolved executables;
 - replace the remaining hand-written Windows command quoting with the selected mature spawn adapter and complete metacharacter/Unicode fixtures;
-- implement process-tree cancellation and forced cleanup for Windows and POSIX;
-- harden local-file containment and skill-junction ownership;
+- harden skill-junction ownership and replacement behavior on Windows;
 - add configuration file-picking and actionable detection states;
 - run the integration suite from the Phase 01 installed artifact on Windows.
 

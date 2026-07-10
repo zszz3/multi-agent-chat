@@ -7,16 +7,7 @@ import {
   createWindowsProcessTreeController,
   type ProcessTreeController,
 } from "./process-tree";
-
-export type PlatformPathApi = Pick<
-  typeof path.win32,
-  "isAbsolute" | "join" | "normalize" | "relative" | "resolve" | "sep"
->;
-
-export interface PlatformPathPolicy {
-  pathApi: PlatformPathApi;
-  caseSensitive: boolean;
-}
+import { createPlatformPathPolicy, type PlatformPathPolicy } from "./platform-paths";
 
 export interface PlatformServices {
   executableLocator: ExecutableLocator;
@@ -41,10 +32,10 @@ export interface PlatformServiceDependencies {
 function platformPathPolicy(platform: NodeJS.Platform): PlatformPathPolicy {
   switch (platform) {
     case "win32":
-      return { pathApi: path.win32, caseSensitive: false };
+      return createPlatformPathPolicy({ pathApi: path.win32, caseSensitive: false });
     case "darwin":
     case "linux":
-      return { pathApi: path.posix, caseSensitive: true };
+      return createPlatformPathPolicy({ pathApi: path.posix, caseSensitive: true });
     default:
       throw new Error(`Unsupported desktop platform: ${platform}`);
   }
