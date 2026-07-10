@@ -1901,6 +1901,7 @@ export class AgentHub {
   private async deleteAgentSession(run: RunState): Promise<void> {
     const resolved = this.resolveConfiguredAgent(run.configuredAgentId, run.modelId, run.kind === "chat" ? run.channelId : undefined);
     if (!resolved) return;
+    if (!this.runtimeRouter.supportsSurface(resolved.runtimeAgentId, "cleanup")) return;
     const workDir = "workDir" in run ? run.workDir : this.workDir;
     await this.runtimeRouter.deleteSessionArtifacts(resolved.runtimeAgentId, {
       workDir,

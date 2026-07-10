@@ -1928,7 +1928,7 @@ describe("AgentHub chat sessions", () => {
     expect(activeChat?.runtimeState?.activeTurnId).toBeUndefined();
   });
 
-  test("disposes interactive sessions when deleting a chat after completion", async () => {
+  test("disposes interactive sessions and deletes chats when a runtime has no cleanup surface", async () => {
     const session = {
       reconfigure: vi.fn(),
       ensureAttached: vi.fn(async () => undefined),
@@ -1962,7 +1962,6 @@ describe("AgentHub chat sessions", () => {
         runtimeId: "codex",
         surfaceSupport: [
           support("chat", ["interactive"], ["fresh", "resume-preferred", "resume-required"]),
-          support("cleanup", ["oneshot"], ["fresh", "resume-preferred"]),
         ],
         getCapabilities: () => interactiveChatCapabilities("codex"),
         createOneShotExecutor: () => ({
@@ -1971,7 +1970,6 @@ describe("AgentHub chat sessions", () => {
           },
           stop: async () => undefined,
         }),
-        deleteSessionArtifacts: async () => undefined,
         createInteractiveSession: (context: any) => {
           interactiveContext = context;
           return session;
@@ -2000,6 +1998,7 @@ describe("AgentHub chat sessions", () => {
     await hub.deleteChat(chatId);
 
     expect(session.detach).toHaveBeenCalledWith("app_shutdown");
+    expect(hub.snapshot().chats.some((chat) => chat.id === chatId)).toBe(false);
   });
 
   test("deletes Codex sessions created while testing configured agents", async () => {

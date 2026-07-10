@@ -276,6 +276,27 @@ describe("RuntimeRouter", () => {
     );
   });
 
+  test("reports optional runtime surfaces without throwing", () => {
+    const router = new RuntimeRouter(
+      new RuntimeDriverRegistry([
+        createDriver({
+          runtimeId: "api",
+          surfaceSupport: [
+            {
+              surface: "task",
+              executionModes: ["oneshot"],
+              continuationPolicies: ["fresh"],
+            },
+          ],
+        }),
+      ]),
+    );
+
+    expect(router.supportsSurface("api", "task")).toBe(true);
+    expect(router.supportsSurface("api", "cleanup")).toBe(false);
+    expect(router.supportsSurface("openclaw", "cleanup")).toBe(false);
+  });
+
   test("rejects cleanup requests that use runtimeConversation owned by another runtime", async () => {
     const deleteSessionArtifacts = vi.fn(async () => undefined);
     const router = new RuntimeRouter(
