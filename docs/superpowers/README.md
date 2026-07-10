@@ -1,15 +1,16 @@
-# Design Specs
+# Specs And Plans
 
-This directory stores reviewed design specs and implementation contracts.
+This directory separates normative contracts from implementation sequencing.
 
 ## Structure
 
-- `specs/`: reviewed design documents and implementation contracts
+- `specs/`: normative behavior contracts and completion evidence
+- `plans/`: implementation order, verification commands, and completion records
 
 Specs are grouped by topic area:
 
 - `runtime/`: runtime execution boundary, driver, routing, and onboarding work
-- `workflow/`: workflow product and UX changes
+- `workflow/`: workflow contracts split into Foundation, Evolution, and History
 
 ## Reading Guide
 
@@ -21,9 +22,10 @@ If you are working on runtime execution, start with:
 
 If you are working on workflow product behavior, start with:
 
-1. the relevant workflow spec under `specs/workflow/`
-2. the matching design document under `../workflow-v2/`
+1. [Workflow documentation router](../workflow-v2/README.md)
+2. the relevant authoritative spec under `specs/workflow/`
+3. the matching plan under `plans/workflow/` only when implementing
 
 ## Authoring Rule
 
-When adding a stable contract, place it in the closest topic folder instead of the `superpowers/` root. Temporary progress notes and one-off implementation plans should stay outside `docs/`.
+When adding a stable contract, place it in the closest `specs/` topic/status folder. Put executable task sequencing in the matching `plans/` folder. Explanatory design and unapproved proposals belong under `docs/workflow-v2/design/` and `docs/workflow-v2/proposals/`, never inside specs.
