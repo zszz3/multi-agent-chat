@@ -130,6 +130,8 @@ const WORKFLOW_TEXT = {
 
 interface WorkflowPageLegacyProps {
   workflowId?: string;
+  sourceType?: "official" | "user";
+  topologyLocked?: boolean;
   title?: string;
   status?: WorkflowStatus;
   graph: WorkflowGraph;
@@ -179,6 +181,7 @@ function resolveWorkflowPageSource(props: WorkflowPageProps): WorkflowController
 export function WorkflowPage(props: WorkflowPageProps) {
   const source = resolveWorkflowPageSource(props);
   const workflowId = source.workflowId;
+  const topologyLocked = source.topologyLocked === true;
   const title = source.title;
   const status = source.status ?? "draft";
   const graph = source.graph;
@@ -261,6 +264,9 @@ export function WorkflowPage(props: WorkflowPageProps) {
   const grillTranscriptRef = useRef<HTMLElement>(null);
   const grillStickRef = useRef(true);
   const editingWorkflowNode = graph.nodes.find((node) => node.id === editingWorkflowNodeId);
+  const nodePositionProps = topologyLocked
+    ? {}
+    : { onNodePositionChange: (nodeId: string, position: { x: number; y: number }) => onUpdateNode(nodeId, { position }) };
 
   useEffect(() => {
     const transcript = grillTranscriptRef.current;
@@ -422,7 +428,7 @@ export function WorkflowPage(props: WorkflowPageProps) {
           </header>
           <label className="workflow-node-edit-field">
             <span>Title</span>
-            <input aria-label={`Node ${node.id} title`} value={node.title} disabled={disabled} onChange={(event) => onUpdateNode(node.id, { title: event.currentTarget.value })} />
+            <input aria-label={`Node ${node.id} title`} value={node.title} disabled={disabled || topologyLocked} onChange={(event) => onUpdateNode(node.id, { title: event.currentTarget.value })} />
           </label>
           {node.kind === "agent" ? (
             <label className="workflow-node-edit-field">
@@ -577,11 +583,11 @@ export function WorkflowPage(props: WorkflowPageProps) {
                 <button className="workflow-graph-close icon-btn" onClick={() => setGraphExpanded(false)} title="Close graph board" aria-label="Close workflow graph board">
                   <X size={15} />
                 </button>
-                <WorkflowCanvasBoard graph={graph} expanded onNodePositionChange={(nodeId, position) => onUpdateNode(nodeId, { position })} renderNodeCard={(node) => renderWorkflowNodeCard(node, false)} />
+                <WorkflowCanvasBoard graph={graph} expanded {...nodePositionProps} renderNodeCard={(node) => renderWorkflowNodeCard(node, false)} />
                 {editingWorkflowNode ? renderWorkflowNodeEditor(editingWorkflowNode) : null}
               </>
             ) : (
-              <WorkflowCanvasBoard graph={graph} runProgressByNodeId={runProgressByNodeId} onExpand={() => setGraphExpanded(true)} onNodePositionChange={(nodeId, position) => onUpdateNode(nodeId, { position })} renderNodeCard={(node) => renderWorkflowNodeCard(node, true)} />
+              <WorkflowCanvasBoard graph={graph} runProgressByNodeId={runProgressByNodeId} onExpand={() => setGraphExpanded(true)} {...nodePositionProps} renderNodeCard={(node) => renderWorkflowNodeCard(node, true)} />
             )}
             {runProgressVisible ? (
               <section className="workflow-run-progress" aria-label={workflowText.runProgress}>

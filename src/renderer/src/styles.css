@@ -129,14 +129,16 @@ textarea:focus-visible {
 .shell.tasks-shell,
 .shell.teams-shell,
 .shell.runtimes-shell,
-.shell.skills-shell {
+.shell.skills-shell,
+.shell.agent-shell {
   grid-template-columns: 74px minmax(0, 1fr);
 }
 
 .shell.tasks-shell .resource-sidebar,
 .shell.teams-shell .resource-sidebar,
 .shell.runtimes-shell .resource-sidebar,
-.shell.skills-shell .resource-sidebar {
+.shell.skills-shell .resource-sidebar,
+.shell.agent-shell .resource-sidebar {
   display: none;
 }
 
@@ -2038,6 +2040,15 @@ textarea:focus-visible {
   gap: 8px;
   overflow: auto;
   padding-right: 2px;
+}
+
+.workflow-history-group-label,
+.skills-nav-group-label {
+  padding: 4px 2px 0;
+  color: var(--muted);
+  font-size: 10px;
+  font-weight: 800;
+  text-transform: uppercase;
 }
 
 .workflow-empty-history {
@@ -4356,7 +4367,7 @@ textarea:focus-visible {
   background: var(--panel-soft);
 }
 
-.config-content {
+.agent-content {
   min-height: 0;
 }
 
@@ -4364,7 +4375,7 @@ textarea:focus-visible {
   min-height: 0;
 }
 
-.config-page {
+.agent-page {
   display: flex;
   flex: 1;
   min-height: 0;
@@ -4515,12 +4526,6 @@ textarea:focus-visible {
   display: flex;
   align-items: center;
   gap: 8px;
-}
-
-.settings-page {
-  display: grid;
-  min-height: 0;
-  gap: 14px;
 }
 
 .skills-content {
@@ -5251,35 +5256,6 @@ textarea:focus-visible {
   font-size: 11px;
 }
 
-.settings-header,
-.settings-layout {
-  border: 1px solid var(--line);
-  border-radius: 12px;
-  background: var(--panel);
-  box-shadow: var(--shadow);
-}
-
-.settings-header {
-  padding: 13px 14px;
-}
-
-.settings-header h2,
-.settings-panel h3 {
-  margin: 0;
-}
-
-.settings-header p,
-.settings-panel p {
-  margin: 4px 0 0;
-  color: var(--muted);
-  font-size: 12px;
-}
-
-.settings-layout {
-  min-height: 0;
-  overflow: hidden;
-}
-
 .settings-nav-row {
   display: flex;
   align-items: center;
@@ -5300,38 +5276,6 @@ textarea:focus-visible {
   border-color: color-mix(in srgb, var(--accent) 20%, var(--line));
   background: var(--accent-tint);
   color: var(--text);
-}
-
-.settings-panel {
-  display: grid;
-  align-content: start;
-  gap: 14px;
-  padding: 14px;
-}
-
-.settings-language-select {
-  display: flex;
-  align-items: center;
-  justify-content: space-between;
-  gap: 12px;
-  max-width: 420px;
-  min-height: 38px;
-  padding: 0 10px;
-  border: 1px solid var(--line);
-  border-radius: 8px;
-  background: var(--panel-soft);
-  color: var(--muted);
-  font-size: 11px;
-  font-weight: 650;
-}
-
-.settings-language-select select {
-  min-width: 132px;
-  border: 0;
-  background: transparent;
-  color: var(--text);
-  font: inherit;
-  outline: none;
 }
 
 .settings-toggle-row {
@@ -5400,6 +5344,10 @@ textarea:focus-visible {
   grid-template-columns: minmax(0, 1fr);
   gap: 12px;
   min-height: 0;
+}
+
+.agent-page .config-form {
+  grid-template-columns: minmax(210px, 260px) minmax(0, 1fr);
 }
 
 .config-channel-browser,
@@ -5882,6 +5830,26 @@ textarea:focus-visible {
   font-size: 11px;
 }
 
+.agent-provider-disclosure > summary {
+  cursor: pointer;
+  list-style: none;
+}
+
+.agent-provider-disclosure > summary::-webkit-details-marker {
+  display: none;
+}
+
+.agent-provider-disclosure > summary::after {
+  content: "+";
+  color: var(--muted);
+  font-size: 14px;
+  line-height: 1;
+}
+
+.agent-provider-disclosure[open] > summary::after {
+  content: "−";
+}
+
 .agent-provider-preset-list {
   display: flex;
   flex-wrap: wrap;
@@ -5914,6 +5882,59 @@ textarea:focus-visible {
 .agent-provider-preset strong {
   font-size: 12px;
   white-space: nowrap;
+}
+
+.agent-provider-catalog {
+  display: grid;
+  gap: 14px;
+  max-height: 320px;
+  overflow-y: auto;
+  padding-right: 4px;
+}
+
+.agent-provider-category {
+  display: grid;
+  gap: 7px;
+}
+
+.agent-provider-category-label {
+  color: var(--muted);
+  font-size: 10px;
+  font-weight: 700;
+  text-transform: uppercase;
+}
+
+.agent-provider-option-grid {
+  display: grid;
+  grid-template-columns: repeat(auto-fill, minmax(132px, 1fr));
+  gap: 6px;
+}
+
+.agent-provider-option {
+  min-width: 0;
+  height: 32px;
+  overflow: hidden;
+  padding: 0 9px;
+  border: 1px solid var(--line);
+  border-radius: 6px;
+  background: var(--panel);
+  color: var(--text);
+  font-size: 11px;
+  font-weight: 650;
+  text-align: left;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.agent-provider-option:hover {
+  border-color: var(--line-strong);
+  background: var(--panel-raised);
+}
+
+.agent-provider-option.is-active {
+  border-color: var(--accent);
+  background: var(--accent-soft);
+  color: var(--accent);
 }
 
 .agent-provider-key-field {
@@ -6192,6 +6213,24 @@ textarea:focus-visible {
 
 .config-field-wide {
   grid-column: 1 / -1;
+}
+
+.config-inline-toggle {
+  display: flex;
+  min-height: 32px;
+  align-items: center;
+  gap: 8px;
+}
+
+.config-inline-toggle input[type="checkbox"] {
+  width: 15px;
+  height: 15px;
+  margin: 0;
+}
+
+.config-field-error {
+  color: var(--danger);
+  font-size: 11px;
 }
 
 .config-field span {

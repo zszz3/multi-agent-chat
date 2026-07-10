@@ -17,6 +17,7 @@ export interface ResolvedHubRunAgent {
   runtimeAgentId: AgentId;
   channel: { id: string };
   modelId: string;
+  reasoningEffort?: string;
   runtime: AgentRuntime | undefined;
 }
 
@@ -71,7 +72,10 @@ export async function runAgentExecution(input: {
     runtimeId: input.resolved.runtimeAgentId,
     executionMode,
     continuationPolicy,
-    runtimeConfig: { model: input.resolved.modelId },
+    runtimeConfig: {
+      model: input.resolved.modelId,
+      ...(input.resolved.reasoningEffort ? { reasoningEffort: input.resolved.reasoningEffort } : {}),
+    },
     ...(runtimeConversation ? { runtimeConversation } : {}),
     runtime,
     channelId: input.resolved.channel.id,

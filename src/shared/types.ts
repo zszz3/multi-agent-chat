@@ -12,11 +12,28 @@ export interface AgentRuntime {
 export interface AgentModelOption {
   id: string;
   label: string;
+  reasoningEfforts?: string[];
+  defaultReasoningEffort?: string;
+}
+
+export interface ModelCatalogRefreshResult {
+  channelId: string;
+  source: "codex_cli" | "openai_models";
+  discoveredCount: number;
+  snapshot: AppSnapshot;
 }
 
 export interface AgentPluginConfig {
   id: string;
   enabled: boolean;
+}
+
+export type RuntimeProviderApiFormat = "anthropic" | "openai_chat" | "openai_responses" | "gemini_native";
+export type ClaudeApiKeyField = "ANTHROPIC_AUTH_TOKEN" | "ANTHROPIC_API_KEY";
+
+export interface RuntimeRequestOverrides {
+  headers?: Record<string, string>;
+  body?: Record<string, unknown>;
 }
 
 export interface CodexPluginCatalogItem {
@@ -40,6 +57,12 @@ export interface AgentChannel {
   baseUrl?: string;
   wireApi?: string;
   httpHeaders?: Record<string, string>;
+  apiFormat?: RuntimeProviderApiFormat;
+  apiKeyField?: ClaudeApiKeyField;
+  isFullUrl?: boolean;
+  customUserAgent?: string;
+  environment?: Record<string, string>;
+  requestOverrides?: RuntimeRequestOverrides;
   plugins?: AgentPluginConfig[];
   modelCatalogJson?: string;
   modelReasoningEffort?: string;
@@ -52,10 +75,14 @@ export interface ConfiguredAgent {
   runtimeAgentId: AgentId;
   channelId: string;
   modelId: string;
+  reasoningEffort?: string;
   tags: string[];
+  managed?: boolean;
   createdAt: number;
   updatedAt: number;
 }
+
+export type ResourceSourceType = "official" | "user";
 
 export interface SkillTemplate {
   id: string;
@@ -67,6 +94,7 @@ export interface SkillTemplate {
   sourcePath?: string;
   sourceUrl?: string;
   translationZh?: string;
+  sourceType?: ResourceSourceType;
 }
 
 export type SkillInstallTarget = "codex" | "claude" | "trae";
@@ -74,6 +102,7 @@ export type SkillInstallTarget = "codex" | "claude" | "trae";
 export interface InstallSkillRequest {
   templateId: string;
   target: SkillInstallTarget;
+  sourceType?: ResourceSourceType;
 }
 
 export interface ImportOnlineSkillRequest {
@@ -189,6 +218,7 @@ export type RuntimeContinuationPolicy = "fresh" | "resume-preferred" | "resume-r
 
 export interface RuntimeConfig {
   model: string;
+  reasoningEffort?: string;
   [key: string]: unknown;
 }
 
@@ -345,6 +375,7 @@ export interface WorkflowAgentResponse {
 
 export type WorkflowAgentEvent =
   | { requestId: string; type: "delta"; content: string }
+  | { requestId: string; type: "workflow_graph"; graph: WorkflowGraph; workflowId?: string; revision?: number; content?: string }
   | { requestId: string; type: "completed"; content: string; runtimeConversation?: RuntimeConversation }
   | { requestId: string; type: "error"; error: string };
 
@@ -610,6 +641,8 @@ export interface RegisterArtifactRequest {
 
 export interface WorkflowDraftState {
   workflowId: string;
+  sourceType?: ResourceSourceType;
+  topologyLocked?: boolean;
   title: string;
   status: WorkflowStatus;
   revision: number;

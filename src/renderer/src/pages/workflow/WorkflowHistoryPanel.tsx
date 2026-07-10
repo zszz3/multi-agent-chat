@@ -35,6 +35,25 @@ export function WorkflowHistoryPanel({
   onCancelRename,
   onDeleteWorkflow,
 }: WorkflowHistoryPanelProps) {
+  const officialWorkflows = workflows.filter((workflow) => workflow.sourceType === "official");
+  const userWorkflows = workflows.filter((workflow) => workflow.sourceType !== "official");
+  const renderWorkflow = (workflow: WorkflowDraftState) => (
+    <button
+      key={workflow.workflowId}
+      className={`workflow-history-card ${workflow.workflowId === activeWorkflowId ? "is-active" : ""}`}
+      onClick={() => void onSelectWorkflow(workflow.workflowId)}
+      onContextMenu={workflow.sourceType === "official" ? undefined : (event) => onOpenContextMenu?.(event, workflow.workflowId)}
+    >
+      <strong>{workflow.title}</strong>
+      <span>{`${workflow.status} · ${workflow.graph.nodes.length} nodes · rev ${workflow.revision}`}</span>
+      <small>
+        {workflow.objective ||
+          (workflow.graphReady || workflow.runProgress.length > 0 || Boolean(workflow.contextDocument || workflow.runContextDocument || workflow.finalReport)
+            ? "未保存目标"
+            : "未开始")}
+      </small>
+    </button>
+  );
   return (
     <section className="resource-panel workflow-list-panel">
       <div className="panel-header">
@@ -49,23 +68,10 @@ export function WorkflowHistoryPanel({
       </div>
       <div className="workflow-history-list" aria-label="Workflow history">
         {workflows.length === 0 ? <div className="workflow-empty-history">No workflows yet</div> : null}
-        {workflows.map((workflow) => (
-          <button
-            key={workflow.workflowId}
-            className={`workflow-history-card ${workflow.workflowId === activeWorkflowId ? "is-active" : ""}`}
-            onClick={() => void onSelectWorkflow(workflow.workflowId)}
-            onContextMenu={(event) => onOpenContextMenu?.(event, workflow.workflowId)}
-          >
-            <strong>{workflow.title}</strong>
-            <span>{`${workflow.status} · ${workflow.graph.nodes.length} nodes · rev ${workflow.revision}`}</span>
-            <small>
-              {workflow.objective ||
-                (workflow.graphReady || workflow.runProgress.length > 0 || Boolean(workflow.contextDocument || workflow.runContextDocument || workflow.finalReport)
-                  ? "未保存目标"
-                  : "未开始")}
-            </small>
-          </button>
-        ))}
+        {officialWorkflows.length > 0 ? <div className="workflow-history-group-label">Official workflows</div> : null}
+        {officialWorkflows.map(renderWorkflow)}
+        {userWorkflows.length > 0 ? <div className="workflow-history-group-label">My workflows</div> : null}
+        {userWorkflows.map(renderWorkflow)}
       </div>
       {contextMenu ? (
         <div

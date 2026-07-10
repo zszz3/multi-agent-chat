@@ -100,6 +100,7 @@ export function loadBundledSkillTemplates(): SkillTemplate[] {
     const metadata = metadataFor(id);
     const template: SkillTemplate = {
       id,
+      sourceType: "official",
       name: frontmatter.name || id,
       description: frontmatter.description || "",
       prompt: normalizedPrompt,

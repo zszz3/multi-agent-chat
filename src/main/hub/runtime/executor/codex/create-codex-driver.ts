@@ -5,7 +5,11 @@ import type { RuntimeDriver } from "../../../../agents/runtime/runtime-driver";
 import { codexRuntimeStateCodec } from "../../../../agents/runtime/runtime-state-codec";
 import { codexAppServerConfigArgs } from "../../../../channels/model-config";
 import { createInteractiveRuntimeDriver } from "../agent-executor-driver-factories";
-import { modelFromRuntimeConfig, type RuntimeAgentExecutorFactoryOptions } from "../agent-executor-types";
+import {
+  modelFromRuntimeConfig,
+  reasoningEffortFromRuntimeConfig,
+  type RuntimeAgentExecutorFactoryOptions,
+} from "../agent-executor-types";
 import {
   codexInteractiveSessionCapabilities,
   codexSurfaceSupport,
@@ -36,7 +40,11 @@ export function createCodexDriver(options: RuntimeAgentExecutorFactoryOptions): 
           client = new CodexRpcClient({
             executable: context.runtime.command || options.executables.codex,
             cwd: context.workDir,
-            extraArgs: codexAppServerConfigArgs(channel, modelFromRuntimeConfig(context.runtimeConfig)),
+            extraArgs: codexAppServerConfigArgs(
+              channel,
+              modelFromRuntimeConfig(context.runtimeConfig),
+              reasoningEffortFromRuntimeConfig(context.runtimeConfig),
+            ),
             env: codexEnvironmentForChannel(channel),
             onEvent,
             onRequest: (id, method, params) => {
