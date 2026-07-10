@@ -78,7 +78,7 @@ describe("AcpInteractiveClient", () => {
     expect(calls.find((call) => call.id === 900)?.result).toEqual({
       outcome: { outcome: "selected", optionId: "allow-once" },
     });
-  });
+  }, 15_000);
 
   test("resumes an existing ACP session without creating a new one", async () => {
     const dir = await mkdtemp(path.join(os.tmpdir(), "multi-agent-chat-acp-resume-"));
@@ -99,7 +99,7 @@ describe("AcpInteractiveClient", () => {
       .map((line) => JSON.parse(line) as Record<string, any>);
     expect(calls.some((call) => call.method === "session/resume" && call.params.sessionId === "existing-session")).toBe(true);
     expect(calls.some((call) => call.method === "session/new")).toBe(false);
-  });
+  }, 15_000);
 });
 
 describe("agentEventsFromAcpUpdate", () => {

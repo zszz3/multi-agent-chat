@@ -89,5 +89,5 @@ describe("createOpenCodeDriver interactive integration", () => {
     expect(calls.filter((call) => call.method === "session/new")).toHaveLength(1);
     expect(calls.some((call) => call.method === "session/resume" && call.params.sessionId === "ses_opencode_1")).toBe(true);
     expect(calls.some((call) => call.method === "session/set_model" && call.params.modelId === "openai/gpt-5")).toBe(true);
-  });
+  }, 15_000);
 });

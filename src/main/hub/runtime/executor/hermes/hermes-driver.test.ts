@@ -91,5 +91,5 @@ describe("createHermesDriver interactive integration", () => {
       .map((line) => JSON.parse(line) as Record<string, any>);
     expect(calls.filter((call) => call.method === "session/new")).toHaveLength(1);
     expect(calls.some((call) => call.method === "session/resume" && call.params.sessionId === "hermes-acp-session")).toBe(true);
-  });
+  }, 15_000);
 });

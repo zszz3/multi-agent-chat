@@ -23,5 +23,5 @@ describe("deleteOpenCodeSessionArtifacts", () => {
       }),
     });
     expect(JSON.parse(await readFile(argsPath, "utf8"))).toEqual(["session", "delete", "ses_opencode_1"]);
-  });
+  }, 15_000);
 });

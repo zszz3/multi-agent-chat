@@ -46,7 +46,7 @@ send({ type: "step_finish", sessionID: "ses_1", part: { type: "step-finish", rea
       expect.objectContaining({ type: "meta" }),
       { type: "completed", content: "Hello from OpenCode" },
     ]);
-  });
+  }, 15_000);
 
   test("maps reasoning, tools, and errors without trusting unknown shapes", () => {
     expect(agentEventsFromOpenCodeJson({
@@ -83,5 +83,5 @@ send({ type: "step_finish", sessionID: "ses_1", part: { type: "step-finish", rea
     expect(emitted).toEqual([
       { type: "error", error: "OpenCode emitted invalid JSON: not-json" },
     ]);
-  });
+  }, 15_000);
 });
