@@ -6,10 +6,11 @@ import { AGENT_PROVIDER_PRESETS } from "./provider-presets";
 describe("runtime catalog", () => {
   test("includes Hermes fallback models, default channel, and provider preset", () => {
     expect(FALLBACK_MODEL_OPTIONS.hermes.map((model) => model.id)).toContain("default");
-    expect(DEFAULT_CONFIG_CHANNEL_IDS.hermes).toBe("hermes-local");
-    expect(AGENT_PROVIDER_PRESETS.find((preset) => preset.id === "hermes-local")).toMatchObject({
+    expect(DEFAULT_CONFIG_CHANNEL_IDS.hermes).toBe("hermes-default");
+    expect(AGENT_PROVIDER_PRESETS.find((preset) => preset.id === "hermes-default")).toMatchObject({
       runtimeAgentId: "hermes",
-      label: "Hermes",
+      label: "Default",
+      configurableModelId: true,
     });
   });
 });

@@ -7,7 +7,7 @@ export const DEFAULT_CONFIG_CHANNEL_IDS: Record<AgentId, string> = {
   codex: "codex-openai",
   claude: "claude-code",
   api: "api-openai",
-  hermes: "hermes-local",
+  hermes: "hermes-default",
 };
 
 function isNewConfigChannelId(channel: AgentChannel): boolean {
@@ -66,7 +66,7 @@ function createFallbackConfigChannels(): AgentChannel[] {
         : agentId === "claude"
           ? "Claude Code"
           : agentId === "hermes"
-            ? "Hermes"
+            ? "Hermes Default"
             : "OpenAI API",
     models: FALLBACK_MODEL_OPTIONS[agentId].some((model) => model.id === DEFAULT_MODEL_ID)
       ? FALLBACK_MODEL_OPTIONS[agentId]

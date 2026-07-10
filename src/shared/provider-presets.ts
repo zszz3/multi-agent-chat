@@ -2,6 +2,7 @@ import { DEFAULT_MODEL_ID, FALLBACK_MODEL_OPTIONS } from "./models";
 import type { AgentId, AgentModelOption } from "./types";
 
 export const CODEX_DEFAULT_PRESET_ID = "codex-default";
+export const HERMES_DEFAULT_PRESET_ID = "hermes-default";
 
 export interface AgentProviderPreset {
   id: string;
@@ -520,9 +521,12 @@ export const AGENT_PROVIDER_PRESETS: AgentProviderPreset[] = [
     models: [{ id: DEFAULT_MODEL_ID, label: "Default" }],
   },
   {
-    id: "hermes-local",
-    label: "Hermes",
+    id: HERMES_DEFAULT_PRESET_ID,
+    label: "Default",
     runtimeAgentId: "hermes",
     models: FALLBACK_MODEL_OPTIONS.hermes,
+    configurableModelId: true,
+    configurableModelLabel: "Hermes model",
+    configurableModelPlaceholder: "Use Hermes profile default",
   },
 ];

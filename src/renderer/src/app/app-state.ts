@@ -81,7 +81,14 @@ export function createChannel(agentId: AgentId, existingIds: string[]): AgentCha
   return {
     id,
     agentId,
-    label: agentId === "codex" ? "New Codex Config" : agentId === "claude" ? "New Claude Config" : "New API Config",
+    label:
+      agentId === "codex"
+        ? "New Codex Config"
+        : agentId === "claude"
+          ? "New Claude Config"
+          : agentId === "hermes"
+            ? "New Hermes Config"
+            : "New API Config",
     models: [{ id: DEFAULT_MODEL_ID, label: "Default" }],
   };
 }
