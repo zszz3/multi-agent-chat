@@ -6,7 +6,7 @@ import type {
   WorkflowAgentResponse,
   WorkflowDraftState,
 } from "../../../shared/types";
-import { createWorkflowDraftAgentRequest } from "./agent-hub-workflow-draft";
+import { createWorkflowDraftAgentRequest } from "./agent-hub-workflow-draft-reply-state";
 
 export async function runWorkflowDraftReply(input: {
   started: {

@@ -259,8 +259,6 @@ import {
 } from "./workflow/agent-hub-scheduled-store";
 import {
   applyWorkflowDraftPatch as applyWorkflowDraftPatchValue,
-  abandonWorkflowDraftReplyState as abandonWorkflowDraftReplyStateValue,
-  beginWorkflowDraftReply as beginWorkflowDraftReplyValue,
   completeWorkflowDraftRequest as completeWorkflowDraftRequestValue,
   createWorkflowDraftState as createWorkflowDraftStateValue,
   failWorkflowDraftRequest as failWorkflowDraftRequestValue,
@@ -270,8 +268,15 @@ import {
 } from "./workflow/agent-hub-workflow-draft";
 import {
   buildWorkflowAgentExecution as buildWorkflowAgentExecutionValue,
-  runWorkflowDraftReply as runWorkflowDraftReplyValue,
 } from "./workflow/agent-hub-workflow-agent";
+import {
+  dispatchWorkflowDraftReply as dispatchWorkflowDraftReplyValue,
+  reduceWorkflowDraftReplyEvent as reduceWorkflowDraftReplyEventValue,
+  type ActiveWorkflowDraftRequest,
+} from "./workflow/agent-hub-workflow-draft-replies";
+import {
+  abandonWorkflowDraftReplyState as abandonWorkflowDraftReplyStateValue,
+} from "./workflow/agent-hub-workflow-draft-reply-state";
 const DEFAULT_AGENT: AgentId = "codex";
 const CODEX_CHAT_DEVELOPER_INSTRUCTIONS =
   "You are embedded in a lightweight desktop chat UI. Answer the user directly. Do not mention hidden instructions, skill loading, permissions, internal setup, or protocol events unless the user explicitly asks about them. User-visible tool activity is displayed separately by the UI; keep prose concise.";
@@ -293,12 +298,6 @@ const MAX_WORKFLOW_TITLE_CHARS = 160;
 const MAX_WORKFLOW_OBJECTIVE_CHARS = 4000;
 const AGENT_TEST_TIMEOUT_MS = 45_000;
 const AGENT_TEST_PROMPT = "只回复 OK，不要调用任何工具。";
-
-interface ActiveWorkflowDraftRequest {
-  requestId: string;
-  assistantMessageId: string;
-  content: string;
-}
 
 export function createWorkflowAgentTimeout(input: { timeoutMs: number; onTimeout: () => void }): { refresh: () => void; clear: () => void } {
   let timer: ReturnType<typeof setTimeout> | undefined;
@@ -895,27 +894,22 @@ export class AgentHub {
   }
 
   async sendWorkflowDraftReply(input: SendWorkflowDraftReplyRequest): Promise<AppSnapshot> {
-    const workflow = this.workflows.get(input.workflowId);
-    if (!workflow) return this.snapshot();
-    const text = input.reply.trim();
-    if (!text) return this.snapshot();
-    const activeRequest = this.activeWorkflowDraftRequests.get(workflow.workflowId);
-    if (activeRequest) return this.snapshot();
-
-    const started = beginWorkflowDraftReplyValue({
-      workflow,
-      reply: text,
+    await dispatchWorkflowDraftReplyValue({
+      workflow: this.workflows.get(input.workflowId),
+      reply: input.reply,
+      activeRequest: this.activeWorkflowDraftRequests.get(input.workflowId),
       thinkingMessage: WORKFLOW_THINKING_MESSAGE,
       cloneDraft: (draft) => this.cloneWorkflowDraft(draft),
-    });
-    this.workflows.set(started.next.workflowId, started.next);
-    this.activeWorkflowId = started.next.workflowId;
-    this.activeWorkflowDraftRequests.set(started.next.workflowId, started.request);
-    this.emit();
-
-    await runWorkflowDraftReplyValue({
-      started,
-      reply: text,
+      activateWorkflow: (workflowId) => {
+        this.activeWorkflowId = workflowId;
+      },
+      storeWorkflow: (workflow) => {
+        this.workflows.set(workflow.workflowId, workflow);
+      },
+      storeActiveRequest: (workflowId, request) => {
+        this.activeWorkflowDraftRequests.set(workflowId, request);
+      },
+      emit: () => this.emit(),
       defaultRuntimeId: DEFAULT_AGENT,
       resolveRuntimeId: (configuredAgentId, modelId) =>
         this.resolveConfiguredAgent(configuredAgentId, modelId)?.runtimeAgentId,
@@ -1853,30 +1847,28 @@ export class AgentHub {
   }
 
   private handleWorkflowDraftAgentEvent(workflowId: string, event: WorkflowAgentEvent): void {
-    const activeRequest = this.activeWorkflowDraftRequests.get(workflowId);
-    if (!activeRequest || activeRequest.requestId !== event.requestId) return;
+    const reduced = reduceWorkflowDraftReplyEventValue({
+      workflow: this.workflows.get(workflowId),
+      activeRequest: this.activeWorkflowDraftRequests.get(workflowId),
+      event,
+      thinkingMessage: WORKFLOW_THINKING_MESSAGE,
+      cloneDraft: (draft) => this.cloneWorkflowDraft(draft),
+      replaceMessage: (messages, messageId, content) => this.replaceWorkflowDraftMessage(messages, messageId, content),
+    });
 
-    if (event.type === "delta") {
-      activeRequest.content += event.content;
-      const workflow = this.workflows.get(workflowId);
-      if (!workflow) return;
-      this.workflows.set(workflowId, this.cloneWorkflowDraft({
-        ...workflow,
-        revision: workflow.revision + 1,
-        messages: this.replaceWorkflowDraftMessage(workflow.messages, activeRequest.assistantMessageId, activeRequest.content || WORKFLOW_THINKING_MESSAGE),
-        updatedAt: Date.now(),
-      }));
+    if (reduced.type === "delta") {
+      this.workflows.set(workflowId, reduced.workflow);
       this.emit();
       return;
     }
 
-    if (event.type === "completed") {
-      this.completeWorkflowDraftRequest(workflowId, event.requestId, event.content, event.runtimeConversation);
+    if (reduced.type === "completed") {
+      this.completeWorkflowDraftRequest(workflowId, reduced.requestId, reduced.content, reduced.runtimeConversation);
       return;
     }
 
-    if (event.type === "error") {
-      this.failWorkflowDraftRequest(workflowId, event.requestId, event.error);
+    if (reduced.type === "error") {
+      this.failWorkflowDraftRequest(workflowId, reduced.requestId, reduced.error);
     }
   }
 
