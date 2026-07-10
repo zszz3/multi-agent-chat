@@ -3,10 +3,6 @@ import type { Dirent } from "node:fs";
 import { readdir } from "node:fs/promises";
 import os from "node:os";
 import path from "node:path";
-import {
-  DEFAULT_SCHEDULED_WORKFLOW_TIME_OF_DAY,
-  DEFAULT_SCHEDULED_WORKFLOW_TIMEZONE,
-} from "../../shared/types";
 import type {
   AgentChannel,
   ConfiguredAgent,
@@ -248,6 +244,16 @@ import {
   cloneWorkflowStore as cloneWorkflowStoreValue,
   normalizeWorkflowStatus as normalizeWorkflowStatusValue,
 } from "./workflow/agent-hub-workflow-clone";
+import {
+  deleteScheduledWorkflowSchedule as deleteScheduledWorkflowScheduleValue,
+  finishScheduledWorkflowRun as finishScheduledWorkflowRunValue,
+  recordScheduledWorkflowRun as recordScheduledWorkflowRunValue,
+  replaceScheduledWorkflowSchedules as replaceScheduledWorkflowSchedulesValue,
+  saveScheduledWorkflowRunnerConfig as saveScheduledWorkflowRunnerConfigValue,
+  selectScheduledWorkflowId as selectScheduledWorkflowIdValue,
+  updateScheduledWorkflowRunnerStatus as updateScheduledWorkflowRunnerStatusValue,
+  upsertScheduledWorkflowSchedule as upsertScheduledWorkflowScheduleValue,
+} from "./workflow/agent-hub-scheduled-store";
 import {
   applyWorkflowDraftPatch as applyWorkflowDraftPatchValue,
   abandonWorkflowDraftReplyState as abandonWorkflowDraftReplyStateValue,
@@ -1192,46 +1198,42 @@ export class AgentHub {
   }
 
   saveScheduledWorkflowRunnerConfig(config: ScheduledWorkflowRunnerConfig): AppSnapshot {
-    this.scheduledWorkflowRunnerConfig = this.cloneScheduledWorkflowRunnerConfig(config);
+    this.scheduledWorkflowRunnerConfig = saveScheduledWorkflowRunnerConfigValue(
+      config,
+      (nextConfig) => this.cloneScheduledWorkflowRunnerConfig(nextConfig),
+    );
     this.emit();
     return this.snapshot();
   }
 
   updateScheduledWorkflowRunnerStatus(status: Partial<ScheduledWorkflowRunnerStatus>): AppSnapshot {
-    this.scheduledWorkflowRunnerStatus = {
-      ...this.scheduledWorkflowRunnerStatus,
-      ...status,
-    };
+    this.scheduledWorkflowRunnerStatus = updateScheduledWorkflowRunnerStatusValue(this.scheduledWorkflowRunnerStatus, status);
     this.emit();
     return this.snapshot();
   }
 
   selectScheduledWorkflow(scheduleId: string): AppSnapshot {
-    if (this.scheduledWorkflowSchedules.has(scheduleId)) {
-      this.activeScheduledWorkflowId = scheduleId;
-      this.emit();
-    }
+    const nextActiveScheduledWorkflowId = selectScheduledWorkflowIdValue({
+      scheduleId,
+      hasSchedule: (nextScheduleId) => this.scheduledWorkflowSchedules.has(nextScheduleId),
+      activeScheduleId: this.activeScheduledWorkflowId,
+    });
+    if (nextActiveScheduledWorkflowId === this.activeScheduledWorkflowId) return this.snapshot();
+    this.activeScheduledWorkflowId = nextActiveScheduledWorkflowId;
+    this.emit();
     return this.snapshot();
   }
 
   upsertScheduledWorkflowSchedule(input: ScheduledWorkflowSchedule): ScheduledWorkflowOperationResult {
-    if (!this.workflows.has(input.workflowId)) return { ok: false, error: `Workflow ${input.workflowId} was not found.` };
-    const now = Date.now();
-    const current = this.scheduledWorkflowSchedules.get(input.scheduleId);
-    const schedule = this.cloneScheduledWorkflowSchedule({
-      ...input,
-      scheduleId: input.scheduleId || `sched_${randomUUID()}`,
-      title: input.title.trim() || this.workflows.get(input.workflowId)?.title || "Scheduled workflow",
-      intervalSeconds: Math.max(60, Math.floor(input.intervalSeconds || current?.intervalSeconds || 3600)),
-      frequency: input.frequency ?? current?.frequency ?? "daily",
-      timeOfDay: input.timeOfDay ?? current?.timeOfDay ?? DEFAULT_SCHEDULED_WORKFLOW_TIME_OF_DAY,
-      timezone: input.timezone ?? current?.timezone ?? DEFAULT_SCHEDULED_WORKFLOW_TIMEZONE,
-      ...(input.weekdays !== undefined || current?.weekdays !== undefined ? { weekdays: input.weekdays ?? current?.weekdays } : {}),
-      ...(input.dayOfMonth !== undefined || current?.dayOfMonth !== undefined ? { dayOfMonth: input.dayOfMonth ?? current?.dayOfMonth } : {}),
-      source: input.source ?? current?.source ?? "cloud",
-      createdAt: input.createdAt || current?.createdAt || now,
-      updatedAt: input.updatedAt || now,
+    const result = upsertScheduledWorkflowScheduleValue({
+      schedule: input,
+      current: this.scheduledWorkflowSchedules.get(input.scheduleId),
+      hasWorkflow: this.workflows.has(input.workflowId),
+      workflowTitle: this.workflows.get(input.workflowId)?.title,
+      cloneSchedule: (schedule) => this.cloneScheduledWorkflowSchedule(schedule),
     });
+    if (!result.ok || !result.schedule) return result;
+    const schedule = result.schedule;
     this.scheduledWorkflowSchedules.set(schedule.scheduleId, schedule);
     this.activeScheduledWorkflowId = schedule.scheduleId;
     this.emit();
@@ -1239,43 +1241,40 @@ export class AgentHub {
   }
 
   replaceScheduledWorkflowSchedules(schedules: ScheduledWorkflowSchedule[]): AppSnapshot {
-    const nextSchedules = new Map<string, ScheduledWorkflowSchedule>();
-    for (const schedule of schedules) {
-      if (!this.workflows.has(schedule.workflowId)) continue;
-      const normalized = this.cloneScheduledWorkflowSchedule(schedule);
-      nextSchedules.set(normalized.scheduleId, normalized);
-    }
-    this.scheduledWorkflowSchedules = nextSchedules;
-    if (this.activeScheduledWorkflowId && !this.scheduledWorkflowSchedules.has(this.activeScheduledWorkflowId)) {
-      this.activeScheduledWorkflowId = undefined;
-    }
-    this.activeScheduledWorkflowId ??= [...this.scheduledWorkflowSchedules.values()].sort((left, right) => right.createdAt - left.createdAt)[0]?.scheduleId;
+    const next = replaceScheduledWorkflowSchedulesValue({
+      schedules,
+      hasWorkflow: (workflowId) => this.workflows.has(workflowId),
+      cloneSchedule: (schedule) => this.cloneScheduledWorkflowSchedule(schedule),
+      activeScheduleId: this.activeScheduledWorkflowId,
+    });
+    this.scheduledWorkflowSchedules = next.schedules;
+    this.activeScheduledWorkflowId = next.activeScheduleId;
     this.emit();
     return this.snapshot();
   }
 
   deleteScheduledWorkflowSchedule(scheduleId: string): AppSnapshot {
-    if (!this.scheduledWorkflowSchedules.has(scheduleId)) return this.snapshot();
-    this.scheduledWorkflowSchedules.delete(scheduleId);
-    if (this.activeScheduledWorkflowId === scheduleId || (this.activeScheduledWorkflowId && !this.scheduledWorkflowSchedules.has(this.activeScheduledWorkflowId))) {
-      this.activeScheduledWorkflowId = [...this.scheduledWorkflowSchedules.values()].sort((left, right) => right.createdAt - left.createdAt)[0]?.scheduleId;
-    }
+    const next = deleteScheduledWorkflowScheduleValue({
+      scheduleId,
+      schedules: this.scheduledWorkflowSchedules,
+      activeScheduleId: this.activeScheduledWorkflowId,
+    });
+    if (!next.deleted) return this.snapshot();
+    this.activeScheduledWorkflowId = next.activeScheduleId;
     this.emit();
     return this.snapshot();
   }
 
   recordScheduledWorkflowRun(input: ScheduledWorkflowRun): AppSnapshot {
-    const now = Date.now();
     const schedule = this.scheduledWorkflowSchedules.get(input.scheduleId);
-    if (!this.workflows.has(input.workflowId)) return this.snapshot();
-    const run = this.cloneScheduledWorkflowRun({
-      ...input,
-      runId: input.runId || `scheduled_run_${randomUUID()}`,
-      title: input.title.trim() || schedule?.title || this.workflows.get(input.workflowId)?.title || "Scheduled workflow",
-      status: input.status || "running",
-      startedAt: input.startedAt || now,
-      finishedAt: input.finishedAt,
+    const run = recordScheduledWorkflowRunValue({
+      run: input,
+      hasWorkflow: this.workflows.has(input.workflowId),
+      scheduleTitle: schedule?.title,
+      workflowTitle: this.workflows.get(input.workflowId)?.title,
+      cloneRun: (nextRun) => this.cloneScheduledWorkflowRun(nextRun),
     });
+    if (!run) return this.snapshot();
     this.scheduledWorkflowRuns.set(run.runId, run);
     this.activeScheduledWorkflowId = run.scheduleId;
     this.emit();
@@ -1291,15 +1290,13 @@ export class AgentHub {
       finishedAt?: number;
     },
   ): AppSnapshot {
-    const run = this.scheduledWorkflowRuns.get(runId);
-    if (!run) return this.snapshot();
-    this.scheduledWorkflowRuns.set(runId, this.cloneScheduledWorkflowRun({
-      ...run,
-      status: input.status,
-      ...(input.workflowRunId !== undefined ? { workflowRunId: input.workflowRunId } : {}),
-      ...(input.message !== undefined ? { message: input.message } : {}),
-      finishedAt: input.finishedAt ?? Date.now(),
-    }));
+    const nextRun = finishScheduledWorkflowRunValue({
+      run: this.scheduledWorkflowRuns.get(runId),
+      update: input,
+      cloneRun: (run) => this.cloneScheduledWorkflowRun(run),
+    });
+    if (!nextRun) return this.snapshot();
+    this.scheduledWorkflowRuns.set(runId, nextRun);
     this.emit();
     return this.snapshot();
   }
