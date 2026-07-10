@@ -45,6 +45,8 @@ export function applyProviderPresetToChannel(channel: AgentChannel, preset: Agen
   delete next.modelProvider;
   delete next.baseUrl;
   delete next.wireApi;
+  delete next.apiFormat;
+  delete next.apiKeyField;
   delete next.modelReasoningEffort;
   delete next.modelCatalogJson;
   delete next.httpHeaders;
@@ -52,6 +54,8 @@ export function applyProviderPresetToChannel(channel: AgentChannel, preset: Agen
   if (preset.modelProvider) next.modelProvider = preset.modelProvider;
   if (preset.baseUrl) next.baseUrl = preset.baseUrl;
   if (preset.wireApi) next.wireApi = preset.wireApi;
+  if (preset.apiFormat) next.apiFormat = preset.apiFormat;
+  if (preset.apiKeyField) next.apiKeyField = preset.apiKeyField;
   if (preset.modelReasoningEffort) next.modelReasoningEffort = preset.modelReasoningEffort;
   if (preset.extraHeaders) next.httpHeaders = { ...preset.extraHeaders };
   const normalizedApiKey = apiKey.trim();

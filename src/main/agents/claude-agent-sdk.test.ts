@@ -1,8 +1,19 @@
 import { describe, expect, test, vi } from "vitest";
 import type { AgentEvent } from "../../shared/types";
-import { ClaudeAgentSdkAdapter } from "./claude-agent-sdk";
+import { ClaudeAgentSdkAdapter, createClaudeSdkQueryOptions } from "./claude-agent-sdk";
 
 describe("ClaudeAgentSdkAdapter", () => {
+  test("passes an isolated provider environment to Claude Code", () => {
+    const env = { PATH: "/bin", ANTHROPIC_AUTH_TOKEN: "test-key" };
+    expect(
+      createClaudeSdkQueryOptions({
+        cwd: "/tmp/project",
+        env,
+        onEvent: () => undefined,
+      }).env,
+    ).toEqual(env);
+  });
+
   test("runs Claude one-shot through the official SDK single-message path", async () => {
     const events: AgentEvent[] = [];
     const runOneShot = vi.fn(async function* (input: { prompt: string; options?: Record<string, unknown> }) {

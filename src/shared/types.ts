@@ -19,6 +19,14 @@ export interface AgentPluginConfig {
   enabled: boolean;
 }
 
+export type RuntimeProviderApiFormat = "anthropic" | "openai_chat" | "openai_responses" | "gemini_native";
+export type ClaudeApiKeyField = "ANTHROPIC_AUTH_TOKEN" | "ANTHROPIC_API_KEY";
+
+export interface RuntimeRequestOverrides {
+  headers?: Record<string, string>;
+  body?: Record<string, unknown>;
+}
+
 export interface CodexPluginCatalogItem {
   id: string;
   name: string;
@@ -40,6 +48,12 @@ export interface AgentChannel {
   baseUrl?: string;
   wireApi?: string;
   httpHeaders?: Record<string, string>;
+  apiFormat?: RuntimeProviderApiFormat;
+  apiKeyField?: ClaudeApiKeyField;
+  isFullUrl?: boolean;
+  customUserAgent?: string;
+  environment?: Record<string, string>;
+  requestOverrides?: RuntimeRequestOverrides;
   plugins?: AgentPluginConfig[];
   modelCatalogJson?: string;
   modelReasoningEffort?: string;

@@ -220,6 +220,16 @@ function normalizeHeaders(raw: unknown): Record<string, string> | undefined {
   return Object.keys(headers).length > 0 ? headers : undefined;
 }
 
+function normalizeJsonObject(raw: unknown): Record<string, unknown> | undefined {
+  if (!raw || typeof raw !== "object" || Array.isArray(raw)) return undefined;
+  try {
+    const value = JSON.parse(JSON.stringify(raw)) as Record<string, unknown>;
+    return Object.keys(value).length > 0 ? value : undefined;
+  } catch {
+    return undefined;
+  }
+}
+
 function normalizePlugins(raw: unknown): AgentPluginConfig[] | undefined {
   if (!Array.isArray(raw)) return undefined;
   const plugins: AgentPluginConfig[] = [];
@@ -268,6 +278,28 @@ function normalizeChannel(raw: unknown): AgentChannel | null {
   if (modelReasoningEffort) channel.modelReasoningEffort = modelReasoningEffort;
   const httpHeaders = normalizeHeaders(record.httpHeaders);
   if (httpHeaders) channel.httpHeaders = httpHeaders;
+  if (
+    record.apiFormat === "anthropic" ||
+    record.apiFormat === "openai_chat" ||
+    record.apiFormat === "openai_responses" ||
+    record.apiFormat === "gemini_native"
+  ) {
+    channel.apiFormat = record.apiFormat;
+  }
+  if (record.apiKeyField === "ANTHROPIC_AUTH_TOKEN" || record.apiKeyField === "ANTHROPIC_API_KEY") {
+    channel.apiKeyField = record.apiKeyField;
+  }
+  if (typeof record.isFullUrl === "boolean") channel.isFullUrl = record.isFullUrl;
+  const customUserAgent = asString(record.customUserAgent);
+  if (customUserAgent) channel.customUserAgent = customUserAgent;
+  const environment = normalizeHeaders(record.environment);
+  if (environment) channel.environment = environment;
+  if (record.requestOverrides && typeof record.requestOverrides === "object" && !Array.isArray(record.requestOverrides)) {
+    const requestOverrides = record.requestOverrides as Record<string, unknown>;
+    const headers = normalizeHeaders(requestOverrides.headers);
+    const body = normalizeJsonObject(requestOverrides.body);
+    if (headers || body) channel.requestOverrides = { ...(headers ? { headers } : {}), ...(body ? { body } : {}) };
+  }
   const plugins = normalizePlugins(record.plugins);
   if (plugins) channel.plugins = plugins;
 

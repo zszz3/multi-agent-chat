@@ -19,6 +19,7 @@ export interface ClaudeAgentSdkRunInput {
   mcpServers?: Options["mcpServers"];
   onEvent: (event: AgentEvent) => void;
   abortController?: AbortController;
+  env?: NodeJS.ProcessEnv;
 }
 
 export class ClaudeAgentSdkAdapter {
@@ -51,6 +52,7 @@ export function createClaudeSdkQueryOptions(input: {
   mcpServers?: Options["mcpServers"];
   onEvent: (event: AgentEvent) => void;
   abortController?: AbortController;
+  env?: NodeJS.ProcessEnv;
 }): Options {
   const systemPrompt =
     input.developerInstructions?.trim()
@@ -74,6 +76,7 @@ export function createClaudeSdkQueryOptions(input: {
     canUseTool: createClaudeSdkPermissionHandler(input.onEvent),
     onElicitation: createClaudeSdkElicitationHandler(input.onEvent),
     ...(input.abortController ? { abortController: input.abortController } : {}),
+    ...(input.env ? { env: input.env } : {}),
   };
 }
 

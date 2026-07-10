@@ -14,7 +14,7 @@ import type {
 } from "../shared/types";
 import { DEFAULT_MODEL_ID, runtimeModelId } from "../shared/models";
 import { codexEnvironmentForChannel } from "./agents/codex-env";
-import { claudeCliModelForChannel } from "./agents/claude-env";
+import { claudeCliModelForChannel, claudeEnvironmentForChannel } from "./agents/claude-env";
 import { ClaudeAgentSdkAdapter, type ClaudeAgentSdkRunInput } from "./agents/claude-agent-sdk";
 import { ClaudeAgentSdkInteractive } from "./agents/claude-agent-sdk-interactive";
 import { ClaudeInteractiveSession } from "./agents/claude-interactive-session";
@@ -512,6 +512,7 @@ async function runClaudeWorkflow(
       developerInstructions: WORKFLOW_DEVELOPER_INSTRUCTIONS,
       ...(resumeSessionId ? { resumeSessionId } : {}),
       ...(mcpServers ? { mcpServers } : {}),
+      env: claudeEnvironmentForChannel(channel, modelFromRuntimeConfig(input.runtimeConfig)),
       onEvent: (event) => {
         if (event.type === "delta") {
           content += event.content;
@@ -683,6 +684,7 @@ export function createRuntimeDriverRegistry(options: RuntimeAgentExecutorFactory
         context,
         claudeSdkAdapter,
         claudeCliModelForChannel(options.channelById(context.channelId), modelFromRuntimeConfig(context.runtimeConfig)),
+        claudeEnvironmentForChannel(options.channelById(context.channelId), modelFromRuntimeConfig(context.runtimeConfig)),
       ),
     createInteractiveSession: (context) =>
       new ClaudeInteractiveSession(
@@ -703,6 +705,11 @@ export function createRuntimeDriverRegistry(options: RuntimeAgentExecutorFactory
               options.channelById(interactiveContext.channelId),
               modelFromRuntimeConfig(interactiveContext.runtimeConfig),
             ) ?? modelFromRuntimeConfig(interactiveContext.runtimeConfig),
+          resolveEnvironment: (interactiveContext) =>
+            claudeEnvironmentForChannel(
+              options.channelById(interactiveContext.channelId),
+              modelFromRuntimeConfig(interactiveContext.runtimeConfig),
+            ),
           sdkInteractive: new ClaudeAgentSdkInteractive(),
         },
       ),
@@ -839,6 +846,7 @@ class ClaudeAgentExecutor implements AgentExecutor {
     private readonly context: AgentExecutionContext,
     private readonly adapter: ClaudeAgentSdkAdapter,
     private readonly resolvedModelId: string | undefined,
+    private readonly environment: NodeJS.ProcessEnv,
   ) {}
 
   async start(): Promise<void> {
@@ -853,6 +861,7 @@ class ClaudeAgentExecutor implements AgentExecutor {
         developerInstructions: this.context.developerInstructions,
         onEvent: this.context.emit,
         abortController,
+        env: this.environment,
         ...(this.resolvedModelId ? { modelId: this.resolvedModelId } : {}),
         ...(resumeSessionId ? { resumeSessionId } : {}),
       });

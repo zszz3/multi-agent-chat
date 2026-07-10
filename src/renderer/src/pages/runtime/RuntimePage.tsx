@@ -24,16 +24,14 @@ import {
   applyProviderPresetToChannel,
   formatBalanceDetail,
   formatBalanceValue,
-  headersToText,
   loadCodexDefaultConfigFromRuntimeApi,
   providerKeyValue,
   resolveProviderPresetId,
   rememberProviderKeyFromChannel,
   removePluginAt,
   updatePluginAt,
-  withOptionalHeaders,
-  withOptionalString,
 } from "./runtime-utils";
+import { RuntimeProviderFields } from "./RuntimeProviderFields";
 
 const AGENTS: AgentId[] = ["codex", "claude", "api", "hermes"];
 
@@ -483,73 +481,11 @@ export function RuntimePage({
 
               <details className="agent-advanced-panel">
                 <summary>{configText.advancedProvider}</summary>
-                <div className="config-field-grid">
-                  <label className="config-field">
-                    <span>Channel ID</span>
-                    <div className="configured-agent-runtime-readonly">
-                      <span className={`agent-badge mini ${agentAccent(selectedRuntime)}`}>{agentLabel(selectedRuntime)}</span>
-                      <strong>{selectedRuntimeChannelRecord.id}</strong>
-                    </div>
-                  </label>
-                  <label className="config-field">
-                    <span>Label</span>
-                    <input
-                      value={selectedRuntimeChannelRecord.label}
-                      onChange={(event) => updateSelectedRuntimeChannel((channel) => ({ ...channel, label: event.currentTarget.value }))}
-                    />
-                  </label>
-                  <label className="config-field">
-                    <span>Model Provider</span>
-                    <input
-                      value={selectedRuntimeChannelRecord.modelProvider ?? ""}
-                      onChange={(event) => updateSelectedRuntimeChannel((channel) => withOptionalString(channel, "modelProvider", event.currentTarget.value))}
-                    />
-                  </label>
-                  <label className="config-field">
-                    <span>Provider Name</span>
-                    <input
-                      value={selectedRuntimeChannelRecord.providerName ?? ""}
-                      onChange={(event) => updateSelectedRuntimeChannel((channel) => withOptionalString(channel, "providerName", event.currentTarget.value))}
-                    />
-                  </label>
-                  <label className="config-field">
-                    <span>Wire API</span>
-                    <input
-                      value={selectedRuntimeChannelRecord.wireApi ?? ""}
-                      onChange={(event) => updateSelectedRuntimeChannel((channel) => withOptionalString(channel, "wireApi", event.currentTarget.value))}
-                    />
-                  </label>
-                  <label className="config-field config-field-wide">
-                    <span>Base URL</span>
-                    <input
-                      value={selectedRuntimeChannelRecord.baseUrl ?? ""}
-                      onChange={(event) => updateSelectedRuntimeChannel((channel) => withOptionalString(channel, "baseUrl", event.currentTarget.value))}
-                    />
-                  </label>
-                  <label className="config-field">
-                    <span>Reasoning</span>
-                    <input
-                      value={selectedRuntimeChannelRecord.modelReasoningEffort ?? ""}
-                      onChange={(event) =>
-                        updateSelectedRuntimeChannel((channel) => withOptionalString(channel, "modelReasoningEffort", event.currentTarget.value))
-                      }
-                    />
-                  </label>
-                  <label className="config-field config-field-wide">
-                    <span>Catalog JSON</span>
-                    <input
-                      value={selectedRuntimeChannelRecord.modelCatalogJson ?? ""}
-                      onChange={(event) => updateSelectedRuntimeChannel((channel) => withOptionalString(channel, "modelCatalogJson", event.currentTarget.value))}
-                    />
-                  </label>
-                  <label className="config-field config-field-wide">
-                    <span>Headers</span>
-                    <textarea
-                      value={headersToText(selectedRuntimeChannelRecord.httpHeaders)}
-                      onChange={(event) => updateSelectedRuntimeChannel((channel) => withOptionalHeaders(channel, event.currentTarget.value))}
-                    />
-                  </label>
-                </div>
+                <RuntimeProviderFields
+                  channel={selectedRuntimeChannelRecord}
+                  language={language}
+                  onChange={updateSelectedRuntimeChannel}
+                />
               </details>
 
               {selectedRuntime === "codex" ? (

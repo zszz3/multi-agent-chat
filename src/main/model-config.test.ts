@@ -16,6 +16,38 @@ import {
 } from "./model-config";
 
 describe("model channel config", () => {
+  test("preserves CC Switch compatible runtime provider fields", () => {
+    const [channel] = normalizeChannels([
+      {
+        id: "claude-custom",
+        agentId: "claude",
+        label: "Claude Custom",
+        models: [{ id: "default", label: "Default" }],
+        apiFormat: "anthropic",
+        apiKeyField: "ANTHROPIC_API_KEY",
+        isFullUrl: true,
+        customUserAgent: "multi-agent-chat/test",
+        environment: { ANTHROPIC_DEFAULT_OPUS_MODEL: "provider-opus" },
+        requestOverrides: {
+          headers: { "x-provider": "test" },
+          body: { service_tier: "priority" },
+        },
+      },
+    ]);
+
+    expect(channel).toMatchObject({
+      apiFormat: "anthropic",
+      apiKeyField: "ANTHROPIC_API_KEY",
+      isFullUrl: true,
+      customUserAgent: "multi-agent-chat/test",
+      environment: { ANTHROPIC_DEFAULT_OPUS_MODEL: "provider-opus" },
+      requestOverrides: {
+        headers: { "x-provider": "test" },
+        body: { service_tier: "priority" },
+      },
+    });
+  });
+
   test("parses visible Codex models from the debug catalog", () => {
     const models = parseCodexModelCatalog(
       JSON.stringify({

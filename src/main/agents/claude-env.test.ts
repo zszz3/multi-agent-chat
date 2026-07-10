@@ -105,4 +105,58 @@ describe("claudeEnvironmentForChannel", () => {
 
     expect(claudeEnvironmentForChannel(channel, "default", env)).toBe(env);
   });
+
+  test("applies model roles to the official Claude channel", () => {
+    const channel: AgentChannel = {
+      id: "claude-code",
+      agentId: "claude",
+      label: "Claude Code",
+      environment: { ANTHROPIC_DEFAULT_OPUS_MODEL: "claude-opus-custom" },
+      models: [{ id: "default", label: "Default" }],
+    };
+
+    expect(claudeEnvironmentForChannel(channel, "default", { PATH: "/bin" })).toMatchObject({
+      PATH: "/bin",
+      ANTHROPIC_DEFAULT_OPUS_MODEL: "claude-opus-custom",
+    });
+  });
+
+  test("applies CC Switch compatible Claude provider fields", () => {
+    const channel = {
+      id: "claude-custom",
+      agentId: "claude",
+      label: "Claude Custom",
+      modelProvider: "custom-anthropic",
+      baseUrl: "https://claude.example/v1/messages",
+      apiKeyField: "ANTHROPIC_API_KEY",
+      customUserAgent: "multi-agent-chat/test",
+      environment: {
+        ANTHROPIC_DEFAULT_OPUS_MODEL: "provider-opus",
+        ANTHROPIC_DEFAULT_SONNET_MODEL: "provider-sonnet",
+        ANTHROPIC_DEFAULT_HAIKU_MODEL: "provider-haiku",
+        ANTHROPIC_DEFAULT_FABLE_MODEL: "provider-fable",
+        CLAUDE_CODE_SUBAGENT_MODEL: "provider-subagent",
+        CLAUDE_CODE_EFFORT_LEVEL: "high",
+      },
+      httpHeaders: { Authorization: "Bearer provider-key" },
+      models: [{ id: "provider-sonnet", label: "Provider Sonnet" }],
+    } as AgentChannel;
+
+    const result = claudeEnvironmentForChannel(channel, "provider-sonnet", { PATH: "/bin" });
+
+    expect(result).toMatchObject({
+      PATH: "/bin",
+      ANTHROPIC_BASE_URL: "https://claude.example/v1/messages",
+      ANTHROPIC_API_KEY: "provider-key",
+      ANTHROPIC_MODEL: "provider-sonnet",
+      ANTHROPIC_DEFAULT_OPUS_MODEL: "provider-opus",
+      ANTHROPIC_DEFAULT_SONNET_MODEL: "provider-sonnet",
+      ANTHROPIC_DEFAULT_HAIKU_MODEL: "provider-haiku",
+      ANTHROPIC_DEFAULT_FABLE_MODEL: "provider-fable",
+      CLAUDE_CODE_SUBAGENT_MODEL: "provider-subagent",
+      CLAUDE_CODE_EFFORT_LEVEL: "high",
+      CLAUDE_AGENT_SDK_CLIENT_APP: "multi-agent-chat/test",
+    });
+    expect(result.ANTHROPIC_AUTH_TOKEN).toBeUndefined();
+  });
 });

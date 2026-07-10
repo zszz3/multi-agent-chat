@@ -101,7 +101,7 @@ import { InteractiveSessionManager } from "./agents/interactive-session-manager"
 import { ClaudeAgentSdkAdapter } from "./agents/claude-agent-sdk";
 import { CodexRpcClient } from "./agents/codex-rpc";
 import { codexEnvironmentForChannel } from "./agents/codex-env";
-import { claudeCliModelForChannel } from "./agents/claude-env";
+import { claudeCliModelForChannel, claudeEnvironmentForChannel } from "./agents/claude-env";
 import type { RuntimeCapabilities } from "./agents/runtime-capabilities";
 import type { InteractiveSessionContext, InteractiveSessionSnapshot, RuntimeDriverRegistry, RuntimeSurface } from "./agents/runtime-driver";
 import { RuntimeRouter } from "./agents/runtime-router";
@@ -3835,6 +3835,7 @@ export class AgentHub {
         prompt: AGENT_TEST_PROMPT,
         cwd: workDir,
         ...(sdkModel ? { modelId: sdkModel } : {}),
+        env: claudeEnvironmentForChannel(channel, modelId),
         onEvent: (event) => {
           if (event.type === "delta") {
             output += event.content;

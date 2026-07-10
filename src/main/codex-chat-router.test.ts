@@ -2,13 +2,60 @@ import http from "node:http";
 import type { AddressInfo } from "node:net";
 import { afterEach, describe, expect, test } from "vitest";
 import type { AgentChannel } from "../shared/types";
-import { startCodexChatRouter, type CodexChatRouterServer } from "./codex-chat-router";
+import { codexChannelNeedsChatRouting, startCodexChatRouter, type CodexChatRouterServer } from "./codex-chat-router";
 
 const servers: Array<{ stop: () => Promise<void> }> = [];
 
 describe("Codex chat router", () => {
   afterEach(async () => {
     await Promise.all(servers.splice(0).map((server) => server.stop()));
+  });
+
+  test("only routes providers configured for Chat Completions", () => {
+    expect(codexChannelNeedsChatRouting({
+      id: "native",
+      agentId: "codex",
+      label: "Native responses",
+      modelProvider: "native",
+      baseUrl: "https://native.example/v1",
+      apiFormat: "openai_responses",
+      models: [{ id: "default", label: "Default" }],
+    })).toBe(false);
+    expect(codexChannelNeedsChatRouting({
+      id: "chat",
+      agentId: "codex",
+      label: "Chat upstream",
+      modelProvider: "chat",
+      baseUrl: "https://chat.example/v1",
+      apiFormat: "openai_chat",
+      models: [{ id: "default", label: "Default" }],
+    })).toBe(true);
+  });
+
+  test("applies full endpoint, user agent, and request overrides", async () => {
+    let captured: { url?: string; headers?: http.IncomingHttpHeaders; body?: unknown } = {};
+    const upstream = await startJsonUpstream(async (body, request) => {
+      captured = { url: request.url ?? "", headers: request.headers, body };
+      return { id: "chatcmpl_override", model: "model-a", choices: [{ message: { role: "assistant", content: "ok" }, finish_reason: "stop" }] };
+    });
+    const router = await startRouter(`${upstream.baseUrl}/custom-chat`, {
+      isFullUrl: true,
+      customUserAgent: "multi-agent-chat/test",
+      requestOverrides: {
+        headers: { "x-provider": "override" },
+        body: { service_tier: "priority" },
+      },
+    });
+
+    await fetch(`${router.baseUrl}/codex-test/responses`, {
+      method: "POST",
+      headers: { "content-type": "application/json" },
+      body: JSON.stringify({ model: "model-a", input: "hello" }),
+    });
+
+    expect(captured.url).toBe("/v1/custom-chat");
+    expect(captured.headers).toMatchObject({ "user-agent": "multi-agent-chat/test", "x-provider": "override" });
+    expect(captured.body).toMatchObject({ model: "model-a", service_tier: "priority" });
   });
 
   test("converts Responses function tools to Chat tools and back", async () => {
@@ -105,7 +152,7 @@ describe("Codex chat router", () => {
   });
 });
 
-async function startRouter(baseUrl: string): Promise<CodexChatRouterServer> {
+async function startRouter(baseUrl: string, overrides: Partial<AgentChannel> = {}): Promise<CodexChatRouterServer> {
   const channel: AgentChannel = {
     id: "codex-test",
     agentId: "codex",
@@ -118,16 +165,17 @@ async function startRouter(baseUrl: string): Promise<CodexChatRouterServer> {
       { id: "default", label: "Default" },
       { id: "deepseek-v4-flash", label: "DeepSeek V4 Flash" },
     ],
+    ...overrides,
   };
   const router = await startCodexChatRouter({ channels: () => [channel] });
   servers.push(router);
   return router;
 }
 
-async function startJsonUpstream(handler: (body: unknown) => Promise<unknown>): Promise<{ baseUrl: string; stop: () => Promise<void> }> {
+async function startJsonUpstream(handler: (body: unknown, request: http.IncomingMessage) => Promise<unknown>): Promise<{ baseUrl: string; stop: () => Promise<void> }> {
   const server = http.createServer(async (request, response) => {
     const body = await readJson(request);
-    const payload = await handler(body);
+    const payload = await handler(body, request);
     response.writeHead(200, { "content-type": "application/json" });
     response.end(`${JSON.stringify(payload)}\n`);
   });

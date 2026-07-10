@@ -6124,6 +6124,24 @@ textarea:focus-visible {
   grid-column: 1 / -1;
 }
 
+.config-inline-toggle {
+  display: flex;
+  min-height: 32px;
+  align-items: center;
+  gap: 8px;
+}
+
+.config-inline-toggle input[type="checkbox"] {
+  width: 15px;
+  height: 15px;
+  margin: 0;
+}
+
+.config-field-error {
+  color: var(--danger);
+  font-size: 11px;
+}
+
 .config-field span {
   color: var(--muted);
   font-size: 11px;
