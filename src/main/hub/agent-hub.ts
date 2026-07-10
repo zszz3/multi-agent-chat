@@ -148,7 +148,7 @@ import {
 import { runAgentExecution as runAgentExecutionValue } from "./runtime/agent-hub-runner";
 import { runRuntimeChannelTest as runRuntimeChannelTestValue } from "./runtime/agent-hub-runtime-test";
 import {
-  prepareTaskPromptExecution as prepareTaskPromptExecutionValue,
+  resolveTaskPromptExecution as resolveTaskPromptExecutionValue,
 } from "./runtime/agent-hub-task-run";
 import {
   codexPluginSummaries,
@@ -223,6 +223,11 @@ import {
   restoreWorkflowDraft as restoreWorkflowDraftValue,
   restoreWorkflowRun as restoreWorkflowRunValue,
 } from "./workflow/agent-hub-workflow-restore";
+import {
+  runScheduledWorkflowEvent as runScheduledWorkflowEventValue,
+  waitForWorkflowRunToSettle as waitForWorkflowRunToSettleValue,
+  scheduledWorkflowEventTarget as scheduledWorkflowEventTargetValue,
+} from "./workflow/agent-hub-workflow-execution";
 import {
   finishWorkflowRunState as finishWorkflowRunStateValue,
   startWorkflowRunState as startWorkflowRunStateValue,
@@ -1155,75 +1160,21 @@ export class AgentHub {
     event: ScheduledWorkflowDueEvent,
     ackEvent: (eventId: string, request: AckScheduledWorkflowEventRequest) => Promise<void>,
   ): Promise<void> {
-    const target = this.scheduledWorkflowEventTarget(event);
-    if (!target) {
-      await ackEvent(event.eventId, {
-        status: "failed",
-        message: "Scheduled event payload is missing scheduleId or workflowId.",
-      });
-      return;
-    }
-
-    const workflow = this.workflows.get(target.workflowId);
-    const runId = `scheduled_run_${event.eventId}`;
-    if (!workflow) {
-      await ackEvent(event.eventId, {
-        status: "failed",
-        message: `Workflow ${target.workflowId} was not found locally.`,
-      });
-      return;
-    }
-
-    this.recordScheduledWorkflowRun({
-      runId,
-      scheduleId: target.scheduleId,
-      workflowId: workflow.workflowId,
-      eventId: event.eventId,
-      title: event.title || workflow.title,
-      status: "running",
-      startedAt: Date.now(),
-      finishedAt: undefined,
-      message: event.message || "Runner started workflow.",
-    });
-
-    const started = this.runWorkflowGraph({
-      workflowId: workflow.workflowId,
-      contextDocument: workflow.contextDocument,
-    });
-    if (!started.ok || !started.runId) {
-      const message = started.error || "Workflow failed to start.";
-      this.finishScheduledWorkflowRun(runId, {
-        status: "failed",
-        message,
-        finishedAt: Date.now(),
-      });
-      await ackEvent(event.eventId, {
-        status: "failed",
-        message,
-      });
-      return;
-    }
-
-    const workflowRun = await this.waitForWorkflowRunToSettle(started.runId);
-    const completed = workflowRun.status === "completed";
-    const awaitingInput = workflowRun.progress.some((item) => item.status === "awaiting_input");
-    const status = completed ? "completed" : "failed";
-    const message = completed
-      ? "Workflow completed."
-      : awaitingInput
-        ? "Workflow requires human input before it can finish."
-        : workflowRun.lastError || (workflowRun.status === "stopped" ? "Workflow stopped before completion." : "Workflow failed.");
-
-    this.finishScheduledWorkflowRun(runId, {
-      status,
-      workflowRunId: workflowRun.runId,
-      message,
-      finishedAt: Date.now(),
-    });
-    await ackEvent(event.eventId, {
-      status,
-      workflowRunId: workflowRun.runId,
-      message,
+    const target = scheduledWorkflowEventTargetValue(event);
+    await runScheduledWorkflowEventValue({
+      event,
+      ackEvent,
+      target,
+      workflow: target ? this.workflows.get(target.workflowId) : undefined,
+      runId: `scheduled_run_${event.eventId}`,
+      recordScheduledWorkflowRun: (run) => {
+        this.recordScheduledWorkflowRun(run);
+      },
+      runWorkflowGraph: (request) => this.runWorkflowGraph(request),
+      finishScheduledWorkflowRun: (runId, request) => {
+        this.finishScheduledWorkflowRun(runId, request);
+      },
+      waitForWorkflowRunToSettle: (runId) => this.waitForWorkflowRunToSettle(runId),
     });
   }
 
@@ -1660,10 +1611,9 @@ export class AgentHub {
     this.tasks.set(task.id, task);
     this.activeTaskId = task.id;
 
-    const resolved = this.resolveConfiguredAgent(task.configuredAgentId, task.modelId);
-    const preparedResolved = prepareTaskPromptExecutionValue({
+    const preparedResolved = resolveTaskPromptExecutionValue({
       task,
-      resolved,
+      resolveConfiguredAgent: (configuredAgentId, modelId) => this.resolveConfiguredAgent(configuredAgentId, modelId),
       createUserMessage: (content) => createUserMessage(content),
       createErrorMessage: (content) => createErrorMessage(content),
     });
@@ -2044,33 +1994,15 @@ export class AgentHub {
     this.emit();
   }
 
-  private scheduledWorkflowEventTarget(event: ScheduledWorkflowDueEvent): { scheduleId: string; workflowId: string } | undefined {
-    const scheduleId = asOptionalString(event.payload?.scheduleId)?.trim();
-    const workflowId = asOptionalString(event.payload?.workflowId)?.trim();
-    if (!scheduleId || !workflowId) return undefined;
-    return { scheduleId, workflowId };
-  }
-
   private waitForWorkflowRunToSettle(runId: string): Promise<WorkflowRunState> {
-    const immediate = this.workflowRuns.get(runId);
-    if (immediate && (immediate.status === "completed" || immediate.status === "failed" || immediate.status === "stopped" || immediate.progress.some((item) => item.status === "awaiting_input"))) {
-      return Promise.resolve(this.cloneWorkflowRun(immediate));
-    }
-
-    return new Promise<WorkflowRunState>((resolve, reject) => {
-      let stopListening: () => void = () => {};
-      stopListening = this.onChange(() => {
-        const run = this.workflowRuns.get(runId);
-        if (!run) {
-          stopListening();
-          reject(new Error(`Workflow run ${runId} was not found.`));
-          return;
-        }
-        if (run.status === "completed" || run.status === "failed" || run.status === "stopped" || run.progress.some((item) => item.status === "awaiting_input")) {
-          stopListening();
-          resolve(this.cloneWorkflowRun(run));
-        }
-      });
+    return waitForWorkflowRunToSettleValue({
+      runId,
+      getRun: (currentRunId) => this.workflowRuns.get(currentRunId),
+      cloneRun: (run) => this.cloneWorkflowRun(run),
+      onChange: (listener) =>
+        this.onChange(() => {
+          listener();
+        }),
     });
   }
 
@@ -2233,10 +2165,9 @@ export class AgentHub {
     this.tasks.set(task.id, task);
     this.activeTaskId = task.id;
 
-    const resolved = this.resolveConfiguredAgent(task.configuredAgentId, task.modelId);
-    const preparedResolved = prepareTaskPromptExecutionValue({
+    const preparedResolved = resolveTaskPromptExecutionValue({
       task,
-      resolved,
+      resolveConfiguredAgent: (configuredAgentId, modelId) => this.resolveConfiguredAgent(configuredAgentId, modelId),
       createUserMessage: (content) => createUserMessage(content),
       createErrorMessage: (content) => createErrorMessage(content),
       onUnavailable: (error) => this.failTeamStepFromTask(task, error),
