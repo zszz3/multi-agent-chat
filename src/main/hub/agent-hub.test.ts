@@ -2917,7 +2917,7 @@ fs.writeFileSync(${JSON.stringify(argsPath)}, process.argv.slice(2).join("\\n") 
     expect(argv.join("\n")).toContain("mcp_servers.multi_agent_chat.command");
     expect(argv.join("\n")).toContain("mcp_servers.multi_agent_chat.args");
     expect(argv.join("\n")).toContain("mcp_servers.multi_agent_chat.env.MULTI_AGENT_CHAT_MCP_BRIDGE");
-    expect(argv.join("\n")).toContain(path.join(dir, "mcp-bridge.json"));
+    expect(argv.join("\n")).toContain(path.join(dir, "mcp-bridge.json").replaceAll("\\", "\\\\"));
   });
 
   test("creates and activates a workflow from Codex workflow_create tool calls", async () => {
@@ -3053,7 +3053,7 @@ fs.writeFileSync(${JSON.stringify(argsPath)}, process.argv.slice(2).join("\\n") 
         env: { MULTI_AGENT_CHAT_MCP_BRIDGE: path.join(dir, "mcp-bridge.json") },
       },
     });
-    expect(oneShotInput?.mcpServers?.multi_agent_chat.args.join("\n")).toContain("src/mcp/server.ts");
+    expect(oneShotInput?.mcpServers?.multi_agent_chat.args.join("\n").replaceAll("\\", "/")).toContain("src/mcp/server.ts");
   });
 
   test("resumes a Claude workflow agent through the official SDK one-shot path when continuationPolicy is resume-preferred", async () => {

@@ -641,6 +641,7 @@ describe("ChatControls", () => {
 
 describe("ChatPage", () => {
   test("renders full date and time for chat messages", () => {
+    const startedAt = new Date(2024, 2, 10, 0, 0).getTime();
     const chat: ChatSession = {
       id: "chat-1",
       title: "Repo chat",
@@ -649,13 +650,13 @@ describe("ChatPage", () => {
       runtimeConversation: runtimeConversation("codex", { native: { threadId: "session-1" } }),
       running: false,
       messages: [
-        { id: "message-1", role: "user", content: "Review this", timestamp: 1710000000000 },
-        { id: "message-2", role: "assistant", content: "Done", timestamp: 1710000060000 },
+        { id: "message-1", role: "user", content: "Review this", timestamp: startedAt },
+        { id: "message-2", role: "assistant", content: "Done", timestamp: startedAt + 60_000 },
       ],
       pendingAssistantMessageId: undefined,
       lastError: undefined,
-      createdAt: 1710000000000,
-      updatedAt: 1710000060000,
+      createdAt: startedAt,
+      updatedAt: startedAt + 60_000,
     };
 
     const html = renderToStaticMarkup(
