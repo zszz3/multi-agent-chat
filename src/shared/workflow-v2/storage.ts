@@ -177,9 +177,11 @@ function isPersistedExecutionState(
   if (value.status !== "running" && value.status !== "paused" && value.status !== "completed" && value.status !== "failed") return false;
   if (!isPositiveSafeInteger(value.maxParallelNodes)) return false;
   if (!Array.isArray(value.nodeOrder) || !value.nodeOrder.every(isNonEmptyString)) return false;
-  if (new Set(value.nodeOrder).size !== value.nodeOrder.length || !isRecord(value.nodes)) return false;
-  return value.nodeOrder.every((nodeId) => {
-    const node = value.nodes[nodeId];
+  const nodeOrder = value.nodeOrder;
+  if (new Set(nodeOrder).size !== nodeOrder.length || !isRecord(value.nodes)) return false;
+  const nodes = value.nodes;
+  return nodeOrder.every((nodeId) => {
+    const node = nodes[nodeId];
     if (!isRecord(node) || node.nodeId !== nodeId || !isNonEmptyString(node.title)) return false;
     if (!isNodeExecutionStatus(node.status) || !isNonNegativeSafeInteger(node.attempt)) return false;
     return [node.dependsOn, node.dependents, node.blockedBy, node.resourceLocks]

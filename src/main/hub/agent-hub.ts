@@ -103,6 +103,7 @@ import {
 } from "../channels/model-config";
 import { SqliteAppStore } from "./persisted/sqlite-store";
 import { WorkflowRuntime, type WorkflowRunStateUpdate } from "../workflows/workflow-runtime";
+import { WorkflowV2FileStore } from "../workflows/v2/workflow-v2-store";
 import {
   buildWorkflowV2GraphRevision as buildWorkflowV2GraphRevisionValue,
   buildWorkflowV2Plan as buildWorkflowV2PlanValue,
@@ -463,6 +464,9 @@ export class AgentHub {
       stopTask: (taskId) => this.stopTask(taskId),
       deleteTask: (taskId, options) => this.deleteTask(taskId, options),
       executeWorkflowV2Script: (input) => executeWorkflowV2ScriptWithPolicy(input),
+      createWorkflowV2Store: () => this.storagePath
+        ? new WorkflowV2FileStore(path.dirname(this.storagePath))
+        : undefined,
     });
     this.installRestoredConfiguredAgents([]);
     const chat = this.createChatState(this.defaultConfiguredAgentId());

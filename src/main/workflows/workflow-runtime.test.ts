@@ -19,6 +19,7 @@ import type { WorkflowV2CostBudget, WorkflowV2ResultPacket } from "../../shared/
 import { buildWorkflowV2Plan } from "./v2/workflow-v2-planner";
 import {
   type ExecuteWorkflowV2ScriptRequest,
+  type WorkflowV2StorePort,
   parseWorkflowV2WorkerArtifact,
   resolveWorkflowNodeAgent,
   WorkflowRuntime,
@@ -240,6 +241,7 @@ async function workflowV2RuntimeFixture(input: {
   costBudget?: WorkflowV2CostBudget;
   llmArtifact?: string;
   taskFactory?: (request: RunTaskRequest, index: number) => TaskRun;
+  store?: WorkflowV2StorePort;
   executeScript: (request: ExecuteWorkflowV2ScriptRequest) => Promise<WorkflowV2WorkerOutput>;
 }): Promise<{
   runtime: WorkflowRuntime;
@@ -357,6 +359,7 @@ async function workflowV2RuntimeFixture(input: {
       return snapshot();
     },
     executeWorkflowV2Script: input.executeScript,
+    ...(input.store ? { createWorkflowV2Store: () => input.store! } : {}),
   });
 
   return {
@@ -568,6 +571,70 @@ describe("WorkflowRuntime Workflow V2 bridge", () => {
       { taskId: "task-3", preserveRuntimeConversation: false },
       { taskId: "task-4", preserveRuntimeConversation: false },
     ]);
+  });
+
+  test("persists incremental executor checkpoints and ordered durable events", async () => {
+    const persistedStates: import("../../shared/workflow-v2/storage").WorkflowV2PersistedRunState[] = [];
+    const persistedEvents: import("../../shared/workflow-v2/storage").WorkflowV2DurableEvent[] = [];
+    const cacheEntries: import("../../shared/workflow-v2/storage").WorkflowV2CacheEntryMetadata[] = [];
+    const store: WorkflowV2StorePort = {
+      persistRunState: async (state) => {
+        persistedStates.push(structuredClone(state));
+      },
+      appendEvents: async ({ events }) => {
+        persistedEvents.push(...structuredClone(events));
+      },
+      persistCacheEntry: async (entry) => {
+        cacheEntries.push(structuredClone(entry));
+      },
+    };
+    const fixture = await workflowV2RuntimeFixture({
+      store,
+      executeScript: async ({ node }) => ({
+        nodeId: node.id,
+        summary: "Verification complete",
+        outputs: { verified: true },
+        proposals: [],
+      }),
+    });
+
+    fixture.runtime.runWorkflowGraph({ workflowId: fixture.workflow.workflowId });
+    const finished = await fixture.finished;
+
+    expect(finished.status).toBe("completed");
+    expect(persistedStates.length).toBeGreaterThanOrEqual(5);
+    expect(persistedStates[0]?.runState.nodes.draft?.status).toBe("ready");
+    expect(persistedStates.at(-1)?.runState.status).toBe("completed");
+    expect(persistedStates.at(-1)?.workerOutputs.map((output) => output.nodeId)).toEqual(["draft", "verify"]);
+    expect(persistedStates.at(-1)?.eventCount).toBe(persistedEvents.length);
+    expect(persistedEvents.map((event) => event.sequence)).toEqual(
+      persistedEvents.map((_event, index) => index),
+    );
+    expect(cacheEntries.map((entry) => entry.nodeId)).toEqual(["draft", "verify"]);
+    expect(cacheEntries.every(
+      (entry) => entry.fingerprint.graphVersion === fixture.workflow.workflowV2Plan!.graphVersion,
+    )).toBe(true);
+  });
+
+  test("fails the run before node execution when the authoritative checkpoint cannot be written", async () => {
+    const fixture = await workflowV2RuntimeFixture({
+      store: {
+        persistRunState: async () => {
+          throw new Error("durable store unavailable");
+        },
+        appendEvents: async () => undefined,
+      },
+      executeScript: async () => {
+        throw new Error("script runner should not be called");
+      },
+    });
+
+    fixture.runtime.runWorkflowGraph({ workflowId: fixture.workflow.workflowId });
+    const finished = await fixture.finished;
+
+    expect(finished.status).toBe("failed");
+    expect(finished.lastError).toContain("durable store unavailable");
+    expect(fixture.taskRequests).toEqual([]);
   });
 
   test("fails V2 pause intervention before stopping a task or changing run state", async () => {

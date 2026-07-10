@@ -81,6 +81,15 @@ import {
   workflowV2SupervisorDecisionPrompt,
 } from "./v2/workflow-v2-supervision-prompts";
 import { WorkflowV2SupervisionSignal } from "./v2/workflow-v2-supervision-signal";
+import {
+  WORKFLOW_V2_STORAGE_SCHEMA_VERSION,
+  type WorkflowV2CacheEntryMetadata,
+  type WorkflowV2DurableEvent,
+  type WorkflowV2DurableNodeControlState,
+  type WorkflowV2PersistedRunState,
+} from "../../shared/workflow-v2/storage";
+import type { ExecuteWorkflowV2Checkpoint } from "./v2/workflow-v2-executor";
+import { createWorkflowV2NodeCacheFingerprint } from "./v2/workflow-v2-recovery";
 
 export interface WorkflowRunStateUpdate {
   workflowId: string;
@@ -111,6 +120,17 @@ interface WorkflowRuntimeDependencies {
   stopTask: (taskId: string) => Promise<void>;
   deleteTask: (taskId: string, options?: { preserveRuntimeConversation?: boolean }) => Promise<AppSnapshot>;
   executeWorkflowV2Script: (input: ExecuteWorkflowV2ScriptRequest) => Promise<WorkflowV2WorkerOutput>;
+  createWorkflowV2Store?: () => WorkflowV2StorePort | undefined;
+}
+
+export interface WorkflowV2StorePort {
+  persistRunState: (state: WorkflowV2PersistedRunState) => Promise<void>;
+  appendEvents: (input: {
+    workflowId: string;
+    runId: string;
+    events: readonly WorkflowV2DurableEvent[];
+  }) => Promise<void>;
+  persistCacheEntry?: (entry: WorkflowV2CacheEntryMetadata) => Promise<void>;
 }
 
 const WORKFLOW_V2_MAX_PARALLEL_NODES = 4;
@@ -807,6 +827,14 @@ export class WorkflowRuntime {
     const maxWallClockMs = plan.budget.cost?.maxWallClockMs;
     const maxModelCalls = plan.budget.cost?.maxModelCalls;
     let startedModelCalls = 0;
+    const durableStore = this.deps.createWorkflowV2Store?.();
+    let durableEventCount = 0;
+    let latestExecutorCheckpoint: ExecuteWorkflowV2Checkpoint | undefined;
+    let previousDurableRunState: ExecuteWorkflowV2Checkpoint["runState"] | undefined;
+    const persistedCacheNodeIds = new Set<string>();
+    const durableNodeControl: Record<string, WorkflowV2DurableNodeControlState> = Object.fromEntries(
+      plan.definition.nodes.map((node) => [node.id, { extensionCount: 0 }]),
+    );
     let latestSnapshot = this.deps.snapshot();
     let latestProgress = plan.definition.nodes.map((node): WorkflowRunProgressItem => ({
       nodeId: node.id,
@@ -817,6 +845,108 @@ export class WorkflowRuntime {
     const workflowWorkDir = workflow.workDir || latestSnapshot.workDir;
     const configuredAgentId = workflow.configuredAgentId || latestSnapshot.configuredAgents[0]?.id || "default-agent";
     const modelId = configuredAgentModelId(workflow, latestSnapshot);
+
+    const appendDurableEvents = async (
+      events: Array<Omit<WorkflowV2DurableEvent, "sequence" | "workflowId" | "runId">>,
+    ): Promise<void> => {
+      if (!durableStore || events.length === 0) return;
+      const sequenced = events.map((event, index): WorkflowV2DurableEvent => ({
+        ...event,
+        sequence: durableEventCount + index,
+        workflowId: workflow.workflowId,
+        runId,
+      }));
+      await durableStore.appendEvents({ workflowId: workflow.workflowId, runId, events: sequenced });
+      durableEventCount += sequenced.length;
+    };
+
+    const persistExecutorCheckpoint = async (checkpoint: ExecuteWorkflowV2Checkpoint): Promise<void> => {
+      latestExecutorCheckpoint = structuredClone(checkpoint);
+      if (!durableStore) return;
+      const transitionEvents = checkpoint.runState.nodeOrder.flatMap((nodeId) => {
+        const current = checkpoint.runState.nodes[nodeId];
+        const previous = previousDurableRunState?.nodes[nodeId];
+        if (!current || previous?.status === current.status) return [];
+        return [{
+          nodeId,
+          type: `node_${current.status}`,
+          at: Date.now(),
+          ...(current.lastError ? { detail: current.lastError } : {}),
+        } satisfies Omit<WorkflowV2DurableEvent, "sequence" | "workflowId" | "runId">];
+      });
+      await appendDurableEvents(transitionEvents);
+      const persisted: WorkflowV2PersistedRunState = {
+        schemaVersion: WORKFLOW_V2_STORAGE_SCHEMA_VERSION,
+        workflowId: workflow.workflowId,
+        runId,
+        graphVersion: plan.graphVersion,
+        savedAt: Date.now(),
+        eventCount: durableEventCount,
+        plan: structuredClone(plan),
+        runState: structuredClone(checkpoint.runState),
+        workerOutputs: checkpoint.workerOutputs.map((output) => structuredClone(output)),
+        nodeControl: structuredClone(durableNodeControl),
+      };
+      await durableStore.persistRunState(persisted);
+      if (durableStore.persistCacheEntry) {
+        const outputByNodeId = new Map(checkpoint.workerOutputs.map((output) => [output.nodeId, output]));
+        for (const output of checkpoint.workerOutputs) {
+          if (persistedCacheNodeIds.has(output.nodeId)) continue;
+          const node = plan.definition.nodes.find((item) => item.id === output.nodeId);
+          const planNode = plan.nodes.find((item) => item.nodeId === output.nodeId);
+          if (!node || !planNode || checkpoint.runState.nodes[output.nodeId]?.status !== "completed") continue;
+          const upstreamOutputs = plan.definition.edges
+            .filter((edge) => edge.toNodeId === output.nodeId)
+            .map((edge) => outputByNodeId.get(edge.fromNodeId))
+            .filter((item): item is WorkflowV2WorkerOutput => Boolean(item));
+          await durableStore.persistCacheEntry({
+            schemaVersion: WORKFLOW_V2_STORAGE_SCHEMA_VERSION,
+            workflowId: workflow.workflowId,
+            nodeId: output.nodeId,
+            graphVersion: plan.graphVersion,
+            fingerprint: createWorkflowV2NodeCacheFingerprint({
+              graphVersion: plan.graphVersion,
+              node,
+              planNode,
+              upstreamOutputs,
+              executionEnvironment: {
+                workDir: workflowWorkDir,
+                configuredAgentId,
+                modelId,
+                execModel: node.execModel,
+                ...(node.execModel === "script"
+                  ? { sandboxMode: node.sandboxMode, language: node.script.language }
+                  : {}),
+              },
+              reviewerPolicy: {
+                judgeDimensions: node.execModel === "llm" ? node.judgeDimensions ?? [] : [],
+                requiresIndependentReview: node.execModel === "llm"
+                  && node.role !== "reviewer"
+                  && (node.judgeDimensions?.length ?? 0) > 0,
+              },
+            }),
+            output: structuredClone(output),
+            savedAt: Date.now(),
+            ...(checkpoint.runState.nodes[output.nodeId]?.reviewVerdict
+              ? { reviewVerdict: structuredClone(checkpoint.runState.nodes[output.nodeId]!.reviewVerdict!) }
+              : {}),
+          });
+          persistedCacheNodeIds.add(output.nodeId);
+        }
+      }
+      previousDurableRunState = structuredClone(checkpoint.runState);
+    };
+
+    const persistLatestControlState = async (nodeId: string, type: string, detail?: string): Promise<void> => {
+      if (!latestExecutorCheckpoint || !durableStore) return;
+      await appendDurableEvents([{
+        nodeId,
+        type,
+        at: Date.now(),
+        ...(detail ? { detail } : {}),
+      }]);
+      await persistExecutorCheckpoint(latestExecutorCheckpoint);
+    };
 
     const remainingWallClockMs = (): number => maxWallClockMs === undefined
       ? Number.POSITIVE_INFINITY
@@ -953,6 +1083,12 @@ export class WorkflowRuntime {
         startedAt: Date.now(),
         policy,
       });
+      durableNodeControl[input.node.id] = {
+        ...durableNodeControl[input.node.id],
+        lease: structuredClone(lease),
+        extensionCount: lease.extensionCount,
+      };
+      await persistLatestControlState(input.node.id, "lease_started");
       let previousReport: WorkflowV2ProgressReport | undefined;
       const boundedProbeTimeoutMs = (): number => {
         const remainingLeaseMs = lease.hardDeadlineAt - Date.now();
@@ -975,6 +1111,11 @@ export class WorkflowRuntime {
 
         if (task.updatedAt > lease.lastActivityAt) {
           lease = recordWorkflowV2LeaseActivity(lease, Math.min(task.updatedAt, lease.hardDeadlineAt));
+          durableNodeControl[input.node.id] = {
+            ...durableNodeControl[input.node.id],
+            lease: structuredClone(lease),
+            extensionCount: lease.extensionCount,
+          };
         }
         updateNode(input.node.id, { status: "running", detail: taskArtifact(task), taskId: task.id });
         const now = Date.now();
@@ -993,6 +1134,13 @@ export class WorkflowRuntime {
         }
         if (inspection === "hard_timeout") {
           await this.deps.stopTask(task.id);
+          durableNodeControl[input.node.id] = {
+            ...durableNodeControl[input.node.id],
+            lease: structuredClone(lease),
+            extensionCount: lease.extensionCount,
+            stopReason: "Hard execution timeout reached.",
+          };
+          await persistLatestControlState(input.node.id, "lease_hard_timeout", "Hard execution timeout reached.");
           throw new Error(`Workflow V2 node ${input.node.id} reached its hard execution timeout.`);
         }
 
@@ -1000,8 +1148,21 @@ export class WorkflowRuntime {
         const stoppedTask = stoppedTaskSnapshot(task);
         const partialArtifact = truncateWorkflowContext(taskArtifact(stoppedTask), 4_000);
         if (!stoppedTask.runtimeConversation) {
+          const report = unavailableProgressReport(input.node, input.attempt, partialArtifact, lease);
+          durableNodeControl[input.node.id] = {
+            ...durableNodeControl[input.node.id],
+            lease: structuredClone(lease),
+            progressReport: structuredClone(report),
+            extensionCount: lease.extensionCount,
+            stopReason: "Progress probe requires a resumable runtime conversation.",
+          };
+          await persistLatestControlState(
+            input.node.id,
+            "progress_probe_unavailable",
+            "Progress probe requires a resumable runtime conversation.",
+          );
           throw new WorkflowV2SupervisionSignal({
-            report: unavailableProgressReport(input.node, input.attempt, partialArtifact, lease),
+            report,
             resolution: {
               action: "pause",
               question: `Node ${input.node.title} exceeded its soft timeout but its runtime cannot resume for a progress probe.`,
@@ -1033,6 +1194,14 @@ export class WorkflowRuntime {
           throw error;
         }
         const report = parseWorkflowV2ProgressReport(taskArtifact(completedProgressTask));
+        durableNodeControl[input.node.id] = {
+          ...durableNodeControl[input.node.id],
+          lease: structuredClone(lease),
+          progressReport: structuredClone(report),
+          ...(report.checkpoint ? { checkpoint: report.checkpoint } : {}),
+          extensionCount: lease.extensionCount,
+        };
+        await persistLatestControlState(input.node.id, "progress_reported", report.phase);
 
         const supervisorTask = await startModelTask(input.node.id, {
           prompt: workflowV2SupervisorDecisionPrompt({
@@ -1065,6 +1234,15 @@ export class WorkflowRuntime {
           now: Date.now(),
         });
         if (resolution.action !== "continue") {
+          durableNodeControl[input.node.id] = {
+            ...durableNodeControl[input.node.id],
+            lease: structuredClone(lease),
+            progressReport: structuredClone(report),
+            ...(report.checkpoint ? { checkpoint: report.checkpoint } : {}),
+            extensionCount: lease.extensionCount,
+            stopReason: resolution.reason,
+          };
+          await persistLatestControlState(input.node.id, `supervisor_${resolution.action}`, resolution.reason);
           throw new WorkflowV2SupervisionSignal({
             report,
             resolution,
@@ -1082,6 +1260,15 @@ export class WorkflowRuntime {
 
         previousReport = report;
         lease = resolution.lease;
+        durableNodeControl[input.node.id] = {
+          ...durableNodeControl[input.node.id],
+          lease: structuredClone(lease),
+          progressReport: structuredClone(report),
+          ...(report.checkpoint ? { checkpoint: report.checkpoint } : {}),
+          extensionCount: lease.extensionCount,
+          stopReason: resolution.reason,
+        };
+        await persistLatestControlState(input.node.id, "lease_extended", resolution.reason);
         currentTask = await startModelTask(input.node.id, {
           prompt: workflowV2ContinueAfterProbePrompt({ node: input.node, report, decision }),
           configuredAgentId: input.configuredAgentId,
@@ -1216,6 +1403,7 @@ export class WorkflowRuntime {
         maxParallelNodes: WORKFLOW_V2_MAX_PARALLEL_NODES,
         runLlmNode,
         executeScript: runScriptNode,
+        onRunCheckpoint: persistExecutorCheckpoint,
         onNodeStateTransition: (transition) => {
           if (transition.status === "running") {
             updateNode(transition.nodeId, { status: "running", detail: "Starting" }, {

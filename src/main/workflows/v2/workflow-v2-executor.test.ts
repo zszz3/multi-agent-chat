@@ -1106,4 +1106,38 @@ describe("workflow-v2 executor", () => {
     expect(result.runState.status).toBe("completed");
     expect(result.runState.nodes.draft?.attempt).toBe(2);
   });
+
+  test("awaits durable checkpoints at initial, running, and settled boundaries", async () => {
+    const checkpointDefinition = definition();
+    checkpointDefinition.nodes = [checkpointDefinition.nodes[0]!];
+    checkpointDefinition.edges = [];
+    const plan = await buildWorkflowV2Plan({ definition: checkpointDefinition, approvedBy: "tester", now: 5_800 });
+    const checkpoints: Array<{ status: string; outputs: string[] }> = [];
+
+    const result = await executeWorkflowV2Plan({
+      plan,
+      runLlmNode: async ({ node }) => ({
+        nodeId: node.id,
+        summary: "done",
+        outputs: { draft: "persisted" },
+        proposals: [],
+      }),
+      executeScript: async () => {
+        throw new Error("script runner should not be called");
+      },
+      onRunCheckpoint: async ({ runState, workerOutputs }) => {
+        checkpoints.push({
+          status: runState.nodes.draft!.status,
+          outputs: workerOutputs.map((output) => output.nodeId),
+        });
+      },
+    });
+
+    expect(result.runState.status).toBe("completed");
+    expect(checkpoints).toEqual([
+      { status: "ready", outputs: [] },
+      { status: "running", outputs: [] },
+      { status: "completed", outputs: ["draft"] },
+    ]);
+  });
 });

@@ -55,7 +55,13 @@ export interface ExecuteWorkflowV2PlanInput {
   }) => boolean;
   reviewNodeOutput?: (input: WorkflowV2ReviewerInput) => Promise<WorkflowV2ReviewerResponse>;
   onNodeStateTransition?: (input: WorkflowV2NodeStateTransitionEvent) => void;
+  onRunCheckpoint?: (input: ExecuteWorkflowV2Checkpoint) => Promise<void>;
   now?: () => number;
+}
+
+export interface ExecuteWorkflowV2Checkpoint {
+  runState: WorkflowV2RunState;
+  workerOutputs: WorkflowV2WorkerOutput[];
 }
 
 export type WorkflowV2NodeStateTransitionEvent =
@@ -81,6 +87,15 @@ export async function executeWorkflowV2Plan(input: ExecuteWorkflowV2PlanInput): 
     definition: input.plan.definition,
     ...(input.maxParallelNodes !== undefined ? { maxParallelNodes: input.maxParallelNodes } : {}),
   });
+  const checkpoint = async (): Promise<void> => {
+    if (!input.onRunCheckpoint) return;
+    await input.onRunCheckpoint({
+      runState: structuredClone(runState),
+      workerOutputs: workerOutputs.map(cloneWorkflowV2WorkerOutput),
+    });
+  };
+
+  if (input.onRunCheckpoint) await checkpoint();
 
   while (runState.status === "running") {
     const runnableNodeIds = listWorkflowV2RunnableNodeIds(runState);
@@ -92,6 +107,7 @@ export async function executeWorkflowV2Plan(input: ExecuteWorkflowV2PlanInput): 
         status: "failed",
         error: "Workflow V2 executor could not make progress on the frozen plan.",
       });
+      if (input.onRunCheckpoint) await checkpoint();
       break;
     }
 
@@ -123,6 +139,7 @@ export async function executeWorkflowV2Plan(input: ExecuteWorkflowV2PlanInput): 
       });
       input.onNodeStateTransition?.({ nodeId, status: "running" });
     }
+    if (input.onRunCheckpoint) await checkpoint();
 
     const settledBatch = await Promise.allSettled(
       batch.map(({ node, planNode, upstreamOutputs }) => executeWorkflowV2Node({
@@ -332,6 +349,7 @@ export async function executeWorkflowV2Plan(input: ExecuteWorkflowV2PlanInput): 
         input.onNodeStateTransition?.({ nodeId, status: "failed", error });
       }
     }
+    if (input.onRunCheckpoint) await checkpoint();
   }
 
   const finalRunnableNodeIds = listWorkflowV2RunnableNodeIds(runState);
