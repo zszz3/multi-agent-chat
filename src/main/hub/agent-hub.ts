@@ -1,7 +1,4 @@
 import { randomUUID } from "node:crypto";
-import type { Dirent } from "node:fs";
-import { readdir } from "node:fs/promises";
-import os from "node:os";
 import path from "node:path";
 import type {
   AgentChannel,
@@ -101,7 +98,6 @@ import {
   saveModelChannels as writeModelChannels,
 } from "../channels/model-config";
 import { SqliteAppStore } from "./persisted/sqlite-store";
-import { resolveWorkDirFile } from "../platform/local-file-preview";
 import { WorkflowRuntime, type WorkflowRunStateUpdate } from "../workflows/workflow-runtime";
 import { ChatState, TaskState, AgentTeamState, TeamRunState } from "./state/agent-hub-state";
 import {
@@ -175,6 +171,13 @@ import {
   serializeTeam,
   serializeTeamRun,
 } from "./state/agent-hub-snapshot";
+import {
+  allowedFileRoots as allowedFileRootsValue,
+  listArtifacts as listArtifactsValue,
+  listWorkflowOutputs as listWorkflowOutputsValue,
+  registerArtifact as registerArtifactValue,
+  workflowWorkDir as workflowWorkDirValue,
+} from "./state/agent-hub-artifacts";
 import {
   restoreWorkflowGraph,
 } from "./state/agent-hub-restore";
@@ -1336,80 +1339,32 @@ export class AgentHub {
   }
 
   async registerArtifact(input: RegisterArtifactRequest): Promise<{ ok: boolean; error?: string; artifact?: RegisteredArtifact }> {
-    const target = typeof input.target === "string" ? input.target.trim() : "";
-    if (!target) return { ok: false, error: "artifacts_register requires a target session id." };
-
-    const artifact: RegisteredArtifact = {
-      id: `artifact_${randomUUID()}`,
-      target,
-      kind: "text",
-      title: "",
-      registeredAt: Date.now(),
-    };
-    if (typeof input.description === "string" && input.description.trim()) artifact.description = input.description.trim();
-
-    if (typeof input.path === "string" && input.path.trim()) {
-      let absolutePath: string;
-      try {
-        absolutePath = await resolveWorkDirFile(input.path, this.workDir, os.homedir());
-      } catch (error) {
-        return { ok: false, error: error instanceof Error ? error.message : String(error) };
-      }
-      artifact.kind = "file";
-      artifact.path = absolutePath;
-      artifact.title = (typeof input.title === "string" && input.title.trim()) || path.basename(absolutePath);
-    } else if (typeof input.url === "string" && input.url.trim()) {
-      artifact.kind = "url";
-      artifact.url = input.url.trim();
-      artifact.title = (typeof input.title === "string" && input.title.trim()) || input.url.trim();
-    } else if (typeof input.content === "string" && input.content.length > 0) {
-      artifact.kind = "text";
-      artifact.content = input.content;
-      artifact.title = (typeof input.title === "string" && input.title.trim()) || "Note";
-    } else {
-      return { ok: false, error: "artifacts_register requires one of path, url, or content." };
-    }
-
+    const result = await registerArtifactValue({
+      request: input,
+      workDir: this.workDir,
+    });
+    if (!result.ok || !result.artifact) return result;
+    const artifact = result.artifact;
     this.artifacts.push(artifact);
     this.emit();
     return { ok: true, artifact };
   }
 
   async listWorkflowOutputs(workflowId: string): Promise<Array<{ name: string; path: string }>> {
-    const workflow = this.workflows.get(workflowId);
-    if (!workflow) return [];
-    const workDir = workflow.workDir || this.workDir;
-    const outputsDir = path.join(workDir, "outputs");
-    let entries: Dirent[];
-    try {
-      entries = await readdir(outputsDir, { withFileTypes: true });
-    } catch {
-      return [];
-    }
-    return entries
-      .filter((entry) => entry.isFile() && !entry.name.startsWith("."))
-      .map((entry) => ({ name: entry.name, path: path.join(outputsDir, entry.name) }))
-      .sort((left, right) => left.name.localeCompare(right.name));
+    return listWorkflowOutputsValue(this.workflows.get(workflowId), this.workDir);
   }
 
   workflowWorkDir(workflowId: string): string | undefined {
-    const workflow = this.workflows.get(workflowId);
-    if (!workflow) return undefined;
-    return workflow.workDir || this.workDir;
+    return workflowWorkDirValue(this.workflows.get(workflowId), this.workDir);
   }
 
   /** Directories from which local files may be previewed: global + each workflow's dir. */
   allowedFileRoots(): string[] {
-    const roots = [this.workDir];
-    for (const workflow of this.workflows.values()) {
-      roots.push(workflow.workDir || this.workDir);
-    }
-    return roots;
+    return allowedFileRootsValue(this.workflows.values(), this.workDir);
   }
 
   listArtifacts(target?: string): RegisteredArtifact[] {
-    const filtered = target ? this.artifacts.filter((artifact) => artifact.target === target) : this.artifacts;
-    return filtered.map((artifact) => ({ ...artifact }));
+    return listArtifactsValue(this.artifacts, target);
   }
 
   onChange(listener: Listener): () => void {
