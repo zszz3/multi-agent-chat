@@ -26,6 +26,7 @@ import {
   type WorkflowRunNodeStatus,
   type WorkflowStoreState,
 } from "../../../shared/types";
+import { isRuntimeId } from "../../../shared/runtime-catalog";
 
 export interface PersistedChatSessionRecord {
   id: string;
@@ -137,7 +138,7 @@ export interface PersistedAppStateV4 {
 }
 
 export function isAgentId(value: unknown): value is AgentId {
-  return value === "codex" || value === "claude" || value === "api" || value === "hermes" || value === "opencode";
+  return isRuntimeId(value);
 }
 
 export function isMessageRole(value: unknown): value is ChatMessage["role"] {

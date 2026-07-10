@@ -1,15 +1,12 @@
 import { DEFAULT_MODEL_ID, FALLBACK_MODEL_OPTIONS } from "./models";
+import { RUNTIME_DEFINITIONS, RUNTIME_IDS, runtimeDefinition } from "./runtime-catalog";
 import type { AgentChannel, AgentId } from "./types";
 
-export const CONFIG_AGENT_ORDER: AgentId[] = ["codex", "claude", "api", "hermes", "opencode"];
+export const CONFIG_AGENT_ORDER: AgentId[] = [...RUNTIME_IDS];
 
-export const DEFAULT_CONFIG_CHANNEL_IDS: Record<AgentId, string> = {
-  codex: "codex-openai",
-  claude: "claude-code",
-  api: "api-openai",
-  hermes: "hermes-default",
-  opencode: "opencode-default",
-};
+export const DEFAULT_CONFIG_CHANNEL_IDS = Object.fromEntries(
+  RUNTIME_DEFINITIONS.map((definition) => [definition.id, definition.defaultChannel.id]),
+) as Record<AgentId, string>;
 
 function isNewConfigChannelId(channel: AgentChannel): boolean {
   return channel.id === `${channel.agentId}-config` || channel.id.startsWith(`${channel.agentId}-config-`);
@@ -58,23 +55,14 @@ export function configChannelForSelection(channels: AgentChannel[], selectedChan
 }
 
 function createFallbackConfigChannels(): AgentChannel[] {
-  return CONFIG_AGENT_ORDER.map((agentId) => ({
-    id: DEFAULT_CONFIG_CHANNEL_IDS[agentId],
-    agentId,
-    label:
-      agentId === "codex"
-        ? "Codex OpenAI"
-        : agentId === "claude"
-          ? "Claude Code"
-          : agentId === "hermes"
-            ? "Hermes Default"
-            : agentId === "opencode"
-              ? "OpenCode Default"
-              : "OpenAI API",
-    models: FALLBACK_MODEL_OPTIONS[agentId].some((model) => model.id === DEFAULT_MODEL_ID)
-      ? FALLBACK_MODEL_OPTIONS[agentId]
-      : [{ id: DEFAULT_MODEL_ID, label: "Default" }, ...FALLBACK_MODEL_OPTIONS[agentId]],
-    ...(agentId === "codex" ? { modelProvider: "openai", providerName: "OpenAI" } : {}),
-    ...(agentId === "api" ? { modelProvider: "openai-api", providerName: "OpenAI", baseUrl: "https://api.openai.com/v1" } : {}),
-  }));
+  return CONFIG_AGENT_ORDER.map((agentId) => {
+    const definition = runtimeDefinition(agentId);
+    return {
+      ...definition.defaultChannel,
+      agentId,
+      models: FALLBACK_MODEL_OPTIONS[agentId].some((model) => model.id === DEFAULT_MODEL_ID)
+        ? FALLBACK_MODEL_OPTIONS[agentId]
+        : [{ id: DEFAULT_MODEL_ID, label: "Default" }, ...FALLBACK_MODEL_OPTIONS[agentId]],
+    };
+  });
 }

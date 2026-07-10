@@ -1,12 +1,20 @@
+import { RUNTIME_DEFINITIONS, runtimeDefinition } from "../../../shared/runtime-catalog";
 import type { AgentId, AgentRuntime } from "../../../shared/types";
 import { execCli } from "../../platform/cli-launcher";
 
-const AGENT_COMMANDS: Record<Exclude<AgentId, "api">, { label: string; env: string; executable: string }> = {
-  codex: { label: "Codex", env: "CODEX_PATH", executable: "codex" },
-  claude: { label: "Claude Code", env: "CLAUDE_PATH", executable: "claude" },
-  hermes: { label: "Hermes", env: "HERMES_PATH", executable: "hermes" },
-  opencode: { label: "OpenCode", env: "OPENCODE_PATH", executable: "opencode" },
-};
+export function resolveRuntimeExecutables(
+  overrides: Partial<Record<AgentId, string>> = {},
+  environment: Record<string, string | undefined> = process.env,
+): Record<AgentId, string> {
+  return Object.fromEntries(
+    RUNTIME_DEFINITIONS.map((definition) => [
+      definition.id,
+      overrides[definition.id]
+        ?? ("executableEnv" in definition ? environment[definition.executableEnv] : undefined)
+        ?? definition.executable,
+    ]),
+  ) as Record<AgentId, string>;
+}
 
 export function parseCliVersion(raw: string): string {
   const firstLine = raw.split("\n")[0]?.trim() ?? "";
@@ -14,19 +22,18 @@ export function parseCliVersion(raw: string): string {
   return match?.[1] ?? firstLine;
 }
 
-async function detectOne(id: AgentId): Promise<AgentRuntime> {
-  if (id === "api") {
+async function detectOne(id: AgentId, executables: Record<AgentId, string>): Promise<AgentRuntime> {
+  const definition = runtimeDefinition(id);
+  const command = executables[id];
+  if (definition.detection === "virtual") {
     return {
       id,
-      label: "API",
-      command: "api",
+      label: definition.label,
+      command,
       version: null,
       available: true,
     };
   }
-
-  const spec = AGENT_COMMANDS[id];
-  const command = process.env[spec.env] ?? spec.executable;
 
   try {
     const { stdout } = await execCli({
@@ -38,7 +45,7 @@ async function detectOne(id: AgentId): Promise<AgentRuntime> {
     });
     return {
       id,
-      label: spec.label,
+      label: definition.label,
       command,
       version: parseCliVersion(String(stdout).trim()),
       available: true,
@@ -46,7 +53,7 @@ async function detectOne(id: AgentId): Promise<AgentRuntime> {
   } catch (error) {
     return {
       id,
-      label: spec.label,
+      label: definition.label,
       command,
       version: null,
       available: false,
@@ -55,6 +62,8 @@ async function detectOne(id: AgentId): Promise<AgentRuntime> {
   }
 }
 
-export async function detectAgentRuntimes(): Promise<AgentRuntime[]> {
-  return Promise.all([detectOne("codex"), detectOne("claude"), detectOne("api"), detectOne("hermes"), detectOne("opencode")]);
+export async function detectAgentRuntimes(
+  executables: Record<AgentId, string> = resolveRuntimeExecutables(),
+): Promise<AgentRuntime[]> {
+  return Promise.all(RUNTIME_DEFINITIONS.map((definition) => detectOne(definition.id, executables)));
 }

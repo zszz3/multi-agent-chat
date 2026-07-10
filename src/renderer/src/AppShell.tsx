@@ -86,7 +86,6 @@ import {
 } from "../../shared/online-skills";
 import type {
   AgentChannel,
-  AgentId,
   AgentModelOption,
   AgentRuntime,
   SkillTemplate,
@@ -156,7 +155,6 @@ export {
   workflowRunProgressSummary,
 } from "./pages/workflow/workflow-utils";
 
-const AGENTS: AgentId[] = ["codex", "claude", "api"];
 const SKILL_INSTALL_TARGETS: Array<{ id: SkillInstallTarget; label: string; path: string }> = [
   { id: "codex", label: "Codex", path: "~/.codex/skills" },
   { id: "claude", label: "Claude", path: "~/.claude/skills" },

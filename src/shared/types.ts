@@ -1,4 +1,6 @@
-export type AgentId = "codex" | "claude" | "api" | "hermes" | "opencode";
+import type { RuntimeId } from "./runtime-catalog";
+
+export type AgentId = RuntimeId;
 
 export interface AgentRuntime {
   id: AgentId;
