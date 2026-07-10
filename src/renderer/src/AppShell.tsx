@@ -88,6 +88,8 @@ import type {
   AgentChannel,
   AgentModelOption,
   AgentRuntime,
+  AssignSkillCategoryRequest,
+  SkillCategory,
   SkillTemplate,
   AgentTeam,
   AgentTeamMember,
@@ -209,6 +211,7 @@ export function AppShell() {
   const [snapshot, setSnapshot] = useState<AppSnapshot>(DEFAULT_SNAPSHOT);
   const [officialSkillTemplates, setOfficialSkillTemplates] = useState<SkillTemplate[]>([]);
   const [userSkillTemplates, setUserSkillTemplates] = useState<SkillTemplate[]>([]);
+  const [skillCategories, setSkillCategories] = useState<SkillCategory[]>([]);
   const [prompt, setPrompt] = useState("");
   const [slashCommandIndex, setSlashCommandIndex] = useState(0);
   const [taskPrompt, setTaskPrompt] = useState("");
@@ -368,12 +371,7 @@ export function AppShell() {
   }, [snapshots]);
 
   useEffect(() => {
-    const api = chatApi as typeof chatApi & {
-      listOfficialSkills?: () => Promise<SkillTemplate[]>;
-      listImportedSkills?: () => Promise<SkillTemplate[]>;
-    };
-    if (api.listOfficialSkills) void api.listOfficialSkills().then(setOfficialSkillTemplates).catch(() => undefined);
-    if (api.listImportedSkills) void api.listImportedSkills().then(setUserSkillTemplates).catch(() => undefined);
+    void refreshSkillLibrary().catch(() => undefined);
   }, [chatApi]);
 
   useEffect(() => {
@@ -645,6 +643,39 @@ export function AppShell() {
     return templates;
   }
 
+  async function refreshSkillLibrary(): Promise<void> {
+    const api = chatApi as typeof chatApi & {
+      listOfficialSkills?: () => Promise<SkillTemplate[]>;
+      listImportedSkills?: () => Promise<SkillTemplate[]>;
+      listSkillCategories?: () => Promise<SkillCategory[]>;
+    };
+    const [official, user, categories] = await Promise.all([
+      api.listOfficialSkills?.() ?? Promise.resolve([]),
+      api.listImportedSkills?.() ?? Promise.resolve([]),
+      api.listSkillCategories?.() ?? Promise.resolve([]),
+    ]);
+    setOfficialSkillTemplates(official);
+    setUserSkillTemplates(user);
+    setSkillCategories(categories);
+  }
+
+  async function createSkillCategory(name: string): Promise<SkillCategory> {
+    const api = chatApi as typeof chatApi & { createSkillCategory?: (input: string) => Promise<SkillCategory> };
+    if (!api.createSkillCategory) throw new Error("技能分类能力需要重启应用后生效。");
+    const category = await api.createSkillCategory(name);
+    await refreshSkillLibrary();
+    return category;
+  }
+
+  async function assignSkillCategory(request: AssignSkillCategoryRequest): Promise<void> {
+    const api = chatApi as typeof chatApi & {
+      assignSkillCategory?: (input: AssignSkillCategoryRequest) => Promise<AssignSkillCategoryRequest>;
+    };
+    if (!api.assignSkillCategory) throw new Error("技能分类能力需要重启应用后生效。");
+    await api.assignSkillCategory(request);
+    await refreshSkillLibrary();
+  }
+
   async function importOnlineSkill(skill: OnlineSkillResult): Promise<ImportedSkillResult> {
     const api = chatApi as typeof chatApi & {
       importOnlineSkill?: (request: ImportOnlineSkillRequest) => Promise<ImportedSkillResult>;
@@ -904,12 +935,15 @@ export function AppShell() {
             language={language}
             officialSkills={officialSkillTemplates}
             userSkills={userSkillTemplates}
+            categories={skillCategories}
             configuredAgents={snapshot.configuredAgents}
             onImportOnlineSkill={importOnlineSkill}
             onRevealSkillInFinder={revealSkillInFinder}
             onInstallSkill={installSkill}
             onUninstallSkill={uninstallSkill}
             onDeleteUserSkill={deleteUserSkill}
+            onCreateCategory={createSkillCategory}
+            onAssignCategory={assignSkillCategory}
           />
         ) : activeFeature === "runtimes" ? (
           <RuntimePage

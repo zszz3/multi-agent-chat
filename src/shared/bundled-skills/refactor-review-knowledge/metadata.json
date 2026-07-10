@@ -5,5 +5,6 @@
     "code"
   ],
   "sourceLabel": "bundled original skill",
+  "categoryId": "coding",
   "sourceUrl": "https://github.com/zszz3/multi-agent-chat/tree/main/src/shared/bundled-skills/refactor-review-knowledge"
 }

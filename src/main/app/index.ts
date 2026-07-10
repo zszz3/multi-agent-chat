@@ -12,6 +12,7 @@ import { deleteImportedSkillFromLibrary, importOnlineSkillToLibrary, installBund
 import { loadBundledWorkflows } from "../workflows/bundled-workflows";
 import { OfficialCatalogStore } from "../official-catalog-store";
 import { UserSkillStore } from "../user-skill-store";
+import { SkillCategoryStore } from "../skill-category-store";
 import { centeredWindowBounds } from "../platform/window-bounds";
 import { resolvePreloadBundlePath } from "./app-paths";
 import { fetchOnlineSkills, ONLINE_SKILL_SOURCES } from "../../shared/online-skills";
@@ -19,6 +20,7 @@ import { SKILL_TEMPLATES } from "../../shared/skill-templates";
 import { DEFAULT_SCHEDULED_WORKFLOW_CLOUD_BASE_URL } from "../../shared/types";
 import type {
   AgentChannel,
+  AssignSkillCategoryRequest,
   AckScheduledWorkflowEventRequest,
   AppSnapshot,
   BuildWorkflowV2GraphRevisionRequest,
@@ -66,6 +68,7 @@ const MIN_WINDOW_HEIGHT = 680;
 const hub = new AgentHub();
 const officialCatalog = new OfficialCatalogStore(path.join(app.getPath("userData"), OFFICIAL_CATALOG_DATABASE_FILE));
 const userSkillStore = new UserSkillStore(path.join(app.getPath("userData"), APP_DATABASE_FILE));
+const skillCategoryStore = new SkillCategoryStore(path.join(app.getPath("userData"), APP_DATABASE_FILE));
 
 let mainWindow: BrowserWindow | null = null;
 let ipcRegistered = false;
@@ -363,8 +366,18 @@ function registerIpcHandlers(): void {
   ipcMain.handle("power:get-keep-awake", () => getKeepAwake());
   ipcMain.handle("power:set-keep-awake", (_event, enabled: boolean) => setKeepAwake(Boolean(enabled)));
   ipcMain.handle("skills:search-online", async (_event, query: string) => fetchOnlineSkills(String(query ?? ""), ONLINE_SKILL_SOURCES));
-  ipcMain.handle("skills:list-official", async () => officialCatalog.listSkills());
-  ipcMain.handle("skills:list-imported", async () => userSkillStore.list());
+  ipcMain.handle("skills:list-official", async () =>
+    skillCategoryStore.applyAssignments(await officialCatalog.listSkills(), "official"),
+  );
+  ipcMain.handle("skills:list-imported", async () =>
+    skillCategoryStore.applyAssignments(await userSkillStore.list(), "user"),
+  );
+  ipcMain.handle("skills:categories:list", async () => skillCategoryStore.list());
+  ipcMain.handle("skills:categories:create", async (_event, name: string) => skillCategoryStore.create(String(name ?? "")));
+  ipcMain.handle("skills:categories:assign", async (_event, request: AssignSkillCategoryRequest) => {
+    await skillCategoryStore.assign(request);
+    return request;
+  });
   ipcMain.handle("skills:import-online", async (_event, request: ImportOnlineSkillRequest) => {
     const result = await importOnlineSkillToLibrary(request, path.join(app.getPath("userData"), "bundled-skills"));
     await userSkillStore.upsert(result.template);
@@ -372,7 +385,10 @@ function registerIpcHandlers(): void {
   });
   ipcMain.handle("skills:delete-user", async (_event, templateId: string) => {
     const removed = await userSkillStore.delete(templateId);
-    if (removed) await deleteImportedSkillFromLibrary(templateId, path.join(app.getPath("userData"), "bundled-skills"));
+    if (removed) {
+      await skillCategoryStore.deleteSkillAssignment("user", templateId);
+      await deleteImportedSkillFromLibrary(templateId, path.join(app.getPath("userData"), "bundled-skills"));
+    }
     return { templateId, removed };
   });
   ipcMain.handle("skills:install", async (_event, request: InstallSkillRequest) =>
@@ -534,6 +550,7 @@ app.on("before-quit", () => {
   void mcpBridge?.stop();
   officialCatalog.close();
   userSkillStore.close();
+  skillCategoryStore.close();
 });
 
 app.on("window-all-closed", () => {

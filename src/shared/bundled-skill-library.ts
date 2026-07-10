@@ -4,10 +4,14 @@ interface BundledSkillMetadata {
   tags?: string[];
   sourceLabel?: string;
   sourceUrl?: string;
+  categoryId?: string;
 }
 
 const BUNDLED_SKILL_ORDER = [
   "brainstorming",
+  "frontend-design",
+  "handoff",
+  "skill-creator",
   "systematic-debugging",
   "personal-finance-planning",
   "resume-optimization",
@@ -77,6 +81,7 @@ function metadataFor(skillId: string): BundledSkillMetadata {
   if (Array.isArray(parsed.tags)) metadata.tags = parsed.tags.filter((tag): tag is string => typeof tag === "string");
   if (typeof parsed.sourceLabel === "string") metadata.sourceLabel = parsed.sourceLabel;
   if (typeof parsed.sourceUrl === "string") metadata.sourceUrl = parsed.sourceUrl;
+  if (typeof parsed.categoryId === "string") metadata.categoryId = parsed.categoryId;
   return metadata;
 }
 
@@ -107,6 +112,7 @@ export function loadBundledSkillTemplates(): SkillTemplate[] {
       tags: metadata.tags ?? [id],
       sourceLabel: metadata.sourceLabel ?? "bundled skill",
       sourcePath: sourcePathFor(filePath),
+      ...(metadata.categoryId ? { categoryId: metadata.categoryId } : {}),
     };
     const sourceUrl = metadata.sourceUrl;
     if (sourceUrl) template.sourceUrl = sourceUrl;

@@ -85,6 +85,7 @@ export class OfficialCatalogStore {
         ...(item.source_path ? { sourcePath: String(item.source_path) } : {}),
         ...(item.source_url ? { sourceUrl: String(item.source_url) } : {}),
         ...(item.translation_zh ? { translationZh: String(item.translation_zh) } : {}),
+        ...(item.category_id ? { categoryId: String(item.category_id) } : {}),
       }));
   }
 
@@ -144,9 +145,14 @@ export class OfficialCatalogStore {
         source_path text,
         source_url text,
         translation_zh text,
+        category_id text,
         sequence integer not null
       );
     `);
+    const skillColumns = db.prepare("pragma table_info(skill_templates)").all().map(row);
+    if (!skillColumns.some((column) => column.name === "category_id")) {
+      db.exec("alter table skill_templates add column category_id text");
+    }
     this.db = db;
     return db;
   }
@@ -187,8 +193,8 @@ export class OfficialCatalogStore {
     const sequence = Number(db.prepare("select count(*) as count from skill_templates").all().map(row)[0]?.count ?? 0);
     db.prepare(
       `insert into skill_templates
-       (id, name, description, prompt, tags_json, source_label, source_path, source_url, translation_zh, sequence)
-       values (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+       (id, name, description, prompt, tags_json, source_label, source_path, source_url, translation_zh, category_id, sequence)
+       values (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
     ).run(
       skill.id,
       skill.name,
@@ -199,6 +205,7 @@ export class OfficialCatalogStore {
       skill.sourcePath ?? null,
       skill.sourceUrl ?? null,
       skill.translationZh ?? null,
+      skill.categoryId ?? null,
       sequence,
     );
   }
