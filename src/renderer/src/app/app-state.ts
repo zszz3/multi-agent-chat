@@ -14,6 +14,7 @@ import type {
   WorkflowRunProgressItem,
 } from "../../../shared/types";
 import { DEFAULT_MODEL_ID, defaultChannelForAgent } from "../../../shared/models";
+import { runtimeLabel } from "../../../shared/runtime-catalog";
 import type { AgentProviderPreset } from "../../../shared/provider-presets";
 import { truncateWorkflowContext } from "../pages/workflow/workflow-utils";
 
@@ -81,14 +82,7 @@ export function createChannel(agentId: AgentId, existingIds: string[]): AgentCha
   return {
     id,
     agentId,
-    label:
-      agentId === "codex"
-        ? "New Codex Config"
-        : agentId === "claude"
-          ? "New Claude Config"
-          : agentId === "hermes"
-            ? "New Hermes Config"
-            : "New API Config",
+    label: `New ${runtimeLabel(agentId)} Config`,
     models: [{ id: DEFAULT_MODEL_ID, label: "Default" }],
   };
 }

@@ -2,6 +2,7 @@ import { mkdtemp, writeFile } from "node:fs/promises";
 import os from "node:os";
 import path from "node:path";
 import { afterEach, describe, expect, test, vi } from "vitest";
+import { RUNTIME_IDS } from "../shared/runtime-catalog";
 import { callMcpTool, mcpToolDefinitions, resolveBridgeDiscoveryPath } from "./server";
 
 const originalEnv = process.env.MULTI_AGENT_CHAT_MCP_BRIDGE;
@@ -31,6 +32,16 @@ describe("MCP server tools", () => {
       "workflow_context_append",
       "workflow_run_context_append",
     ]);
+  });
+
+  test("derives runtime enums from the canonical runtime catalog", () => {
+    const tools = mcpToolDefinitions();
+    for (const toolName of ["agents_create", "agents_update", "channels_list", "models_list", "workflow_create"]) {
+      const tool = tools.find((item) => item.name === toolName);
+      const properties = (tool?.inputSchema.properties ?? {}) as Record<string, { enum?: string[] }>;
+      const field = toolName === "agents_create" || toolName === "agents_update" ? "runtimeAgentId" : "agentId";
+      expect(properties[field]?.enum).toEqual(RUNTIME_IDS);
+    }
   });
 
   test("uses env override for bridge discovery", () => {
