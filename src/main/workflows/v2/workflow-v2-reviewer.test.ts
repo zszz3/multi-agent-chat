@@ -5,7 +5,9 @@ import {
   assertIndependentWorkflowV2Reviewer,
   createWorkflowV2ReviewerInput,
   isWorkflowV2ReviewVerdict,
+  parseWorkflowV2ReviewerResponse,
   resolveWorkflowV2ReviewVerdict,
+  workflowV2ReviewerPrompt,
 } from "./workflow-v2-reviewer";
 
 const node: WorkflowV2LLMNode = {
@@ -28,6 +30,49 @@ const rejectVerdict: WorkflowV2ReviewVerdict = {
 };
 
 describe("workflow-v2 reviewer", () => {
+  test("builds an independent review prompt and parses its structured verdict", () => {
+    const input = createWorkflowV2ReviewerInput({
+      node,
+      objective: "Ship a verified change",
+      output: {
+        nodeId: "implement",
+        summary: "Implemented with tests",
+        outputs: { patch: "diff" },
+        evidence: ["Regression test passed"],
+        proposals: [],
+      },
+    });
+    const prompt = workflowV2ReviewerPrompt(input);
+
+    expect(prompt).toContain("independent Workflow V2 reviewer");
+    expect(prompt).toContain('"executorNodeId":"implement"');
+    expect(parseWorkflowV2ReviewerResponse(JSON.stringify({
+      reviewerNodeId: "reviewer:implement",
+      verdict: {
+        decision: "accept",
+        reasons: ["Evidence matches the acceptance contract."],
+        riskLevel: "low",
+        confidence: "high",
+      },
+    }), "implement")).toMatchObject({
+      reviewerNodeId: "reviewer:implement",
+      verdict: { decision: "accept" },
+    });
+  });
+
+  test("rejects self-review and malformed reviewer payloads", () => {
+    expect(() => parseWorkflowV2ReviewerResponse(JSON.stringify({
+      reviewerNodeId: "implement",
+      verdict: {
+        decision: "accept",
+        reasons: ["Self approved."],
+        riskLevel: "low",
+        confidence: "high",
+      },
+    }), "implement")).toThrow("cannot certify its own output");
+    expect(() => parseWorkflowV2ReviewerResponse("not json", "implement")).toThrow("not valid JSON");
+  });
+
   test("builds independent reviewer data without worker control proposals", () => {
     const input = createWorkflowV2ReviewerInput({
       node,

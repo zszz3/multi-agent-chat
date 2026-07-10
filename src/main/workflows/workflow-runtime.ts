@@ -69,6 +69,7 @@ import type {
   WorkflowV2ExecutionLeaseState,
   WorkflowV2ProgressReport,
 } from "../../shared/workflow-v2/supervision";
+import type { WorkflowV2ReviewerInput, WorkflowV2ReviewerResponse } from "../../shared/workflow-v2/review";
 import {
   createWorkflowV2ExecutionLease,
   inspectWorkflowV2ExecutionLease,
@@ -83,6 +84,10 @@ import {
   workflowV2SupervisorDecisionPrompt,
 } from "./v2/workflow-v2-supervision-prompts";
 import { WorkflowV2SupervisionSignal } from "./v2/workflow-v2-supervision-signal";
+import {
+  parseWorkflowV2ReviewerResponse,
+  workflowV2ReviewerPrompt,
+} from "./v2/workflow-v2-reviewer";
 import {
   WORKFLOW_V2_STORAGE_SCHEMA_VERSION,
   type WorkflowV2CacheEntryMetadata,
@@ -1569,6 +1574,26 @@ export class WorkflowRuntime {
       return output;
     };
 
+    const reviewNodeOutput = async (reviewInput: WorkflowV2ReviewerInput): Promise<WorkflowV2ReviewerResponse> => {
+      const task = await startModelTask(`reviewer:${reviewInput.executorNodeId}`, {
+        prompt: workflowV2ReviewerPrompt(reviewInput),
+        configuredAgentId,
+        modelId,
+        workDir: workflowWorkDir,
+      });
+      updateNode(reviewInput.executorNodeId, {
+        status: "running",
+        detail: "Independent semantic review running",
+        taskId: task.id,
+      });
+      try {
+        const completedTask = await waitForTask(task.id, reviewInput.executorNodeId);
+        return parseWorkflowV2ReviewerResponse(taskArtifact(completedTask), reviewInput.executorNodeId);
+      } finally {
+        latestSnapshot = await this.deps.deleteTask(task.id);
+      }
+    };
+
     try {
       this.deps.updateWorkflowRunState({
         workflowId: workflow.workflowId,
@@ -1583,6 +1608,7 @@ export class WorkflowRuntime {
         ...(input.initialCheckpoint ? { initialCheckpoint: input.initialCheckpoint } : {}),
         runLlmNode,
         executeScript: runScriptNode,
+        reviewNodeOutput,
         onRunCheckpoint: persistExecutorCheckpoint,
         onNodeStateTransition: (transition) => {
           if (transition.status === "running") {

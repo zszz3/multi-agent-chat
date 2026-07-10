@@ -456,6 +456,59 @@ describe("WorkflowRuntime Workflow V2 bridge", () => {
     expect(fixture.startRequests).toEqual([fixture.workflow.workflowId]);
   });
 
+  test("runs an independent structured reviewer before accepting an important node", async () => {
+    const definition = workflowV2Definition();
+    const draftNode = definition.nodes[0]!;
+    if (draftNode.execModel !== "llm") throw new Error("test requires an llm node");
+    draftNode.judgeDimensions = [{ key: "correctness", description: "The draft must satisfy the objective." }];
+    definition.nodes = [draftNode];
+    definition.edges = [];
+    const fixture = await workflowV2RuntimeFixture({
+      definition,
+      taskFactory: (request, index) => ({
+        id: `task-${index}`,
+        title: request.prompt.includes("independent Workflow V2 reviewer") ? "Independent reviewer" : "Workflow worker",
+        status: "completed",
+        prompt: request.prompt,
+        configuredAgentId: request.configuredAgentId,
+        messages: [{
+          role: "assistant",
+          content: request.prompt.includes("independent Workflow V2 reviewer")
+            ? JSON.stringify({
+                reviewerNodeId: "reviewer:draft",
+                verdict: {
+                  decision: "accept",
+                  reasons: ["The draft output is supported by concrete evidence."],
+                  riskLevel: "low",
+                  evidence: ["draft evidence"],
+                  confidence: "high",
+                },
+              })
+            : JSON.stringify({
+                nodeId: "draft",
+                summary: "Draft ready for review",
+                outputs: { draft: "const reviewed = true;" },
+                evidence: ["draft evidence"],
+                proposals: [],
+              }),
+        }],
+        createdAt: index,
+        updatedAt: index,
+      } as TaskRun),
+      executeScript: async () => {
+        throw new Error("script runner should not be called");
+      },
+    });
+
+    fixture.runtime.runWorkflowGraph({ workflowId: fixture.workflow.workflowId });
+    const finished = await fixture.finished;
+
+    expect(finished.status).toBe("completed");
+    expect(fixture.taskRequests).toHaveLength(2);
+    expect(fixture.taskRequests[1]?.prompt).toContain("independent Workflow V2 reviewer");
+    expect(fixture.taskRequests[1]?.prompt).toContain('"executorNodeId":"draft"');
+  });
+
   test("probes, supervises, and resumes an llm task after its execution lease becomes inactive", async () => {
     const definition = workflowV2Definition();
     const draftNode = definition.nodes[0]!;

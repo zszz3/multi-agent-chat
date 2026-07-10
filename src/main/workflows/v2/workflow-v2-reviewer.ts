@@ -57,6 +57,46 @@ export function isWorkflowV2ReviewVerdict(value: unknown): value is WorkflowV2Re
   return isSharedWorkflowV2ReviewVerdict(value);
 }
 
+export function workflowV2ReviewerPrompt(input: WorkflowV2ReviewerInput): string {
+  return [
+    `Act as an independent Workflow V2 reviewer for executor node ${input.executorNodeId}.`,
+    "Do not continue the executor's work and do not certify based on its self-assessment.",
+    "Evaluate the result against the objective and constraints using only concrete evidence in the packet.",
+    "Return one JSON object with exactly this contract:",
+    '{"reviewerNodeId":"independent-reviewer","verdict":{"decision":"accept|reject|escalate","reasons":["string"],"requiredFixes":["optional string"],"riskLevel":"low|medium|high","evidence":["optional string"],"confidence":"high|medium|low"}}',
+    "Reviewer input:",
+    JSON.stringify(input),
+  ].join("\n\n");
+}
+
+export function parseWorkflowV2ReviewerResponse(
+  content: string,
+  executorNodeId: string,
+): WorkflowV2ReviewerResponse {
+  const normalized = content.trim();
+  const fenced = normalized.match(/^```(?:json)?\s*\n([\s\S]*?)\n```$/i);
+  const candidate = fenced?.[1]?.trim() ?? normalized;
+  let parsed: unknown;
+  try {
+    parsed = JSON.parse(candidate) as unknown;
+  } catch (error) {
+    const message = error instanceof Error ? error.message : String(error);
+    throw new Error(`Workflow V2 reviewer response is not valid JSON: ${message}`);
+  }
+  if (!isRecord(parsed)
+    || typeof parsed.reviewerNodeId !== "string"
+    || !parsed.reviewerNodeId.trim()
+    || !isWorkflowV2ReviewVerdict(parsed.verdict)) {
+    throw new Error("Workflow V2 reviewer response is malformed.");
+  }
+  const response: WorkflowV2ReviewerResponse = {
+    reviewerNodeId: parsed.reviewerNodeId.trim(),
+    verdict: cloneVerdict(parsed.verdict),
+  };
+  assertIndependentWorkflowV2Reviewer(executorNodeId, response);
+  return response;
+}
+
 function toResultPacket(output: WorkflowV2WorkerOutput): WorkflowV2ResultPacket {
   return {
     nodeId: output.nodeId,
@@ -70,4 +110,8 @@ function toResultPacket(output: WorkflowV2WorkerOutput): WorkflowV2ResultPacket 
 
 function cloneVerdict(verdict: WorkflowV2ReviewVerdict): WorkflowV2ReviewVerdict {
   return structuredClone(verdict);
+}
+
+function isRecord(value: unknown): value is Record<string, unknown> {
+  return typeof value === "object" && value !== null && !Array.isArray(value);
 }
