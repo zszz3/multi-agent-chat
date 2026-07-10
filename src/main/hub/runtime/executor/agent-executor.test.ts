@@ -185,6 +185,32 @@ describe("createRuntimeDriverRegistry", () => {
     expect(sharedHelperMocks.hermesChannelTest).toHaveBeenCalledWith(channelTestInput, options);
   });
 
+  test("runtime-local builders expose explicit surface support for onboarding", async () => {
+    const options = buildOptions();
+
+    vi.doUnmock("./codex/create-codex-driver");
+    vi.doUnmock("./claude/create-claude-driver");
+    vi.doUnmock("./api/create-api-driver");
+    vi.doUnmock("./hermes/create-hermes-driver");
+
+    const [
+      { createCodexDriver },
+      { createClaudeDriver },
+      { createApiDriver },
+      { createHermesDriver },
+    ] = await Promise.all([
+      import("./codex/create-codex-driver"),
+      import("./claude/create-claude-driver"),
+      import("./api/create-api-driver"),
+      import("./hermes/create-hermes-driver"),
+    ]);
+
+    expect(createCodexDriver(options).surfaceSupport.length).toBeGreaterThan(0);
+    expect(createClaudeDriver(options).surfaceSupport.length).toBeGreaterThan(0);
+    expect(createApiDriver(options).surfaceSupport.length).toBeGreaterThan(0);
+    expect(createHermesDriver(options).surfaceSupport.length).toBeGreaterThan(0);
+  });
+
   test("runtime-local wrapper modules forward arguments to shared helpers", async () => {
     const options = buildOptions();
     const workflowInput = {
