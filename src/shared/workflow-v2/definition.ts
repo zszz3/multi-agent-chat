@@ -5,6 +5,7 @@ export type WorkflowV2ScriptLanguage = "python" | "typescript" | "bash";
 export type WorkflowV2ScriptSandboxMode = "sandbox" | "workspace" | "full";
 export type WorkflowV2ExhaustedPolicy = "fail" | "skip" | "ask_human";
 export type WorkflowV2PassThreshold = "must" | "should" | "nice_to_have";
+export type WorkflowV2ValidationOutcome = "pass" | "retry" | "fail" | "ask_human";
 export type WorkflowV2TemplateParamValue = string | number | boolean | string[] | number[] | boolean[];
 
 export interface WorkflowV2OutputFieldDef {
@@ -157,4 +158,10 @@ export interface WorkflowV2ValidationResult {
   errors: string[];
   warnings: string[];
   topologicalNodeIds: string[];
+}
+
+export interface WorkflowV2NodeValidationResult {
+  outcome: WorkflowV2ValidationOutcome;
+  reasons: string[];
+  missingOutputFields: string[];
 }
