@@ -11,6 +11,7 @@ import type {
   WorkflowV2NodeRole,
   WorkflowV2ValidationResult,
 } from "./workflow-v2/definition";
+import type { WorkflowV2HumanIntervention } from "./workflow-v2/review";
 
 export type AgentId = "codex" | "claude" | "api" | "hermes";
 
@@ -577,6 +578,8 @@ export interface WorkflowEvent {
   question?: string;
   /** gate_answered: the human's answer that unblocks the node. */
   answer?: string;
+  /** node_paused: unified Workflow V2 intervention payload. */
+  intervention?: WorkflowV2HumanIntervention;
 }
 
 export type WorkflowStatus = "draft" | "running" | "completed" | "failed" | "stopped";

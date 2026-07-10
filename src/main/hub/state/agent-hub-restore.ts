@@ -10,6 +10,7 @@ import type {
   WorkflowRunProgressItem,
   WorkflowStatus,
 } from "../../../shared/types";
+import { isWorkflowV2HumanIntervention } from "../../../shared/workflow-v2/review";
 import {
   asArray,
   asNumber,
@@ -152,6 +153,9 @@ export function restoreWorkflowEvent(raw: unknown): WorkflowEvent | undefined {
   if (artifactRefs.length > 0) event.artifactRefs = artifactRefs;
   const error = asOptionalString(record.error);
   if (error) event.error = error;
+  if (record.intervention !== undefined && isWorkflowV2HumanIntervention(record.intervention)) {
+    event.intervention = structuredClone(record.intervention);
+  }
   return event;
 }
 

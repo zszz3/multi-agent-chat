@@ -6,7 +6,11 @@ import type {
   WorkflowV2SupervisorDecision,
   WorkflowV2SupervisorResolution,
 } from "../../../shared/workflow-v2/supervision";
-import { isWorkflowV2ExecutionLeasePolicy } from "../../../shared/workflow-v2/supervision";
+import {
+  isWorkflowV2ExecutionLeasePolicy,
+  isWorkflowV2ProgressReport as isSharedWorkflowV2ProgressReport,
+  isWorkflowV2SupervisorDecision as isSharedWorkflowV2SupervisorDecision,
+} from "../../../shared/workflow-v2/supervision";
 
 export function validateWorkflowV2ExecutionLeasePolicy(
   value: unknown,
@@ -59,31 +63,11 @@ export function inspectWorkflowV2ExecutionLease(input: {
 }
 
 export function isWorkflowV2ProgressReport(value: unknown): value is WorkflowV2ProgressReport {
-  if (!isRecord(value)) return false;
-  if (typeof value.nodeId !== "string" || !value.nodeId.trim()) return false;
-  if (!isPositiveInteger(value.attempt)) return false;
-  if (typeof value.phase !== "string" || !value.phase.trim()) return false;
-  if (!isStringArray(value.completedItems)) return false;
-  if (!isStringArray(value.remainingItems)) return false;
-  if (!isStringArray(value.blockers)) return false;
-  if (!isStringArray(value.evidence)) return false;
-  if (value.checkpoint !== undefined && (typeof value.checkpoint !== "string" || !value.checkpoint.trim())) return false;
-  if (value.estimatedRemainingMs !== undefined && !isNonNegativeFinite(value.estimatedRemainingMs)) return false;
-  if (typeof value.safeToInterrupt !== "boolean") return false;
-  if (value.requestedAction !== "continue" && value.requestedAction !== "need_input" && value.requestedAction !== "escalate") return false;
-  return isNonNegativeFinite(value.reportedAt);
+  return isSharedWorkflowV2ProgressReport(value);
 }
 
 export function isWorkflowV2SupervisorDecision(value: unknown): value is WorkflowV2SupervisorDecision {
-  if (!isRecord(value) || typeof value.reason !== "string" || !value.reason.trim()) return false;
-  if (value.action === "continue") return isPositiveInteger(value.extensionMs);
-  if (value.action === "retry") {
-    return value.fromCheckpoint === undefined
-      || (typeof value.fromCheckpoint === "string" && value.fromCheckpoint.trim().length > 0);
-  }
-  if (value.action === "escalate") return value.modelProfile === "expert";
-  if (value.action === "pause") return typeof value.question === "string" && value.question.trim().length > 0;
-  return value.action === "cancel";
+  return isSharedWorkflowV2SupervisorDecision(value);
 }
 
 export function assertWorkflowV2ProgressReportIdentity(
@@ -169,14 +153,6 @@ function assertLeasePolicy(policy: WorkflowV2ExecutionLeasePolicy): void {
 
 function assertSupervisorDecision(decision: WorkflowV2SupervisorDecision): void {
   if (!isWorkflowV2SupervisorDecision(decision)) throw new Error("Workflow V2 supervisor decision is malformed.");
-}
-
-function isRecord(value: unknown): value is Record<string, unknown> {
-  return typeof value === "object" && value !== null && !Array.isArray(value);
-}
-
-function isStringArray(value: unknown): value is string[] {
-  return Array.isArray(value) && value.every((item) => typeof item === "string");
 }
 
 function isPositiveInteger(value: unknown): value is number {

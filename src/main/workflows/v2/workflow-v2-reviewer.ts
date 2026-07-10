@@ -8,6 +8,7 @@ import type {
   WorkflowV2ReviewRetryPolicy,
   WorkflowV2ReviewVerdict,
 } from "../../../shared/workflow-v2/review";
+import { isWorkflowV2ReviewVerdict as isSharedWorkflowV2ReviewVerdict } from "../../../shared/workflow-v2/review";
 
 export function createWorkflowV2ReviewerInput(input: {
   node: WorkflowV2Node;
@@ -53,13 +54,7 @@ export function resolveWorkflowV2ReviewVerdict(
 }
 
 export function isWorkflowV2ReviewVerdict(value: unknown): value is WorkflowV2ReviewVerdict {
-  if (!isRecord(value)) return false;
-  if (value.decision !== "accept" && value.decision !== "reject" && value.decision !== "escalate") return false;
-  if (!isStringArray(value.reasons)) return false;
-  if (value.requiredFixes !== undefined && !isStringArray(value.requiredFixes)) return false;
-  if (value.riskLevel !== "low" && value.riskLevel !== "medium" && value.riskLevel !== "high") return false;
-  if (value.evidence !== undefined && !isStringArray(value.evidence)) return false;
-  return value.confidence === "high" || value.confidence === "medium" || value.confidence === "low";
+  return isSharedWorkflowV2ReviewVerdict(value);
 }
 
 function toResultPacket(output: WorkflowV2WorkerOutput): WorkflowV2ResultPacket {
@@ -75,12 +70,4 @@ function toResultPacket(output: WorkflowV2WorkerOutput): WorkflowV2ResultPacket 
 
 function cloneVerdict(verdict: WorkflowV2ReviewVerdict): WorkflowV2ReviewVerdict {
   return structuredClone(verdict);
-}
-
-function isRecord(value: unknown): value is Record<string, unknown> {
-  return typeof value === "object" && value !== null && !Array.isArray(value);
-}
-
-function isStringArray(value: unknown): value is string[] {
-  return Array.isArray(value) && value.every((item) => typeof item === "string");
 }

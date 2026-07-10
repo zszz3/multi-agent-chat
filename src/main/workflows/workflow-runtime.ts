@@ -1237,6 +1237,7 @@ export class WorkflowRuntime {
               type: "node_paused",
               nodeId: transition.nodeId,
               detail: transition.intervention.reason,
+              intervention: transition.intervention,
             }, true);
           } else {
             updateNode(transition.nodeId, { status: "failed", detail: transition.error }, {

@@ -80,7 +80,7 @@ export function cloneWorkflowRun(run: WorkflowRunState): WorkflowRunState {
       ...(item.detail !== undefined ? { detail: item.detail } : {}),
       ...(item.taskId !== undefined ? { taskId: item.taskId } : {}),
     })),
-    events: run.events.map((event) => ({ ...event })),
+    events: run.events.map((event) => structuredClone(event)),
     contextDocument: run.contextDocument,
     ...(run.finalReport !== undefined ? { finalReport: run.finalReport } : {}),
     startedAt: run.startedAt,

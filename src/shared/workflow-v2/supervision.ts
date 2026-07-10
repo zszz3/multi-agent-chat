@@ -70,6 +70,34 @@ export function isWorkflowV2ExecutionLeasePolicy(value: unknown): value is Workf
   return value.softTimeoutMs < value.hardTimeoutMs;
 }
 
+export function isWorkflowV2ProgressReport(value: unknown): value is WorkflowV2ProgressReport {
+  if (!isRecord(value)) return false;
+  if (typeof value.nodeId !== "string" || !value.nodeId.trim()) return false;
+  if (!isPositiveInteger(value.attempt)) return false;
+  if (typeof value.phase !== "string" || !value.phase.trim()) return false;
+  if (!isStringArray(value.completedItems)) return false;
+  if (!isStringArray(value.remainingItems)) return false;
+  if (!isStringArray(value.blockers)) return false;
+  if (!isStringArray(value.evidence)) return false;
+  if (value.checkpoint !== undefined && (typeof value.checkpoint !== "string" || !value.checkpoint.trim())) return false;
+  if (value.estimatedRemainingMs !== undefined && !isNonNegativeFinite(value.estimatedRemainingMs)) return false;
+  if (typeof value.safeToInterrupt !== "boolean") return false;
+  if (value.requestedAction !== "continue" && value.requestedAction !== "need_input" && value.requestedAction !== "escalate") return false;
+  return isNonNegativeFinite(value.reportedAt);
+}
+
+export function isWorkflowV2SupervisorDecision(value: unknown): value is WorkflowV2SupervisorDecision {
+  if (!isRecord(value) || typeof value.reason !== "string" || !value.reason.trim()) return false;
+  if (value.action === "continue") return isPositiveInteger(value.extensionMs);
+  if (value.action === "retry") {
+    return value.fromCheckpoint === undefined
+      || (typeof value.fromCheckpoint === "string" && value.fromCheckpoint.trim().length > 0);
+  }
+  if (value.action === "escalate") return value.modelProfile === "expert";
+  if (value.action === "pause") return typeof value.question === "string" && value.question.trim().length > 0;
+  return value.action === "cancel";
+}
+
 function isRecord(value: unknown): value is Record<string, unknown> {
   return typeof value === "object" && value !== null && !Array.isArray(value);
 }
@@ -80,4 +108,12 @@ function isPositiveInteger(value: unknown): value is number {
 
 function isNonNegativeInteger(value: unknown): value is number {
   return typeof value === "number" && Number.isSafeInteger(value) && value >= 0;
+}
+
+function isNonNegativeFinite(value: unknown): value is number {
+  return typeof value === "number" && Number.isFinite(value) && value >= 0;
+}
+
+function isStringArray(value: unknown): value is string[] {
+  return Array.isArray(value) && value.every((item) => typeof item === "string");
 }
