@@ -25,6 +25,7 @@ export async function runClaudeWorkflow(
   let completedContent: string | undefined;
   let runtimeConversation = input.runtimeConversation ? cloneClaudeRuntimeConversation(input.runtimeConversation) : undefined;
   let errorMessage: string | undefined;
+  const mcpServers = options.claudeWorkflowMcpServers?.();
 
   try {
     await runClaudeOneShot({
@@ -33,6 +34,7 @@ export async function runClaudeWorkflow(
       ...(sdkModel ? { modelId: sdkModel } : {}),
       developerInstructions: WORKFLOW_DEVELOPER_INSTRUCTIONS,
       ...(resumeSessionId ? { resumeSessionId } : {}),
+      ...(mcpServers ? { mcpServers } : {}),
       onEvent: (event) => {
         if (event.type === "delta") {
           content += event.content;

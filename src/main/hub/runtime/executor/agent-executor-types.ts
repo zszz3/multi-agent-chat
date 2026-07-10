@@ -8,6 +8,7 @@ import type {
 } from "../../../../shared/types";
 import type { ClaudeAgentSdkRunInput } from "../../../agents/claude/claude-agent-sdk";
 import type { CodexRpcClient } from "../../../agents/codex/codex-rpc";
+import type { CodexServerRequestOptions } from "../../codex/agent-hub-codex-app";
 import type {
   RuntimeChannelTestContext,
   RuntimeSessionCleanupContext,
@@ -43,7 +44,10 @@ export interface RuntimeAgentExecutorFactoryOptions {
     id: number,
     method: string,
     params: Record<string, unknown>,
+    options?: CodexServerRequestOptions,
   ) => void;
+  codexWorkflowExtraArgs?: () => string[];
+  claudeWorkflowMcpServers?: () => ClaudeAgentSdkRunInput["mcpServers"] | undefined;
   runClaudeOneShot?: (input: ClaudeAgentSdkRunInput) => Promise<void>;
   askWorkflowByRuntime?: Partial<Record<AgentId, (input: RuntimeWorkflowRequestContext) => Promise<WorkflowAgentResponse>>>;
   testChannelByRuntime?: Partial<Record<AgentId, (input: RuntimeChannelTestContext) => Promise<string>>>;
@@ -52,4 +56,10 @@ export interface RuntimeAgentExecutorFactoryOptions {
 
 export function modelFromRuntimeConfig(runtimeConfig: RuntimeRequest["runtimeConfig"]): string {
   return runtimeConfig.model;
+}
+
+export function reasoningEffortFromRuntimeConfig(
+  runtimeConfig: RuntimeRequest["runtimeConfig"],
+): string | undefined {
+  return typeof runtimeConfig.reasoningEffort === "string" ? runtimeConfig.reasoningEffort : undefined;
 }

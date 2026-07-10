@@ -1,5 +1,5 @@
 import { useEffect, useMemo, useState } from "react";
-import { Bot, FolderOpen, MessageSquareText, Save, Send, X } from "lucide-react";
+import { Bot, FolderOpen, MessageSquareText, Save, Send, Trash2, X } from "lucide-react";
 import { ONLINE_SKILL_SOURCES, fetchOnlineSkills, type OnlineSkillResult } from "../../../../shared/online-skills";
 import type { ConfiguredAgent, ImportedSkillResult, InstalledSkillResult, RuntimeConversation, SkillInstallTarget, SkillTemplate, UninstalledSkillResult } from "../../../../shared/types";
 import { resolveFindSkillConfiguredAgentId } from "../../app/agents";
@@ -41,21 +41,27 @@ function targetLabel(target: SkillInstallTarget): string {
 
 export function SkillsPage({
   language,
+  officialSkills = [],
+  userSkills = [],
   templates,
   configuredAgents = [],
   onImportOnlineSkill,
   onRevealSkillInFinder,
   onInstallSkill,
   onUninstallSkill,
+  onDeleteUserSkill,
   defaultFindSkillChatOpen = false,
 }: {
   language: Language;
-  templates: SkillTemplate[];
+  officialSkills?: SkillTemplate[];
+  userSkills?: SkillTemplate[];
+  templates?: SkillTemplate[];
   configuredAgents?: ConfiguredAgent[];
   onImportOnlineSkill?: (skill: OnlineSkillResult) => Promise<ImportedSkillResult>;
   onRevealSkillInFinder?: (filePath: string) => Promise<void>;
-  onInstallSkill?: (templateId: string, target: SkillInstallTarget) => Promise<InstalledSkillResult>;
+  onInstallSkill?: (templateId: string, target: SkillInstallTarget, sourceType: "official" | "user") => Promise<InstalledSkillResult>;
   onUninstallSkill?: (templateId: string, target: SkillInstallTarget) => Promise<UninstalledSkillResult>;
+  onDeleteUserSkill?: (templateId: string) => Promise<void>;
   defaultFindSkillChatOpen?: boolean;
 }) {
   const title = language === "zh" ? "技能库" : "Skill library";
@@ -63,13 +69,14 @@ export function SkillsPage({
   const noConfiguredAgents = language === "zh" ? "暂无配置的 Agent" : "No configured agents";
   const description =
     language === "zh"
-      ? `${templates.length} 个内置技能，随应用开箱即用；需要线上候选时可让 Find skill 帮你找。`
-      : `${templates.length} bundled skills, ready to use. Use Find skill when you need online candidates.`;
+      ? `${officialSkills.length} 个官方技能，${userSkills.length} 个我的技能。`
+      : `${officialSkills.length} official skills and ${userSkills.length} user skills.`;
   const localDescription =
     language === "zh"
       ? "内置技能随应用一起维护。第三方 skill 只会通过 Find skill 候选预览，不会自动安装。"
       : "Bundled skills are maintained with the app. Third-party skills are only previewed through Find skill candidates and are never installed automatically.";
-  const localTitle = language === "zh" ? "内置技能" : "Bundled skills";
+  const officialTitle = language === "zh" ? "官方技能" : "Official skills";
+  const userTitle = language === "zh" ? "我的技能" : "My skills";
   const searchingText = language === "zh" ? "搜索中..." : "Searching...";
   const localInstall = language === "zh" ? "本地安装" : "Local install";
   const installLinks = language === "zh" ? "安装/更新链接" : "Install/update links";
@@ -105,16 +112,21 @@ export function SkillsPage({
   const [findSkillMessages, setFindSkillMessages] = useState<Array<{ id: string; role: "assistant" | "user" | "error"; content: string }>>(() => [
     { id: "find-skill-welcome", role: "assistant", content: findSkillWelcome },
   ]);
-  const localSkillItems = useMemo(
-    () => templates.map((template) => ({ ...template, itemKey: `local:${template.id}`, kind: "local" as const })),
-    [templates],
+  const legacyOfficialSkills = templates ?? [];
+  const officialSkillItems = useMemo(
+    () => [...officialSkills, ...legacyOfficialSkills].map((template) => ({ ...template, sourceType: "official" as const, itemKey: `official:${template.id}`, kind: "official" as const })),
+    [legacyOfficialSkills, officialSkills],
+  );
+  const userSkillItems = useMemo(
+    () => userSkills.map((template) => ({ ...template, sourceType: "user" as const, itemKey: `user:${template.id}`, kind: "user" as const })),
+    [userSkills],
   );
   const onlineSkillItems = useMemo(
     () => onlineResults.map((skill) => ({ ...skill, itemKey: `online:${skill.id}`, kind: "online" as const })),
     [onlineResults],
   );
   const selectedOnlineSkill = onlineSkillItems.find((skill) => skill.itemKey === selectedOnlineSkillKey);
-  const selectedSkill = selectedOnlineSkill ?? localSkillItems.find((skill) => skill.itemKey === selectedSkillKey) ?? localSkillItems[0];
+  const selectedSkill = selectedOnlineSkill ?? officialSkillItems.find((skill) => skill.itemKey === selectedSkillKey) ?? userSkillItems.find((skill) => skill.itemKey === selectedSkillKey) ?? officialSkillItems[0] ?? userSkillItems[0];
   const selectedSkillSourceUrl = selectedSkill ? (selectedSkill.kind === "online" ? selectedSkill.url : selectedSkill.sourceUrl) : undefined;
   const selectedSkillSourcePath = selectedSkill ? (selectedSkill.kind === "online" ? selectedSkill.path : selectedSkill.sourcePath) : undefined;
   const activeFindSkillConfiguredAgentId = resolveFindSkillConfiguredAgentId(findSkillConfiguredAgentId, configuredAgents);
@@ -261,7 +273,7 @@ export function SkillsPage({
   }
 
   async function applyInstallSelection(action: "install" | "uninstall"): Promise<void> {
-    if (!selectedSkill || selectedSkill.kind !== "local" || !onInstallSkill) return;
+    if (!selectedSkill || selectedSkill.kind === "online" || !onInstallSkill) return;
     const targets = selectedInstallTargets;
     if (targets.length === 0) return;
     setInstallAction(action);
@@ -272,7 +284,7 @@ export function SkillsPage({
       for (const target of targets) {
         setInstallingTarget(target);
         if (action === "install") {
-          const result = await onInstallSkill(selectedSkill.id, target);
+          const result = await onInstallSkill(selectedSkill.id, target, selectedSkill.sourceType);
           results.push(`${targetLabel(target)}: ${result.path}`);
         } else {
           if (!onUninstallSkill) throw new Error("技能卸载能力需要重启应用后生效。");
@@ -333,18 +345,38 @@ export function SkillsPage({
         <aside className="skill-list-panel">
           <div className="skill-list-head">
             <div>
-              <h3>{localTitle}</h3>
+              <h3>{officialTitle}</h3>
               <p>{localDescription}</p>
             </div>
-            <span>{localSkillItems.length}</span>
+            <span>{officialSkillItems.length + userSkillItems.length}</span>
           </div>
           <div className="skill-list-scroll" aria-label="Skill list">
-            {localSkillItems.length === 0 ? (
+            {officialSkillItems.length === 0 && userSkillItems.length === 0 ? (
               <div className="empty-state config-empty">{noSkills}</div>
             ) : (
               <div className="skill-list-group">
-                <span>{localTitle}</span>
-                {localSkillItems.map((skill) => (
+                {officialSkillItems.length > 0 ? <span>{officialTitle}</span> : null}
+                {officialSkillItems.map((skill) => (
+                  <button
+                    key={skill.itemKey}
+                    className={`skill-list-item ${selectedSkill?.itemKey === skill.itemKey ? "is-active" : ""}`}
+                    type="button"
+                    onClick={() => {
+                      setSelectedSkillKey(skill.itemKey);
+                      setSelectedOnlineSkillKey(undefined);
+                      setInstallStatus("");
+                      setInstallStatusTone(undefined);
+                      setTranslationStatus("");
+                      setShowTranslatedSkill(false);
+                    }}
+                  >
+                    <strong>{skillDisplayName(skill)}</strong>
+                    <small>{skillDisplayDescription(skill)}</small>
+                    <span>{skill.tags.join(", ")}</span>
+                  </button>
+                ))}
+                {userSkillItems.length > 0 ? <span>{userTitle}</span> : null}
+                {userSkillItems.map((skill) => (
                   <button
                     key={skill.itemKey}
                     className={`skill-list-item ${selectedSkill?.itemKey === skill.itemKey ? "is-active" : ""}`}
@@ -373,7 +405,7 @@ export function SkillsPage({
             <>
               <header className="skill-detail-head">
                 <div>
-                  <span>{selectedSkill.sourceLabel ?? (selectedSkill.kind === "online" ? selectedSkill.sourceLabel : localTitle)}</span>
+                  <span>{selectedSkill.sourceLabel ?? (selectedSkill.kind === "official" ? officialTitle : selectedSkill.kind === "user" ? userTitle : selectedSkill.sourceLabel)}</span>
                   <h3>{skillDisplayName(selectedSkill)}</h3>
                   <p>{skillDisplayDescription(selectedSkill)}</p>
                 </div>
@@ -385,7 +417,7 @@ export function SkillsPage({
               </div>
               <div className="skill-detail-body-head">
                 <div>
-                  {selectedSkill.kind === "local" && selectedSkillSourcePath && onRevealSkillInFinder ? (
+                  {selectedSkill.kind !== "online" && selectedSkillSourcePath && onRevealSkillInFinder ? (
                     <button
                       className="control-btn compact secondary"
                       type="button"
@@ -408,10 +440,31 @@ export function SkillsPage({
                       {sourceUrlLabel(selectedSkillSourceUrl)}
                     </a>
                   ) : null}
-                  {selectedSkill.kind === "local" && onInstallSkill ? (
+                  {selectedSkill.kind !== "online" && onInstallSkill ? (
                     <button className="control-btn compact skill-install-trigger" type="button" onClick={() => setInstallDialogOpen(true)} disabled={Boolean(installingTarget)}>
                       <Save size={13} />
                       <span>{localInstall}</span>
+                    </button>
+                  ) : null}
+                  {selectedSkill.kind === "user" && onDeleteUserSkill ? (
+                    <button
+                      className="control-btn compact danger"
+                      type="button"
+                      onClick={() => {
+                        void onDeleteUserSkill(selectedSkill.id)
+                          .then(() => {
+                            setSelectedSkillKey(undefined);
+                            setInstallStatus(language === "zh" ? "已删除我的技能。" : "User skill deleted.");
+                            setInstallStatusTone("success");
+                          })
+                          .catch((error) => {
+                            setInstallStatus(error instanceof Error ? error.message : String(error));
+                            setInstallStatusTone("error");
+                          });
+                      }}
+                    >
+                      <Trash2 size={13} />
+                      <span>{language === "zh" ? "删除" : "Delete"}</span>
                     </button>
                   ) : null}
                 </div>
@@ -421,7 +474,7 @@ export function SkillsPage({
               </div>
               {translationStatus ? <div className="skill-translation-note">{translationStatus}</div> : null}
               <MarkdownDocument className="skill-detail-body" text={showTranslatedSkill && selectedSkill.translationZh ? selectedSkill.translationZh : selectedSkill.prompt} />
-              {installDialogOpen && selectedSkill.kind === "local" ? (
+              {installDialogOpen && selectedSkill.kind !== "online" ? (
                 <div className="skill-install-modal-backdrop" role="presentation" onClick={() => setInstallDialogOpen(false)}>
                   <section className="skill-install-modal" role="dialog" aria-modal="true" aria-label={localInstall} onClick={(event) => event.stopPropagation()}>
                     <header>

@@ -1,5 +1,7 @@
 import type { AgentChannel, AgentId, RuntimeRequest } from "../../../../../shared/types";
 import type { CodexRpcClient } from "../../../../agents/codex/codex-rpc";
+import type { ClaudeAgentSdkRunInput } from "../../../../agents/claude/claude-agent-sdk";
+import type { CodexServerRequestOptions } from "../../../codex/agent-hub-codex-app";
 
 export const WORKFLOW_AGENT_IDLE_TIMEOUT_MS = 10 * 60_000;
 export const WORKFLOW_DEVELOPER_INSTRUCTIONS =
@@ -13,7 +15,10 @@ export interface RuntimeWorkflowExecutionOptions {
     id: number,
     method: string,
     params: Record<string, unknown>,
+    options?: CodexServerRequestOptions,
   ) => void;
+  codexWorkflowExtraArgs?: () => string[];
+  claudeWorkflowMcpServers?: () => ClaudeAgentSdkRunInput["mcpServers"] | undefined;
 }
 
 export function modelFromRuntimeConfig(runtimeConfig: RuntimeRequest["runtimeConfig"]): string {

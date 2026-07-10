@@ -16,6 +16,7 @@ import {
   WORKFLOW_AGENT_IDLE_TIMEOUT_MS,
   WORKFLOW_DEVELOPER_INSTRUCTIONS,
 } from "./agent-executor-workflow-shared";
+import { reasoningEffortFromRuntimeConfig } from "../agent-executor-types";
 
 export async function runCodexWorkflow(
   input: RuntimeWorkflowRequestContext,
@@ -47,7 +48,14 @@ export async function runCodexWorkflow(
     client = new CodexRpcClient({
       executable,
       cwd: input.workDir,
-      extraArgs: codexAppServerConfigArgs(channel, modelFromRuntimeConfig(input.runtimeConfig)),
+      extraArgs: [
+        ...codexAppServerConfigArgs(
+          channel,
+          modelFromRuntimeConfig(input.runtimeConfig),
+          reasoningEffortFromRuntimeConfig(input.runtimeConfig),
+        ),
+        ...(options.codexWorkflowExtraArgs?.() ?? []),
+      ],
       env: codexEnvironmentForChannel(channel),
       onEvent: (event) => {
         timeout?.refresh();
@@ -73,7 +81,20 @@ export async function runCodexWorkflow(
         }
       },
       onRequest: (id, method, params) => {
-        if (client) options.respondToCodexServerRequest(client, id, method, params);
+        if (client) {
+          options.respondToCodexServerRequest(client, id, method, params, {
+            onWorkflowGraph: ({ graph, workflowId, revision }) => {
+              input.onEvent?.({
+                requestId: input.requestId,
+                type: "workflow_graph",
+                graph,
+                content: "Workflow graph created through MCP.",
+                ...(workflowId ? { workflowId } : {}),
+                ...(revision !== undefined ? { revision } : {}),
+              });
+            },
+          });
+        }
       },
       onExit: (_code, _signal, stderr) => {
         if (settled) return;

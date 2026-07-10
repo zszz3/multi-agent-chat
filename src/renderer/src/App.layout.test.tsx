@@ -10,9 +10,8 @@ import {
   ChatHistoryPanel,
   chatConfigLocked,
   ChatControls,
-  ConfigPage,
+  AgentPage,
   RuntimePage,
-  SettingsPage,
   ScheduledWorkflowPage,
   SkillsPage,
   applySkillTemplate,
@@ -45,6 +44,7 @@ import {
   resolveConfiguredAgentChannel,
   reorderTeamMembers,
   taskDetailIdFor,
+  navigateWithRuntimeSave,
   TaskPage,
   TaskStatusFilter,
   TeamPage,
@@ -182,6 +182,21 @@ const codexPluginCatalog: CodexPluginCatalogItem[] = [
     enabled: false,
   },
 ];
+
+test("guards only navigation away from the Runtime page", async () => {
+  const navigated: string[] = [];
+  let confirmations = 0;
+  const confirm = async () => {
+    confirmations += 1;
+    return false;
+  };
+
+  await navigateWithRuntimeSave("chat", "workflow", confirm, (feature) => navigated.push(feature));
+  await navigateWithRuntimeSave("runtimes", "skills", confirm, (feature) => navigated.push(feature));
+
+  expect(confirmations).toBe(1);
+  expect(navigated).toEqual(["workflow"]);
+});
 
 const taskRuns: TaskRun[] = [
   {
@@ -421,6 +436,7 @@ describe("ChatControls", () => {
     expect(appShellClass("tasks")).toBe("shell tasks-shell");
     expect(appShellClass("schedules")).toBe("shell schedules-shell");
     expect(appShellClass("skills")).toBe("shell skills-shell");
+    expect(appShellClass("agent")).toBe("shell agent-shell");
     expect(appShellClass("runtimes")).toBe("shell runtimes-shell");
     expect(appShellClass("chat")).toBe("shell");
   });
@@ -976,12 +992,53 @@ describe("Sidebar history panels", () => {
     expect(html).toContain("aria-label=\"Rename workflow\"");
     expect(html).toContain("value=\"Review payment release\"");
   });
+
+  test("separates official and user workflow history", () => {
+    const base = {
+      objective: "Run",
+      status: "draft" as const,
+      revision: 1,
+      graph: workflowPanelGraph,
+      graphReady: true,
+      messages: [],
+      reply: "",
+      error: undefined,
+      runProgress: [],
+      runContextDocument: "",
+      contextDocument: "",
+      runIds: [],
+      configuredAgentId: "repo-reviewer",
+      modelId: "gpt-5.5",
+      createdAt: 1,
+      updatedAt: 1,
+    };
+    const html = renderToStaticMarkup(
+      <WorkflowHistoryPanel
+        workflows={[
+          { ...base, workflowId: "official", title: "Official release", sourceType: "official", topologyLocked: true },
+          { ...base, workflowId: "user", title: "My release", sourceType: "user", topologyLocked: false },
+        ]}
+        activeWorkflowId="official"
+        onSelectWorkflow={() => undefined}
+        onNewWorkflow={() => undefined}
+      />,
+    );
+
+    expect(html).toContain("Official workflows");
+    expect(html).toContain("My workflows");
+    expect(html.indexOf("Official release")).toBeLessThan(html.indexOf("My release"));
+  });
 });
 
-describe("ConfigPage", () => {
+describe("AgentPage", () => {
+  test("scopes the two-column agent editor without changing runtime forms", () => {
+    expect(styles).toContain(".config-form {\n  display: grid;\n  grid-template-columns: minmax(0, 1fr);");
+    expect(styles).toContain(".agent-page .config-form {\n  grid-template-columns: minmax(210px, 260px) minmax(0, 1fr);");
+  });
+
   test("renders agent profile controls without runtime provider settings", () => {
     const html = renderToStaticMarkup(
-      <ConfigPage
+      <AgentPage
         channels={channels}
         configuredAgents={configuredAgents}
         selectedConfiguredAgentId="repo-reviewer"
@@ -1020,6 +1077,8 @@ describe("ConfigPage", () => {
     expect(html).not.toContain(">Import template<");
     expect(html).not.toContain(">导入模板<");
     expect(html).toContain("Repo Reviewer");
+    expect(html).toContain("configured-agent-browser");
+    expect(html).toContain("aria-label=\"Agent runtime\"");
     expect(html).toContain("aria-label=\"Agent execution config\"");
     expect(html).toContain("Codex OpenAI · Codex");
     expect(html).toContain("aria-label=\"Agent model\"");
@@ -1028,6 +1087,40 @@ describe("ConfigPage", () => {
     expect(html).not.toContain(">Test<");
     expect(html).toContain("configured-agent-editor-actions");
     expect(html).toContain(">Save<");
+  });
+
+  test("renders model-specific Codex reasoning efforts", () => {
+    const modelChannel: AgentChannel = {
+      ...channels[0]!,
+      models: [{
+        id: "gpt-5.6-sol",
+        label: "GPT-5.6-Sol",
+        reasoningEfforts: ["low", "medium", "high", "xhigh", "max", "ultra"],
+        defaultReasoningEffort: "low",
+      }],
+    };
+    const agent: ConfiguredAgent = {
+      ...configuredAgents[0]!,
+      modelId: "gpt-5.6-sol",
+      reasoningEffort: "xhigh",
+    };
+
+    const html = renderToStaticMarkup(
+      <AgentPage
+        channels={[modelChannel]}
+        configuredAgents={[agent]}
+        selectedConfiguredAgentId={agent.id}
+        status=""
+        onSave={async () => undefined}
+        onAddConfiguredAgent={() => undefined}
+        onSelectConfiguredAgent={() => undefined}
+        onUpdateConfiguredAgent={() => undefined}
+      />,
+    );
+
+    expect(html).toContain('aria-label="Agent reasoning effort"');
+    expect(html).toContain('<option value="xhigh" selected="">XHigh</option>');
+    expect(html).toContain('<option value="ultra">Ultra</option>');
   });
 
   test("renders runtime provider settings separately from agent profile settings", () => {
@@ -1153,6 +1246,11 @@ describe("ConfigPage", () => {
     );
 
     expect(html).toContain(">Default<");
+    expect(html).toContain('aria-label="Refresh model catalog"');
+    expect(html).toContain('aria-label="Provider presets"');
+    expect(html).toContain('class="agent-provider-catalog"');
+    expect(html).toContain('<details class="agent-provider-presets agent-provider-disclosure" open="">');
+    expect(html).not.toContain('class="agent-provider-select"');
   });
 
   test("renders runtime config status messages", () => {
@@ -1248,7 +1346,7 @@ describe("ConfigPage", () => {
       />,
     );
 
-    expect(html).toContain("value=\"sk-default\"");
+    expect(html).not.toContain('aria-label="Provider API key"');
     expect(html).not.toContain("value=\"stale-key\"");
     expect(html).toContain("value=\"Bridge\"");
     expect(html).toContain("value=\"bridge\"");
@@ -1494,12 +1592,13 @@ describe("ConfigPage", () => {
     );
 
     expect(html).toContain("Claude Code");
+    expect(html).toContain('class="agent-provider-option is-active" aria-pressed="true" title="Claude Official">Claude Official</button>');
     expect(html).toContain(">DeepSeek<");
-    expect(html).toContain(">GLM<");
+    expect(html).toContain(">Zhipu GLM<");
     expect(html).toContain(">Kimi<");
     expect(html).toContain(">SiliconFlow<");
     expect(html).toContain(">Bailian<");
-    expect(html).toContain(">Volcengine<");
+    expect(html).toContain(">DouBaoSeed<");
     expect(html).toContain(">Custom<");
   });
 
@@ -1749,35 +1848,6 @@ describe("ConfigPage", () => {
     expect(resume?.translationZh).toContain("# 简历优化");
     expect(SKILL_TEMPLATES.find((template) => template.id === "systematic-debugging")?.translationZh).toContain("# 系统化调试");
     expect(SKILL_TEMPLATES.find((template) => template.id === "code-review-and-quality")?.translationZh).toContain("# 代码评审与质量");
-  });
-
-  test("renders language controls without a duplicate settings sidebar", () => {
-    const html = renderToStaticMarkup(<SettingsPage language="zh" onLanguageChange={() => undefined} />);
-
-    expect(html).toContain("settings-page");
-    expect(html).not.toContain("settings-sidebar");
-    expect(html).toContain("语言");
-    expect(html).toContain("aria-label=\"Language\"");
-    expect(html).toContain("统一中文");
-    expect(html).toContain("English");
-  });
-
-  test("renders a keep-awake control for scheduled local task execution", () => {
-    const html = renderToStaticMarkup(
-      <SettingsPage
-        language="zh"
-        onLanguageChange={() => undefined}
-        {...({
-          keepAwake: true,
-          onKeepAwakeChange: () => undefined,
-        } as Record<string, unknown>)}
-      />,
-    );
-
-    expect(html).toContain("保持唤醒");
-    expect(html).toContain("定时任务");
-    expect(html).toContain("aria-label=\"Keep awake for scheduled tasks\"");
-    expect(html).toContain("checked=\"\"");
   });
 
   test("renders scheduled workflow runner status, schedules, and run history", () => {
@@ -2069,7 +2139,7 @@ describe("ConfigPage", () => {
     expect(nextAgent.modelId).toBe(DEFAULT_MODEL_ID);
   });
 
-  test("offers Doubao Seed Lite in the Volcengine API and Codex presets", () => {
+  test("keeps the API catalog and follows CC Switch for the latest Codex Doubao model", () => {
     const apiPreset = AGENT_PROVIDER_PRESETS.find((preset) => preset.id === "api-volcengine");
     const codexPreset = AGENT_PROVIDER_PRESETS.find((preset) => preset.id === "codex-volcengine");
     const volcengineModels = [...(apiPreset?.models ?? []), ...(codexPreset?.models ?? [])];
@@ -2078,8 +2148,7 @@ describe("ConfigPage", () => {
     expect(codexPreset?.baseUrl).toBe("https://ark.cn-beijing.volces.com/api/v3");
     expect(apiPreset?.models).toContainEqual({ id: "doubao-seed-1-6-lite-251015", label: "Doubao Seed 1.6 Lite" });
     expect(apiPreset?.models).toContainEqual({ id: "doubao-seed-2-0-lite-260428", label: "Doubao Seed 2.0 Lite" });
-    expect(codexPreset?.models).toContainEqual({ id: "doubao-seed-1-6-lite-251015", label: "Doubao Seed 1.6 Lite" });
-    expect(codexPreset?.models).toContainEqual({ id: "doubao-seed-2-0-lite-260428", label: "Doubao Seed 2.0 Lite" });
+    expect(codexPreset?.models).toContainEqual({ id: "doubao-seed-2-1-pro-260628", label: "doubao-seed-2-1-pro-260628" });
     expect(volcengineModels.every((model) => !model.id.startsWith("ep-m-"))).toBe(true);
   });
 
@@ -2111,6 +2180,25 @@ describe("ConfigPage", () => {
     });
   });
 
+  test("drops models from the previous provider when switching to Claude Official", () => {
+    const claudeOfficial = AGENT_PROVIDER_PRESETS.find((preset) => preset.id === "claude-code")!;
+    const qwenChannel: AgentChannel = {
+      id: "claude-code",
+      agentId: "claude",
+      label: "Claude Qwen",
+      presetId: "claude-code-bailian",
+      models: [
+        { id: DEFAULT_MODEL_ID, label: "Default" },
+        { id: "qwen3-coder-plus", label: "Qwen3 Coder Plus" },
+      ],
+    };
+
+    const officialChannel = applyProviderPresetToChannel(qwenChannel, claudeOfficial);
+
+    expect(officialChannel.models).toEqual(claudeOfficial.models);
+    expect(officialChannel.models.some((model) => model.id.includes("qwen"))).toBe(false);
+  });
+
   test("remembers the current provider key before switching presets", () => {
     const deepseekPreset = AGENT_PROVIDER_PRESETS.find((item) => item.id === "deepseek")!;
     const glmPreset = AGENT_PROVIDER_PRESETS.find((item) => item.id === "glm")!;
@@ -2127,6 +2215,20 @@ describe("ConfigPage", () => {
 });
 
 describe("SkillsPage", () => {
+  test("renders official and user skills as separate collections", () => {
+    const html = renderToStaticMarkup(
+      <SkillsPage
+        language="zh"
+        officialSkills={[{ id: "official", sourceType: "official", name: "Official", description: "Official", prompt: "official", tags: [] }]}
+        userSkills={[{ id: "user", sourceType: "user", name: "User", description: "User", prompt: "user", tags: [] }]}
+      />,
+    );
+    expect(html).toContain("官方技能");
+    expect(html).toContain("我的技能");
+    expect(html).toContain("Official");
+    expect(html).toContain("User");
+  });
+
   test("renders the built-in skill library as a sourced reader", () => {
     const installResult: InstalledSkillResult = {
       templateId: "brainstorming",
@@ -2641,7 +2743,7 @@ describe("App chrome", () => {
     await expect(syncKeepAwakeIfAvailable({} as Window["multiAgentChat"], true)).resolves.toBeUndefined();
   });
 
-  test("uses the rail footer for settings instead of clearing all history", () => {
+  test("keeps Runtime and Agent navigation without a general settings page", () => {
     const originalWindow = globalThis.window;
     const storage = new Map<string, string>();
     Object.defineProperty(globalThis, "window", {
@@ -2661,8 +2763,9 @@ describe("App chrome", () => {
     try {
       const html = renderToStaticMarkup(<App />);
 
-      expect(html).toContain("aria-label=\"打开设置\"");
-      expect(html).toContain("data-tip=\"设置\"");
+      expect(html).not.toContain("aria-label=\"打开设置\"");
+      expect(html).not.toContain("data-tip=\"设置\"");
+      expect(html).toContain("<span>Agent</span>");
       expect(html).toContain("<span>配置</span>");
       expect(html).not.toContain("清除全部历史");
       expect(html).not.toContain("danger");

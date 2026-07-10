@@ -29,6 +29,7 @@ import type {
   RegisterArtifactRequest,
   GeneratedConfigFile,
   ImportedCodexConfig,
+  ModelCatalogRefreshResult,
   CodexDefaultConfig,
   PatchWorkflowDraftRequest,
   PauseWorkflowNodeRequest,
@@ -89,6 +90,12 @@ import {
 } from "./api/agent-hub-api";
 import { queryProviderBalance, type ProviderBalanceQueryOptions } from "../channels/provider-balance";
 import {
+  discoverChannelModels,
+  mergeModelCatalog,
+  ModelCatalogUnsupportedError,
+  type ModelCatalogDiscoverer,
+} from "../channels/model-catalog";
+import {
   createDefaultChannels,
   generateCodexConfigs as writeCodexConfigs,
   importCodexConfigs as readCodexConfigs,
@@ -99,6 +106,7 @@ import {
 } from "../channels/model-config";
 import { SqliteAppStore } from "./persisted/sqlite-store";
 import { WorkflowRuntime, type WorkflowRunStateUpdate } from "../workflows/workflow-runtime";
+import { WorkflowStore } from "../workflow-store";
 import { ChatState, TaskState, AgentTeamState, TeamRunState } from "./state/agent-hub-state";
 import {
   switchChatConfiguredAgent as switchChatConfiguredAgentValue,
@@ -152,7 +160,9 @@ import {
 import {
   codexPluginSummaries,
   respondToCodexServerRequest,
+  type CodexServerRequestOptions,
 } from "./codex/agent-hub-codex-app";
+import { handleCodexWorkflowToolCall } from "./codex/agent-hub-codex-workflow-tools";
 import {
   agentLabel,
   cloneAgentChannel,
@@ -235,6 +245,7 @@ import {
   restoreWorkflowDraft as restoreWorkflowDraftValue,
   restoreWorkflowRun as restoreWorkflowRunValue,
 } from "./workflow/agent-hub-workflow-restore";
+import { claudeWorkflowMcpServers, codexWorkflowMcpArgs } from "./workflow/agent-hub-workflow-mcp";
 import {
   runScheduledWorkflowEvent as runScheduledWorkflowEventValue,
   waitForWorkflowRunToSettle as waitForWorkflowRunToSettleValue,
@@ -346,6 +357,10 @@ function createDefaultConfiguredAgent(channels: AgentChannel[], now = Date.now()
   };
 }
 
+function managedRuntimeAgentId(channel: AgentChannel): string {
+  return channel.id === "codex-openai" ? "default-agent" : `runtime-agent:${channel.id}`;
+}
+
 type RunState = ChatState | TaskState;
 
 interface ResolvedConfiguredAgent {
@@ -353,6 +368,7 @@ interface ResolvedConfiguredAgent {
   runtimeAgentId: AgentId;
   channel: AgentChannel;
   modelId: string;
+  reasoningEffort?: string;
   runtime: AgentRuntime | undefined;
 }
 type Listener = (snapshot: AppSnapshot) => void;
@@ -368,13 +384,10 @@ export class AgentHub {
   private activeTaskId: string | undefined;
   private activeTeamId: string | undefined;
   private activeTeamRunId: string | undefined;
-  private workflows = new Map<string, WorkflowDraftState>();
   private activeWorkflowDraftRequests = new Map<string, ActiveWorkflowDraftRequest>();
-  private workflowRuns = new Map<string, WorkflowRunState>();
   private scheduledWorkflowSchedules = new Map<string, ScheduledWorkflowSchedule>();
   private scheduledWorkflowRuns = new Map<string, ScheduledWorkflowRun>();
   private configuredAgents = new Map<string, ConfiguredAgent>();
-  private activeWorkflowId: string | undefined;
   private activeScheduledWorkflowId: string | undefined;
   private scheduledWorkflowRunnerConfig: ScheduledWorkflowRunnerConfig = { baseUrl: "" };
   private scheduledWorkflowRunnerStatus: ScheduledWorkflowRunnerStatus = { connected: false, connecting: false };
@@ -386,6 +399,7 @@ export class AgentHub {
   private storagePath: string | undefined = undefined;
   private sqliteStore: SqliteAppStore | undefined = undefined;
   private modelConfigPath: string | undefined = undefined;
+  private mcpBridgeDiscoveryPath: string | undefined = undefined;
   private persistTimer: ReturnType<typeof setTimeout> | undefined = undefined;
   private idleSweepTimer: ReturnType<typeof setInterval> | undefined = undefined;
   private persistInFlight: Promise<void> | undefined = undefined;
@@ -395,12 +409,15 @@ export class AgentHub {
   private readonly interactiveSessions: InteractiveSessionManager;
   private readonly executables: Record<AgentId, string>;
   private readonly workflowRuntime: WorkflowRuntime;
+  private readonly workflowStore: WorkflowStore;
   private readonly claudeSdkAdapter: Pick<ClaudeAgentSdkAdapter, "runOneShot">;
+  private readonly modelCatalogDiscoverer: ModelCatalogDiscoverer;
 
   constructor(
     executables: Partial<Record<AgentId, string>> = {},
     executorFactory?: AgentExecutorFactory,
     runtimeDrivers?: RuntimeDriverRegistry,
+    modelCatalogDiscoverer: ModelCatalogDiscoverer = discoverChannelModels,
   ) {
     this.executables = {
       codex: executables.codex ?? process.env.CODEX_PATH ?? "codex",
@@ -409,14 +426,17 @@ export class AgentHub {
       hermes: executables.hermes ?? process.env.HERMES_PATH ?? "hermes",
     };
     this.claudeSdkAdapter = new ClaudeAgentSdkAdapter();
+    this.modelCatalogDiscoverer = modelCatalogDiscoverer;
     this.runtimeDrivers =
       runtimeDrivers ??
       createRuntimeDriverRegistry({
         executables: this.executables,
         channelById: (channelId) => this.channelById(channelId),
-        respondToCodexServerRequest: (client, id, method, params) => {
-          respondToCodexServerRequest(client, id, method, params);
+        respondToCodexServerRequest: (client, id, method, params, options) => {
+          this.respondToCodexServerRequest(client, id, method, params, options);
         },
+        codexWorkflowExtraArgs: () => codexWorkflowMcpArgs(this.mcpBridgeDiscoveryPath),
+        claudeWorkflowMcpServers: () => claudeWorkflowMcpServers(this.mcpBridgeDiscoveryPath),
         runClaudeOneShot: (input) => this.claudeSdkAdapter.runOneShot(input),
         askWorkflowByRuntime: {
           api: (input) =>
@@ -436,6 +456,13 @@ export class AgentHub {
         },
       });
     this.runtimeRouter = new RuntimeRouter(this.runtimeDrivers);
+    this.workflowStore = new WorkflowStore({
+      normalizeDraft: (draft) => this.cloneWorkflowDraft(draft),
+      now: () => Date.now(),
+      createWorkflowId: () => `wf_${randomUUID()}`,
+      createRunId: () => `run_${randomUUID()}`,
+      onChange: () => this.emit(),
+    });
     this.executorFactory =
       executorFactory ??
       new RuntimeAgentExecutorFactory(this.runtimeRouter);
@@ -504,6 +531,27 @@ export class AgentHub {
     this.emit();
   }
 
+  setMcpBridgeDiscoveryPath(discoveryPath: string | undefined): void {
+    this.mcpBridgeDiscoveryPath = discoveryPath;
+  }
+
+  private respondToCodexServerRequest(
+    client: CodexRpcClient,
+    id: number,
+    method: string,
+    params: Record<string, unknown>,
+    options: CodexServerRequestOptions = {},
+  ): void {
+    respondToCodexServerRequest(client, id, method, params, {
+      ...options,
+      handleWorkflowToolCall: (toolParams) => handleCodexWorkflowToolCall(toolParams, {
+        createWorkflow: (request) => this.createWorkflow(request),
+        getWorkflow: (workflowId) => this.workflowStore.getWorkflow(workflowId),
+        appendWorkflowContext: (request) => this.appendWorkflowContext(request),
+      }),
+    });
+  }
+
   async saveModelChannels(channels: AgentChannel[]): Promise<AppSnapshot> {
     const normalizedChannels = normalizeConfigChannelsForStorage(normalizeChannels(channels));
     if (this.storagePath) {
@@ -544,13 +592,42 @@ export class AgentHub {
     });
   }
 
+  async refreshModelCatalog(channelId: string): Promise<ModelCatalogRefreshResult> {
+    const channel = this.channelOrThrow(channelId);
+    const discovered = await this.modelCatalogDiscoverer(cloneAgentChannel(channel), {
+      codexCommand: this.executables.codex,
+    });
+    channel.models = mergeModelCatalog(channel.models, discovered.models);
+    this.installRestoredConfiguredAgents(this.listConfiguredAgents());
+    this.normalizeRunSelections();
+    this.emit();
+    await this.flushPersistence();
+    return {
+      channelId,
+      source: discovered.source,
+      discoveredCount: discovered.models.length,
+      snapshot: this.snapshot(),
+    };
+  }
+
+  async refreshDiscoverableModelCatalogs(): Promise<void> {
+    await Promise.all(this.channels.map(async (channel) => {
+      try {
+        await this.refreshModelCatalog(channel.id);
+      } catch (error) {
+        if (!(error instanceof ModelCatalogUnsupportedError)) {
+          console.warn(
+            `Failed to refresh model catalog for ${channel.id}:`,
+            error instanceof Error ? error.message : String(error),
+          );
+        }
+      }
+    }));
+  }
+
   updateConfiguredAgents(agents: ConfiguredAgent[]): AppSnapshot {
-    this.configuredAgents.clear();
-    const now = Date.now();
-    for (const input of agents) {
-      const restored = this.restoreConfiguredAgent(input, now);
-      if (restored) this.configuredAgents.set(restored.id, restored);
-    }
+    this.installRestoredConfiguredAgents(agents);
+    this.normalizeRunSelections();
     this.emit();
     return this.snapshot();
   }
@@ -562,11 +639,16 @@ export class AgentHub {
   }
 
   private defaultConfiguredAgentId(): string {
-    return this.configuredAgents.get("default-agent")?.id ?? this.configuredAgents.values().next().value?.id ?? "";
+    return this.configuredAgents.get("default-agent")?.id
+      ?? this.listConfiguredAgents().find((agent) => agent.managed)?.id
+      ?? this.configuredAgents.values().next().value?.id
+      ?? "";
   }
 
   private defaultConfiguredAgentIdForRuntime(runtimeAgentId: AgentId): string {
-    return this.listConfiguredAgents().find((agent) => agent.runtimeAgentId === runtimeAgentId)?.id ?? this.defaultConfiguredAgentId();
+    return this.listConfiguredAgents().find((agent) => agent.runtimeAgentId === runtimeAgentId && agent.managed)?.id
+      ?? this.listConfiguredAgents().find((agent) => agent.runtimeAgentId === runtimeAgentId)?.id
+      ?? this.defaultConfiguredAgentId();
   }
 
   private configuredAgentOrDefault(configuredAgentId: string | undefined): ConfiguredAgent | undefined {
@@ -603,11 +685,14 @@ export class AgentHub {
         : isModelForChannel(runtimeAgentId, channel.id, agent.modelId, this.channels)
           ? agent.modelId
           : defaultModelForAgent(runtimeAgentId);
+    const model = channel.models.find((item) => item.id === modelId);
+    const reasoningEffort = agent.reasoningEffort?.trim();
     return {
       agent,
       runtimeAgentId,
       channel,
       modelId,
+      ...(reasoningEffort && model?.reasoningEfforts?.includes(reasoningEffort) ? { reasoningEffort } : {}),
       runtime: this.runtimes.get(runtimeAgentId),
     };
   }
@@ -824,12 +909,12 @@ export class AgentHub {
     this.chats.clear();
     this.tasks.clear();
     this.teamRuns.clear();
-    this.workflows.clear();
+    this.workflowStore.workflows.clear();
     this.activeWorkflowDraftRequests.clear();
-    this.workflowRuns.clear();
+    this.workflowStore.runs.clear();
     this.scheduledWorkflowSchedules.clear();
     this.scheduledWorkflowRuns.clear();
-    this.activeWorkflowId = undefined;
+    this.workflowStore.activeId = undefined;
     this.activeScheduledWorkflowId = undefined;
     const chat = this.createChatState(this.defaultConfiguredAgentId());
     this.chats.set(chat.id, chat);
@@ -841,22 +926,22 @@ export class AgentHub {
 
   updateWorkflowDraft(draft: WorkflowDraftState | undefined): AppSnapshot {
     if (!draft) {
-      this.workflows.clear();
+      this.workflowStore.workflows.clear();
       this.activeWorkflowDraftRequests.clear();
-      this.workflowRuns.clear();
-      this.activeWorkflowId = undefined;
+      this.workflowStore.runs.clear();
+      this.workflowStore.activeId = undefined;
       this.emit();
       return this.snapshot();
     }
     const normalized = this.cloneWorkflowDraft(draft);
-    this.workflows.set(normalized.workflowId, normalized);
-    this.activeWorkflowId = normalized.workflowId;
+    this.workflowStore.workflows.set(normalized.workflowId, normalized);
+    this.workflowStore.activeId = normalized.workflowId;
     this.emit();
     return this.snapshot();
   }
 
   createWorkflowDraft(input: CreateWorkflowDraftRequest = {}): AppSnapshot {
-    if (this.workflows.size >= MAX_WORKFLOW_COUNT) return this.snapshot();
+    if (this.workflowStore.workflows.size >= MAX_WORKFLOW_COUNT) return this.snapshot();
     const now = Date.now();
     const graph = createWorkflowGraphFromObjective("");
     const workflow = this.cloneWorkflowDraft({
@@ -879,48 +964,48 @@ export class AgentHub {
       createdAt: now,
       updatedAt: now,
     });
-    this.workflows.set(workflow.workflowId, workflow);
-    this.activeWorkflowId = workflow.workflowId;
+    this.workflowStore.workflows.set(workflow.workflowId, workflow);
+    this.workflowStore.activeId = workflow.workflowId;
     this.emit();
     return this.snapshot();
   }
 
   patchWorkflowDraft(input: PatchWorkflowDraftRequest): AppSnapshot {
-    const current = this.workflows.get(input.workflowId);
+    const current = this.workflowStore.workflows.get(input.workflowId);
     if (!current) return this.snapshot();
     const next = this.applyWorkflowDraftPatch(current, input);
-    this.workflows.set(next.workflowId, next);
-    this.activeWorkflowId = next.workflowId;
+    this.workflowStore.workflows.set(next.workflowId, next);
+    this.workflowStore.activeId = next.workflowId;
     this.emit();
     return this.snapshot();
   }
 
   resetWorkflowDraftSession(workflowId: string): AppSnapshot {
-    const current = this.workflows.get(workflowId);
+    const current = this.workflowStore.workflows.get(workflowId);
     if (!current) return this.snapshot();
     this.activeWorkflowDraftRequests.delete(workflowId);
     const next = resetWorkflowDraftSessionStateValue({
       workflow: current,
       cloneDraft: (draft) => this.cloneWorkflowDraft(draft),
     });
-    this.workflows.set(next.workflowId, next);
-    this.activeWorkflowId = next.workflowId;
+    this.workflowStore.workflows.set(next.workflowId, next);
+    this.workflowStore.activeId = next.workflowId;
     this.emit();
     return this.snapshot();
   }
 
   async sendWorkflowDraftReply(input: SendWorkflowDraftReplyRequest): Promise<AppSnapshot> {
     await dispatchWorkflowDraftReplyValue({
-      workflow: this.workflows.get(input.workflowId),
+      workflow: this.workflowStore.workflows.get(input.workflowId),
       reply: input.reply,
       activeRequest: this.activeWorkflowDraftRequests.get(input.workflowId),
       thinkingMessage: WORKFLOW_THINKING_MESSAGE,
       cloneDraft: (draft) => this.cloneWorkflowDraft(draft),
       activateWorkflow: (workflowId) => {
-        this.activeWorkflowId = workflowId;
+        this.workflowStore.activeId = workflowId;
       },
       storeWorkflow: (workflow) => {
-        this.workflows.set(workflow.workflowId, workflow);
+        this.workflowStore.workflows.set(workflow.workflowId, workflow);
       },
       storeActiveRequest: (workflowId, request) => {
         this.activeWorkflowDraftRequests.set(workflowId, request);
@@ -942,7 +1027,7 @@ export class AgentHub {
 
   abandonWorkflowDraftReply(workflowId: string): AppSnapshot {
     const request = this.activeWorkflowDraftRequests.get(workflowId);
-    const workflow = this.workflows.get(workflowId);
+    const workflow = this.workflowStore.workflows.get(workflowId);
     if (!request || !workflow) return this.snapshot();
     this.activeWorkflowDraftRequests.delete(workflowId);
     const next = abandonWorkflowDraftReplyStateValue({
@@ -950,14 +1035,14 @@ export class AgentHub {
       activeRequest: request,
       cloneDraft: (draft) => this.cloneWorkflowDraft(draft),
     });
-    this.workflows.set(next.workflowId, next);
-    if (this.activeWorkflowId === next.workflowId) this.activeWorkflowId = next.workflowId;
+    this.workflowStore.workflows.set(next.workflowId, next);
+    if (this.workflowStore.activeId === next.workflowId) this.workflowStore.activeId = next.workflowId;
     this.emit();
     return this.snapshot();
   }
 
   createWorkflow(input: CreateWorkflowRequest): WorkflowOperationResult {
-    if (this.workflows.size >= MAX_WORKFLOW_COUNT) return { ok: false, error: `Workflow count exceeds ${MAX_WORKFLOW_COUNT}.` };
+    if (this.workflowStore.workflows.size >= MAX_WORKFLOW_COUNT) return { ok: false, error: `Workflow count exceeds ${MAX_WORKFLOW_COUNT}.` };
     const limitError = this.workflowLimitError(input.graph, input.title, input.objective);
     if (limitError) return { ok: false, error: limitError };
     const validation = validateWorkflowGraph(input.graph);
@@ -970,8 +1055,8 @@ export class AgentHub {
       modelId: this.normalizeModelIdForConfiguredAgent(input.configuredAgentId, input.modelId),
       cloneDraft: (draft) => this.cloneWorkflowDraft(draft),
     });
-    this.workflows.set(workflow.workflowId, workflow);
-    this.activeWorkflowId = workflow.workflowId;
+    this.workflowStore.workflows.set(workflow.workflowId, workflow);
+    this.workflowStore.activeId = workflow.workflowId;
     this.emit();
     return { ok: true, workflowId: workflow.workflowId, revision: workflow.revision, validation };
   }
@@ -983,7 +1068,7 @@ export class AgentHub {
   ensureBundledWorkflows(defs: Array<{ workflowId: string; title: string; objective: string; graph: WorkflowGraph }>): void {
     let changed = false;
     for (const def of defs) {
-      if (!def.workflowId || this.workflows.has(def.workflowId)) continue;
+      if (!def.workflowId || this.workflowStore.workflows.has(def.workflowId)) continue;
       const now = Date.now();
       const workflow = this.cloneWorkflowDraft({
         workflowId: def.workflowId,
@@ -1005,26 +1090,26 @@ export class AgentHub {
         createdAt: now,
         updatedAt: now,
       });
-      this.workflows.set(workflow.workflowId, workflow);
-      if (!this.activeWorkflowId) this.activeWorkflowId = workflow.workflowId;
+      this.workflowStore.workflows.set(workflow.workflowId, workflow);
+      if (!this.workflowStore.activeId) this.workflowStore.activeId = workflow.workflowId;
       changed = true;
     }
     if (changed) this.emit();
   }
 
   selectWorkflow(workflowId: string): AppSnapshot {
-    if (this.workflows.has(workflowId)) {
-      this.activeWorkflowId = workflowId;
+    if (this.workflowStore.workflows.has(workflowId)) {
+      this.workflowStore.activeId = workflowId;
       this.emit();
     }
     return this.snapshot();
   }
 
   renameWorkflow(workflowId: string, title: string): AppSnapshot {
-    const workflow = this.workflows.get(workflowId);
+    const workflow = this.workflowStore.workflows.get(workflowId);
     const nextTitle = title.trim();
     if (!workflow || !nextTitle) return this.snapshot();
-    this.workflows.set(workflowId, this.cloneWorkflowDraft({
+    this.workflowStore.workflows.set(workflowId, this.cloneWorkflowDraft({
       ...workflow,
       title: nextTitle,
       revision: workflow.revision + 1,
@@ -1035,21 +1120,21 @@ export class AgentHub {
   }
 
   deleteWorkflow(workflowId: string): AppSnapshot {
-    if (!this.workflows.has(workflowId)) return this.snapshot();
-    this.workflows.delete(workflowId);
+    if (!this.workflowStore.workflows.has(workflowId)) return this.snapshot();
+    this.workflowStore.workflows.delete(workflowId);
     this.activeWorkflowDraftRequests.delete(workflowId);
-    for (const run of [...this.workflowRuns.values()]) {
-      if (run.workflowId === workflowId) this.workflowRuns.delete(run.runId);
+    for (const run of [...this.workflowStore.runs.values()]) {
+      if (run.workflowId === workflowId) this.workflowStore.runs.delete(run.runId);
     }
-    if (this.activeWorkflowId === workflowId || (this.activeWorkflowId && !this.workflows.has(this.activeWorkflowId))) {
-      this.activeWorkflowId = [...this.workflows.values()].sort((left, right) => right.updatedAt - left.updatedAt)[0]?.workflowId;
+    if (this.workflowStore.activeId === workflowId || (this.workflowStore.activeId && !this.workflowStore.workflows.has(this.workflowStore.activeId))) {
+      this.workflowStore.activeId = [...this.workflowStore.workflows.values()].sort((left, right) => right.updatedAt - left.updatedAt)[0]?.workflowId;
     }
     this.emit();
     return this.snapshot();
   }
 
   updateWorkflow(input: UpdateWorkflowRequest): WorkflowOperationResult {
-    const current = this.workflows.get(input.workflowId);
+    const current = this.workflowStore.workflows.get(input.workflowId);
     if (!current) return { ok: false, error: `Workflow ${input.workflowId} was not found.` };
     if (current.status === "running") return { ok: false, error: "Cannot modify workflow graph while it is running." };
     if (input.expectedRevision !== undefined && input.expectedRevision !== current.revision) {
@@ -1072,13 +1157,13 @@ export class AgentHub {
           : current.modelId,
       cloneDraft: (draft) => this.cloneWorkflowDraft(draft),
     });
-    this.workflows.set(next.workflowId, next);
+    this.workflowStore.workflows.set(next.workflowId, next);
     this.emit();
     return { ok: true, workflowId: next.workflowId, revision: next.revision, validation };
   }
 
   appendWorkflowContext(input: AppendWorkflowContextRequest): WorkflowOperationResult {
-    const workflow = this.workflows.get(input.workflowId);
+    const workflow = this.workflowStore.workflows.get(input.workflowId);
     if (!workflow) return { ok: false, error: `Workflow ${input.workflowId} was not found.` };
     const limitError = this.contextAppendLimitError(input);
     if (limitError) return { ok: false, workflowId: workflow.workflowId, revision: workflow.revision, error: limitError };
@@ -1089,19 +1174,19 @@ export class AgentHub {
       revision: workflow.revision + 1,
       updatedAt: Date.now(),
     });
-    this.workflows.set(next.workflowId, next);
+    this.workflowStore.workflows.set(next.workflowId, next);
     this.emit();
     return { ok: true, workflowId: next.workflowId, revision: next.revision };
   }
 
   appendWorkflowRunContext(input: AppendWorkflowRunContextRequest): WorkflowOperationResult {
-    const run = this.workflowRuns.get(input.runId);
+    const run = this.workflowStore.runs.get(input.runId);
     if (!run || run.workflowId !== input.workflowId) return { ok: false, error: `Workflow run ${input.runId} was not found.` };
     if (run.status !== "running") return { ok: false, error: "Cannot append to a workflow run after it has finished." };
     const limitError = this.contextAppendLimitError(input);
     if (limitError) return { ok: false, workflowId: input.workflowId, error: limitError };
     const appended = this.formatWorkflowContextAppend(input.report, input.handoff, input.artifacts, input.nodeId);
-    this.workflowRuns.set(run.runId, {
+    this.workflowStore.runs.set(run.runId, {
       ...run,
       contextDocument: [run.contextDocument.trim(), appended].filter(Boolean).join("\n\n"),
     });
@@ -1110,7 +1195,7 @@ export class AgentHub {
   }
 
   startWorkflowRun(input: StartWorkflowRunRequest): WorkflowOperationResult {
-    const workflow = this.workflows.get(input.workflowId);
+    const workflow = this.workflowStore.workflows.get(input.workflowId);
     if (!workflow) return { ok: false, error: `Workflow ${input.workflowId} was not found.` };
     if (workflow.status === "running") return { ok: false, error: "Workflow is already running." };
     this.activeWorkflowDraftRequests.delete(workflow.workflowId);
@@ -1122,15 +1207,15 @@ export class AgentHub {
       cloneGraph: (graph) => this.cloneWorkflowGraph(graph),
       cloneDraft: (draft) => this.cloneWorkflowDraft(draft),
     });
-    this.workflowRuns.set(runId, next.nextRun);
-    this.workflows.set(workflow.workflowId, next.nextWorkflow);
+    this.workflowStore.runs.set(runId, next.nextRun);
+    this.workflowStore.workflows.set(workflow.workflowId, next.nextWorkflow);
     this.emit();
     return { ok: true, workflowId: workflow.workflowId, runId, revision: workflow.revision };
   }
 
   finishWorkflowRun(input: FinishWorkflowRunRequest): WorkflowOperationResult {
-    const workflow = this.workflows.get(input.workflowId);
-    const run = this.workflowRuns.get(input.runId);
+    const workflow = this.workflowStore.workflows.get(input.workflowId);
+    const run = this.workflowStore.runs.get(input.runId);
     if (!workflow) return { ok: false, error: `Workflow ${input.workflowId} was not found.` };
     if (!run || run.workflowId !== input.workflowId) return { ok: false, error: `Workflow run ${input.runId} was not found.` };
     const next = finishWorkflowRunStateValue({
@@ -1139,8 +1224,8 @@ export class AgentHub {
       request: input,
       cloneDraft: (draft) => this.cloneWorkflowDraft(draft),
     });
-    this.workflowRuns.set(run.runId, next.nextRun);
-    this.workflows.set(workflow.workflowId, next.nextWorkflow);
+    this.workflowStore.runs.set(run.runId, next.nextRun);
+    this.workflowStore.workflows.set(workflow.workflowId, next.nextWorkflow);
     this.emit();
     return { ok: true, workflowId: workflow.workflowId, runId: run.runId, revision: workflow.revision };
   }
@@ -1148,9 +1233,9 @@ export class AgentHub {
   runWorkflowGraph(input: RunWorkflowGraphRequest): WorkflowOperationResult {
     const result = this.workflowRuntime.runWorkflowGraph(input);
     if (!result.ok && result.error) {
-      const workflow = this.workflows.get(input.workflowId);
+      const workflow = this.workflowStore.workflows.get(input.workflowId);
       if (workflow) {
-        this.workflows.set(workflow.workflowId, this.cloneWorkflowDraft({
+        this.workflowStore.workflows.set(workflow.workflowId, this.cloneWorkflowDraft({
           ...workflow,
           error: result.error,
           updatedAt: Date.now(),
@@ -1182,7 +1267,7 @@ export class AgentHub {
       event,
       ackEvent,
       target,
-      workflow: target ? this.workflows.get(target.workflowId) : undefined,
+      workflow: target ? this.workflowStore.workflows.get(target.workflowId) : undefined,
       runId: `scheduled_run_${event.eventId}`,
       recordScheduledWorkflowRun: (run) => {
         this.recordScheduledWorkflowRun(run);
@@ -1196,8 +1281,8 @@ export class AgentHub {
   }
 
   private updateWorkflowRunState(input: WorkflowRunStateUpdate): void {
-    const workflow = this.workflows.get(input.workflowId);
-    const run = this.workflowRuns.get(input.runId);
+    const workflow = this.workflowStore.workflows.get(input.workflowId);
+    const run = this.workflowStore.runs.get(input.runId);
     if (!workflow || !run || run.workflowId !== input.workflowId) return;
     const next = updateWorkflowRunStateValue({
       workflow,
@@ -1205,8 +1290,8 @@ export class AgentHub {
       update: input,
       cloneDraft: (draft) => this.cloneWorkflowDraft(draft),
     });
-    this.workflowRuns.set(run.runId, next.nextRun);
-    this.workflows.set(workflow.workflowId, next.nextWorkflow);
+    this.workflowStore.runs.set(run.runId, next.nextRun);
+    this.workflowStore.workflows.set(workflow.workflowId, next.nextWorkflow);
     this.emit();
   }
 
@@ -1241,8 +1326,8 @@ export class AgentHub {
     const result = upsertScheduledWorkflowScheduleValue({
       schedule: input,
       current: this.scheduledWorkflowSchedules.get(input.scheduleId),
-      hasWorkflow: this.workflows.has(input.workflowId),
-      workflowTitle: this.workflows.get(input.workflowId)?.title,
+      hasWorkflow: this.workflowStore.workflows.has(input.workflowId),
+      workflowTitle: this.workflowStore.workflows.get(input.workflowId)?.title,
       cloneSchedule: (schedule) => this.cloneScheduledWorkflowSchedule(schedule),
     });
     if (!result.ok || !result.schedule) return result;
@@ -1256,7 +1341,7 @@ export class AgentHub {
   replaceScheduledWorkflowSchedules(schedules: ScheduledWorkflowSchedule[]): AppSnapshot {
     const next = replaceScheduledWorkflowSchedulesValue({
       schedules,
-      hasWorkflow: (workflowId) => this.workflows.has(workflowId),
+      hasWorkflow: (workflowId) => this.workflowStore.workflows.has(workflowId),
       cloneSchedule: (schedule) => this.cloneScheduledWorkflowSchedule(schedule),
       activeScheduleId: this.activeScheduledWorkflowId,
     });
@@ -1282,9 +1367,9 @@ export class AgentHub {
     const schedule = this.scheduledWorkflowSchedules.get(input.scheduleId);
     const run = recordScheduledWorkflowRunValue({
       run: input,
-      hasWorkflow: this.workflows.has(input.workflowId),
+      hasWorkflow: this.workflowStore.workflows.has(input.workflowId),
       scheduleTitle: schedule?.title,
-      workflowTitle: this.workflows.get(input.workflowId)?.title,
+      workflowTitle: this.workflowStore.workflows.get(input.workflowId)?.title,
       cloneRun: (nextRun) => this.cloneScheduledWorkflowRun(nextRun),
     });
     if (!run) return this.snapshot();
@@ -1361,16 +1446,16 @@ export class AgentHub {
   }
 
   async listWorkflowOutputs(workflowId: string): Promise<Array<{ name: string; path: string }>> {
-    return listWorkflowOutputsValue(this.workflows.get(workflowId), this.workDir);
+    return listWorkflowOutputsValue(this.workflowStore.workflows.get(workflowId), this.workDir);
   }
 
   workflowWorkDir(workflowId: string): string | undefined {
-    return workflowWorkDirValue(this.workflows.get(workflowId), this.workDir);
+    return workflowWorkDirValue(this.workflowStore.workflows.get(workflowId), this.workDir);
   }
 
   /** Directories from which local files may be previewed: global + each workflow's dir. */
   allowedFileRoots(): string[] {
-    return allowedFileRootsValue(this.workflows.values(), this.workDir);
+    return allowedFileRootsValue(this.workflowStore.workflows.values(), this.workDir);
   }
 
   listArtifacts(target?: string): RegisteredArtifact[] {
@@ -1805,9 +1890,67 @@ export class AgentHub {
     return replaceWorkflowDraftMessageValue(messages, messageId, content);
   }
 
+  private workflowIdForActiveDraftRequest(requestId: string): string | undefined {
+    for (const [workflowId, request] of this.activeWorkflowDraftRequests) {
+      if (request.requestId === requestId) return workflowId;
+    }
+    return undefined;
+  }
+
+  private handleWorkflowDraftGraphEvent(
+    workflowId: string,
+    event: Extract<WorkflowAgentEvent, { type: "workflow_graph" }>,
+    activeRequest: ActiveWorkflowDraftRequest,
+  ): void {
+    const targetWorkflowId = event.workflowId && this.workflowStore.workflows.has(event.workflowId)
+      ? event.workflowId
+      : workflowId;
+    const sourceWorkflow = this.workflowStore.workflows.get(workflowId);
+    const targetWorkflow = this.workflowStore.workflows.get(targetWorkflowId);
+    if (!targetWorkflow) return;
+
+    const content = event.content ?? "Workflow graph created.";
+    activeRequest.content = content;
+    const baseMessages = targetWorkflow.messages.length > 0 ? targetWorkflow.messages : sourceWorkflow?.messages ?? [];
+    const messages = baseMessages.some((message) => message.id === activeRequest.assistantMessageId)
+      ? this.replaceWorkflowDraftMessage(baseMessages, activeRequest.assistantMessageId, content)
+      : [...baseMessages, { id: activeRequest.assistantMessageId, role: "assistant" as const, content }];
+
+    if (targetWorkflowId !== workflowId) {
+      this.activeWorkflowDraftRequests.delete(workflowId);
+      this.activeWorkflowDraftRequests.set(targetWorkflowId, activeRequest);
+      this.workflowStore.workflows.delete(workflowId);
+    }
+
+    const { finalReport: _finalReport, ...targetWithoutFinalReport } = targetWorkflow;
+    this.workflowStore.workflows.set(targetWorkflowId, this.cloneWorkflowDraft({
+      ...targetWithoutFinalReport,
+      title: event.graph.title || targetWorkflow.title,
+      status: targetWorkflow.status === "running" ? "running" : "draft",
+      revision: targetWorkflow.revision + 1,
+      objective: event.graph.objective || targetWorkflow.objective,
+      graph: this.cloneWorkflowGraph(event.graph),
+      graphReady: true,
+      messages,
+      reply: "",
+      error: undefined,
+      runProgress: [],
+      runContextDocument: "",
+      runIds: [],
+      updatedAt: Date.now(),
+    }));
+    this.workflowStore.activeId = targetWorkflowId;
+    this.emit();
+  }
+
   private handleWorkflowDraftAgentEvent(workflowId: string, event: WorkflowAgentEvent): void {
+    const activeRequest = this.activeWorkflowDraftRequests.get(workflowId);
+    if (event.type === "workflow_graph" && activeRequest?.requestId === event.requestId) {
+      this.handleWorkflowDraftGraphEvent(workflowId, event, activeRequest);
+      return;
+    }
     const reduced = reduceWorkflowDraftReplyEventValue({
-      workflow: this.workflows.get(workflowId),
+      workflow: this.workflowStore.workflows.get(workflowId),
       activeRequest: this.activeWorkflowDraftRequests.get(workflowId),
       event,
       thinkingMessage: WORKFLOW_THINKING_MESSAGE,
@@ -1816,7 +1959,7 @@ export class AgentHub {
     });
 
     if (reduced.type === "delta") {
-      this.workflows.set(workflowId, reduced.workflow);
+      this.workflowStore.workflows.set(workflowId, reduced.workflow);
       this.emit();
       return;
     }
@@ -1832,10 +1975,11 @@ export class AgentHub {
   }
 
   private completeWorkflowDraftRequest(workflowId: string, requestId: string, content: string, runtimeConversation: RuntimeConversation | undefined): void {
+    workflowId = this.workflowIdForActiveDraftRequest(requestId) ?? workflowId;
     const activeRequest = this.activeWorkflowDraftRequests.get(workflowId);
     if (!activeRequest || activeRequest.requestId !== requestId) return;
     this.activeWorkflowDraftRequests.delete(workflowId);
-    const workflow = this.workflows.get(workflowId);
+    const workflow = this.workflowStore.workflows.get(workflowId);
     if (!workflow) return;
     const next = completeWorkflowDraftRequestValue({
       workflow,
@@ -1847,17 +1991,18 @@ export class AgentHub {
       cloneConversation: (conversation) => this.runtimeRouter.cloneConversation(conversation),
       cloneDraft: (draft) => this.cloneWorkflowDraft(draft),
     });
-    this.workflows.set(workflowId, next);
+    this.workflowStore.workflows.set(workflowId, next);
     this.emit();
   }
 
   private failWorkflowDraftRequest(workflowId: string, requestId: string, error: string): void {
+    workflowId = this.workflowIdForActiveDraftRequest(requestId) ?? workflowId;
     const activeRequest = this.activeWorkflowDraftRequests.get(workflowId);
     if (!activeRequest || activeRequest.requestId !== requestId) return;
     this.activeWorkflowDraftRequests.delete(workflowId);
-    const workflow = this.workflows.get(workflowId);
+    const workflow = this.workflowStore.workflows.get(workflowId);
     if (!workflow) return;
-    this.workflows.set(workflowId, failWorkflowDraftRequestValue({
+    this.workflowStore.workflows.set(workflowId, failWorkflowDraftRequestValue({
       workflow,
       activeRequest,
       error,
@@ -1869,7 +2014,7 @@ export class AgentHub {
   private waitForWorkflowRunToSettle(runId: string): Promise<WorkflowRunState> {
     return waitForWorkflowRunToSettleValue({
       runId,
-      getRun: (currentRunId) => this.workflowRuns.get(currentRunId),
+      getRun: (currentRunId) => this.workflowStore.runs.get(currentRunId),
       cloneRun: (run) => this.cloneWorkflowRun(run),
       onChange: (listener) =>
         this.onChange(() => {
@@ -1879,15 +2024,15 @@ export class AgentHub {
   }
 
   private activeWorkflowDraft(): WorkflowDraftState | undefined {
-    const workflow = this.activeWorkflowId ? this.workflows.get(this.activeWorkflowId) : undefined;
+    const workflow = this.workflowStore.activeId ? this.workflowStore.workflows.get(this.workflowStore.activeId) : undefined;
     return workflow ? this.cloneWorkflowDraft(workflow) : undefined;
   }
 
   private cloneWorkflowStore(): WorkflowStoreState {
     return cloneWorkflowStoreValue({
-      activeWorkflowId: this.activeWorkflowId,
-      workflows: this.workflows.values(),
-      workflowRuns: this.workflowRuns.values(),
+      activeWorkflowId: this.workflowStore.activeId,
+      workflows: this.workflowStore.workflows.values(),
+      workflowRuns: this.workflowStore.runs.values(),
       cloneDraft: (draft) => this.cloneWorkflowDraft(draft),
       cloneRun: (run) => this.cloneWorkflowRun(run),
     });
@@ -1915,7 +2060,7 @@ export class AgentHub {
   }
 
   private cloneScheduledWorkflowSchedule(schedule: ScheduledWorkflowSchedule): ScheduledWorkflowSchedule {
-    const workflowTitle = this.workflows.get(schedule.workflowId)?.title;
+    const workflowTitle = this.workflowStore.workflows.get(schedule.workflowId)?.title;
     return workflowTitle === undefined
       ? cloneScheduledWorkflowScheduleValue({ schedule })
       : cloneScheduledWorkflowScheduleValue({ schedule, workflowTitle });
@@ -1990,8 +2135,8 @@ export class AgentHub {
     for (const team of this.teams.values()) {
       team.members = this.normalizeTeamMembers(team.members);
     }
-    for (const workflow of this.workflows.values()) {
-      this.workflows.set(workflow.workflowId, this.cloneWorkflowDraft(workflow));
+    for (const workflow of this.workflowStore.workflows.values()) {
+      this.workflowStore.workflows.set(workflow.workflowId, this.cloneWorkflowDraft(workflow));
     }
   }
 
@@ -2244,9 +2389,25 @@ export class AgentHub {
       const agent = this.restoreConfiguredAgent(rawAgent, now);
       if (agent) this.configuredAgents.set(agent.id, agent);
     }
+    for (const channel of this.channels) {
+      const id = managedRuntimeAgentId(channel);
+      if (this.configuredAgents.has(id)) continue;
+      this.configuredAgents.set(id, {
+        id,
+        name: channel.label,
+        description: "",
+        runtimeAgentId: channel.agentId,
+        channelId: channel.id,
+        modelId: defaultModelForAgent(channel.agentId),
+        tags: [],
+        managed: true,
+        createdAt: now,
+        updatedAt: now,
+      });
+    }
     if (this.configuredAgents.size === 0) {
       const agent = createDefaultConfiguredAgent(this.channels, now);
-      this.configuredAgents.set(agent.id, agent);
+      this.configuredAgents.set(agent.id, { ...agent, managed: true });
     }
   }
 
@@ -2356,12 +2517,12 @@ export class AgentHub {
   private restoreWorkflowStore(rawStore: unknown): boolean {
     const restored = restoreWorkflowStoreStateValue({
       rawStore,
-      workflowsTarget: this.workflows,
-      workflowRunsTarget: this.workflowRuns,
+      workflowsTarget: this.workflowStore.workflows,
+      workflowRunsTarget: this.workflowStore.runs,
       restoreWorkflowDraft: (payload) => this.restoreWorkflowDraft(payload),
       restoreWorkflowRun: (payload) => this.restoreWorkflowRun(payload),
     });
-    this.activeWorkflowId = restored.activeWorkflowId;
+    this.workflowStore.activeId = restored.activeWorkflowId;
     return restored.ok;
   }
 
@@ -2382,15 +2543,15 @@ export class AgentHub {
 
   private restoreScheduledWorkflowSchedule(raw: unknown): ScheduledWorkflowSchedule | undefined {
     return restoreScheduledWorkflowScheduleValue(raw, {
-      hasWorkflow: (workflowId) => this.workflows.has(workflowId),
-      workflowTitle: (workflowId) => this.workflows.get(workflowId)?.title,
+      hasWorkflow: (workflowId) => this.workflowStore.workflows.has(workflowId),
+      workflowTitle: (workflowId) => this.workflowStore.workflows.get(workflowId)?.title,
       cloneScheduledWorkflowSchedule: (schedule) => this.cloneScheduledWorkflowSchedule(schedule),
     });
   }
 
   private restoreScheduledWorkflowRun(raw: unknown): ScheduledWorkflowRun | undefined {
     return restoreScheduledWorkflowRunValue(raw, {
-      hasWorkflow: (workflowId) => this.workflows.has(workflowId),
+      hasWorkflow: (workflowId) => this.workflowStore.workflows.has(workflowId),
       scheduledWorkflowTitle: (scheduleId) => this.scheduledWorkflowSchedules.get(scheduleId)?.title,
       cloneScheduledWorkflowRun: (run) => this.cloneScheduledWorkflowRun(run),
     });
