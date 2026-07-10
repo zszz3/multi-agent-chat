@@ -14,6 +14,7 @@ This directory contains project documentation for the Electron desktop app.
 - `workflow-v2-design.md`: top-level workflow-v2 outline document
 - `superpowers/README.md`: design-spec and implementation-plan archive, grouped by topic area
 - `progress/README.md`: progress logs, refactor checkpoints, and branch-era status documents
+- `renderer-refactor-progress-2026-06-28.md`: current progress, validation status, and remaining work for the renderer shell/provider/service refactor
 - `modules/main.md`: Electron main process, application state hub, official Claude SDK runtime wiring, and interactive session orchestration
 - `modules/preload.md`: preload bridge and renderer-facing API surface
 - `modules/renderer.md`: React renderer structure, page modules, and UI state flow
@@ -33,8 +34,8 @@ Top-level docs are intentionally kept small in number. Stable entry documents st
 If you are working on runtime execution specifically, read:
 
 - `runtime-execution-architecture-spec.md`
-- `superpowers/specs/runtime/2026-07-08-runtime-boundary-reset-design.md`
-- the relevant `superpowers/specs/runtime/2026-07-08-runtime-phase-0x-*.md` file for the phase you are changing
+- `superpowers/specs/2026-07-08-runtime-boundary-reset-design.md`
+- the relevant `superpowers/specs/2026-07-08-runtime-phase-0x-*.md` file for the phase you are changing
 
 If you are looking for historical design or plan documents, start with:
 

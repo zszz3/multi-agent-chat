@@ -27,14 +27,14 @@
 2. `docs/zh-CN/architecture-overview.md`
 3. `docs/zh-CN/runtime-execution-architecture-spec.md`
 4. `src/shared/types.ts`
-5. `src/main/index.ts`
-6. `src/main/agent-hub.ts`
+5. `src/main/app/index.ts`
+6. `src/main/hub/agent-hub.ts`
 
 如果你在做 runtime execution 相关工作，优先读：
 
 - `docs/zh-CN/runtime-execution-architecture-spec.md`
-- `docs/superpowers/specs/runtime/2026-07-08-runtime-boundary-reset-design.md`
-- 对应的 `docs/superpowers/specs/runtime/2026-07-08-runtime-phase-0x-*.md`
+- `docs/superpowers/specs/2026-07-08-runtime-boundary-reset-design.md`
+- 对应的 `docs/superpowers/specs/2026-07-08-runtime-phase-0x-*.md`
 
 如果你要查设计稿或实施计划归档，优先看：
 
