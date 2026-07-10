@@ -6,4 +6,9 @@ describe("renderer runtime helpers", () => {
     expect(agentLabel("hermes")).toBe("Hermes");
     expect(agentAccent("hermes")).toBe("agent-hermes");
   });
+
+  test("renders OpenCode label and accent", () => {
+    expect(agentLabel("opencode")).toBe("OpenCode");
+    expect(agentAccent("opencode")).toBe("agent-opencode");
+  });
 });

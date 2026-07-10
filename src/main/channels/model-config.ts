@@ -351,6 +351,13 @@ export function createDefaultChannels(codexModels = FALLBACK_MODEL_OPTIONS.codex
       presetId: "hermes-default",
       models: FALLBACK_MODEL_OPTIONS.hermes,
     },
+    {
+      id: "opencode-default",
+      agentId: "opencode",
+      label: "OpenCode Default",
+      presetId: "opencode-default",
+      models: FALLBACK_MODEL_OPTIONS.opencode,
+    },
   ];
 }
 

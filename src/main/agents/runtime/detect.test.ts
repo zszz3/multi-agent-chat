@@ -72,4 +72,22 @@ describe("detectAgentRuntimes", () => {
       version: "1.2.3",
     });
   });
+
+  test("detects an OpenCode CLI from OPENCODE_PATH", async () => {
+    vi.resetModules();
+    vi.stubEnv("OPENCODE_PATH", "C:\\Users\\demo\\AppData\\Roaming\\npm\\opencode.cmd");
+    const execCli = vi.fn(async (request: { executable: string; args?: string[] }) => {
+      if (request.executable.endsWith("opencode.cmd")) return { stdout: "opencode 1.2.3\n", stderr: "" };
+      throw new Error(`unexpected executable: ${request.executable}`);
+    });
+    vi.doMock("../../platform/cli-launcher", () => ({ execCli }));
+    const { detectAgentRuntimes } = await import("./detect");
+    const runtimes = await detectAgentRuntimes();
+    expect(runtimes.find((runtime) => runtime.id === "opencode")).toMatchObject({
+      id: "opencode",
+      command: "C:\\Users\\demo\\AppData\\Roaming\\npm\\opencode.cmd",
+      available: true,
+      version: "1.2.3",
+    });
+  });
 });

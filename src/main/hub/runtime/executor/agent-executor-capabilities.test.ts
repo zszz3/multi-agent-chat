@@ -5,10 +5,11 @@ import { apiSurfaceSupport } from "./api/api-capabilities";
 import { claudeInteractiveSessionCapabilities, claudeSurfaceSupport } from "./claude/claude-capabilities";
 import { codexInteractiveSessionCapabilities, codexSurfaceSupport } from "./codex/codex-capabilities";
 import { hermesSurfaceSupport } from "./hermes/hermes-capabilities";
+import { openCodeSurfaceSupport } from "./opencode/opencode-capabilities";
 
 function buildOptions() {
   return {
-    executables: { codex: "codex", claude: "claude", api: "api", hermes: "hermes" },
+    executables: { codex: "codex", claude: "claude", api: "api", hermes: "hermes", opencode: "opencode" },
     channelById: () => ({
       id: "test-channel",
       runtimeAgentId: "api",
@@ -160,6 +161,30 @@ describe("runtime capability declarations", () => {
         supportsInProcessConversationResume: true,
         supportsResumeAfterDetach: true,
         supportsResumeAfterAppRestart: true,
+        supportsTurnResume: false,
+      },
+    });
+
+    expect(registry.driverFor("opencode").surfaceSupport).toEqual(openCodeSurfaceSupport);
+    expect(registry.driverFor("opencode").surfaceSupport).toEqual([
+      { surface: "chat", executionModes: ["oneshot"], continuationPolicies: ["fresh"] },
+      { surface: "task", executionModes: ["oneshot"], continuationPolicies: ["fresh"] },
+      { surface: "workflow", executionModes: ["oneshot"], continuationPolicies: ["fresh"] },
+      { surface: "channel-test", executionModes: ["oneshot"], continuationPolicies: ["fresh"] },
+    ]);
+    expect(registry.driverFor("opencode").getCapabilities(runtime("opencode"))).toMatchObject({
+      chatStyle: "oneshot",
+      taskStyle: "oneshot",
+      workflowStyle: "oneshot",
+      testStyle: "oneshot",
+      supportsInterrupt: false,
+      supportsContinue: false,
+      supportsApprovalRequests: false,
+      supportsUserInputRequests: false,
+      resume: {
+        supportsInProcessConversationResume: false,
+        supportsResumeAfterDetach: false,
+        supportsResumeAfterAppRestart: false,
         supportsTurnResume: false,
       },
     });

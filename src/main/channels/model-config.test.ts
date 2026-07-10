@@ -25,6 +25,13 @@ describe("model channel config", () => {
       presetId: "hermes-default",
       models: [{ id: "default", label: "Default" }],
     });
+    expect(createDefaultChannels().find((channel) => channel.agentId === "opencode")).toEqual({
+      id: "opencode-default",
+      agentId: "opencode",
+      label: "OpenCode Default",
+      presetId: "opencode-default",
+      models: [{ id: "default", label: "Default" }],
+    });
   });
 
   test("parses visible Codex models from the debug catalog", () => {

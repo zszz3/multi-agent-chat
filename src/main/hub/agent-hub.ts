@@ -388,6 +388,7 @@ export class AgentHub {
       claude: executables.claude ?? process.env.CLAUDE_PATH ?? "claude",
       api: executables.api ?? "api",
       hermes: executables.hermes ?? process.env.HERMES_PATH ?? "hermes",
+      opencode: executables.opencode ?? process.env.OPENCODE_PATH ?? "opencode",
     };
     this.runtimeDrivers =
       runtimeDrivers ??

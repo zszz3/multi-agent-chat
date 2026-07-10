@@ -64,5 +64,6 @@ export function agentLabel(agentId: AgentId): string {
   if (agentId === "codex") return "Codex";
   if (agentId === "claude") return "Claude Code";
   if (agentId === "hermes") return "Hermes";
+  if (agentId === "opencode") return "OpenCode";
   return "API";
 }

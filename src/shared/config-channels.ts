@@ -1,13 +1,14 @@
 import { DEFAULT_MODEL_ID, FALLBACK_MODEL_OPTIONS } from "./models";
 import type { AgentChannel, AgentId } from "./types";
 
-export const CONFIG_AGENT_ORDER: AgentId[] = ["codex", "claude", "api", "hermes"];
+export const CONFIG_AGENT_ORDER: AgentId[] = ["codex", "claude", "api", "hermes", "opencode"];
 
 export const DEFAULT_CONFIG_CHANNEL_IDS: Record<AgentId, string> = {
   codex: "codex-openai",
   claude: "claude-code",
   api: "api-openai",
   hermes: "hermes-default",
+  opencode: "opencode-default",
 };
 
 function isNewConfigChannelId(channel: AgentChannel): boolean {
@@ -67,7 +68,9 @@ function createFallbackConfigChannels(): AgentChannel[] {
           ? "Claude Code"
           : agentId === "hermes"
             ? "Hermes Default"
-            : "OpenAI API",
+            : agentId === "opencode"
+              ? "OpenCode Default"
+              : "OpenAI API",
     models: FALLBACK_MODEL_OPTIONS[agentId].some((model) => model.id === DEFAULT_MODEL_ID)
       ? FALLBACK_MODEL_OPTIONS[agentId]
       : [{ id: DEFAULT_MODEL_ID, label: "Default" }, ...FALLBACK_MODEL_OPTIONS[agentId]],

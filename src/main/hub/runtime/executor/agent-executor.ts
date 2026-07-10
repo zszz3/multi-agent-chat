@@ -10,6 +10,7 @@ import { createApiDriver } from "./api/create-api-driver";
 import { createClaudeDriver } from "./claude/create-claude-driver";
 import { createCodexDriver } from "./codex/create-codex-driver";
 import { createHermesDriver } from "./hermes/create-hermes-driver";
+import { createOpenCodeDriver } from "./opencode/create-opencode-driver";
 
 export { RuntimeDriverRegistry } from "../../../agents/runtime/runtime-driver";
 export type {
@@ -24,6 +25,7 @@ export function createRuntimeDriverRegistry(options: RuntimeAgentExecutorFactory
     createClaudeDriver(options),
     createApiDriver(options),
     createHermesDriver(options),
+    createOpenCodeDriver(options),
   ]);
 }
 

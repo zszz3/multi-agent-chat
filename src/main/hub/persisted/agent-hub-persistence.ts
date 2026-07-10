@@ -137,7 +137,7 @@ export interface PersistedAppStateV4 {
 }
 
 export function isAgentId(value: unknown): value is AgentId {
-  return value === "codex" || value === "claude" || value === "api" || value === "hermes";
+  return value === "codex" || value === "claude" || value === "api" || value === "hermes" || value === "opencode";
 }
 
 export function isMessageRole(value: unknown): value is ChatMessage["role"] {

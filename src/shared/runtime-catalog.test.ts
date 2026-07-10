@@ -13,4 +13,14 @@ describe("runtime catalog", () => {
       configurableModelId: true,
     });
   });
+
+  test("includes OpenCode fallback models, default channel, and provider preset", () => {
+    expect(FALLBACK_MODEL_OPTIONS.opencode.map((model) => model.id)).toContain("default");
+    expect(DEFAULT_CONFIG_CHANNEL_IDS.opencode).toBe("opencode-default");
+    expect(AGENT_PROVIDER_PRESETS.find((preset) => preset.id === "opencode-default")).toMatchObject({
+      runtimeAgentId: "opencode",
+      label: "Default",
+      configurableModelId: true,
+    });
+  });
 });

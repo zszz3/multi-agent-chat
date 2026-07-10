@@ -20,6 +20,8 @@
   --on-accent: #ffffff;
   --codex: #15966b;
   --claude: #c47e1d;
+  --hermes: #8b5cf6;
+  --opencode: #2563eb;
   --ok: #15966b;
   --ok-strong: #0b7f59;
   --ok-tint: #f0faf6;
@@ -58,6 +60,8 @@
   --on-accent: #ffffff;
   --codex: #4cb782;
   --claude: #d9913d;
+  --hermes: #a78bfa;
+  --opencode: #60a5fa;
   --ok: #4cb782;
   --ok-strong: #5fcf96;
   --ok-tint: #14211b;
@@ -337,6 +341,14 @@ textarea:focus-visible {
 
 .agent-api {
   background: var(--accent);
+}
+
+.agent-hermes {
+  background: var(--hermes);
+}
+
+.agent-opencode {
+  background: var(--opencode);
 }
 
 .runtime-meta {
@@ -7481,6 +7493,18 @@ textarea:focus-visible {
   border-color: color-mix(in srgb, var(--accent) 30%, transparent);
   background: color-mix(in srgb, var(--accent) 10%, transparent);
   color: var(--accent);
+}
+
+.agent-badge.mini.agent-hermes {
+  border-color: color-mix(in srgb, var(--hermes) 30%, transparent);
+  background: color-mix(in srgb, var(--hermes) 10%, transparent);
+  color: var(--hermes);
+}
+
+.agent-badge.mini.agent-opencode {
+  border-color: color-mix(in srgb, var(--opencode) 30%, transparent);
+  background: color-mix(in srgb, var(--opencode) 10%, transparent);
+  color: var(--opencode);
 }
 
 /* ---- chat surface: flat, centered reading column ---- */

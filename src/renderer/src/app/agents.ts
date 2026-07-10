@@ -5,6 +5,7 @@ export function agentLabel(agentId: AgentId): string {
   if (agentId === "codex") return "Codex";
   if (agentId === "claude") return "Claude Code";
   if (agentId === "hermes") return "Hermes";
+  if (agentId === "opencode") return "OpenCode";
   return "API";
 }
 
@@ -12,6 +13,7 @@ export function agentAccent(agentId: AgentId): string {
   if (agentId === "codex") return "agent-codex";
   if (agentId === "claude") return "agent-claude";
   if (agentId === "hermes") return "agent-hermes";
+  if (agentId === "opencode") return "agent-opencode";
   return "agent-api";
 }
 

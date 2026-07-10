@@ -1,4 +1,4 @@
-export type AgentId = "codex" | "claude" | "api" | "hermes";
+export type AgentId = "codex" | "claude" | "api" | "hermes" | "opencode";
 
 export interface AgentRuntime {
   id: AgentId;

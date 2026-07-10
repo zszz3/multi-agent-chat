@@ -25,6 +25,9 @@ export const FALLBACK_MODEL_OPTIONS: Record<AgentId, AgentModelOption[]> = {
   hermes: [
     { id: DEFAULT_MODEL_ID, label: "Default" },
   ],
+  opencode: [
+    { id: DEFAULT_MODEL_ID, label: "Default" },
+  ],
 };
 
 export function defaultModelForAgent(_agentId: AgentId): string {
