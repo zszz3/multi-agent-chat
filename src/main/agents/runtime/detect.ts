@@ -6,6 +6,7 @@ const AGENT_COMMANDS: Record<Exclude<AgentId, "api">, { label: string; env: stri
   claude: { label: "Claude Code", env: "CLAUDE_PATH", executable: "claude" },
   hermes: { label: "Hermes", env: "HERMES_PATH", executable: "hermes" },
   opencode: { label: "OpenCode", env: "OPENCODE_PATH", executable: "opencode" },
+  openclaw: { label: "OpenClaw", env: "OPENCLAW_PATH", executable: "openclaw" },
 };
 
 export function parseCliVersion(raw: string): string {
@@ -56,5 +57,5 @@ async function detectOne(id: AgentId): Promise<AgentRuntime> {
 }
 
 export async function detectAgentRuntimes(): Promise<AgentRuntime[]> {
-  return Promise.all([detectOne("codex"), detectOne("claude"), detectOne("api"), detectOne("hermes"), detectOne("opencode")]);
+  return Promise.all([detectOne("codex"), detectOne("claude"), detectOne("api"), detectOne("hermes"), detectOne("opencode"), detectOne("openclaw")]);
 }

@@ -40,7 +40,7 @@ describe("createOpenCodeDriver interactive integration", () => {
     const dir = await mkdtemp(path.join(os.tmpdir(), "multi-agent-chat-opencode-driver-"));
     const fake = await createOpenCodeAcpFake(dir);
     const driver = createOpenCodeDriver({
-      executables: { codex: "codex", claude: "claude", api: "api", hermes: "hermes", opencode: fake.executable },
+      executables: { codex: "codex", claude: "claude", api: "api", hermes: "hermes", opencode: fake.executable, openclaw: "openclaw" },
       channelById: () => ({
         id: "opencode-default",
         agentId: "opencode",

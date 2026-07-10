@@ -28,6 +28,9 @@ export const FALLBACK_MODEL_OPTIONS: Record<AgentId, AgentModelOption[]> = {
   opencode: [
     { id: DEFAULT_MODEL_ID, label: "Default" },
   ],
+  openclaw: [
+    { id: DEFAULT_MODEL_ID, label: "Default" },
+  ],
 };
 
 export function defaultModelForAgent(_agentId: AgentId): string {

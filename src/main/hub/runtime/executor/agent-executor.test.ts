@@ -3,7 +3,7 @@ import type { RuntimeDriver } from "../../../agents/runtime/runtime-driver";
 
 function buildOptions() {
   return {
-    executables: { codex: "codex", claude: "claude", api: "api", hermes: "hermes", opencode: "opencode" },
+    executables: { codex: "codex", claude: "claude", api: "api", hermes: "hermes", opencode: "opencode", openclaw: "openclaw" },
     channelById: () => ({
       id: "test-channel",
       runtimeAgentId: "api",
@@ -32,6 +32,7 @@ const builderMocks = vi.hoisted(() => ({
   api: vi.fn(),
   hermes: vi.fn(),
   opencode: vi.fn(),
+  openclaw: vi.fn(),
 }));
 
 const runtimeModuleMocks = vi.hoisted(() => ({
@@ -41,6 +42,8 @@ const runtimeModuleMocks = vi.hoisted(() => ({
   hermesChannelTest: vi.fn(async () => "hermes channel test"),
   opencodeWorkflow: vi.fn(async () => ({ content: "opencode workflow" })),
   opencodeChannelTest: vi.fn(async () => "opencode channel test"),
+  openclawWorkflow: vi.fn(async () => ({ content: "openclaw workflow" })),
+  openclawChannelTest: vi.fn(async () => "openclaw channel test"),
   codexCleanup: vi.fn(async () => undefined),
   claudeCleanup: vi.fn(async () => undefined),
 }));
@@ -58,6 +61,10 @@ vi.mock("./hermes/hermes-workflow", () => ({
 vi.mock("./opencode/opencode-workflow", () => ({
   runOpenCodeWorkflow: runtimeModuleMocks.opencodeWorkflow,
   runOpenCodeChannelTest: runtimeModuleMocks.opencodeChannelTest,
+}));
+vi.mock("./openclaw/openclaw-workflow", () => ({
+  runOpenClawWorkflow: runtimeModuleMocks.openclawWorkflow,
+  runOpenClawChannelTest: runtimeModuleMocks.openclawChannelTest,
 }));
 vi.mock("./codex/codex-cleanup", () => ({
   deleteCodexSessionArtifacts: runtimeModuleMocks.codexCleanup,
@@ -81,6 +88,7 @@ describe("createRuntimeDriverRegistry", () => {
       api: createMockDriver("api"),
       hermes: createMockDriver("hermes"),
       opencode: createMockDriver("opencode"),
+      openclaw: createMockDriver("openclaw"),
     };
 
     builderMocks.codex.mockReturnValue(drivers.codex);
@@ -88,12 +96,14 @@ describe("createRuntimeDriverRegistry", () => {
     builderMocks.api.mockReturnValue(drivers.api);
     builderMocks.hermes.mockReturnValue(drivers.hermes);
     builderMocks.opencode.mockReturnValue(drivers.opencode);
+    builderMocks.openclaw.mockReturnValue(drivers.openclaw);
 
     vi.doMock("./codex/create-codex-driver", () => ({ createCodexDriver: builderMocks.codex }));
     vi.doMock("./claude/create-claude-driver", () => ({ createClaudeDriver: builderMocks.claude }));
     vi.doMock("./api/create-api-driver", () => ({ createApiDriver: builderMocks.api }));
     vi.doMock("./hermes/create-hermes-driver", () => ({ createHermesDriver: builderMocks.hermes }));
     vi.doMock("./opencode/create-opencode-driver", () => ({ createOpenCodeDriver: builderMocks.opencode }));
+    vi.doMock("./openclaw/create-openclaw-driver", () => ({ createOpenClawDriver: builderMocks.openclaw }));
 
     const { createRuntimeDriverRegistry } = await import("./agent-executor");
     const registry = createRuntimeDriverRegistry(options);
@@ -107,6 +117,7 @@ describe("createRuntimeDriverRegistry", () => {
     expect(registry.driverFor("api")).toBe(drivers.api);
     expect(registry.driverFor("hermes")).toBe(drivers.hermes);
     expect(registry.driverFor("opencode")).toBe(drivers.opencode);
+    expect(registry.driverFor("openclaw")).toBe(drivers.openclaw);
   });
 
   test("runtime-local builders own their workflow, cleanup, and test hooks", async () => {
@@ -134,17 +145,20 @@ describe("createRuntimeDriverRegistry", () => {
     vi.doUnmock("./claude/create-claude-driver");
     vi.doUnmock("./hermes/create-hermes-driver");
     vi.doUnmock("./opencode/create-opencode-driver");
-    const [{ createCodexDriver }, { createClaudeDriver }, { createHermesDriver }, { createOpenCodeDriver }] = await Promise.all([
+    vi.doUnmock("./openclaw/create-openclaw-driver");
+    const [{ createCodexDriver }, { createClaudeDriver }, { createHermesDriver }, { createOpenCodeDriver }, { createOpenClawDriver }] = await Promise.all([
       import("./codex/create-codex-driver"),
       import("./claude/create-claude-driver"),
       import("./hermes/create-hermes-driver"),
       import("./opencode/create-opencode-driver"),
+      import("./openclaw/create-openclaw-driver"),
     ]);
 
     const codexDriver = createCodexDriver(options);
     const claudeDriver = createClaudeDriver(options);
     const hermesDriver = createHermesDriver(options);
     const opencodeDriver = createOpenCodeDriver(options);
+    const openclawDriver = createOpenClawDriver(options);
 
     await codexDriver.askWorkflow?.(workflowInput);
     await codexDriver.deleteSessionArtifacts?.(cleanupInput);
@@ -154,6 +168,8 @@ describe("createRuntimeDriverRegistry", () => {
     await hermesDriver.testChannel?.(channelTestInput);
     await opencodeDriver.askWorkflow?.(workflowInput);
     await opencodeDriver.testChannel?.(channelTestInput);
+    await openclawDriver.askWorkflow?.(workflowInput);
+    await openclawDriver.testChannel?.(channelTestInput);
 
     expect(runtimeModuleMocks.codexWorkflow).toHaveBeenCalledWith(workflowInput, options);
     expect(runtimeModuleMocks.codexCleanup).toHaveBeenCalledWith(options.executables.codex, cleanupInput);
@@ -163,6 +179,8 @@ describe("createRuntimeDriverRegistry", () => {
     expect(runtimeModuleMocks.hermesChannelTest).toHaveBeenCalledWith(channelTestInput, options);
     expect(runtimeModuleMocks.opencodeWorkflow).toHaveBeenCalledWith(workflowInput, options);
     expect(runtimeModuleMocks.opencodeChannelTest).toHaveBeenCalledWith(channelTestInput, options);
+    expect(runtimeModuleMocks.openclawWorkflow).toHaveBeenCalledWith(workflowInput, options);
+    expect(runtimeModuleMocks.openclawChannelTest).toHaveBeenCalledWith(channelTestInput, options);
   });
 
   test("runtime-local builders expose only explicitly supported hooks", async () => {
@@ -172,15 +190,17 @@ describe("createRuntimeDriverRegistry", () => {
     vi.doUnmock("./api/create-api-driver");
     vi.doUnmock("./hermes/create-hermes-driver");
     vi.doUnmock("./opencode/create-opencode-driver");
-    const [codex, claude, api, hermes, opencode] = await Promise.all([
+    vi.doUnmock("./openclaw/create-openclaw-driver");
+    const [codex, claude, api, hermes, opencode, openclaw] = await Promise.all([
       import("./codex/create-codex-driver").then(({ createCodexDriver }) => createCodexDriver(options)),
       import("./claude/create-claude-driver").then(({ createClaudeDriver }) => createClaudeDriver(options)),
       import("./api/create-api-driver").then(({ createApiDriver }) => createApiDriver(options)),
       import("./hermes/create-hermes-driver").then(({ createHermesDriver }) => createHermesDriver(options)),
       import("./opencode/create-opencode-driver").then(({ createOpenCodeDriver }) => createOpenCodeDriver(options)),
+      import("./openclaw/create-openclaw-driver").then(({ createOpenClawDriver }) => createOpenClawDriver(options)),
     ]);
 
-    for (const driver of [codex, claude, api, hermes, opencode]) {
+    for (const driver of [codex, claude, api, hermes, opencode, openclaw]) {
       expect(driver.surfaceSupport.length).toBeGreaterThan(0);
     }
     expect(hermes.runtimeStateCodec).toBeDefined();
@@ -189,5 +209,7 @@ describe("createRuntimeDriverRegistry", () => {
     expect(opencode.runtimeStateCodec).toBeDefined();
     expect(opencode.createInteractiveSession).toBeTypeOf("function");
     expect(opencode.deleteSessionArtifacts).toBeTypeOf("function");
+    expect(openclaw.runtimeStateCodec).toBeUndefined();
+    expect(openclaw.createInteractiveSession).toBeUndefined();
   });
 });

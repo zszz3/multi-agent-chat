@@ -132,6 +132,7 @@ function createHubWithClaudeOneShot(
     api: executables.api ?? "api",
     hermes: executables.hermes ?? "missing-hermes-for-test",
     opencode: executables.opencode ?? "missing-opencode-for-test",
+    openclaw: executables.openclaw ?? "missing-openclaw-for-test",
   };
   const runtimeDrivers = createRuntimeDriverRegistry({
     executables: resolvedExecutables,
@@ -201,7 +202,7 @@ test("ignores legacy CLAUDE_INTERACTIVE_TRANSPORT selectors and keeps Claude res
   process.env.CLAUDE_INTERACTIVE_TRANSPORT = "runner";
   try {
     const capabilities = createRuntimeDriverRegistry({
-      executables: { codex: "codex", claude: "claude", api: "api", hermes: "hermes", opencode: "opencode" },
+      executables: { codex: "codex", claude: "claude", api: "api", hermes: "hermes", opencode: "opencode", openclaw: "openclaw" },
       channelById: () => undefined,
       respondToCodexServerRequest: () => undefined,
     }).driverFor("claude").getCapabilities({
@@ -225,7 +226,7 @@ test("ignores legacy CLAUDE_INTERACTIVE_TRANSPORT selectors and keeps Claude res
 
 test("api runtime advertises oneshot chat style", () => {
   const capabilities = createRuntimeDriverRegistry({
-    executables: { codex: "codex", claude: "claude", api: "api", hermes: "hermes", opencode: "opencode" },
+    executables: { codex: "codex", claude: "claude", api: "api", hermes: "hermes", opencode: "opencode", openclaw: "openclaw" },
     channelById: () => undefined,
     respondToCodexServerRequest: () => undefined,
   }).driverFor("api").getCapabilities({

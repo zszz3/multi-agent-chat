@@ -23,4 +23,14 @@ describe("runtime catalog", () => {
       configurableModelId: true,
     });
   });
+
+  test("includes OpenClaw fallback models, default channel, and provider preset", () => {
+    expect(FALLBACK_MODEL_OPTIONS.openclaw.map((model) => model.id)).toContain("default");
+    expect(DEFAULT_CONFIG_CHANNEL_IDS.openclaw).toBe("openclaw-default");
+    expect(AGENT_PROVIDER_PRESETS.find((preset) => preset.id === "openclaw-default")).toMatchObject({
+      runtimeAgentId: "openclaw",
+      label: "Default",
+      configurableModelId: true,
+    });
+  });
 });

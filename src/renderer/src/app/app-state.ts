@@ -90,7 +90,9 @@ export function createChannel(agentId: AgentId, existingIds: string[]): AgentCha
             ? "New Hermes Config"
             : agentId === "opencode"
               ? "New OpenCode Config"
-              : "New API Config",
+              : agentId === "openclaw"
+                ? "New OpenClaw Config"
+                : "New API Config",
     models: [{ id: DEFAULT_MODEL_ID, label: "Default" }],
   };
 }

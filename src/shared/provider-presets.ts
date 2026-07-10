@@ -4,6 +4,7 @@ import type { AgentId, AgentModelOption } from "./types";
 export const CODEX_DEFAULT_PRESET_ID = "codex-default";
 export const HERMES_DEFAULT_PRESET_ID = "hermes-default";
 export const OPENCODE_DEFAULT_PRESET_ID = "opencode-default";
+export const OPENCLAW_DEFAULT_PRESET_ID = "openclaw-default";
 
 export interface AgentProviderPreset {
   id: string;
@@ -538,5 +539,14 @@ export const AGENT_PROVIDER_PRESETS: AgentProviderPreset[] = [
     configurableModelId: true,
     configurableModelLabel: "OpenCode model",
     configurableModelPlaceholder: "provider/model (use OpenCode default when empty)",
+  },
+  {
+    id: OPENCLAW_DEFAULT_PRESET_ID,
+    label: "Default",
+    runtimeAgentId: "openclaw",
+    models: FALLBACK_MODEL_OPTIONS.openclaw,
+    configurableModelId: true,
+    configurableModelLabel: "OpenClaw one-shot model",
+    configurableModelPlaceholder: "provider/model (ACP chat uses Gateway session model)",
   },
 ];

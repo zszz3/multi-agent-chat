@@ -358,6 +358,13 @@ export function createDefaultChannels(codexModels = FALLBACK_MODEL_OPTIONS.codex
       presetId: "opencode-default",
       models: FALLBACK_MODEL_OPTIONS.opencode,
     },
+    {
+      id: "openclaw-default",
+      agentId: "openclaw",
+      label: "OpenClaw Default",
+      presetId: "openclaw-default",
+      models: FALLBACK_MODEL_OPTIONS.openclaw,
+    },
   ];
 }
 

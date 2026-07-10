@@ -32,6 +32,13 @@ describe("model channel config", () => {
       presetId: "opencode-default",
       models: [{ id: "default", label: "Default" }],
     });
+    expect(createDefaultChannels().find((channel) => channel.agentId === "openclaw")).toEqual({
+      id: "openclaw-default",
+      agentId: "openclaw",
+      label: "OpenClaw Default",
+      presetId: "openclaw-default",
+      models: [{ id: "default", label: "Default" }],
+    });
   });
 
   test("parses visible Codex models from the debug catalog", () => {

@@ -11,4 +11,9 @@ describe("renderer runtime helpers", () => {
     expect(agentLabel("opencode")).toBe("OpenCode");
     expect(agentAccent("opencode")).toBe("agent-opencode");
   });
+
+  test("renders OpenClaw label and accent", () => {
+    expect(agentLabel("openclaw")).toBe("OpenClaw");
+    expect(agentAccent("openclaw")).toBe("agent-openclaw");
+  });
 });

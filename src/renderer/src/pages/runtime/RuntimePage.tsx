@@ -35,7 +35,7 @@ import {
   withOptionalString,
 } from "./runtime-utils";
 
-const AGENTS: AgentId[] = ["codex", "claude", "api", "hermes", "opencode"];
+const AGENTS: AgentId[] = ["codex", "claude", "api", "hermes", "opencode", "openclaw"];
 
 const CONFIG_TEXT = {
   zh: {
@@ -143,8 +143,8 @@ export function RuntimePage({
   const runtimeTitle = language === "zh" ? "配置" : "Config";
   const runtimeDescription =
     language === "zh"
-      ? "管理 Codex / Claude / API / Hermes / OpenCode 执行器、Provider、API Key、插件和模型。"
-      : "Manage Codex / Claude / API / Hermes / OpenCode executors, providers, API keys, plugins, and models.";
+      ? "管理 Codex / Claude / API / Hermes / OpenCode / OpenClaw 执行器、Provider、API Key、插件和模型。"
+      : "Manage Codex / Claude / API / Hermes / OpenCode / OpenClaw executors, providers, API keys, plugins, and models.";
   const channelTitle = language === "zh" ? "配置项" : "Configs";
   const addConfigText = language === "zh" ? "新增配置" : "Add config";
   const deleteConfigText = language === "zh" ? "删除配置" : "Delete config";

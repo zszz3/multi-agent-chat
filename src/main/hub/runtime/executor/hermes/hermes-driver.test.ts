@@ -40,7 +40,7 @@ describe("createHermesDriver interactive integration", () => {
     const dir = await mkdtemp(path.join(os.tmpdir(), "multi-agent-chat-hermes-driver-"));
     const fake = await createHermesAcpFake(dir);
     const driver = createHermesDriver({
-      executables: { codex: "codex", claude: "claude", api: "api", hermes: fake.executable, opencode: "opencode" },
+      executables: { codex: "codex", claude: "claude", api: "api", hermes: fake.executable, opencode: "opencode", openclaw: "openclaw" },
       channelById: () => ({
         id: "hermes-default",
         agentId: "hermes",

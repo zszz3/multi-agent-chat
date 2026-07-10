@@ -90,4 +90,22 @@ describe("detectAgentRuntimes", () => {
       version: "1.2.3",
     });
   });
+
+  test("detects an OpenClaw CLI from OPENCLAW_PATH", async () => {
+    vi.resetModules();
+    vi.stubEnv("OPENCLAW_PATH", "C:\\Users\\demo\\AppData\\Roaming\\npm\\openclaw.cmd");
+    const execCli = vi.fn(async (request: { executable: string; args?: string[] }) => {
+      if (request.executable.endsWith("openclaw.cmd")) return { stdout: "openclaw 2026.7.1\n", stderr: "" };
+      throw new Error(`unexpected executable: ${request.executable}`);
+    });
+    vi.doMock("../../platform/cli-launcher", () => ({ execCli }));
+    const { detectAgentRuntimes } = await import("./detect");
+    const runtimes = await detectAgentRuntimes();
+    expect(runtimes.find((runtime) => runtime.id === "openclaw")).toMatchObject({
+      id: "openclaw",
+      command: "C:\\Users\\demo\\AppData\\Roaming\\npm\\openclaw.cmd",
+      available: true,
+      version: "2026.7.1",
+    });
+  });
 });

@@ -22,6 +22,7 @@
   --claude: #c47e1d;
   --hermes: #8b5cf6;
   --opencode: #2563eb;
+  --openclaw: #f5654a;
   --ok: #15966b;
   --ok-strong: #0b7f59;
   --ok-tint: #f0faf6;
@@ -62,6 +63,7 @@
   --claude: #d9913d;
   --hermes: #a78bfa;
   --opencode: #60a5fa;
+  --openclaw: #fb806b;
   --ok: #4cb782;
   --ok-strong: #5fcf96;
   --ok-tint: #14211b;
@@ -349,6 +351,10 @@ textarea:focus-visible {
 
 .agent-opencode {
   background: var(--opencode);
+}
+
+.agent-openclaw {
+  background: var(--openclaw);
 }
 
 .runtime-meta {
@@ -7505,6 +7511,12 @@ textarea:focus-visible {
   border-color: color-mix(in srgb, var(--opencode) 30%, transparent);
   background: color-mix(in srgb, var(--opencode) 10%, transparent);
   color: var(--opencode);
+}
+
+.agent-badge.mini.agent-openclaw {
+  border-color: color-mix(in srgb, var(--openclaw) 30%, transparent);
+  background: color-mix(in srgb, var(--openclaw) 10%, transparent);
+  color: var(--openclaw);
 }
 
 /* ---- chat surface: flat, centered reading column ---- */
