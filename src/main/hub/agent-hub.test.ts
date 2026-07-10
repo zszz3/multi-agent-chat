@@ -397,6 +397,7 @@ const readline = require("readline");
 const callsPath = ${JSON.stringify(callsPath)};
 const counterPath = ${JSON.stringify(counterPath)};
 let threadIndex = 0;
+fs.appendFileSync(callsPath, JSON.stringify({ method: "process/argv", params: { args: process.argv.slice(2) } }) + "\\n");
 
 function write(message) {
   process.stdout.write(JSON.stringify(message) + "\\n");
@@ -453,6 +454,101 @@ rl.on("line", (line) => {
 });
 `;
   const executable = await writeNodeCliLauncher(dir, "codex-sequential-fake", script);
+  return { executable, callsPath };
+}
+
+async function writeWorkflowToolCodexFake(dir: string): Promise<{ executable: string; callsPath: string }> {
+  const callsPath = path.join(dir, "workflow-tool-calls.jsonl");
+  const graph = {
+    title: "MCP Planned Workflow",
+    objective: "Build a workflow through MCP",
+    nodes: [
+      { id: "start", kind: "start", title: "Start", prompt: "" },
+      { id: "plan", kind: "agent", title: "Plan", prompt: "Plan the work." },
+      { id: "end", kind: "end", title: "Done", prompt: "" },
+    ],
+    edges: [
+      { id: "start->plan", fromNodeId: "start", toNodeId: "plan" },
+      { id: "plan->end", fromNodeId: "plan", toNodeId: "end" },
+    ],
+  };
+  const script = `#!/usr/bin/env node
+const fs = require("fs");
+const readline = require("readline");
+
+const callsPath = ${JSON.stringify(callsPath)};
+const graph = ${JSON.stringify(graph)};
+let threadIndex = 0;
+fs.appendFileSync(callsPath, JSON.stringify({ method: "process/argv", params: { args: process.argv.slice(2) } }) + "\\n");
+
+function write(message) {
+  process.stdout.write(JSON.stringify(message) + "\\n");
+}
+
+function record(message) {
+  if (!message.method) return;
+  fs.appendFileSync(callsPath, JSON.stringify({ method: message.method, params: message.params ?? null }) + "\\n");
+}
+
+function completeAfterToolResponse(response) {
+  fs.appendFileSync(callsPath, JSON.stringify({ method: "client/toolResponse", params: response.result ?? response.error ?? null }) + "\\n");
+  write({
+    jsonrpc: "2.0",
+    method: "turn/completed",
+    params: {
+      turn: {
+        status: "completed",
+        type: "message",
+        role: "assistant",
+        content: [{ type: "output_text", text: "Workflow created through MCP." }]
+      }
+    }
+  });
+}
+
+const rl = readline.createInterface({ input: process.stdin });
+rl.on("line", (line) => {
+  if (!line.trim()) return;
+  const message = JSON.parse(line);
+  if (!message.method && message.id === 900) {
+    completeAfterToolResponse(message);
+    return;
+  }
+  record(message);
+  if (message.id === undefined) return;
+
+  if (message.method === "initialize") {
+    write({ jsonrpc: "2.0", id: message.id, result: {} });
+    return;
+  }
+  if (message.method === "thread/start") {
+    threadIndex += 1;
+    write({ jsonrpc: "2.0", id: message.id, result: { thread: { id: "thread-" + threadIndex } } });
+    return;
+  }
+  if (message.method === "turn/start") {
+    write({ jsonrpc: "2.0", id: message.id, result: { turn: { id: "turn-1" } } });
+    setTimeout(() => {
+      write({
+        jsonrpc: "2.0",
+        id: 900,
+        method: "mcp/dynamicToolCall",
+        params: {
+          name: "workflow_create",
+          arguments: {
+            title: graph.title,
+            objective: graph.objective,
+            graph
+          }
+        }
+      });
+    }, 10);
+    return;
+  }
+  write({ jsonrpc: "2.0", id: message.id, error: { code: -32601, message: "unknown method " + message.method } });
+});
+`;
+  const executable = await writeNodeCliLauncher(dir, "codex-workflow-tool-fake", script);
   return { executable, callsPath };
 }
 
@@ -544,6 +640,78 @@ async function waitFor<T>(read: () => T, predicate: (value: T) => boolean): Prom
 }
 
 describe("AgentHub chat sessions", () => {
+  test("creates default agents once without binding their later edits to runtime configs", () => {
+    const hub = new AgentHub();
+    (hub as any).channels = [
+      {
+        id: "codex-openai",
+        agentId: "codex",
+        label: "Codex Official",
+        models: [{ id: DEFAULT_MODEL_ID, label: "Default" }],
+      },
+      {
+        id: "codex-glm",
+        agentId: "codex",
+        label: "Codex GLM",
+        models: [{ id: DEFAULT_MODEL_ID, label: "Default" }],
+      },
+    ];
+    (hub as any).installRestoredConfiguredAgents([]);
+
+    expect(hub.snapshot().configuredAgents).toEqual(
+      expect.arrayContaining([
+        expect.objectContaining({ id: "default-agent", name: "Codex Official", channelId: "codex-openai", managed: true }),
+        expect.objectContaining({ id: "runtime-agent:codex-glm", name: "Codex GLM", channelId: "codex-glm", managed: true }),
+      ]),
+    );
+
+    const existing = hub.snapshot().configuredAgents.map((agent) =>
+      agent.id === "runtime-agent:codex-glm"
+        ? {
+            ...agent,
+            name: "My Reviewer",
+            channelId: "codex-openai",
+            runtimeAgentId: "codex" as const,
+            modelId: DEFAULT_MODEL_ID,
+            managed: false,
+          }
+        : agent,
+    );
+    (hub as any).channels[1].label = "Codex GLM Updated";
+    (hub as any).installRestoredConfiguredAgents(existing);
+    expect(hub.snapshot().configuredAgents.find((agent) => agent.id === "runtime-agent:codex-glm")).toMatchObject({
+      name: "My Reviewer",
+      channelId: "codex-openai",
+      runtimeAgentId: "codex",
+      modelId: DEFAULT_MODEL_ID,
+    });
+    expect(hub.snapshot().configuredAgents.find((agent) => agent.id === "runtime-agent:codex-glm")?.managed).toBeUndefined();
+  });
+
+  test("restores a configured agent reasoning effort supported by its model", () => {
+    const hub = new AgentHub();
+    (hub as any).channels = [{
+      id: "codex-openai",
+      agentId: "codex",
+      label: "Codex Official",
+      models: [{ id: "gpt-5.6-sol", label: "GPT-5.6-Sol", reasoningEfforts: ["low", "xhigh", "ultra"] }],
+    }];
+    (hub as any).installRestoredConfiguredAgents([{
+      id: "sol-agent",
+      name: "Sol Agent",
+      description: "",
+      runtimeAgentId: "codex",
+      channelId: "codex-openai",
+      modelId: "gpt-5.6-sol",
+      reasoningEffort: "xhigh",
+      tags: [],
+      createdAt: 1,
+      updatedAt: 1,
+    }]);
+
+    expect(hub.snapshot().configuredAgents.find((agent) => agent.id === "sol-agent")?.reasoningEffort).toBe("xhigh");
+  });
+
   test("refreshes workflow agent timeout after activity", () => {
     vi.useFakeTimers();
     try {
@@ -630,7 +798,26 @@ describe("AgentHub chat sessions", () => {
       version: "test",
       available: true,
     });
+    (hub as any).channels = [{
+      id: "codex-openai",
+      agentId: "codex",
+      label: "Codex Official",
+      models: [{ id: "gpt-5.6-sol", label: "GPT-5.6-Sol", reasoningEfforts: ["low", "xhigh", "ultra"] }],
+    }];
+    hub.updateConfiguredAgents([{
+      id: "sol-agent",
+      name: "Sol Agent",
+      description: "",
+      runtimeAgentId: "codex",
+      channelId: "codex-openai",
+      modelId: "gpt-5.6-sol",
+      reasoningEffort: "xhigh",
+      tags: [],
+      createdAt: 1,
+      updatedAt: 1,
+    }]);
     const chatId = hub.snapshot().activeChatId!;
+    hub.setChatAgent(chatId, "sol-agent");
 
     await hub.sendPrompt("Hello", chatId);
     await waitFor(() => hub.snapshot().chats.find((chat) => chat.id === chatId), (chat) => chat?.running === false);
@@ -638,6 +825,7 @@ describe("AgentHub chat sessions", () => {
     expect(events).toHaveLength(1);
     expect(events[0]).toMatchObject({
       runtimeId: "codex",
+      runtimeConfig: { model: "gpt-5.6-sol", reasoningEffort: "xhigh" },
       prompt: "Hello",
       runKind: "chat",
       continuationPolicy: "resume-preferred",
@@ -2681,6 +2869,77 @@ fs.writeFileSync(${JSON.stringify(argsPath)}, process.argv.slice(2).join("\\n") 
     expect(calls.some((call) => call.method === "thread/start" && call.params.developerInstructions.includes("Final User Report"))).toBe(true);
   });
 
+  test("injects the local workflow MCP server into Codex workflow agent runs", async () => {
+    const dir = await mkdtemp(path.join(os.tmpdir(), "multi-agent-chat-workflow-mcp-"));
+    const fake = await writeSequentialCodexFake(dir);
+    const hub = new AgentHub({ codex: fake.executable, claude: "missing-claude-for-test" });
+    hub.setMcpBridgeDiscoveryPath(path.join(dir, "mcp-bridge.json"));
+    (hub as any).runtimes.set("codex", {
+      id: "codex",
+      label: "Codex",
+      command: fake.executable,
+      version: "test",
+      available: true,
+    });
+
+    await (hub as any).askWorkflowAgent({
+      requestId: "workflow-mcp-config-test",
+      prompt: "Use workflow tools when ready.",
+      configuredAgentId: "default-agent",
+      workDir: dir,
+      runtimeId: "codex",
+      executionMode: "oneshot",
+      continuationPolicy: "fresh",
+      runtimeConfig: { model: DEFAULT_MODEL_ID },
+    });
+
+    const calls = (await readFile(fake.callsPath, "utf8")).trim().split("\n").map((line) => JSON.parse(line) as any);
+    const argv = calls.find((call) => call.method === "process/argv")?.params.args as string[];
+    expect(argv.join("\n")).toContain("mcp_servers.multi_agent_chat.command");
+    expect(argv.join("\n")).toContain("mcp_servers.multi_agent_chat.args");
+    expect(argv.join("\n")).toContain("mcp_servers.multi_agent_chat.env.MULTI_AGENT_CHAT_MCP_BRIDGE");
+    expect(argv.join("\n")).toContain(path.join(dir, "mcp-bridge.json"));
+  });
+
+  test("creates and activates a workflow from Codex workflow_create tool calls", async () => {
+    const dir = await mkdtemp(path.join(os.tmpdir(), "multi-agent-chat-workflow-tool-"));
+    const fake = await writeWorkflowToolCodexFake(dir);
+    const hub = new AgentHub({ codex: fake.executable, claude: "missing-claude-for-test" });
+    (hub as any).runtimes.set("codex", {
+      id: "codex",
+      label: "Codex",
+      command: fake.executable,
+      version: "test",
+      available: true,
+    });
+    const created = hub.createWorkflowDraft({ configuredAgentId: "default-agent" });
+    const sourceWorkflowId = created.workflowDraft?.workflowId;
+    expect(sourceWorkflowId).toBeTruthy();
+
+    const next = await hub.sendWorkflowDraftReply({
+      workflowId: sourceWorkflowId!,
+      reply: "Create the workflow with the MCP workflow_create tool.",
+    });
+
+    expect(next.workflowDraft).toMatchObject({
+      workflowId: expect.stringMatching(/^wf_/),
+      title: "MCP Planned Workflow",
+      objective: "Build a workflow through MCP",
+      graphReady: true,
+      messages: [
+        { role: "user", content: "Create the workflow with the MCP workflow_create tool." },
+        { role: "assistant", content: "Workflow created through MCP." },
+      ],
+      runtimeConversation: runtimeConversation("codex", { native: { threadId: "thread-1" } }),
+    });
+    expect(next.workflowDraft?.workflowId).not.toBe(sourceWorkflowId);
+    expect(next.workflowDraft?.graph.nodes.map((node) => node.id)).toEqual(["start", "plan", "end"]);
+    expect(next.workflowStore.workflows.some((workflow) => workflow.workflowId === sourceWorkflowId)).toBe(false);
+
+    const calls = (await readFile(fake.callsPath, "utf8")).trim().split("\n").map((line) => JSON.parse(line) as any);
+    expect(calls.some((call) => call.method === "client/toolResponse" && call.params.success === true)).toBe(true);
+  });
+
   test("asks a Claude workflow agent through the official SDK one-shot path without resuming when continuationPolicy is fresh", async () => {
     const dir = await mkdtemp(path.join(os.tmpdir(), "multi-agent-chat-claude-workflow-sdk-"));
     const runOneShot = vi.fn(async (input: any) => {
@@ -2737,6 +2996,47 @@ fs.writeFileSync(${JSON.stringify(argsPath)}, process.argv.slice(2).join("\\n") 
       developerInstructions: expect.stringContaining("workflow builder"),
     });
     expect(oneShotInput?.resumeSessionId).toBeUndefined();
+  });
+
+  test("passes the local workflow MCP server to Claude workflow SDK runs", async () => {
+    const dir = await mkdtemp(path.join(os.tmpdir(), "multi-agent-chat-claude-workflow-mcp-"));
+    const hub = new AgentHub({ codex: "missing-codex-for-test", claude: "missing-claude-for-test" });
+    hub.setMcpBridgeDiscoveryPath(path.join(dir, "mcp-bridge.json"));
+    addConfiguredAgents(hub, [configuredAgent("claude-agent", { runtimeAgentId: "claude", name: "Claude Agent" })]);
+    (hub as any).runtimes.set("claude", {
+      id: "claude",
+      label: "Claude",
+      command: "claude",
+      version: "test",
+      available: true,
+    });
+
+    const runOneShot = vi.fn(async (input: any) => {
+      input.onEvent({ type: "delta", content: "workflow-sdk" });
+      input.onEvent({ type: "completed", content: "workflow-sdk" });
+    });
+    (hub as any).claudeSdkAdapter = { runOneShot };
+
+    await (hub as any).askWorkflowAgent({
+      requestId: "claude-workflow-mcp-test",
+      prompt: "Plan the repo",
+      configuredAgentId: "claude-agent",
+      workDir: dir,
+      runtimeId: "claude",
+      executionMode: "oneshot",
+      continuationPolicy: "fresh",
+      runtimeConfig: { model: DEFAULT_MODEL_ID },
+    });
+
+    const oneShotInput = runOneShot.mock.calls[0]?.[0];
+    expect(oneShotInput?.mcpServers).toMatchObject({
+      multi_agent_chat: {
+        type: "stdio",
+        command: "node",
+        env: { MULTI_AGENT_CHAT_MCP_BRIDGE: path.join(dir, "mcp-bridge.json") },
+      },
+    });
+    expect(oneShotInput?.mcpServers?.multi_agent_chat.args.join("\n")).toContain("src/mcp/server.ts");
   });
 
   test("resumes a Claude workflow agent through the official SDK one-shot path when continuationPolicy is resume-preferred", async () => {
@@ -3371,7 +3671,11 @@ fs.writeFileSync(${JSON.stringify(argsPath)}, process.argv.slice(2).join("\\n") 
         modelProvider: "deepseek",
         baseUrl: "https://api.deepseek.com",
         wireApi: "responses",
+        apiFormat: "openai_responses",
+        isFullUrl: false,
         httpHeaders: { Authorization: "Bearer persisted-key" },
+        environment: { DEEPSEEK_REGION: "cn" },
+        requestOverrides: { headers: { "x-provider": "deepseek" }, body: { service_tier: "priority" } },
         plugins: [{ id: "github@openai-curated", enabled: true }],
         models: [
           { id: DEFAULT_MODEL_ID, label: "Default" },
@@ -3392,6 +3696,10 @@ fs.writeFileSync(${JSON.stringify(argsPath)}, process.argv.slice(2).join("\\n") 
         id: "codex-deepseek",
         providerName: "DeepSeek",
         httpHeaders: { Authorization: "Bearer persisted-key" },
+        apiFormat: "openai_responses",
+        isFullUrl: false,
+        environment: { DEEPSEEK_REGION: "cn" },
+        requestOverrides: { headers: { "x-provider": "deepseek" }, body: { service_tier: "priority" } },
         plugins: [{ id: "github@openai-curated", enabled: true }],
       }),
     ]);
@@ -3420,6 +3728,38 @@ fs.writeFileSync(${JSON.stringify(argsPath)}, process.argv.slice(2).join("\\n") 
       httpHeaders: { Authorization: "Bearer persisted-key" },
       plugins: [{ id: "github@openai-curated", enabled: true }],
     });
+  });
+
+  test("refreshes one model catalog without removing cached models", async () => {
+    const dir = await mkdtemp(path.join(os.tmpdir(), "multi-agent-chat-model-refresh-"));
+    const hub = new AgentHub({}, undefined, undefined, async () => ({
+      source: "codex_cli",
+      models: [{
+        id: "gpt-5.6-sol",
+        label: "GPT-5.6-Sol",
+        reasoningEfforts: ["low", "xhigh", "ultra"],
+        defaultReasoningEffort: "low",
+      }],
+    }));
+    await hub.loadModelChannels(path.join(dir, "model-channels.json"));
+    await hub.saveModelChannels([{
+      id: "codex-official",
+      agentId: "codex",
+      label: "Codex Official",
+      modelProvider: "openai",
+      models: [
+        { id: "default", label: "Default" },
+        { id: "private-model", label: "Private" },
+      ],
+    }]);
+
+    const result = await hub.refreshModelCatalog("codex-official");
+
+    expect(result).toMatchObject({ channelId: "codex-official", source: "codex_cli", discoveredCount: 1 });
+    expect(result.snapshot.channels[0]?.models).toEqual(expect.arrayContaining([
+      expect.objectContaining({ id: "private-model" }),
+      expect.objectContaining({ id: "gpt-5.6-sol", reasoningEfforts: ["low", "xhigh", "ultra"] }),
+    ]));
   });
 
   test("stores execution channel config in app state without rewriting the legacy channel file", async () => {
@@ -3618,6 +3958,15 @@ fs.writeFileSync(${JSON.stringify(argsPath)}, process.argv.slice(2).join("\\n") 
 
     const url = await (hub as any).registerArtifact({ target: "chat-1", url: "https://example.com/x", title: "Spec" });
     expect(url).toMatchObject({ ok: true, artifact: { kind: "url", url: "https://example.com/x", title: "Spec" } });
+  });
+
+  test("uses WorkflowStore as the workflow state owner", () => {
+    const hub = new AgentHub();
+
+    expect((hub as any).workflowStore).toBeDefined();
+    expect("workflows" in (hub as any)).toBe(false);
+    expect("workflowRuns" in (hub as any)).toBe(false);
+    expect("activeWorkflowId" in (hub as any)).toBe(false);
   });
 
   test("persists and restores multiple workflow drafts", async () => {
@@ -4641,7 +4990,7 @@ describe("AgentHub task runs", () => {
       running: false,
       messages: [
         expect.objectContaining({ role: "user", content: "Inspect the repo and summarize risks" }),
-        expect.objectContaining({ role: "error", content: "Default Agent is not available on this machine." }),
+        expect.objectContaining({ role: "error", content: "Codex OpenAI is not available on this machine." }),
       ],
       });
     });

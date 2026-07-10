@@ -1,5 +1,6 @@
 import { DEFAULT_MODEL_ID, FALLBACK_MODEL_OPTIONS } from "./models";
-import type { AgentId, AgentModelOption } from "./types";
+import type { AgentId, AgentModelOption, ClaudeApiKeyField, RuntimeProviderApiFormat } from "./types";
+import { CC_SWITCH_PROVIDER_PRESETS } from "./cc-switch-provider-presets.generated";
 
 export const CODEX_DEFAULT_PRESET_ID = "codex-default";
 export const HERMES_DEFAULT_PRESET_ID = "hermes-default";
@@ -14,6 +15,8 @@ export interface AgentProviderPreset {
   modelProvider?: string;
   baseUrl?: string;
   wireApi?: string;
+  apiFormat?: RuntimeProviderApiFormat;
+  apiKeyField?: ClaudeApiKeyField;
   modelReasoningEffort?: string;
   models: AgentModelOption[];
   usesApiKey?: boolean;
@@ -23,9 +26,15 @@ export interface AgentProviderPreset {
   configurableModelId?: boolean;
   configurableModelLabel?: string;
   configurableModelPlaceholder?: string;
+  websiteUrl?: string;
+  apiKeyUrl?: string;
+  category?: string;
+  environment?: Record<string, string>;
+  requiresOAuth?: boolean;
+  providerType?: string;
 }
 
-export const AGENT_PROVIDER_PRESETS: AgentProviderPreset[] = [
+const LEGACY_PROVIDER_PRESETS: AgentProviderPreset[] = [
   {
     id: "codex-openai",
     label: "Codex OpenAI",
@@ -47,6 +56,7 @@ export const AGENT_PROVIDER_PRESETS: AgentProviderPreset[] = [
     providerName: "DeepSeek",
     modelProvider: "deepseek-anthropic",
     baseUrl: "https://api.deepseek.com/anthropic",
+    apiFormat: "anthropic",
     usesApiKey: true,
     models: [
       { id: DEFAULT_MODEL_ID, label: "Default (DeepSeek Flash)" },
@@ -61,6 +71,7 @@ export const AGENT_PROVIDER_PRESETS: AgentProviderPreset[] = [
     providerName: "Zhipu GLM",
     modelProvider: "glm-anthropic",
     baseUrl: "https://open.bigmodel.cn/api/anthropic",
+    apiFormat: "anthropic",
     usesApiKey: true,
     models: [
       { id: DEFAULT_MODEL_ID, label: "Default" },
@@ -74,6 +85,7 @@ export const AGENT_PROVIDER_PRESETS: AgentProviderPreset[] = [
     providerName: "Kimi",
     modelProvider: "kimi-anthropic",
     baseUrl: "https://api.moonshot.cn/anthropic",
+    apiFormat: "anthropic",
     usesApiKey: true,
     models: [
       { id: DEFAULT_MODEL_ID, label: "Default" },
@@ -87,6 +99,7 @@ export const AGENT_PROVIDER_PRESETS: AgentProviderPreset[] = [
     providerName: "OpenRouter",
     modelProvider: "openrouter-anthropic",
     baseUrl: "https://openrouter.ai/api/v1",
+    apiFormat: "openai_chat",
     usesApiKey: true,
     models: [
       { id: DEFAULT_MODEL_ID, label: "Default" },
@@ -101,6 +114,7 @@ export const AGENT_PROVIDER_PRESETS: AgentProviderPreset[] = [
     providerName: "SiliconFlow",
     modelProvider: "siliconflow-anthropic",
     baseUrl: "https://api.siliconflow.cn/v1",
+    apiFormat: "openai_chat",
     usesApiKey: true,
     models: [
       { id: DEFAULT_MODEL_ID, label: "Default" },
@@ -115,6 +129,7 @@ export const AGENT_PROVIDER_PRESETS: AgentProviderPreset[] = [
     providerName: "Alibaba Bailian",
     modelProvider: "bailian-anthropic",
     baseUrl: "https://dashscope.aliyuncs.com/compatible-mode/v1",
+    apiFormat: "openai_chat",
     usesApiKey: true,
     models: [
       { id: DEFAULT_MODEL_ID, label: "Default" },
@@ -129,6 +144,7 @@ export const AGENT_PROVIDER_PRESETS: AgentProviderPreset[] = [
     providerName: "Volcengine",
     modelProvider: "volcengine-anthropic",
     baseUrl: "https://ark.cn-beijing.volces.com/api/compatible",
+    apiFormat: "anthropic",
     usesApiKey: true,
     configurableModelId: true,
     configurableModelLabel: "Endpoint / model ID",
@@ -144,6 +160,7 @@ export const AGENT_PROVIDER_PRESETS: AgentProviderPreset[] = [
     runtimeAgentId: "claude",
     providerName: "Custom",
     modelProvider: "custom-anthropic",
+    apiFormat: "anthropic",
     usesApiKey: true,
     models: [{ id: DEFAULT_MODEL_ID, label: "Default" }],
   },
@@ -162,6 +179,7 @@ export const AGENT_PROVIDER_PRESETS: AgentProviderPreset[] = [
     modelProvider: "deepseek",
     baseUrl: "https://api.deepseek.com",
     wireApi: "responses",
+    apiFormat: "openai_chat",
     modelReasoningEffort: "high",
     usesApiKey: true,
     models: [
@@ -178,6 +196,7 @@ export const AGENT_PROVIDER_PRESETS: AgentProviderPreset[] = [
     modelProvider: "zhipu-glm",
     baseUrl: "https://open.bigmodel.cn/api/paas/v4",
     wireApi: "responses",
+    apiFormat: "openai_chat",
     modelReasoningEffort: "high",
     usesApiKey: true,
     models: [
@@ -193,6 +212,7 @@ export const AGENT_PROVIDER_PRESETS: AgentProviderPreset[] = [
     modelProvider: "kimi",
     baseUrl: "https://api.moonshot.cn/v1",
     wireApi: "responses",
+    apiFormat: "openai_chat",
     modelReasoningEffort: "high",
     usesApiKey: true,
     models: [
@@ -208,6 +228,7 @@ export const AGENT_PROVIDER_PRESETS: AgentProviderPreset[] = [
     modelProvider: "longcat",
     baseUrl: "https://api.longcat.chat/openai/v1",
     wireApi: "responses",
+    apiFormat: "openai_responses",
     modelReasoningEffort: "high",
     usesApiKey: true,
     models: [
@@ -223,6 +244,7 @@ export const AGENT_PROVIDER_PRESETS: AgentProviderPreset[] = [
     modelProvider: "xiaomi-mimo",
     baseUrl: "https://api.xiaomimimo.com/v1",
     wireApi: "responses",
+    apiFormat: "openai_responses",
     modelReasoningEffort: "high",
     usesApiKey: true,
     models: [
@@ -238,6 +260,7 @@ export const AGENT_PROVIDER_PRESETS: AgentProviderPreset[] = [
     modelProvider: "volcengine",
     baseUrl: "https://ark.cn-beijing.volces.com/api/v3",
     wireApi: "responses",
+    apiFormat: "openai_responses",
     modelReasoningEffort: "high",
     usesApiKey: true,
     configurableModelId: true,
@@ -258,6 +281,7 @@ export const AGENT_PROVIDER_PRESETS: AgentProviderPreset[] = [
     providerName: "Custom",
     modelProvider: "custom",
     wireApi: "responses",
+    apiFormat: "openai_responses",
     usesApiKey: true,
     models: [{ id: DEFAULT_MODEL_ID, label: "Default" }],
   },
@@ -549,4 +573,33 @@ export const AGENT_PROVIDER_PRESETS: AgentProviderPreset[] = [
     configurableModelLabel: "OpenClaw one-shot model",
     configurableModelPlaceholder: "provider/model (ACP chat uses Gateway session model)",
   },
+];
+
+export const AGENT_PROVIDER_PRESETS: AgentProviderPreset[] = [
+  ...CC_SWITCH_PROVIDER_PRESETS,
+  {
+    id: "custom",
+    label: "Custom",
+    runtimeAgentId: "codex",
+    providerName: "Custom",
+    modelProvider: "custom",
+    wireApi: "responses",
+    apiFormat: "openai_responses",
+    usesApiKey: true,
+    models: [{ id: DEFAULT_MODEL_ID, label: "Default" }],
+  },
+  {
+    id: "claude-code-custom",
+    label: "Custom",
+    runtimeAgentId: "claude",
+    providerName: "Custom",
+    modelProvider: "custom-anthropic",
+    apiFormat: "anthropic",
+    apiKeyField: "ANTHROPIC_AUTH_TOKEN",
+    usesApiKey: true,
+    models: [{ id: DEFAULT_MODEL_ID, label: "Default" }],
+  },
+  ...LEGACY_PROVIDER_PRESETS.filter(
+    (preset) => preset.runtimeAgentId !== "codex" && preset.runtimeAgentId !== "claude",
+  ),
 ];

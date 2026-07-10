@@ -79,7 +79,13 @@ export function codexChatRouterBaseUrl(): string | undefined {
 }
 
 export function codexChannelNeedsChatRouting(channel: AgentChannel | undefined): boolean {
-  return Boolean(channel?.agentId === "codex" && channel.modelProvider && channel.modelProvider !== "openai" && channel.baseUrl);
+  return Boolean(
+    channel?.agentId === "codex" &&
+    channel.modelProvider &&
+    channel.modelProvider !== "openai" &&
+    channel.baseUrl &&
+    channel.apiFormat !== "openai_responses",
+  );
 }
 
 export function codexChatRouterUrlForChannel(channel: AgentChannel): string | undefined {
@@ -183,16 +189,21 @@ function codexModelsPayload(models: AgentModelOption[]): unknown {
 }
 
 async function proxyResponsesToChat(channel: AgentChannel, body: ResponsesRequestBody, response: http.ServerResponse): Promise<void> {
-  const upstreamUrl = chatCompletionsUrl(channel.baseUrl ?? "");
+  const upstreamUrl = channel.isFullUrl ? channel.baseUrl ?? "" : chatCompletionsUrl(channel.baseUrl ?? "");
   const model = resolveModel(channel, body.model);
   const toolContext = buildToolContext(body);
-  const chatBody = responsesToChatBody(body, model, toolContext);
+  const chatBody = {
+    ...responsesToChatBody(body, model, toolContext),
+    ...(channel.requestOverrides?.body ?? {}),
+  };
 
   const upstream = await fetch(upstreamUrl, {
     method: "POST",
     headers: {
       "content-type": "application/json",
+      ...(channel.customUserAgent ? { "user-agent": channel.customUserAgent } : {}),
       ...(channel.httpHeaders ?? {}),
+      ...(channel.requestOverrides?.headers ?? {}),
     },
     body: JSON.stringify(chatBody),
   });

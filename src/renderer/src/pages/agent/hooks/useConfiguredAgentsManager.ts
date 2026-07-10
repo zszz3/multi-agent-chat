@@ -69,9 +69,11 @@ export function useConfiguredAgentsManager({
   }, [saveConfiguredAgents, snapshot.channels, snapshot.configuredAgents]);
 
   const updateConfiguredAgent = useCallback((agentId: string, updater: (agent: ConfiguredAgent) => ConfiguredAgent): void => {
-    const nextAgents = snapshot.configuredAgents.map((agent) =>
-      agent.id === agentId ? { ...updater(agent), updatedAt: Date.now() } : agent,
-    );
+    const nextAgents = snapshot.configuredAgents.map((agent) => {
+      if (agent.id !== agentId) return agent;
+      const { managed: _managed, ...editableAgent } = updater(agent);
+      return { ...editableAgent, updatedAt: Date.now() };
+    });
     setConfiguredAgentStatus("");
     void saveConfiguredAgents(nextAgents, { successMessage: undefined, clearStatusBefore: false });
   }, [saveConfiguredAgents, snapshot.configuredAgents]);

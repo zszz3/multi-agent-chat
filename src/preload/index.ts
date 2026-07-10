@@ -21,6 +21,7 @@ import type {
   InstalledSkillResult,
   InstallSkillRequest,
   LocalFilePreview,
+  ModelCatalogRefreshResult,
   AnswerWorkflowGateRequest,
   PauseWorkflowNodeRequest,
   ProviderBalanceResult,
@@ -63,6 +64,7 @@ const api = {
   testRuntimeChannel: (channelId: string): Promise<AgentTestResult> => ipcRenderer.invoke("runtime-channels:test", channelId),
   queryRuntimeChannelBalance: (channelId: string): Promise<ProviderBalanceResult> => ipcRenderer.invoke("runtime-channels:balance", channelId),
   loadCodexDefaultConfig: (): Promise<CodexDefaultConfig> => ipcRenderer.invoke("runtime-channels:load-codex-default"),
+  refreshModelCatalog: (channelId: string): Promise<ModelCatalogRefreshResult> => ipcRenderer.invoke("runtime-channels:refresh-models", channelId),
   onAgentTestEvent: (callback: (event: AgentTestEvent) => void): (() => void) => {
     const listener = (_event: Electron.IpcRendererEvent, event: AgentTestEvent) => callback(event);
     ipcRenderer.on("configured-agents:test-event", listener);
@@ -80,8 +82,10 @@ const api = {
   getKeepAwake: (): Promise<boolean> => ipcRenderer.invoke("power:get-keep-awake"),
   setKeepAwake: (enabled: boolean): Promise<boolean> => ipcRenderer.invoke("power:set-keep-awake", enabled),
   searchOnlineSkills: (query: string): Promise<OnlineSkillResult[]> => ipcRenderer.invoke("skills:search-online", query),
+  listOfficialSkills: (): Promise<SkillTemplate[]> => ipcRenderer.invoke("skills:list-official"),
   listImportedSkills: (): Promise<SkillTemplate[]> => ipcRenderer.invoke("skills:list-imported"),
   importOnlineSkill: (request: ImportOnlineSkillRequest): Promise<ImportedSkillResult> => ipcRenderer.invoke("skills:import-online", request),
+  deleteUserSkill: (templateId: string): Promise<{ templateId: string; removed: boolean }> => ipcRenderer.invoke("skills:delete-user", templateId),
   installSkill: (request: InstallSkillRequest): Promise<InstalledSkillResult> => ipcRenderer.invoke("skills:install", request),
   uninstallSkill: (request: UninstallSkillRequest): Promise<UninstalledSkillResult> => ipcRenderer.invoke("skills:uninstall", request),
   sendPrompt: (prompt: string, chatId?: string): Promise<AppSnapshot> => ipcRenderer.invoke("run:send", prompt, chatId),

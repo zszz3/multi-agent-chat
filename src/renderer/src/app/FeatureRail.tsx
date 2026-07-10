@@ -1,16 +1,14 @@
-import { Bot, CalendarClock, ClipboardList, Cpu, GitBranch, MessageSquareText, Moon, Settings, SlidersHorizontal, Sun, Wand2 } from "lucide-react";
+import { Bot, CalendarClock, ClipboardList, Cpu, GitBranch, MessageSquareText, Moon, SlidersHorizontal, Sun, Wand2 } from "lucide-react";
 import type { Theme } from "../CommandPalette";
 import type { ActiveFeature } from "./shell";
 
 interface FeatureRailText {
-  nav: Record<"chat" | "tasks" | "workflow" | "schedules" | "skills" | "configuration" | "runtimes", string>;
+  nav: Record<"chat" | "tasks" | "workflow" | "schedules" | "skills" | "agent" | "runtimes", string>;
   chrome: {
     featureNav: string;
     lightTheme: string;
     darkTheme: string;
     toggleTheme: string;
-    settings: string;
-    openSettings: string;
   };
 }
 
@@ -49,9 +47,9 @@ export function FeatureRail({ activeFeature, theme, text, onSelectFeature, onTog
           <Wand2 size={15} />
           <span>{text.nav.skills}</span>
         </button>
-        <button className={`feature-nav-item ${activeFeature === "configuration" ? "is-active" : ""}`} onClick={() => onSelectFeature("configuration")}>
+        <button className={`feature-nav-item ${activeFeature === "agent" ? "is-active" : ""}`} onClick={() => onSelectFeature("agent")}>
           <SlidersHorizontal size={15} />
-          <span>{text.nav.configuration}</span>
+          <span>{text.nav.agent}</span>
         </button>
         <button className={`feature-nav-item ${activeFeature === "runtimes" ? "is-active" : ""}`} onClick={() => onSelectFeature("runtimes")}>
           <Cpu size={15} />
@@ -66,9 +64,6 @@ export function FeatureRail({ activeFeature, theme, text, onSelectFeature, onTog
           aria-label={text.chrome.toggleTheme}
         >
           {theme === "dark" ? <Sun size={14} /> : <Moon size={14} />}
-        </button>
-        <button className="icon-btn" onClick={() => onSelectFeature("settings")} data-tip={text.chrome.settings} aria-label={text.chrome.openSettings}>
-          <Settings size={14} />
         </button>
       </div>
     </aside>
