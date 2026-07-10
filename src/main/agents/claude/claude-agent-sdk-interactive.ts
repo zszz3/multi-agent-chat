@@ -13,6 +13,7 @@ interface ClaudeAgentSdkInteractiveAttachInput {
   developerInstructions?: string;
   resumeSessionId?: string;
   onEvent: (event: AgentEvent) => void;
+  env?: NodeJS.ProcessEnv;
 }
 
 export class ClaudeAgentSdkInteractive {
@@ -45,6 +46,7 @@ export class ClaudeAgentSdkInteractive {
         ...(input.modelId ? { modelId: input.modelId } : {}),
         ...(input.developerInstructions ? { developerInstructions: input.developerInstructions } : {}),
         ...(input.resumeSessionId ? { resumeSessionId: input.resumeSessionId } : {}),
+        ...(input.env ? { env: input.env } : {}),
       }),
     });
 

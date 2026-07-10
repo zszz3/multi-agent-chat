@@ -33,6 +33,7 @@ import type {
 } from "./agent-executor-types";
 import {
   modelFromRuntimeConfig,
+  reasoningEffortFromRuntimeConfig,
 } from "./agent-executor-types";
 import {
   runClaudeWorkflow,
@@ -82,7 +83,11 @@ export function createRuntimeDriverRegistry(options: RuntimeAgentExecutorFactory
           client = new CodexRpcClient({
             executable: context.runtime.command || options.executables.codex,
             cwd: context.workDir,
-            extraArgs: codexAppServerConfigArgs(channel, modelFromRuntimeConfig(context.runtimeConfig)),
+            extraArgs: codexAppServerConfigArgs(
+              channel,
+              modelFromRuntimeConfig(context.runtimeConfig),
+              reasoningEffortFromRuntimeConfig(context.runtimeConfig),
+            ),
             env: codexEnvironmentForChannel(channel),
             onEvent,
             onRequest: (id, method, params) => {

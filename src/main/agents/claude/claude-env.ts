@@ -10,25 +10,33 @@ export function claudeEnvironmentForChannel(
   modelId: string,
   baseEnv: NodeJS.ProcessEnv = process.env,
 ): NodeJS.ProcessEnv {
-  if (!channel || channel.agentId !== "claude" || !channel.modelProvider?.endsWith("-anthropic")) {
+  if (!channel || channel.agentId !== "claude") {
     return baseEnv;
   }
 
+  const providerChannel = channel.modelProvider?.endsWith("-anthropic") === true;
+  const hasOverrides = Boolean(channel.environment || channel.baseUrl || channel.customUserAgent || channel.apiKeyField);
+  if (!providerChannel && !hasOverrides) return baseEnv;
+
   const authToken = authorizationToken(channel.httpHeaders?.Authorization);
   const model = claudeEnvironmentModelForChannel(channel, modelId);
-  const env = { ...baseEnv };
+  const env = { ...baseEnv, ...(channel.environment ?? {}) };
+  delete env.ANTHROPIC_AUTH_TOKEN;
   delete env.ANTHROPIC_API_KEY;
   if (channel.baseUrl) env.ANTHROPIC_BASE_URL = channel.baseUrl;
   if (authToken) {
-    env.ANTHROPIC_AUTH_TOKEN = authToken;
-    if (channel.modelProvider === "deepseek-anthropic") env.ANTHROPIC_API_KEY = authToken;
+    env[channel.apiKeyField ?? "ANTHROPIC_AUTH_TOKEN"] = authToken;
+    if (!channel.apiKeyField && channel.modelProvider === "deepseek-anthropic") env.ANTHROPIC_API_KEY = authToken;
   }
-  env.ANTHROPIC_MODEL = model;
-  env.ANTHROPIC_DEFAULT_OPUS_MODEL = channel.modelProvider === "deepseek-anthropic" ? DEEPSEEK_PRO_MODEL : model;
-  env.ANTHROPIC_DEFAULT_SONNET_MODEL = channel.modelProvider === "deepseek-anthropic" ? DEFAULT_CLAUDE_MODEL : model;
-  env.ANTHROPIC_DEFAULT_HAIKU_MODEL = defaultClaudeSubagentModel(channel);
-  env.CLAUDE_CODE_SUBAGENT_MODEL = defaultClaudeSubagentModel(channel);
-  env.CLAUDE_CODE_EFFORT_LEVEL = "max";
+  if (providerChannel) {
+    env.ANTHROPIC_MODEL = model;
+    env.ANTHROPIC_DEFAULT_OPUS_MODEL ??= channel.modelProvider === "deepseek-anthropic" ? DEEPSEEK_PRO_MODEL : model;
+    env.ANTHROPIC_DEFAULT_SONNET_MODEL ??= channel.modelProvider === "deepseek-anthropic" ? DEFAULT_CLAUDE_MODEL : model;
+    env.ANTHROPIC_DEFAULT_HAIKU_MODEL ??= defaultClaudeSubagentModel(channel);
+    env.CLAUDE_CODE_SUBAGENT_MODEL ??= defaultClaudeSubagentModel(channel);
+    env.CLAUDE_CODE_EFFORT_LEVEL ??= "max";
+  }
+  if (channel.customUserAgent) env.CLAUDE_AGENT_SDK_CLIENT_APP = channel.customUserAgent;
   return {
     ...env,
   };

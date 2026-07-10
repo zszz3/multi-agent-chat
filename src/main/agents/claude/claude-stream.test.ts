@@ -96,4 +96,64 @@ describe("normalizeClaudeStreamEvent", () => {
       { type: "completed" },
     ]);
   });
+
+  test("pairs Claude tool results with tool uses by id", () => {
+    const state = createClaudeStreamState();
+
+    expect(
+      normalizeClaudeStreamEvent(
+        {
+          type: "assistant",
+          message: {
+            content: [
+              { type: "tool_use", id: "toolu_1", name: "Read", input: { file_path: "src/App.tsx" } },
+              { type: "mcp_tool_use", id: "toolu_2", name: "mcp__multi_agent_chat__workflow_create", input: { title: "Plan" } },
+            ],
+          },
+        },
+        state,
+      ),
+    ).toEqual([
+      {
+        type: "tool_call",
+        name: "Read",
+        content: '{\n  "file_path": "src/App.tsx"\n}',
+        metadata: { id: "toolu_1" },
+      },
+      {
+        type: "tool_call",
+        name: "mcp__multi_agent_chat__workflow_create",
+        content: '{\n  "title": "Plan"\n}',
+        metadata: { id: "toolu_2" },
+      },
+    ]);
+
+    expect(
+      normalizeClaudeStreamEvent(
+        {
+          type: "message",
+          message: {
+            role: "user",
+            content: [{ type: "tool_result", tool_use_id: "toolu_2", content: "Workflow created" }],
+          },
+        },
+        state,
+      ),
+    ).toEqual([
+      { type: "tool_result", name: "mcp__multi_agent_chat__workflow_create", content: "Workflow created", metadata: { id: "toolu_2" } },
+    ]);
+
+    expect(
+      normalizeClaudeStreamEvent(
+        {
+          type: "message",
+          message: {
+            role: "user",
+            content: [{ type: "tool_result", tool_use_id: "toolu_1", content: [{ type: "text", text: "App.tsx" }] }],
+          },
+        },
+        state,
+      ),
+    ).toEqual([{ type: "tool_result", name: "Read", content: "App.tsx", metadata: { id: "toolu_1" } }]);
+  });
 });

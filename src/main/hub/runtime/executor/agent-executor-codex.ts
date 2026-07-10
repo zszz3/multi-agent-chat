@@ -9,7 +9,7 @@ import type {
   AgentExecutor,
   RuntimeAgentExecutorFactoryOptions,
 } from "./agent-executor-types";
-import { modelFromRuntimeConfig } from "./agent-executor-types";
+import { modelFromRuntimeConfig, reasoningEffortFromRuntimeConfig } from "./agent-executor-types";
 
 export class CodexAgentExecutor implements AgentExecutor {
   private client: CodexRpcClient | undefined;
@@ -28,7 +28,11 @@ export class CodexAgentExecutor implements AgentExecutor {
     client = new CodexRpcClient({
       executable,
       cwd: this.context.workDir,
-      extraArgs: codexAppServerConfigArgs(channel, modelFromRuntimeConfig(this.context.runtimeConfig)),
+      extraArgs: codexAppServerConfigArgs(
+        channel,
+        modelFromRuntimeConfig(this.context.runtimeConfig),
+        reasoningEffortFromRuntimeConfig(this.context.runtimeConfig),
+      ),
       env: codexEnvironmentForChannel(channel),
       onEvent: this.context.emit,
       onRequest: (id, method, params) => {
