@@ -1,6 +1,6 @@
 import { describe, expect, test } from "vitest";
 import type { RuntimeConversation } from "../../../shared/types";
-import { claudeRuntimeStateCodec, codexRuntimeStateCodec, hermesRuntimeStateCodec } from "./runtime-state-codec";
+import { claudeRuntimeStateCodec, codexRuntimeStateCodec, hermesRuntimeStateCodec, openCodeRuntimeStateCodec } from "./runtime-state-codec";
 
 function runtimeConversation(runtimeId: RuntimeConversation["runtimeId"], payload: Record<string, unknown>): RuntimeConversation {
   return {
@@ -94,5 +94,20 @@ describe("runtime state codecs", () => {
         }),
       ),
     ).toBeUndefined();
+  });
+
+  test("opencode codec persists ACP session identity and rejects malformed native state", () => {
+    const raw = runtimeConversation("opencode", {
+      native: { sessionId: "ses_opencode_1" },
+      appContext: { cwd: "/repo", modelId: "openai/gpt-5", transport: "acp" },
+    });
+    expect(openCodeRuntimeStateCodec.restorePersistedConversation(raw)).toEqual(raw);
+    expect(openCodeRuntimeStateCodec.decodeConversation(raw)).toEqual({
+      native: { sessionId: "ses_opencode_1" },
+      appContext: { cwd: "/repo", modelId: "openai/gpt-5", transport: "acp" },
+    });
+    expect(openCodeRuntimeStateCodec.restorePersistedConversation(runtimeConversation("opencode", {
+      native: { sessionId: 42 },
+    }))).toBeUndefined();
   });
 });

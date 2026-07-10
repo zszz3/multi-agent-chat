@@ -186,7 +186,8 @@ describe("createRuntimeDriverRegistry", () => {
     expect(hermes.runtimeStateCodec).toBeDefined();
     expect(hermes.createInteractiveSession).toBeTypeOf("function");
     expect(hermes.deleteSessionArtifacts).toBeTypeOf("function");
-    expect(opencode.runtimeStateCodec).toBeUndefined();
-    expect(opencode.createInteractiveSession).toBeUndefined();
+    expect(opencode.runtimeStateCodec).toBeDefined();
+    expect(opencode.createInteractiveSession).toBeTypeOf("function");
+    expect(opencode.deleteSessionArtifacts).toBeTypeOf("function");
   });
 });

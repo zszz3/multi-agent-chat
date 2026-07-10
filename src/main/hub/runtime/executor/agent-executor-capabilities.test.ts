@@ -5,7 +5,7 @@ import { apiSurfaceSupport } from "./api/api-capabilities";
 import { claudeInteractiveSessionCapabilities, claudeSurfaceSupport } from "./claude/claude-capabilities";
 import { codexInteractiveSessionCapabilities, codexSurfaceSupport } from "./codex/codex-capabilities";
 import { hermesSurfaceSupport } from "./hermes/hermes-capabilities";
-import { openCodeSurfaceSupport } from "./opencode/opencode-capabilities";
+import { openCodeInteractiveSessionCapabilities, openCodeSurfaceSupport } from "./opencode/opencode-capabilities";
 
 function buildOptions() {
   return {
@@ -167,24 +167,25 @@ describe("runtime capability declarations", () => {
 
     expect(registry.driverFor("opencode").surfaceSupport).toEqual(openCodeSurfaceSupport);
     expect(registry.driverFor("opencode").surfaceSupport).toEqual([
-      { surface: "chat", executionModes: ["oneshot"], continuationPolicies: ["fresh"] },
+      { surface: "chat", executionModes: ["interactive"], continuationPolicies: ["fresh", "resume-preferred"] },
       { surface: "task", executionModes: ["oneshot"], continuationPolicies: ["fresh"] },
       { surface: "workflow", executionModes: ["oneshot"], continuationPolicies: ["fresh"] },
       { surface: "channel-test", executionModes: ["oneshot"], continuationPolicies: ["fresh"] },
+      { surface: "cleanup", executionModes: ["oneshot"], continuationPolicies: ["fresh", "resume-preferred"] },
     ]);
     expect(registry.driverFor("opencode").getCapabilities(runtime("opencode"))).toMatchObject({
-      chatStyle: "oneshot",
+      chatStyle: "interactive",
       taskStyle: "oneshot",
       workflowStyle: "oneshot",
       testStyle: "oneshot",
-      supportsInterrupt: false,
-      supportsContinue: false,
-      supportsApprovalRequests: false,
+      supportsInterrupt: true,
+      supportsContinue: true,
+      supportsApprovalRequests: true,
       supportsUserInputRequests: false,
       resume: {
-        supportsInProcessConversationResume: false,
-        supportsResumeAfterDetach: false,
-        supportsResumeAfterAppRestart: false,
+        supportsInProcessConversationResume: true,
+        supportsResumeAfterDetach: true,
+        supportsResumeAfterAppRestart: true,
         supportsTurnResume: false,
       },
     });
@@ -202,5 +203,10 @@ describe("runtime capability declarations", () => {
     const claudeSession = claudeDriver.createInteractiveSession?.(interactiveSessionContext("claude"));
     expect(claudeSession?.snapshot().runtimeState.capabilities).toEqual(claudeInteractiveSessionCapabilities);
     expect(claudeSession?.snapshot().runtimeState.capabilities).toEqual(sessionCapabilityProjection("claude"));
+
+    const openCodeDriver = registry.driverFor("opencode");
+    const openCodeSession = openCodeDriver.createInteractiveSession?.(interactiveSessionContext("opencode"));
+    expect(openCodeSession?.snapshot().runtimeState.capabilities).toEqual(openCodeInteractiveSessionCapabilities);
+    expect(openCodeSession?.snapshot().runtimeState.capabilities).toEqual(sessionCapabilityProjection("opencode"));
   });
 });

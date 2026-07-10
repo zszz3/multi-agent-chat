@@ -29,7 +29,7 @@ export interface ClaudeRuntimeConversationPayload {
   extensions?: Record<string, unknown>;
 }
 
-export interface HermesRuntimeConversationPayload {
+export interface AcpRuntimeConversationPayload {
   native: {
     sessionId: string;
   };
@@ -40,6 +40,9 @@ export interface HermesRuntimeConversationPayload {
   };
   extensions?: Record<string, unknown>;
 }
+
+export type HermesRuntimeConversationPayload = AcpRuntimeConversationPayload;
+export type OpenCodeRuntimeConversationPayload = AcpRuntimeConversationPayload;
 
 export interface RuntimeStateCodec<TState> {
   runtimeId: AgentId;
@@ -181,7 +184,7 @@ function decodeClaudePayload(raw: unknown): ClaudeRuntimeConversationPayload | u
   };
 }
 
-function decodeHermesPayload(raw: unknown): HermesRuntimeConversationPayload | undefined {
+function decodeAcpPayload(raw: unknown): AcpRuntimeConversationPayload | undefined {
   const record = asRecord(raw);
   const native = asRecord(record?.native);
   const sessionId = asString(native?.sessionId);
@@ -254,5 +257,10 @@ export const claudeRuntimeStateCodec = createRuntimeStateCodec<ClaudeRuntimeConv
 
 export const hermesRuntimeStateCodec = createRuntimeStateCodec<HermesRuntimeConversationPayload>({
   runtimeId: "hermes",
-  decodePayload: decodeHermesPayload,
+  decodePayload: decodeAcpPayload,
+});
+
+export const openCodeRuntimeStateCodec = createRuntimeStateCodec<OpenCodeRuntimeConversationPayload>({
+  runtimeId: "opencode",
+  decodePayload: decodeAcpPayload,
 });
