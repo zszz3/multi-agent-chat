@@ -1,5 +1,7 @@
 # Future Runtime Onboarding Proof Implementation Plan
 
+> **Historical plan:** Superseded on 2026-07-10 by the completed runtime-extension rollout and full Hermes integration. Current Hermes uses the `hermes-default` preset, official `hermes -z` one-shot execution, and official ACP interactive sessions; examples below preserve the original proof-runtime worksheet.
+
 > **For agentic workers:** REQUIRED SUB-SKILL: Use superpowers:subagent-driven-development (recommended) or superpowers:executing-plans to implement this plan task-by-task. Steps use checkbox (`- [ ]`) syntax for tracking.
 
 **Goal:** Prove the runtime-driver architecture can onboard one more local runtime without adding new product-level `if (runtimeId === "...")` branches by introducing a minimal `hermes` runtime and moving the remaining runtime-specific workflow, test, and cleanup decisions behind driver-owned hooks.

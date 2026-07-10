@@ -124,44 +124,25 @@ Implication for this repo:
 - Hermes continuation is richer than the current local payload shape `{ sessionId }`.
 - We should expect different state carriers depending on the surface we choose.
 
-## Repo Gap Analysis
+## Repository Implementation
 
-## Current local implementation
+The implementation now follows the documented CLI and ACP surfaces:
 
-- [src/main/agents/runtime/detect.ts](/Users/pengjie.zhai/.codex/worktrees/e685/multi-agent-chat/src/main/agents/runtime/detect.ts) detects Hermes by running `--version`.
-- [src/main/agents/hermes/hermes-runner.ts](/Users/pengjie.zhai/.codex/worktrees/e685/multi-agent-chat/src/main/agents/hermes/hermes-runner.ts) assumes a subprocess contract of `hermes run --json`.
-- [src/main/hub/runtime/executor/workflow/agent-executor-hermes-workflow.ts](/Users/pengjie.zhai/.codex/worktrees/e685/multi-agent-chat/src/main/hub/runtime/executor/workflow/agent-executor-hermes-workflow.ts) treats Hermes as one-shot text generation with `delta`, `completed`, and `error`.
-- [src/main/hub/runtime/executor/agent-executor.ts](/Users/pengjie.zhai/.codex/worktrees/e685/multi-agent-chat/src/main/hub/runtime/executor/agent-executor.ts) registers Hermes through `createOneShotRuntimeDriver(...)`, not the interactive path.
+- `src/main/agents/hermes/hermes-runner.ts` runs `hermes -z <prompt>` and adds `--model` only for a non-default selection.
+- `src/main/agents/acp/acp-interactive-client.ts` implements the reusable official ACP client boundary over stdio.
+- `src/main/hub/runtime/executor/hermes/hermes-session.ts` owns Hermes attach, prompt, interrupt, detach, and resume lifecycle.
+- `src/main/hub/runtime/executor/hermes/create-hermes-driver.ts` assembles one-shot, interactive, workflow, test, codec, and cleanup behavior behind one runtime-local builder.
+- `src/main/agents/runtime/runtime-state-codec.ts` validates the persisted ACP session id and app-owned context.
+- `src/main/hub/runtime/executor/hermes/hermes-cleanup.ts` deletes native session artifacts with the documented CLI command.
 
-## Confirmed mismatch
+The chosen mapping is intentionally split:
 
-Official docs directly document:
+1. Tasks, workflows, and channel tests use `hermes -z` because those surfaces need a bounded final answer, not a durable attachment.
+2. Chat uses `hermes acp` because ACP provides session creation/resume, streaming updates, cancellation, tools, and permission requests.
+3. The persisted envelope stores the native ACP session id, while transport-specific data remains hidden below the runtime codec/session boundary.
 
-- `hermes chat`
-- `hermes -z`
-- `hermes acp`
-- TUI gateway JSON-RPC
-- API server HTTP/SSE
-- Python `AIAgent`
+The implementation no longer relies on an undocumented `hermes run --json` command.
 
-Official docs do not document:
+## Remaining Release Verification
 
-- a top-level `hermes run` command
-- a public `--json` event stream for CLI one-shot mode
-
-This is not proof that such a path does not exist in upstream code, but it is enough to say our current adapter is not aligned with the documented public integration surfaces.
-
-## Recommended direction for implementation work
-
-If this repository needs both `oneshot` and `interactive`, the least-surprising path is:
-
-1. Keep a simple one-shot fallback around `hermes -z` or `hermes chat -q` only if we need an immediate local subprocess bridge.
-2. Treat the API server as the first stable external surface for HTTP-based one-shot and resumable runs.
-3. Treat ACP or TUI gateway JSON-RPC as the primary interactive target, depending on whether we want editor-like or custom-host semantics.
-4. Revisit `hermesRuntimeStateCodec` once we choose the real surface, because the persisted payload likely needs more than a single `sessionId`.
-
-## Practical recommendation for this app
-
-- Short-term `oneshot`: API server `/v1/responses` or `/v1/runs`, with CLI fallback only if local-only startup matters.
-- Short-term `interactive`: TUI gateway JSON-RPC if we need feature parity with approvals and session controls; API sessions if we want an HTTP-first bridge.
-- Long-term: avoid building more product logic around the current `hermes run --json` proof contract unless upstream documents it.
+Automated tests exercise the ACP wire contract with a fake subprocess and cover the runtime driver, session lifecycle, codec, cleanup, and one-shot argument construction. A real Hermes binary was unavailable on the implementation machine, so release validation should still perform a live authenticated one-shot and interactive smoke test.

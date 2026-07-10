@@ -4,7 +4,7 @@
 
 ### Status
 
-Proposed on 2026-07-10.
+Implemented on 2026-07-10. Runtime-local builders, capability ownership, onboarding tests, and the Hermes one-shot/interactive bundle satisfy the contract on the current branch.
 
 This file defines the architectural contract for extending the runtime system after the runtime boundary reset landed.
 
@@ -52,7 +52,7 @@ The agent must not assume prior chat history.
 
 ## Objective
 
-Keep runtime onboarding sustainable as the repository grows beyond Codex, Claude, API, and the current Hermes proof runtime.
+Keep runtime onboarding sustainable as the repository grows beyond Codex, Claude, API, and the integrated Hermes runtime.
 
 The desired end state is not "one more abstraction layer."
 

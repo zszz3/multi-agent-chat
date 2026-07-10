@@ -1,5 +1,7 @@
 # Runtime 扩展方案：面向 Hermes / OpenClaw / 后续 Runtime
 
+> 状态（2026-07-10）：runtime 自治架构与 Hermes 接入已经完成。Hermes 的 task/workflow/channel-test 使用官方 `hermes -z` one-shot，chat 使用官方 `hermes acp` interactive。OpenCode 与 OpenClaw 按独立后续分支推进。
+
 ## 1. 目标
 
 这份文档只回答一个问题：
@@ -39,12 +41,7 @@ AgentHub
   - `testChannel`
   - `deleteSessionArtifacts`
 
-但当前仍有一个现实问题：
-
-- 主装配文件虽然比之前瘦了，但依然知道较多 runtime-specific 细节
-- 新增 runtime 时，仍然会较频繁改到中央装配文件
-
-这对继续扩 `hermes`、`openclaw` 不够理想。
+当前中央装配文件已经收敛为 runtime builder 注册聚合；executor、workflow、capability、session 和 cleanup 由 runtime 目录自治。新增 runtime 仍需在共享类型、检测和 UI 枚举等必要边界登记，但业务层不需要 runtime-specific 分支。
 
 ## 3. 基本原则
 
@@ -153,7 +150,9 @@ src/main/hub/runtime/
       create-hermes-driver.ts
       hermes-executor.ts
       hermes-workflow.ts
-      hermes-test.ts
+      hermes-capabilities.ts
+      hermes-session.ts
+      hermes-cleanup.ts
 
     openclaw/
       create-openclaw-driver.ts
@@ -163,14 +162,7 @@ src/main/hub/runtime/
       openclaw-cleanup.ts            # 如果未来支持 cleanup
 ```
 
-注意这不是要求一次性大搬家，而是一个演进目标。
-
-当前已经拆出来的：
-
-- runtime executor shared/types
-- runtime-specific workflow executor
-
-本质上已经在往这个方向走了。
+该结构现已落地。通用 ACP 协议客户端位于 `src/main/agents/acp/`，Hermes bundle 只负责 Hermes 的命令选择、能力声明和会话装配。
 
 ## 5. 推荐的 driver builder 形态
 
@@ -193,22 +185,19 @@ export function createOpenClawDriver(options: RuntimeAgentExecutorFactoryOptions
 
 中央 `agent-executor.ts` 不再关心这些细节，只负责把各个 driver 放进 registry。
 
-## 6. Hermes 接入建议
+## 6. Hermes 接入结果
 
-`hermes` 比较适合作为“轻量 CLI runtime”模板。
+官方文档和上游 ACP adapter 证明 Hermes 具备稳定的 session identity 与恢复语义，因此最终能力边界是：
 
-建议能力边界：
+- `task/workflow/channel-test`：`hermes -z` one-shot
+- `chat`：`hermes acp` interactive
+- `runtimeConversation codec`：持久化并校验 ACP `sessionId`，支持 detach 和应用重启后的 resume
+- `interrupt`：ACP `session/cancel`
+- `approval`：ACP permission request/response
+- `cleanup`：`hermes sessions delete <session-id> --yes`
+- `Default` 配置：内置 `hermes-default` preset，可选填 model id
 
-- `chat/task`：先走 one-shot
-- `workflow`：可复用 one-shot / 或专用 workflow runner
-- `interactive`：先不做，除非后面有稳定 session 语义
-- `runtimeConversation codec`：没有稳定 conversation identity 之前先不做
-- `cleanup`：通常不需要
-- `channel-test`：保留
-
-也就是说，`hermes` 适合做“非 session 型 runtime”标准模板。
-
-这样未来再加类似的 CLI runtime，可以直接参考 `hermes` 目录结构接入。
+Hermes 因此同时证明了“简单 one-shot CLI”和“session-capable ACP runtime”可以共存在同一 runtime-local bundle 内，而不向 `AgentHub` 泄漏协议细节。
 
 ## 7. OpenClaw 接入建议
 
@@ -308,7 +297,7 @@ createXxxDriver(options)
 - 在 `AgentHub` 里增加 runtime-specific 判断
 - 在主装配文件里持续堆大段 runtime-specific 代码
 - 用一个“大而全”的通用 executor 试图适配所有 runtime
-- 在 runtime 能力未稳定前就强行要求支持 interactive / resume / cleanup
+- 在缺少官方协议证据时就强行声明 interactive / resume / cleanup
 - 把 session、workflow、test、cleanup 混在一个超大 runtime 文件里
 
 ## 10. 最终建议

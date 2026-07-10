@@ -88,7 +88,8 @@ The key entry files are:
 - `src/main/agents/claude-agent-sdk-interactive.ts`: official Claude Agent SDK streaming-input helper for reusable sessions
 - `src/main/agents/claude-interactive-session.ts`: shared Claude chat attachment boundary backed by the official SDK
 - `src/main/agents/claude-stream.ts`: shared Claude event normalization helpers reused by the SDK adapters
-- `src/main/agents/hermes-runner.ts`: minimal JSON-line CLI adapter proving the future-runtime onboarding path
+- `src/main/agents/hermes/hermes-runner.ts`: documented `hermes -z` one-shot adapter
+- `src/main/agents/acp/acp-interactive-client.ts`: shared official ACP stdio client used by interactive runtimes
 - `src/main/sqlite-store.ts`: small SQLite persistence wrapper
 
 ### Preload
@@ -164,7 +165,8 @@ Each runtime still has a different backend:
 - Claude one-shot: official Claude Agent SDK single-message execution through `ClaudeAgentSdkAdapter`
 - Claude interactive: official Claude Agent SDK streaming-input sessions through `ClaudeInteractiveSession` and `ClaudeAgentSdkInteractive`
 - API: direct HTTP request to provider-compatible endpoints, kept one-shot only
-- Hermes: minimal one-shot JSON-line CLI runner through `src/main/agents/hermes-runner.ts`
+- Hermes one-shot: documented `hermes -z` execution through `src/main/agents/hermes/hermes-runner.ts`
+- Hermes interactive: official ACP sessions through `hermes acp`, `AcpInteractiveClient`, and the runtime-local `HermesInteractiveSession`
 
 `AgentHub` remains the state authority. It persists logical chat identity, app-owned `runtimeState`, opaque `runtimeConversation` envelopes, and structured approval or user-input request lifecycles, restores interactive chats in a detached state after app restart, downgrades abandoned live requests to non-live state, and lets `InteractiveSessionManager` own serialized per-chat execution and idle sweeping.
 
@@ -178,7 +180,7 @@ Upper layers now build explicit runtime requests before crossing into the router
 
 Claude SDK events are normalized in `src/main/agents/claude-stream.ts` before they reach shared chat history.
 Interactive reconfigure classification lives in `src/main/agents/session-reconfigure.ts`, and chat state can persist an optional per-chat `channelId` override instead of treating the configured-agent channel as immutable forever.
-The same `RuntimeDriver` contract now proves future-runtime onboarding by letting Hermes plug workflow, test, cleanup, and capability behavior in at the runtime-local builder layer instead of reopening `AgentHub`.
+The same `RuntimeDriver` contract proves future-runtime onboarding by letting Hermes plug one-shot, interactive, workflow, test, cleanup, codec, and capability behavior in at the runtime-local builder layer instead of reopening `AgentHub`.
 
 The same high-level concepts are reused across chat, task, and workflow execution:
 

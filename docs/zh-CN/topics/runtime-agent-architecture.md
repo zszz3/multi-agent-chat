@@ -35,8 +35,8 @@
                ▼
 ┌─────────────────────────────────────────────────────┐
 │         具体实现 (AgentExecutor / Runner)              │
-│  CodexRpcClient  ClaudeRunner  fetch()  HermesRunner │
-│     (JSON-RPC)     (CLI进程)   (HTTP)   (CLI进程)    │
+│  CodexRpcClient  Claude SDK  fetch()  HermesRunner / ACP │
+│     (JSON-RPC)      (SDK)    (HTTP)    (CLI / JSON-RPC) │
 └─────────────────────────────────────────────────────┘
 ```
 
@@ -296,40 +296,41 @@ ApiAgentExecutor (oneshot)
 API 能力：全部 `oneshot` 风格，**不支持**中断、继续、审批请求、用户输入请求。
 无状态，每次请求独立 HTTP 调用。
 
-### 4.4 Hermes — 子进程 CLI（JSON 行协议）
+### 4.4 Hermes — 官方 CLI one-shot + ACP interactive
 
 ```
-HermesAgentExecutor (oneshot)
-  │
+task / workflow / channel-test (oneshot)
   └─ HermesRunner
-       │
-       ├─ spawn("hermes", ["run", "--json", "--model", modelId, prompt])
-       │
-       └─ 协议：stdout 逐行 JSON
-            {"type":"delta", "content":"..."}   → 增量文本
-            {"type":"completed", "content":"..."} → 完成
-            {"type":"error", "error":"..."}     → 错误
-            {"sessionId":"..."}                 → 会话 ID
+       └─ hermes -z <prompt> [--model <modelId>] → stdout 最终文本
+
+chat (interactive)
+  └─ HermesInteractiveSession
+       └─ AcpInteractiveClient
+            └─ hermes acp → ACP JSON-RPC over stdio
+                 ├─ session/new、session/resume、session/prompt
+                 ├─ session/cancel
+                 ├─ message / thought / tool / plan 更新
+                 └─ permission request / response
 ```
 
-Hermes 能力：全部 `oneshot` 风格，**不支持**中断、继续、审批请求、用户输入请求。
+Hermes chat 支持 detach、应用重启后的会话恢复、中断、继续和审批请求；不声明 turn resume 与自由形式用户输入请求。ACP `sessionId` 由 `hermesRuntimeStateCodec` 持久化，cleanup 使用 `hermes sessions delete <sessionId> --yes`。
 
 ## 5. RuntimeDriverRegistry 的构造
 
 ```typescript
-// src/main/agent-executor.ts — createRuntimeDriverRegistry()
+// src/main/hub/runtime/executor/agent-executor.ts — createRuntimeDriverRegistry()
 
 createRuntimeDriverRegistry(options) {
   return new RuntimeDriverRegistry([
-    codexDriver,    // interactive, RPC 风格
-    claudeDriver,   // interactive, CLI 风格
-    apiDriver,      // oneshot, HTTP 风格
-    hermesDriver,   // oneshot, CLI JSON 行风格
+    createCodexDriver(options),   // interactive, RPC 风格
+    createClaudeDriver(options),  // interactive, SDK 风格
+    createApiDriver(options),     // oneshot, HTTP 风格
+    createHermesDriver(options),  // interactive chat + CLI oneshot
   ]);
 }
 ```
 
-AgentHub 初始化时注入三个钩子，由上层实现并绑入 Driver：
+新的 runtime 扩展路径以 `createXxxDriver()` 为唯一入口。中央 registry 只做注册聚合，具体 runtime 的 executor / workflow / cleanup / session / capability 组装放回各自目录自治。
 
 ```
 AgentHub 构造:

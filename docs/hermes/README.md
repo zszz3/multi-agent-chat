@@ -1,52 +1,41 @@
-# Hermes Integration Notes
+# Hermes Integration
 
 Last updated: 2026-07-10
 
-This directory tracks external research for integrating [Hermes Agent](https://hermes-agent.nousresearch.com/docs) into this repository.
+Hermes is integrated through its documented public interfaces:
 
-## What We Confirmed
+- one-shot task, workflow, and channel-test execution uses `hermes -z <prompt>` and optional `--model`
+- interactive chat starts `hermes acp` and speaks the official Agent Client Protocol (ACP) over newline-delimited JSON-RPC on stdio
+- session identity returned by ACP is persisted in the opaque runtime conversation envelope and used with `session/resume` after detach or app restart
+- interrupt uses ACP `session/cancel`
+- tool, thought, plan, and permission updates are normalized into the shared agent event model
+- cleanup uses `hermes sessions delete <session-id> --yes`
 
-Hermes has official external integration docs.
+Hermes also has a built-in `Default` preset. A user can keep the default model selection or provide a model id in the same preset-backed configuration flow used by Codex and Claude.
 
-- One-shot entry points are documented through:
-  - [`hermes -z`](https://hermes-agent.nousresearch.com/docs/reference/cli-commands) for plain-text scripted calls
-  - [`hermes chat -q`](https://hermes-agent.nousresearch.com/docs/reference/cli-commands) for one-shot chat runs
-  - the [API server](https://hermes-agent.nousresearch.com/docs/user-guide/features/api-server) for HTTP and SSE clients
-  - the [Python library](https://hermes-agent.nousresearch.com/docs/guides/python-library) for in-process embedding
-- Interactive entry points are documented through:
-  - [`hermes acp`](https://hermes-agent.nousresearch.com/docs/developer-guide/programmatic-integration) for ACP-compatible IDE clients
-  - the [TUI gateway JSON-RPC protocol](https://hermes-agent.nousresearch.com/docs/developer-guide/programmatic-integration) for custom hosts that need session control, approvals, slash commands, and streaming events
-  - the [API server](https://hermes-agent.nousresearch.com/docs/user-guide/features/api-server) runs and sessions APIs for HTTP-based session control
+## Runtime Mapping
 
-## Recommended Mapping For This Repo
+| Product surface | Mode | Hermes surface |
+| --- | --- | --- |
+| Chat | `interactive` | `hermes acp` |
+| Task | `oneshot` | `hermes -z` |
+| Workflow | `oneshot` | `hermes -z` |
+| Channel test | `oneshot` | `hermes -z` |
+| Cleanup | app operation | `hermes sessions delete ... --yes` |
 
-If we want both `oneshot` and `interactive`, the cleanest mapping is:
+Interactive chat supports in-process continuation, resume after detach, resume after app restart, interrupt, continue, and ACP permission requests. Turn-level resume and free-form user-input requests are not declared.
 
-- `oneshot`
-  - minimal CLI bridge: `hermes -z`
-  - richer local subprocess bridge: `hermes chat -q --quiet`
-  - more stable external integration surface: API server `/v1/responses` or `/v1/runs`
-- `interactive`
-  - IDE-style integration: `hermes acp`
-  - full custom-host integration: TUI gateway JSON-RPC
-  - HTTP fallback for web/native UI control: API sessions and runs endpoints
+Developer instructions are prepended only to the first prompt of a newly created ACP session. A resumed session receives only the new user prompt so persisted context is not duplicated.
 
-## Important Gap vs Current Repo
+## Verification Boundary
 
-Current repository assumptions still model Hermes as a minimal one-shot CLI proof runtime.
+The repository includes protocol-level tests backed by a fake ACP subprocess for session creation, streaming updates, tool calls, permission requests, cancellation, model selection, detach, and resume. Driver and session tests also cover persisted conversation state and cleanup command construction.
 
-- The code currently detects Hermes via `HERMES_PATH` in [src/main/agents/runtime/detect.ts](/Users/pengjie.zhai/.codex/worktrees/e685/multi-agent-chat/src/main/agents/runtime/detect.ts).
-- One-shot execution currently assumes `hermes run --json ...` in [src/main/agents/hermes/hermes-runner.ts](/Users/pengjie.zhai/.codex/worktrees/e685/multi-agent-chat/src/main/agents/hermes/hermes-runner.ts).
-- Driver registration still exposes Hermes as one-shot only in [src/main/hub/runtime/executor/agent-executor.ts](/Users/pengjie.zhai/.codex/worktrees/e685/multi-agent-chat/src/main/hub/runtime/executor/agent-executor.ts).
+The `hermes` executable was not installed on the implementation machine, so a live smoke test against a locally configured Hermes account was not run. The integration is aligned with the official protocol and CLI documentation, but release validation should still include one real `hermes -z` call and one real `hermes acp` conversation.
 
-Based on the official docs, that local contract is incomplete:
+## References
 
-- The official CLI reference documents `hermes chat`, `hermes -z`, `hermes acp`, and `hermes gateway`, but it does not document a top-level `hermes run` command.
-- The official programmatic integration guide says Hermes exposes three supported external protocols: ACP, TUI gateway JSON-RPC, and the API server.
-- Interactive Hermes is a first-class concept in official docs, but our repo currently has no Hermes interactive session implementation.
-
-The statement about `hermes run --json` not being an official surface is an inference from the official CLI and integration docs rather than a direct denial page. We should treat the current runner as a local proof adapter until we verify a real machine-facing CLI protocol in upstream source or docs.
-
-## Files In This Folder
-
-- [official-integration-surfaces.md](/Users/pengjie.zhai/.codex/worktrees/e685/multi-agent-chat/docs/hermes/official-integration-surfaces.md): detailed notes on official Hermes interfaces, capabilities, and repo impact
+- [Official integration surfaces](official-integration-surfaces.md)
+- [Hermes CLI commands](https://hermes-agent.nousresearch.com/docs/reference/cli-commands)
+- [Hermes programmatic integration](https://hermes-agent.nousresearch.com/docs/developer-guide/programmatic-integration)
+- [Hermes Agent repository](https://github.com/NousResearch/hermes-agent)

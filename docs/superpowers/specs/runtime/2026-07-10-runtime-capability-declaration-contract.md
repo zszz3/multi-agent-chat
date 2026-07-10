@@ -4,7 +4,7 @@
 
 ### Status
 
-Proposed on 2026-07-10.
+Implemented on 2026-07-10. Hermes provides the first post-contract proof with evidence-backed one-shot and interactive capability declarations.
 
 This file defines the capability declaration rules for every runtime.
 
@@ -87,12 +87,13 @@ That classification must be based on evidence from the runtime itself, not on th
 
 ### Hermes
 
-Until upstream evidence proves stable interactive session and resume semantics, Hermes should declare conservative support:
+Official Hermes ACP documentation and upstream adapter behavior establish stable session creation, resume, cancellation, streaming, and permission semantics. Hermes therefore declares:
 
-- one-shot where implemented
-- workflow one-shot if reused or implemented explicitly
-- channel-test if implemented
-- no interactive resume semantics by default
+- interactive chat with fresh and resume-preferred continuation
+- one-shot task, workflow, and channel-test execution through `hermes -z`
+- codec-owned ACP session persistence and native cleanup
+- interrupt, continue, and approval-request support
+- no turn-level resume or free-form user-input request support
 
 ### OpenClaw
 

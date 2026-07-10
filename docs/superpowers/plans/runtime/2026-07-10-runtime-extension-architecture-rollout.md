@@ -1,5 +1,7 @@
 # Runtime Extension Architecture Rollout Implementation Plan
 
+> **Status (2026-07-10): Completed.** The runtime-local builder extraction, workflow/cleanup relocation, runtime-owned capability declarations, onboarding contract tests, and architecture documentation landed. The code has since advanced beyond the original conservative Hermes examples: Hermes chat now uses official ACP interactive sessions while task/workflow/channel-test remain official CLI one-shot paths. The unchecked boxes below preserve the original execution worksheet and are not the current completion ledger.
+
 > **For agentic workers:** REQUIRED SUB-SKILL: Use superpowers:subagent-driven-development (recommended) or superpowers:executing-plans to implement this plan task-by-task. Steps use checkbox (`- [ ]`) syntax for tracking.
 
 **Goal:** Refactor the runtime executor layer so new runtimes enter through runtime-local driver builders, capability declarations stay explicit, and the central registry becomes a small aggregator instead of a runtime-specific assembly file.
