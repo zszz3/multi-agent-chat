@@ -7,6 +7,7 @@ import { claudeRuntimeStateCodec } from "../../../../agents/runtime/runtime-stat
 import { createInteractiveRuntimeDriver } from "../agent-executor-driver-factories";
 import { ClaudeAgentExecutor } from "../agent-executor-claude";
 import { modelFromRuntimeConfig, type RuntimeAgentExecutorFactoryOptions } from "../agent-executor-types";
+import { claudeSurfaceSupport, getClaudeCapabilities } from "./claude-capabilities";
 import { deleteClaudeSessionArtifacts } from "./claude-cleanup";
 import { runClaudeWorkflow } from "./claude-workflow";
 
@@ -20,13 +21,9 @@ export function createClaudeDriver(options: RuntimeAgentExecutorFactoryOptions):
 
   return createInteractiveRuntimeDriver({
     runtimeId: "claude",
+    surfaceSupport: [...claudeSurfaceSupport],
+    getCapabilities: getClaudeCapabilities,
     runtimeStateCodec: claudeRuntimeStateCodec,
-    resume: {
-      supportsInProcessConversationResume: true,
-      supportsResumeAfterDetach: true,
-      supportsResumeAfterAppRestart: true,
-      supportsTurnResume: false,
-    },
     createOneShotExecutor: (context) =>
       new ClaudeAgentExecutor(
         context,

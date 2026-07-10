@@ -7,6 +7,7 @@ import { codexAppServerConfigArgs } from "../../../../channels/model-config";
 import { createInteractiveRuntimeDriver } from "../agent-executor-driver-factories";
 import { CodexAgentExecutor } from "../agent-executor-codex";
 import { modelFromRuntimeConfig, type RuntimeAgentExecutorFactoryOptions } from "../agent-executor-types";
+import { codexSurfaceSupport, getCodexCapabilities } from "./codex-capabilities";
 import { deleteCodexSessionArtifacts } from "./codex-cleanup";
 import { runCodexWorkflow } from "./codex-workflow";
 
@@ -17,13 +18,9 @@ export function createCodexDriver(options: RuntimeAgentExecutorFactoryOptions): 
 
   return createInteractiveRuntimeDriver({
     runtimeId: "codex",
+    surfaceSupport: [...codexSurfaceSupport],
+    getCapabilities: getCodexCapabilities,
     runtimeStateCodec: codexRuntimeStateCodec,
-    resume: {
-      supportsInProcessConversationResume: true,
-      supportsResumeAfterDetach: true,
-      supportsResumeAfterAppRestart: true,
-      supportsTurnResume: false,
-    },
     createOneShotExecutor: (context) => new CodexAgentExecutor(context, options),
     createInteractiveSession: (context) =>
       new CodexInteractiveSession(context, {
