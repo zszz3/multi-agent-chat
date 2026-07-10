@@ -32,6 +32,7 @@
 13. [演进实施 Agent 指南](evolution-execution-guide.md)
 14. [演进契约注册表](evolution-contract-registry.md)
 15. [演进需求追踪矩阵](evolution-requirement-matrix.md)
+16. [生成策略、行业实践与推荐落地方案](generation-strategies-and-industry-practice.md)
 
 ## 已完成基础程序：Phase 01–06
 

@@ -20,6 +20,8 @@
 
 Phase 01–06 的完成结论保持不变。本文描述的是后续增强，不回写或重新解释已冻结的基础语义。
 
+Workflow 目标生成、HTN、rolling-wave、dynamic map 和 bounded agentic stage 的候选方案另见[生成策略、行业实践与推荐落地方案](generation-strategies-and-industry-practice.md)。该研究当前不是 Phase 07–14 的实现承诺；决定落地前必须新增独立 spec/plan 或明确修订对应前置契约。
+
 ## 当前基线
 
 已有能力：
