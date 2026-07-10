@@ -10,6 +10,7 @@ This directory contains project documentation for the Electron desktop app.
 ## Documents
 
 - `architecture-overview.md`: overall architecture, runtime flow, the SDK-backed `oneshot` / `interactive` execution boundary, and data flow
+- `hermes/README.md`: external Hermes research, supported integration surfaces, and repo-specific adoption notes
 - `runtime-execution-architecture-spec.md`: pointer to the canonical runtime boundary reset contract and phase specs
 - `workflow-v2-design.md`: top-level workflow-v2 outline document
 - `superpowers/README.md`: design-spec and implementation-plan archive, grouped by topic area

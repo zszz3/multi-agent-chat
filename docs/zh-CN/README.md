@@ -55,6 +55,25 @@
 
 - `docs/zh-CN/topics/README.md`
 
+如果你要查设计稿或实施计划归档，优先看：
+
+- `docs/superpowers/README.md`
+- `docs/superpowers/specs/README.md`
+- `docs/superpowers/plans/README.md`
+
+如果你要查阶段性进展或重构记录，优先看：
+
+- `docs/progress/README.md`
+
+如果你要查 Workflow V2 设计，优先看：
+
+- `docs/workflow-v2-design.md`
+- `docs/workflow-v2/README.md`
+
+如果你要看中文专题展开，优先看：
+
+- `docs/zh-CN/topics/README.md`
+
 ## 按改动范围选文档
 
 - 改桌面生命周期、IPC、持久化、runtime 附着或恢复行为：看 `modules/main.md`

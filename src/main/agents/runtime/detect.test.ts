@@ -62,7 +62,7 @@ describe("detectAgentRuntimes", () => {
     });
 
     vi.doMock("../../platform/cli-launcher", () => ({ execCli }));
-     const { detectAgentRuntimes } = await import("./detect");
+    const { detectAgentRuntimes } = await import("./detect");
 
     const runtimes = await detectAgentRuntimes();
     expect(runtimes.find((runtime) => runtime.id === "hermes")).toMatchObject({
