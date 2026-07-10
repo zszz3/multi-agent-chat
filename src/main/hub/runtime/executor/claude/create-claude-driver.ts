@@ -5,10 +5,10 @@ import { claudeCliModelForChannel } from "../../../../agents/claude/claude-env";
 import type { RuntimeDriver } from "../../../../agents/runtime/runtime-driver";
 import { claudeRuntimeStateCodec } from "../../../../agents/runtime/runtime-state-codec";
 import { createInteractiveRuntimeDriver } from "../agent-executor-driver-factories";
-import { deleteClaudeSessionArtifacts } from "../agent-executor-session-cleanup";
 import { ClaudeAgentExecutor } from "../agent-executor-claude";
 import { modelFromRuntimeConfig, type RuntimeAgentExecutorFactoryOptions } from "../agent-executor-types";
-import { runClaudeWorkflow } from "../workflow/agent-executor-workflow";
+import { deleteClaudeSessionArtifacts } from "./claude-cleanup";
+import { runClaudeWorkflow } from "./claude-workflow";
 
 export function createClaudeDriver(options: RuntimeAgentExecutorFactoryOptions): RuntimeDriver {
   const askWorkflowByRuntime = options.askWorkflowByRuntime ?? {};
@@ -59,6 +59,6 @@ export function createClaudeDriver(options: RuntimeAgentExecutorFactoryOptions):
     testChannel: testChannelByRuntime.claude,
     deleteSessionArtifacts:
       deleteSessionArtifactsByRuntime.claude ??
-      ((input) => deleteClaudeSessionArtifacts(input.workDir, input.runtimeConversation)),
+      ((input) => deleteClaudeSessionArtifacts(input)),
   });
 }

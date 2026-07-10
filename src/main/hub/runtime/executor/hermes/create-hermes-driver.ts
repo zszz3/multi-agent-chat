@@ -3,7 +3,7 @@ import { hermesRuntimeStateCodec } from "../../../../agents/runtime/runtime-stat
 import { createOneShotRuntimeDriver } from "../agent-executor-driver-factories";
 import { HermesAgentExecutor } from "../agent-executor-hermes";
 import type { RuntimeAgentExecutorFactoryOptions } from "../agent-executor-types";
-import { runHermesChannelTest, runHermesWorkflow } from "../workflow/agent-executor-workflow";
+import { runHermesChannelTest, runHermesWorkflow } from "./hermes-workflow";
 
 export function createHermesDriver(options: RuntimeAgentExecutorFactoryOptions): RuntimeDriver {
   return createOneShotRuntimeDriver({

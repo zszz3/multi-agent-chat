@@ -5,10 +5,10 @@ import type { RuntimeDriver } from "../../../../agents/runtime/runtime-driver";
 import { codexRuntimeStateCodec } from "../../../../agents/runtime/runtime-state-codec";
 import { codexAppServerConfigArgs } from "../../../../channels/model-config";
 import { createInteractiveRuntimeDriver } from "../agent-executor-driver-factories";
-import { deleteCodexSessionArtifacts } from "../agent-executor-session-cleanup";
 import { CodexAgentExecutor } from "../agent-executor-codex";
 import { modelFromRuntimeConfig, type RuntimeAgentExecutorFactoryOptions } from "../agent-executor-types";
-import { runCodexWorkflow } from "../workflow/agent-executor-workflow";
+import { deleteCodexSessionArtifacts } from "./codex-cleanup";
+import { runCodexWorkflow } from "./codex-workflow";
 
 export function createCodexDriver(options: RuntimeAgentExecutorFactoryOptions): RuntimeDriver {
   const askWorkflowByRuntime = options.askWorkflowByRuntime ?? {};
@@ -58,6 +58,6 @@ export function createCodexDriver(options: RuntimeAgentExecutorFactoryOptions): 
     testChannel: testChannelByRuntime.codex,
     deleteSessionArtifacts:
       deleteSessionArtifactsByRuntime.codex ??
-      ((input) => deleteCodexSessionArtifacts(options.executables.codex, input.runtimeConversation)),
+      ((input) => deleteCodexSessionArtifacts(options.executables.codex, input)),
   });
 }
