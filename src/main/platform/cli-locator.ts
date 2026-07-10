@@ -10,6 +10,7 @@ import {
 
 export interface ExecutableLocator {
   resolve(request: ExecutableResolutionRequest): Promise<ResolvedExecutable>;
+  invalidate(): void;
 }
 
 interface ExecutableLocatorOptions {
@@ -19,6 +20,13 @@ interface ExecutableLocatorOptions {
   execute: ExecCli;
   fileExists?: (filePath: string) => Promise<boolean>;
   pathApi?: Pick<typeof path, "isAbsolute" | "join" | "resolve">;
+  cacheTtlMs?: number;
+  now?: () => number;
+}
+
+interface ExecutableCacheEntry {
+  expiresAt: number;
+  resolution: Promise<ResolvedExecutable>;
 }
 
 async function defaultFileExists(filePath: string): Promise<boolean> {
@@ -111,6 +119,9 @@ export function createExecutableLocator(options: ExecutableLocatorOptions): Exec
   const environment = options.environment ?? process.env;
   const pathApi = options.pathApi ?? (platform === "win32" ? path.win32 : path);
   const fileExists = options.fileExists ?? defaultFileExists;
+  const cacheTtlMs = options.cacheTtlMs ?? 30_000;
+  const now = options.now ?? Date.now;
+  const cache = new Map<string, ExecutableCacheEntry>();
   const resolvers: ExecutableResolver[] = [
     explicitPathResolver(pathApi, options.cwd ?? process.cwd()),
     ...(platform === "win32"
@@ -126,13 +137,35 @@ export function createExecutableLocator(options: ExecutableLocatorOptions): Exec
     fallbackPathResolver(),
   ];
 
+  const resolveUncached = async (request: ExecutableResolutionRequest): Promise<ResolvedExecutable> => {
+    for (const resolver of resolvers) {
+      const result = await resolver.resolve(request);
+      if (result) {
+        return request.sourceHint ? { ...result, source: request.sourceHint } : result;
+      }
+    }
+    throw new Error(`Unable to resolve executable: ${request.executable}`);
+  };
+
   return {
     async resolve(request) {
-      for (const resolver of resolvers) {
-        const result = await resolver.resolve(request);
-        if (result) return result;
+      const cacheKey = `${request.sourceHint ?? ""}\u0000${request.executable.trim()}`;
+      const cached = cache.get(cacheKey);
+      if (cached && cached.expiresAt > now()) return cached.resolution;
+
+      const resolution = resolveUncached(request);
+      if (cacheTtlMs > 0) {
+        cache.set(cacheKey, { expiresAt: now() + cacheTtlMs, resolution });
       }
-      throw new Error(`Unable to resolve executable: ${request.executable}`);
+      try {
+        return await resolution;
+      } catch (error) {
+        if (cache.get(cacheKey)?.resolution === resolution) cache.delete(cacheKey);
+        throw error;
+      }
+    },
+    invalidate() {
+      cache.clear();
     },
   };
 }

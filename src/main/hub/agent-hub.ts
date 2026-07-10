@@ -76,7 +76,11 @@ import { normalizeConfigChannelsForStorage } from "../../shared/config-channels"
 import { DEFAULT_MODEL_ID, defaultChannelForAgent, defaultModelForAgent, isModelForChannel } from "../../shared/models";
 import { createWorkflowGraphFromObjective, validateWorkflowGraph } from "../../shared/workflow-graph";
 import { defaultWorkflowWorkDirSuffix } from "../../shared/workflow-run";
-import { detectAgentRuntimes, resolveRuntimeExecutables } from "../agents/runtime/detect";
+import {
+  detectAgentRuntimes,
+  resolveRuntimeExecutableConfiguration,
+} from "../agents/runtime/detect";
+import type { ExecutableResolutionSourceHint } from "../platform/executable-resolver";
 import { InteractiveSessionManager } from "../agents/runtime/interactive-session-manager";
 import type { CodexRpcClient } from "../agents/codex/codex-rpc";
 import type { RuntimeCapabilities } from "../agents/runtime/runtime-capabilities";
@@ -388,6 +392,7 @@ export class AgentHub {
   private readonly runtimeRouter: RuntimeRouter;
   private readonly interactiveSessions: InteractiveSessionManager;
   private readonly executables: Record<AgentId, string>;
+  private readonly executableSources: Partial<Record<AgentId, ExecutableResolutionSourceHint>>;
   private readonly workflowRuntime: WorkflowRuntime;
   private readonly workflowStore: WorkflowStore;
   private readonly modelCatalogDiscoverer: ModelCatalogDiscoverer;
@@ -400,7 +405,9 @@ export class AgentHub {
     modelCatalogDiscoverer: ModelCatalogDiscoverer = discoverChannelModels,
     platformServices?: PlatformServices,
   ) {
-    this.executables = resolveRuntimeExecutables(executables);
+    const executableConfiguration = resolveRuntimeExecutableConfiguration(executables);
+    this.executables = executableConfiguration.executables;
+    this.executableSources = executableConfiguration.sources;
     this.modelCatalogDiscoverer = modelCatalogDiscoverer;
     this.platformServices = platformServices;
     this.runtimeDrivers =
@@ -736,6 +743,7 @@ export class AgentHub {
   }
 
   async refreshAgents(): Promise<AppSnapshot> {
+    this.platformServices?.executableLocator.invalidate();
     const runtimes = await this.detectConfiguredRuntimes();
     for (const runtime of runtimes) {
       this.runtimes.set(runtime.id, runtime);
@@ -745,10 +753,13 @@ export class AgentHub {
   }
 
   private detectConfiguredRuntimes(): Promise<AgentRuntime[]> {
-    if (!this.platformServices) return detectAgentRuntimes(this.executables);
+    if (!this.platformServices) {
+      return detectAgentRuntimes(this.executables, { executableSources: this.executableSources });
+    }
     return detectAgentRuntimes(this.executables, {
       executableLocator: this.platformServices.executableLocator,
       execute: this.platformServices.processLauncher.exec,
+      executableSources: this.executableSources,
     });
   }
 

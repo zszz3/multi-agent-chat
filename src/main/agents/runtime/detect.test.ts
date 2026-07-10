@@ -1,17 +1,18 @@
 import { afterEach, describe, expect, test, vi } from "vitest";
 import type { ExecutableLocator } from "../../platform/cli-locator";
-import { parseCliVersion } from "./detect";
+import { parseCliVersion, resolveRuntimeExecutableConfiguration } from "./detect";
 
 function identityExecutableLocator(): ExecutableLocator {
   return {
-    async resolve({ executable }) {
+    async resolve({ executable, sourceHint }) {
       return {
         requested: executable,
         resolvedPath: executable,
-        source: "explicit",
+        source: sourceHint ?? "path",
         kind: executable.toLowerCase().endsWith(".cmd") ? "cmd" : "script",
       };
     },
+    invalidate() {},
   };
 }
 
@@ -33,6 +34,22 @@ describe("parseCliVersion", () => {
 });
 
 describe("detectAgentRuntimes", () => {
+  test("preserves explicit and environment executable sources with override precedence", () => {
+    const configuration = resolveRuntimeExecutableConfiguration(
+      { codex: "C:\\configured\\codex.exe" },
+      {
+        CODEX_PATH: "C:\\environment\\codex.cmd",
+        HERMES_PATH: "C:\\environment\\hermes.cmd",
+      },
+    );
+
+    expect(configuration.executables.codex).toBe("C:\\configured\\codex.exe");
+    expect(configuration.sources.codex).toBe("explicit");
+    expect(configuration.executables.hermes).toBe("C:\\environment\\hermes.cmd");
+    expect(configuration.sources.hermes).toBe("environment");
+    expect(configuration.sources.claude).toBeUndefined();
+  });
+
   test("treats Windows codex.cmd overrides as available when exec succeeds through the launcher adapter", async () => {
     vi.resetModules();
     vi.stubEnv("CODEX_PATH", "C:\\Users\\demo\\AppData\\Roaming\\npm\\codex.cmd");
@@ -58,6 +75,7 @@ describe("detectAgentRuntimes", () => {
       command: "C:\\Users\\demo\\AppData\\Roaming\\npm\\codex.cmd",
       available: true,
       version: "0.136.0",
+      commandSource: "environment",
     });
     expect(execCli).toHaveBeenCalledWith(
       expect.objectContaining({

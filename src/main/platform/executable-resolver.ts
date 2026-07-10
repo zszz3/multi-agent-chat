@@ -1,8 +1,12 @@
-export type ExecutableResolutionSource = "explicit" | "path" | "known-location";
+import type { AgentExecutableSource } from "../../shared/types";
+
+export type ExecutableResolutionSource = AgentExecutableSource;
+export type ExecutableResolutionSourceHint = Extract<ExecutableResolutionSource, "explicit" | "environment">;
 export type ExecutableKind = "exe" | "cmd" | "bat" | "script";
 
 export interface ExecutableResolutionRequest {
   executable: string;
+  sourceHint?: ExecutableResolutionSourceHint;
 }
 
 export interface ResolvedExecutable {

@@ -4,7 +4,7 @@
 
 ### Status
 
-In progress. Executable discovery, Main-process `PlatformServices` composition, shared process-tree control, production Runtime lifecycle injection, local-file containment, and managed skill-link ownership were implemented on 2026-07-10. Compatibility cleanup and Windows-hosted validation remain pending.
+In progress. Executable discovery with bounded refreshable caching, Main-process `PlatformServices` composition, shared process-tree control, production Runtime lifecycle injection, local-file containment, and managed skill-link ownership are implemented. Compatibility cleanup, classified remediation, and Windows-hosted validation remain pending.
 
 ## Goal
 
@@ -46,15 +46,19 @@ Completed:
 - removed `process.platform` and raw symlink mutation from the skill installer;
 - required canonical target ownership before managed links can be replaced or removed;
 - added filesystem tests for safe replacement, real-directory protection, foreign-target protection, owned uninstall, and paths containing spaces;
-- added a host-independent contract assertion that win32 selects `junction` while darwin/linux select `dir`.
+- added a host-independent contract assertion that win32 selects `junction` while darwin/linux select `dir`;
+- preserved `explicit` versus `environment` Runtime executable sources through PATH and known-location resolution;
+- exposed the successful command source in Runtime diagnostics without logging environment contents;
+- added a 30-second locator cache that deduplicates concurrent lookup and expires by injected time;
+- made explicit Agent refresh invalidate the shared locator cache before redetection;
+- added source-precedence, environment-source, TTL-expiry, explicit-invalidation, and Agent-refresh tests.
 
 Pending:
 
 - remove temporary direct-kill compatibility fallbacks after all tests and non-Main construction sites inject process services;
 - pass the platform launcher/controller through future packaged sidecars;
 - add Windows parent/child integration fixtures proving both processes disappear after cancellation and app shutdown;
-- preserve environment overrides as a separately classified `environment` resolution source instead of only preselecting them in `resolveRuntimeExecutables(...)`;
-- add bounded locator caching, ambiguity handling, and classified remediation for unresolved executables;
+- add ambiguity handling and classified remediation for unresolved or non-runnable executables;
 - replace the remaining hand-written Windows command quoting with the selected mature spawn adapter and complete metacharacter/Unicode fixtures;
 - run the managed-junction suite on Windows without Developer Mode or administrator privileges;
 - add configuration file-picking and actionable detection states;

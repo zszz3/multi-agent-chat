@@ -1,6 +1,7 @@
 import type { RuntimeId } from "./runtime-catalog";
 
 export type AgentId = RuntimeId;
+export type AgentExecutableSource = "explicit" | "environment" | "path" | "known-location";
 
 export interface AgentRuntime {
   id: AgentId;
@@ -8,6 +9,7 @@ export interface AgentRuntime {
   command: string;
   version: string | null;
   available: boolean;
+  commandSource?: AgentExecutableSource;
   error?: string;
 }
 

@@ -83,4 +83,49 @@ describe("createExecutableLocator", () => {
     });
     expect(execute).not.toHaveBeenCalled();
   });
+
+  test("preserves an environment source hint after Windows PATH resolution", async () => {
+    const execute = vi.fn(async () => ({
+      stdout: "C:\\Users\\demo\\AppData\\Roaming\\npm\\codex.cmd\r\n",
+      stderr: "",
+    }));
+    const locator = createExecutableLocator({
+      platform: "win32",
+      environment: {},
+      execute,
+      pathApi: path.win32,
+    });
+
+    await expect(locator.resolve({ executable: "codex", sourceHint: "environment" })).resolves.toMatchObject({
+      resolvedPath: "C:\\Users\\demo\\AppData\\Roaming\\npm\\codex.cmd",
+      source: "environment",
+    });
+  });
+
+  test("caches concurrent resolution for a bounded TTL and supports explicit invalidation", async () => {
+    let currentTime = 1_000;
+    const execute = vi.fn(async () => ({ stdout: "C:\\tools\\codex.exe\r\n", stderr: "" }));
+    const locator = createExecutableLocator({
+      platform: "win32",
+      environment: {},
+      execute,
+      pathApi: path.win32,
+      cacheTtlMs: 30_000,
+      now: () => currentTime,
+    });
+
+    await Promise.all([
+      locator.resolve({ executable: "codex" }),
+      locator.resolve({ executable: "codex" }),
+    ]);
+    expect(execute).toHaveBeenCalledTimes(1);
+
+    currentTime += 30_001;
+    await locator.resolve({ executable: "codex" });
+    expect(execute).toHaveBeenCalledTimes(2);
+
+    locator.invalidate();
+    await locator.resolve({ executable: "codex" });
+    expect(execute).toHaveBeenCalledTimes(3);
+  });
 });
