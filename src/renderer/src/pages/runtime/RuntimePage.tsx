@@ -3,6 +3,7 @@ import { CheckCircle2, Cpu, Plus, RefreshCw, Save, Trash2 } from "lucide-react";
 import { configChannelForSelection, selectConfigChannelsForDisplay } from "../../../../shared/config-channels";
 import { DEFAULT_MODEL_ID } from "../../../../shared/models";
 import { AGENT_PROVIDER_PRESETS, CODEX_DEFAULT_PRESET_ID, type AgentProviderPreset } from "../../../../shared/provider-presets";
+import { RUNTIME_IDS } from "../../../../shared/runtime-catalog";
 import type {
   AgentChannel,
   AgentId,
@@ -33,7 +34,7 @@ import {
 } from "./runtime-utils";
 import { RuntimeProviderFields } from "./RuntimeProviderFields";
 
-const AGENTS: AgentId[] = ["codex", "claude", "api", "hermes", "opencode", "openclaw"];
+const AGENTS: AgentId[] = [...RUNTIME_IDS];
 const PROVIDER_CATEGORY_ORDER = ["official", "cn_official", "cloud_provider", "aggregator", "third_party", "custom"];
 
 function providerCategoryLabel(category: string, language: Language): string {

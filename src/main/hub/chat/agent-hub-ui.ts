@@ -1,4 +1,5 @@
 import { randomUUID } from "node:crypto";
+import { runtimeLabel } from "../../../shared/runtime-catalog";
 import type { AgentChannel, AgentId, ChatMessage } from "../../../shared/types";
 
 export function createAssistantMessage(content = "", local = false): ChatMessage {
@@ -75,10 +76,5 @@ export function cloneAgentChannel(channel: AgentChannel): AgentChannel {
 }
 
 export function agentLabel(agentId: AgentId): string {
-  if (agentId === "codex") return "Codex";
-  if (agentId === "claude") return "Claude Code";
-  if (agentId === "hermes") return "Hermes";
-  if (agentId === "opencode") return "OpenCode";
-  if (agentId === "openclaw") return "OpenClaw";
-  return "API";
+  return runtimeLabel(agentId);
 }

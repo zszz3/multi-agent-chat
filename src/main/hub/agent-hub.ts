@@ -76,7 +76,7 @@ import { normalizeConfigChannelsForStorage } from "../../shared/config-channels"
 import { DEFAULT_MODEL_ID, defaultChannelForAgent, defaultModelForAgent, isModelForChannel } from "../../shared/models";
 import { createWorkflowGraphFromObjective, validateWorkflowGraph } from "../../shared/workflow-graph";
 import { defaultWorkflowWorkDirSuffix } from "../../shared/workflow-run";
-import { detectAgentRuntimes } from "../agents/runtime/detect";
+import { detectAgentRuntimes, resolveRuntimeExecutables } from "../agents/runtime/detect";
 import { InteractiveSessionManager } from "../agents/runtime/interactive-session-manager";
 import { ClaudeAgentSdkAdapter } from "../agents/claude/claude-agent-sdk";
 import type { CodexRpcClient } from "../agents/codex/codex-rpc";
@@ -402,14 +402,7 @@ export class AgentHub {
     runtimeDrivers?: RuntimeDriverRegistry,
     modelCatalogDiscoverer: ModelCatalogDiscoverer = discoverChannelModels,
   ) {
-    this.executables = {
-      codex: executables.codex ?? process.env.CODEX_PATH ?? "codex",
-      claude: executables.claude ?? process.env.CLAUDE_PATH ?? "claude",
-      api: executables.api ?? "api",
-      hermes: executables.hermes ?? process.env.HERMES_PATH ?? "hermes",
-      opencode: executables.opencode ?? process.env.OPENCODE_PATH ?? "opencode",
-      openclaw: executables.openclaw ?? process.env.OPENCLAW_PATH ?? "openclaw",
-    };
+    this.executables = resolveRuntimeExecutables(executables);
     this.claudeSdkAdapter = new ClaudeAgentSdkAdapter();
     this.modelCatalogDiscoverer = modelCatalogDiscoverer;
     this.runtimeDrivers =
@@ -455,7 +448,7 @@ export class AgentHub {
   }
 
   async initialize(): Promise<void> {
-    const runtimes = await detectAgentRuntimes();
+    const runtimes = await detectAgentRuntimes(this.executables);
     for (const runtime of runtimes) {
       this.runtimes.set(runtime.id, {
         ...runtime,

@@ -3,17 +3,20 @@ import os from "node:os";
 import path from "node:path";
 import { describe, expect, test } from "vitest";
 import type { AgentChannel } from "../../shared/types";
+import { RUNTIME_IDS } from "../../shared/runtime-catalog";
 import { setCodexChatRouterBaseUrl } from "../bridges/codex-chat-router";
 import {
   codexAppServerConfigArgs,
   createDefaultChannels,
   generateCodexConfigs,
   importCodexConfigs,
+  loadModelChannels,
   loadCodexDefaultConfig,
   normalizeChannels,
   parseCodexDefaultConfig,
   parseCodexModelCatalog,
   parseCodexProfileConfig,
+  saveModelChannels,
 } from "./model-config";
 
 describe("model channel config", () => {
@@ -39,6 +42,23 @@ describe("model channel config", () => {
       presetId: "openclaw-default",
       models: [{ id: "default", label: "Default" }],
     });
+  });
+
+  test("round-trips custom channels for every registered runtime", async () => {
+    const dir = await mkdtemp(path.join(os.tmpdir(), "multi-agent-chat-runtime-channels-"));
+    const configPath = path.join(dir, "model-channels.json");
+    const channels: AgentChannel[] = RUNTIME_IDS.map((agentId) => ({
+      id: `${agentId}-custom`,
+      agentId,
+      label: `${agentId} custom`,
+      models: [{ id: "default", label: "Default" }],
+    }));
+
+    await saveModelChannels(configPath, channels);
+    const restored = await loadModelChannels(configPath);
+
+    expect(restored.map((channel) => channel.id)).toEqual(channels.map((channel) => channel.id));
+    expect(restored.map((channel) => channel.agentId)).toEqual(RUNTIME_IDS);
   });
 
   test("preserves CC Switch compatible runtime provider fields", () => {
