@@ -384,10 +384,20 @@ function registerIpcHandlers(): void {
     return { templateId, removed };
   });
   ipcMain.handle("skills:install", async (_event, request: InstallSkillRequest) =>
-    installBundledSkill(request, app.getPath("home"), path.join(app.getPath("userData"), "bundled-skills")),
+    installBundledSkill(
+      request,
+      app.getPath("home"),
+      platformServices.managedDirectoryLinks,
+      path.join(app.getPath("userData"), "bundled-skills"),
+    ),
   );
   ipcMain.handle("skills:uninstall", async (_event, request: UninstallSkillRequest) =>
-    uninstallBundledSkill(request, app.getPath("home"), path.join(app.getPath("userData"), "bundled-skills")),
+    uninstallBundledSkill(
+      request,
+      app.getPath("home"),
+      platformServices.managedDirectoryLinks,
+      path.join(app.getPath("userData"), "bundled-skills"),
+    ),
   );
   ipcMain.handle("run:send", (_event, prompt: string, chatId?: string) => {
     void hub.sendPrompt(prompt, chatId);

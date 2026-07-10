@@ -117,6 +117,7 @@ interface PlatformServices {
   processLauncher: ProcessLauncher;
   processTreeController: ProcessTreeController;
   pathPolicy: PlatformPathPolicy;
+  managedDirectoryLinks: ManagedDirectoryLinkService;
   resourceLocator: AppResourceLocator;
 }
 ```
@@ -129,6 +130,7 @@ Extension rules:
 - executable discovery uses an ordered `ExecutableResolver[]` chain so package-manager and Runtime-specific locations can be added without rewriting the locator;
 - process launch and process-tree termination are separate contracts because a portable spawn implementation does not imply portable tree cleanup;
 - `AppResourceLocator` is platform-neutral and distinguishes development, packaged read-only, and mutable user-data roots;
+- `ManagedDirectoryLinkService` owns safe junction/symlink creation, replacement, and removal so skill installation never branches on the host platform;
 - `PackagedSidecarLauncher` consumes `PlatformServices`; Workflow code does not own OS-specific sidecar behavior;
 - strategy selection is unit-tested through injected platform/dependency values instead of mutating global process state;
 - no platform implementation may widen a Runtime capability beyond its declared support.

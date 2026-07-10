@@ -1,5 +1,5 @@
 import { existsSync } from "node:fs";
-import { cp, lstat, mkdir, readdir, readFile, readlink, rm, symlink, unlink, writeFile } from "node:fs/promises";
+import { cp, lstat, mkdir, readdir, readFile, rm, writeFile } from "node:fs/promises";
 import path from "node:path";
 import { fileURLToPath } from "node:url";
 import { parseSkillMarkdown } from "../../shared/online-skills";
@@ -13,6 +13,7 @@ import type {
   UninstalledSkillResult,
   UninstallSkillRequest,
 } from "../../shared/types";
+import type { ManagedDirectoryLinkService } from "../platform/managed-directory-link";
 
 const TARGET_DIRS: Record<InstallSkillRequest["target"], string[]> = {
   codex: [".codex", "skills"],
@@ -83,18 +84,6 @@ function bundledSkillSourceDir(template: SkillTemplate): string | undefined {
 
 function pathExistsSync(filePath: string): boolean {
   return existsSync(filePath);
-}
-
-async function assertOwnedSymlink(linkPath: string, sourceDir: string): Promise<void> {
-  const stats = await lstat(linkPath);
-  if (!stats.isSymbolicLink()) {
-    throw new Error(`${linkPath} already exists and is not a symlink. Refusing to overwrite user content.`);
-  }
-  const linkTarget = await readlink(linkPath);
-  const resolvedTarget = path.resolve(path.dirname(linkPath), linkTarget);
-  if (resolvedTarget !== sourceDir) {
-    throw new Error(`${linkPath} points to ${resolvedTarget}, not this app's bundled skill. Refusing to modify it.`);
-  }
 }
 
 async function importedSkillTemplateFromDir(skillDir: string): Promise<SkillTemplate | undefined> {
@@ -169,7 +158,12 @@ export async function deleteImportedSkillFromLibrary(templateId: string, bundled
   await rm(managedSkillDir(templateId, bundledRoot), { recursive: true, force: true });
 }
 
-export async function installBundledSkill(request: InstallSkillRequest, homeDir: string, bundledRoot = defaultBundledSkillRoot(homeDir)): Promise<InstalledSkillResult> {
+export async function installBundledSkill(
+  request: InstallSkillRequest,
+  homeDir: string,
+  directoryLinks: ManagedDirectoryLinkService,
+  bundledRoot: string = defaultBundledSkillRoot(homeDir),
+): Promise<InstalledSkillResult> {
   assertSafeTemplateId(request.templateId);
   const { template, imported } = await managedSkillTemplate(request, bundledRoot);
 
@@ -177,7 +171,6 @@ export async function installBundledSkill(request: InstallSkillRequest, homeDir:
   const sourcePath = path.join(sourceDir, "SKILL.md");
   const linkPath = targetSkillDir(request, homeDir);
   const skillPath = path.join(linkPath, "SKILL.md");
-  const existed = await pathExists(linkPath);
   if (!imported) {
     await rm(sourceDir, { recursive: true, force: true });
     const bundledSourceDir = bundledSkillSourceDir(template);
@@ -189,11 +182,7 @@ export async function installBundledSkill(request: InstallSkillRequest, homeDir:
     }
   }
   await mkdir(path.dirname(linkPath), { recursive: true });
-  if (existed) {
-    await assertOwnedSymlink(linkPath, sourceDir);
-    await unlink(linkPath);
-  }
-  await symlink(sourceDir, linkPath, process.platform === "win32" ? "junction" : "dir");
+  const existed = await directoryLinks.replaceOwnedLink(linkPath, sourceDir);
 
   return {
     templateId: template.id,
@@ -207,12 +196,14 @@ export async function installBundledSkill(request: InstallSkillRequest, homeDir:
 export async function uninstallBundledSkill(
   request: UninstallSkillRequest,
   homeDir: string,
-  bundledRoot = defaultBundledSkillRoot(homeDir),
+  directoryLinks: ManagedDirectoryLinkService,
+  bundledRoot: string = defaultBundledSkillRoot(homeDir),
 ): Promise<UninstalledSkillResult> {
   assertSafeTemplateId(request.templateId);
   const sourceDir = managedSkillDir(request.templateId, bundledRoot);
   const linkPath = targetSkillDir(request, homeDir);
-  if (!(await pathExists(linkPath))) {
+  const removed = await directoryLinks.removeOwnedLink(linkPath, sourceDir);
+  if (!removed) {
     return {
       templateId: request.templateId,
       target: request.target,
@@ -220,12 +211,10 @@ export async function uninstallBundledSkill(
       removed: false,
     };
   }
-  await assertOwnedSymlink(linkPath, sourceDir);
-  await unlink(linkPath);
   return {
     templateId: request.templateId,
     target: request.target,
     path: linkPath,
-    removed: true,
+    removed,
   };
 }

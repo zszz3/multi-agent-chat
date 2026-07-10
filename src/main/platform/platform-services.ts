@@ -8,12 +8,17 @@ import {
   type ProcessTreeController,
 } from "./process-tree";
 import { createPlatformPathPolicy, type PlatformPathPolicy } from "./platform-paths";
+import {
+  createManagedDirectoryLinkService,
+  type ManagedDirectoryLinkService,
+} from "./managed-directory-link";
 
 export interface PlatformServices {
   executableLocator: ExecutableLocator;
   processLauncher: ProcessLauncher;
   processTreeController: ProcessTreeController;
   pathPolicy: PlatformPathPolicy;
+  managedDirectoryLinks: ManagedDirectoryLinkService;
   resourceLocator: AppResourceLocator;
 }
 
@@ -24,6 +29,7 @@ export interface PlatformServiceDependencies {
   processTreeController?: ProcessTreeController;
   executableLocator?: ExecutableLocator;
   processLauncher?: ProcessLauncher;
+  managedDirectoryLinks?: ManagedDirectoryLinkService;
   environment?: Record<string, string | undefined>;
   cwd?: string;
   fileExists?: (filePath: string) => Promise<boolean>;
@@ -65,12 +71,17 @@ export function createPlatformServices(
       ? createWindowsProcessTreeController(processLauncher.exec)
       : createPosixProcessTreeController(processLauncher.exec)
   );
+  const managedDirectoryLinks = dependencies.managedDirectoryLinks ?? createManagedDirectoryLinkService({
+    pathPolicy,
+    linkType: platform === "win32" ? "junction" : "dir",
+  });
 
   return {
     executableLocator,
     processLauncher,
     processTreeController,
     pathPolicy,
+    managedDirectoryLinks,
     resourceLocator: dependencies.resourceLocator,
   };
 }

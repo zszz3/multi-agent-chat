@@ -2,7 +2,7 @@ import type path from "node:path";
 
 export type PlatformPathApi = Pick<
   typeof path.win32,
-  "basename" | "isAbsolute" | "join" | "normalize" | "relative" | "resolve" | "sep"
+  "basename" | "dirname" | "isAbsolute" | "join" | "normalize" | "relative" | "resolve" | "sep"
 >;
 
 export interface PlatformPathPolicy {
@@ -11,6 +11,7 @@ export interface PlatformPathPolicy {
   expandHome(input: string, homeDir: string): string;
   normalize(input: string): string;
   isDevicePath(input: string): boolean;
+  equals(left: string, right: string): boolean;
   isWithin(root: string, candidate: string): boolean;
 }
 
@@ -50,6 +51,9 @@ export function createPlatformPathPolicy(options: PlatformPathPolicyOptions): Pl
     },
     normalize,
     isDevicePath,
+    equals(left, right) {
+      return comparisonPath(left) === comparisonPath(right);
+    },
     isWithin(root, candidate) {
       if (isDevicePath(root) || isDevicePath(candidate)) return false;
       const relative = options.pathApi.relative(comparisonPath(root), comparisonPath(candidate));

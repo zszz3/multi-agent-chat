@@ -2,7 +2,38 @@ import { lstat, mkdtemp, readFile } from "node:fs/promises";
 import os from "node:os";
 import path from "node:path";
 import { describe, expect, test } from "vitest";
-import { importOnlineSkillToLibrary, installBundledSkill, listImportedSkillTemplates, uninstallBundledSkill } from "./skill-installer";
+import { createManagedDirectoryLinkService } from "../platform/managed-directory-link";
+import { createPlatformPathPolicy } from "../platform/platform-paths";
+import {
+  importOnlineSkillToLibrary,
+  installBundledSkill as installBundledSkillValue,
+  listImportedSkillTemplates,
+  uninstallBundledSkill as uninstallBundledSkillValue,
+} from "./skill-installer";
+
+const directoryLinks = createManagedDirectoryLinkService({
+  pathPolicy: createPlatformPathPolicy({
+    pathApi: path,
+    caseSensitive: path.sep !== "\\",
+  }),
+  linkType: path.sep === "\\" ? "junction" : "dir",
+});
+
+function installBundledSkill(
+  request: Parameters<typeof installBundledSkillValue>[0],
+  homeDir: string,
+  bundledRoot: string,
+) {
+  return installBundledSkillValue(request, homeDir, directoryLinks, bundledRoot);
+}
+
+function uninstallBundledSkill(
+  request: Parameters<typeof uninstallBundledSkillValue>[0],
+  homeDir: string,
+  bundledRoot: string,
+) {
+  return uninstallBundledSkillValue(request, homeDir, directoryLinks, bundledRoot);
+}
 
 describe("installBundledSkill", () => {
   test("links a bundled skill into the Codex skills directory", async () => {

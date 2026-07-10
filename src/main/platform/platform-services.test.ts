@@ -40,6 +40,7 @@ describe("createPlatformServices", () => {
       resolvedPath: "C:\\workspace\\tools\\codex.exe",
       separator: "\\",
       caseSensitive: false,
+      linkType: "junction",
     },
     {
       platform: "darwin" as const,
@@ -48,6 +49,7 @@ describe("createPlatformServices", () => {
       resolvedPath: "/workspace/tools/codex",
       separator: "/",
       caseSensitive: true,
+      linkType: "dir",
     },
     {
       platform: "linux" as const,
@@ -56,6 +58,7 @@ describe("createPlatformServices", () => {
       resolvedPath: "/workspace/tools/codex",
       separator: "/",
       caseSensitive: true,
+      linkType: "dir",
     },
   ])("constructs $platform services without using the host platform", async (fixture) => {
     const processLauncher = fakeProcessLauncher();
@@ -73,6 +76,7 @@ describe("createPlatformServices", () => {
     });
     expect(services.pathPolicy.pathApi.sep).toBe(fixture.separator);
     expect(services.pathPolicy.caseSensitive).toBe(fixture.caseSensitive);
+    expect(services.managedDirectoryLinks.linkType).toBe(fixture.linkType);
     expect(services.processLauncher).toBe(processLauncher);
     expect(services.processTreeController).toBe(processTreeController);
     expect(services.resourceLocator).toBe(resourceLocator);

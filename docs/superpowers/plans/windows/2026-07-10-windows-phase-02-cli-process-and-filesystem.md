@@ -4,7 +4,7 @@
 
 ### Status
 
-In progress. Executable discovery, Main-process `PlatformServices` composition, shared process-tree control, production Runtime lifecycle injection, and local-file containment hardening were implemented on 2026-07-10. Compatibility cleanup, skill-junction ownership, and Windows-hosted validation remain pending.
+In progress. Executable discovery, Main-process `PlatformServices` composition, shared process-tree control, production Runtime lifecycle injection, local-file containment, and managed skill-link ownership were implemented on 2026-07-10. Compatibility cleanup and Windows-hosted validation remain pending.
 
 ## Goal
 
@@ -41,7 +41,12 @@ Completed:
 - extracted a focused path policy with Windows drive normalization, case-insensitive containment, UNC support, device-path rejection, and `~/`/`~\\` expansion;
 - routed Main-process local-file previews through the composed path policy;
 - changed file authorization to compare both lexical paths and canonical `realpath` results before reading;
-- added pure Windows/POSIX path fixtures and a filesystem test proving symlink/junction escape is rejected.
+- added pure Windows/POSIX path fixtures and a filesystem test proving symlink/junction escape is rejected;
+- extracted a focused `ManagedDirectoryLinkService` and selected Windows junction versus POSIX directory-symlink behavior in `createPlatformServices(...)`;
+- removed `process.platform` and raw symlink mutation from the skill installer;
+- required canonical target ownership before managed links can be replaced or removed;
+- added filesystem tests for safe replacement, real-directory protection, foreign-target protection, owned uninstall, and paths containing spaces;
+- added a host-independent contract assertion that win32 selects `junction` while darwin/linux select `dir`.
 
 Pending:
 
@@ -51,7 +56,7 @@ Pending:
 - preserve environment overrides as a separately classified `environment` resolution source instead of only preselecting them in `resolveRuntimeExecutables(...)`;
 - add bounded locator caching, ambiguity handling, and classified remediation for unresolved executables;
 - replace the remaining hand-written Windows command quoting with the selected mature spawn adapter and complete metacharacter/Unicode fixtures;
-- harden skill-junction ownership and replacement behavior on Windows;
+- run the managed-junction suite on Windows without Developer Mode or administrator privileges;
 - add configuration file-picking and actionable detection states;
 - run the integration suite from the Phase 01 installed artifact on Windows.
 
@@ -80,6 +85,8 @@ Add:
 - `src/main/platform/process-tree.test.ts`
 - `src/main/platform/platform-paths.ts`
 - `src/main/platform/platform-paths.test.ts`
+- `src/main/platform/managed-directory-link.ts`
+- `src/main/platform/managed-directory-link.test.ts`
 
 ## Step 1: Define The PlatformServices Composition Boundary
 
@@ -91,6 +98,7 @@ interface PlatformServices {
   processLauncher: ProcessLauncher;
   processTreeController: ProcessTreeController;
   pathPolicy: PlatformPathPolicy;
+  managedDirectoryLinks: ManagedDirectoryLinkService;
   resourceLocator: AppResourceLocator;
 }
 ```
