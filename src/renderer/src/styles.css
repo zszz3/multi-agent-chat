@@ -6106,6 +6106,26 @@ textarea:focus-visible {
   padding: 0 9px;
 }
 
+.agent-provider-key-input {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) 32px;
+  gap: 6px;
+  align-items: center;
+}
+
+.agent-provider-key-input .icon-btn {
+  width: 32px;
+  height: 32px;
+}
+
+.runtime-secret-visibility {
+  align-items: flex-start;
+}
+
+textarea.is-secret-masked {
+  -webkit-text-security: disc;
+}
+
 .agent-advanced-panel {
   border: 1px solid var(--line);
   border-radius: 10px;

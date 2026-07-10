@@ -5,6 +5,7 @@ export const RUNTIME_DEFINITIONS = [
     executable: "codex",
     executableEnv: "CODEX_PATH",
     detection: "cli",
+    localConfigImport: true,
     defaultChannel: {
       id: "codex-openai",
       label: "Codex OpenAI",
@@ -18,6 +19,7 @@ export const RUNTIME_DEFINITIONS = [
     executable: "claude",
     executableEnv: "CLAUDE_PATH",
     detection: "cli",
+    localConfigImport: true,
     defaultChannel: {
       id: "claude-code",
       label: "Claude Code",
@@ -28,6 +30,7 @@ export const RUNTIME_DEFINITIONS = [
     label: "API",
     executable: "api",
     detection: "virtual",
+    localConfigImport: false,
     defaultChannel: {
       id: "api-openai",
       label: "OpenAI API",
@@ -42,6 +45,7 @@ export const RUNTIME_DEFINITIONS = [
     executable: "hermes",
     executableEnv: "HERMES_PATH",
     detection: "cli",
+    localConfigImport: true,
     defaultChannel: {
       id: "hermes-default",
       label: "Hermes Default",
@@ -54,6 +58,7 @@ export const RUNTIME_DEFINITIONS = [
     executable: "opencode",
     executableEnv: "OPENCODE_PATH",
     detection: "cli",
+    localConfigImport: true,
     defaultChannel: {
       id: "opencode-default",
       label: "OpenCode Default",
@@ -66,6 +71,7 @@ export const RUNTIME_DEFINITIONS = [
     executable: "openclaw",
     executableEnv: "OPENCLAW_PATH",
     detection: "cli",
+    localConfigImport: true,
     defaultChannel: {
       id: "openclaw-default",
       label: "OpenClaw Default",

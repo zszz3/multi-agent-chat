@@ -3331,7 +3331,7 @@ fs.writeFileSync(${JSON.stringify(argsPath)}, process.argv.slice(2).join("\\n") 
     await hub.flushPersistence();
 
     const persisted = JSON.parse(await readFile(storagePath, "utf8")) as any;
-    expect(persisted.version).toBe(4);
+    expect(persisted.version).toBe(5);
     expect(persisted.sessions).toEqual([expect.objectContaining({ id: expect.any(String) }), expect.objectContaining({ id: chat.id })]);
     expect(persisted.messages).toEqual(expect.arrayContaining([expect.objectContaining({ chatId: chat.id, role: "assistant" })]));
     expect(persisted.events).toEqual(expect.arrayContaining([expect.objectContaining({ chatId: chat.id, type: "meta", content: "→ shell_command\npwd" })]));
@@ -3413,7 +3413,7 @@ fs.writeFileSync(${JSON.stringify(argsPath)}, process.argv.slice(2).join("\\n") 
     await hub.flushPersistence();
 
     const persisted = JSON.parse(await readFile(storagePath, "utf8")) as any;
-    expect(persisted.version).toBe(4);
+    expect(persisted.version).toBe(5);
     expect(persisted.tasks).toEqual(
       expect.arrayContaining([
         expect.objectContaining({
@@ -3512,7 +3512,7 @@ fs.writeFileSync(${JSON.stringify(argsPath)}, process.argv.slice(2).join("\\n") 
     expect(snapshot.chats).toHaveLength(1);
   });
 
-  test("persists runtimeState as V4 and restores durable fields while clearing ephemeral state", async () => {
+  test("persists runtimeState as V5 and restores durable fields while clearing ephemeral state", async () => {
     const dir = await mkdtemp(path.join(os.tmpdir(), "multi-agent-chat-runtime-session-roundtrip-"));
     const storagePath = path.join(dir, "app-chats.json");
     const hub = new AgentHub();
@@ -3550,7 +3550,7 @@ fs.writeFileSync(${JSON.stringify(argsPath)}, process.argv.slice(2).join("\\n") 
     await hub.flushPersistence();
 
     const persisted = JSON.parse(await readFile(storagePath, "utf8")) as any;
-    expect(persisted.version).toBe(4);
+    expect(persisted.version).toBe(5);
     expect(persisted.sessions).toEqual(
       expect.arrayContaining([
         expect.objectContaining({
@@ -3937,7 +3937,14 @@ fs.writeFileSync(${JSON.stringify(argsPath)}, process.argv.slice(2).join("\\n") 
     const restored = new AgentHub();
     await restored.loadPersistedState(storagePath);
 
-    expect(restored.snapshot().channels.map((channel) => channel.id)).toEqual(["codex-deepseek"]);
+    expect(restored.snapshot().channels.map((channel) => channel.id)).toEqual([
+      "codex-deepseek",
+      "claude-code",
+      "api-openai",
+      "hermes-default",
+      "opencode-default",
+      "openclaw-default",
+    ]);
   });
 
   test("does not salvage legacy JSON history into SQLite storage", async () => {

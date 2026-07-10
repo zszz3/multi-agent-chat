@@ -1,9 +1,9 @@
-import { useMemo, type MouseEvent } from "react";
-import { CheckCircle2, Cpu, Plus, RefreshCw, Save, Trash2 } from "lucide-react";
+import { useMemo, useState, type MouseEvent } from "react";
+import { CheckCircle2, Cpu, Eye, EyeOff, Plus, RefreshCw, Save, Trash2 } from "lucide-react";
 import { configChannelForSelection, selectConfigChannelsForDisplay } from "../../../../shared/config-channels";
 import { DEFAULT_MODEL_ID } from "../../../../shared/models";
 import { AGENT_PROVIDER_PRESETS, CODEX_DEFAULT_PRESET_ID, type AgentProviderPreset } from "../../../../shared/provider-presets";
-import { RUNTIME_IDS } from "../../../../shared/runtime-catalog";
+import { RUNTIME_IDS, runtimeDefinition } from "../../../../shared/runtime-catalog";
 import type {
   AgentChannel,
   AgentId,
@@ -95,6 +95,7 @@ interface RuntimePageProps {
   language?: Language;
   channels: AgentChannel[];
   selectedChannelId: string;
+  selectedRuntimeId: AgentId;
   providerKeys: Record<string, string>;
   codexPluginCatalog: CodexPluginCatalogItem[];
   pluginCatalogStatus: string;
@@ -112,7 +113,9 @@ interface RuntimePageProps {
   onSave: () => Promise<void>;
   onLoadCodexPluginCatalog: () => Promise<void>;
   onSelectChannel: (channelId: string) => void | Promise<void>;
+  onSelectRuntime: (runtimeId: AgentId) => void;
   onAddConfig: () => void;
+  onImportLocalConfig?: (runtimeId: AgentId, channelId?: string) => Promise<void>;
   onOpenContextMenu: (event: MouseEvent, channelId: string) => void;
   onDeleteConfig: (channelId: string) => void;
   onTestChannel: (channelId: string) => Promise<void>;
@@ -128,6 +131,7 @@ export function RuntimePage({
   language = "en",
   channels,
   selectedChannelId,
+  selectedRuntimeId,
   providerKeys,
   codexPluginCatalog,
   pluginCatalogStatus,
@@ -145,7 +149,9 @@ export function RuntimePage({
   onSave,
   onLoadCodexPluginCatalog,
   onSelectChannel,
+  onSelectRuntime,
   onAddConfig,
+  onImportLocalConfig,
   onOpenContextMenu,
   onDeleteConfig,
   onTestChannel,
@@ -157,6 +163,7 @@ export function RuntimePage({
   onStatusChange,
 }: RuntimePageProps) {
   const configText = CONFIG_TEXT[language];
+  const [showProviderKey, setShowProviderKey] = useState(false);
   const runtimeTitle = language === "zh" ? "配置" : "Config";
   const runtimeDescription =
     language === "zh"
@@ -177,11 +184,19 @@ export function RuntimePage({
   const balanceIdleText = language === "zh" ? "点击刷新查询当前 Provider 余额。" : "Refresh to query the current provider balance.";
   const balanceNoDataText = language === "zh" ? "Provider 没有返回余额明细。" : "The provider did not return balance details.";
   const visibleRuntimeChannels = useMemo(() => selectConfigChannelsForDisplay(channels), [channels]);
-  const selectedRuntimeChannelRecord = useMemo(() => configChannelForSelection(channels, selectedChannelId), [channels, selectedChannelId]);
+  const selectedRuntimeChannels = useMemo(
+    () => visibleRuntimeChannels.filter((channel) => channel.agentId === selectedRuntimeId),
+    [selectedRuntimeId, visibleRuntimeChannels],
+  );
+  const selectedRuntimeChannelRecord = useMemo(
+    () => selectedRuntimeChannels.find((channel) => channel.id === selectedChannelId) ?? selectedRuntimeChannels[0],
+    [selectedChannelId, selectedRuntimeChannels],
+  );
   const selectedRuntimeChannelId = selectedRuntimeChannelRecord?.id ?? "";
   const configuredPluginIds = useMemo(() => new Set((selectedRuntimeChannelRecord?.plugins ?? []).map((plugin) => plugin.id)), [selectedRuntimeChannelRecord]);
   const availableCodexPlugins = useMemo(() => codexPluginCatalog.filter((plugin) => !configuredPluginIds.has(plugin.id)), [codexPluginCatalog, configuredPluginIds]);
-  const selectedRuntime = selectedRuntimeChannelRecord?.agentId ?? "codex";
+  const selectedRuntime = selectedRuntimeId;
+  const localConfigImportSupported = runtimeDefinition(selectedRuntime).localConfigImport;
   const runtimeProviderPresets = useMemo(() => AGENT_PROVIDER_PRESETS.filter((preset) => preset.runtimeAgentId === selectedRuntime), [selectedRuntime]);
   const runtimeProviderCategories = useMemo(() => {
     const categories = new Set(runtimeProviderPresets.map((preset) => preset.category ?? (preset.id.includes("custom") ? "custom" : "third_party")));
@@ -236,10 +251,6 @@ export function RuntimePage({
     }
     const apiKey = cachedProviderKeys[preset.id] ?? (preset.id === selectedRuntimePresetId ? apiKeyFromChannelHeaders(selectedRuntimeChannelRecord, preset) : "");
     updateSelectedRuntimeChannel((channel) => applyProviderPresetToChannel(channel, preset, apiKey));
-  };
-  const selectRuntime = (runtimeAgentId: AgentId): void => {
-    const nextChannel = visibleRuntimeChannels.find((channel) => channel.agentId === runtimeAgentId);
-    if (nextChannel) void onSelectChannel(nextChannel.id);
   };
   const updateSelectedProviderKey = (value: string): void => {
     if (!selectedRuntimePreset) return;
@@ -332,6 +343,26 @@ export function RuntimePage({
         </aside>
 
         <section className="config-form runtime-editor">
+          <section className="agent-provider-presets runtime-selector">
+            <div className="agent-provider-presets-head">
+              <h3>CLI</h3>
+              <span>{configText.cliHelp}</span>
+            </div>
+            <div className="agent-provider-preset-list">
+              {AGENTS.map((agentId) => (
+                <button
+                  type="button"
+                  key={agentId}
+                  className={`agent-provider-preset ${selectedRuntime === agentId ? "is-active" : ""}`}
+                  title={agentLabel(agentId)}
+                  onClick={() => onSelectRuntime(agentId)}
+                >
+                  <span className={`runtime-choice-dot ${agentAccent(agentId)}`} aria-hidden="true" />
+                  <strong>{agentLabel(agentId)}</strong>
+                </button>
+              ))}
+            </div>
+          </section>
           {selectedRuntimeChannelRecord ? (
             <>
               <div className="runtime-editor-actions">
@@ -339,15 +370,27 @@ export function RuntimePage({
                   <span className={`agent-badge mini ${agentAccent(selectedRuntime)}`}>{agentLabel(selectedRuntime)}</span>
                   <strong>{selectedRuntimeChannelRecord.label || selectedRuntimeChannelRecord.id}</strong>
                 </div>
-                <button
-                  type="button"
-                  className="control-btn compact secondary"
-                  onClick={() => void onTestChannel(selectedRuntimeChannelRecord.id)}
-                  disabled={selectedChannelTesting}
-                >
-                  <RefreshCw size={13} />
-                  <span>{selectedChannelTesting ? runtimeConfigTesting : runtimeConfigTest}</span>
-                </button>
+                <div className="config-plugin-actions">
+                  {localConfigImportSupported && onImportLocalConfig ? (
+                    <button
+                      type="button"
+                      className="control-btn compact secondary"
+                      onClick={() => void onImportLocalConfig(selectedRuntime, selectedRuntimeChannelRecord.id)}
+                    >
+                      <RefreshCw size={13} />
+                      <span>{language === "zh" ? "导入本地默认配置" : "Import local defaults"}</span>
+                    </button>
+                  ) : null}
+                  <button
+                    type="button"
+                    className="control-btn compact secondary"
+                    onClick={() => void onTestChannel(selectedRuntimeChannelRecord.id)}
+                    disabled={selectedChannelTesting}
+                  >
+                    <RefreshCw size={13} />
+                    <span>{selectedChannelTesting ? runtimeConfigTesting : runtimeConfigTest}</span>
+                  </button>
+                </div>
               </div>
               {status ? <div className="config-status runtime-config-status">{status}</div> : null}
               {selectedChannelTestResult ? (
@@ -438,27 +481,6 @@ export function RuntimePage({
                   <p className="provider-balance-idle">{selectedBalanceLoading ? balanceRefreshingText : balanceIdleText}</p>
                 )}
               </section>
-              <section className="agent-provider-presets">
-                <div className="agent-provider-presets-head">
-                  <h3>CLI</h3>
-                  <span>{configText.cliHelp}</span>
-                </div>
-                <div className="agent-provider-preset-list">
-                  {AGENTS.map((agentId) => (
-                    <button
-                      type="button"
-                      key={agentId}
-                      className={`agent-provider-preset ${selectedRuntime === agentId ? "is-active" : ""}`}
-                      title={agentLabel(agentId)}
-                      onClick={() => selectRuntime(agentId)}
-                    >
-                      <span className={`runtime-choice-dot ${agentAccent(agentId)}`} aria-hidden="true" />
-                      <strong>{agentLabel(agentId)}</strong>
-                    </button>
-                  ))}
-                </div>
-              </section>
-
               <details className="agent-provider-presets agent-provider-disclosure" open>
                 <summary className="agent-provider-presets-head">
                   <h3>Provider</h3>
@@ -490,13 +512,24 @@ export function RuntimePage({
                 {selectedRuntimePreset?.usesApiKey ? (
                   <label className="agent-provider-key-field">
                     <span>{configText.apiKey}</span>
-                    <input
-                      aria-label="Provider API key"
-                      type="password"
-                      value={selectedProviderKey}
-                      placeholder={`${configText.usedByAll} ${selectedRuntimePreset.label} agents`}
-                      onChange={(event) => updateSelectedProviderKey(event.currentTarget.value)}
-                    />
+                    <div className="agent-provider-key-input">
+                      <input
+                        aria-label="Provider API key"
+                        type={showProviderKey ? "text" : "password"}
+                        value={selectedProviderKey}
+                        placeholder={`${configText.usedByAll} ${selectedRuntimePreset.label} agents`}
+                        onChange={(event) => updateSelectedProviderKey(event.currentTarget.value)}
+                      />
+                      <button
+                        type="button"
+                        className="icon-btn"
+                        aria-label={showProviderKey ? "Hide provider API key" : "Show provider API key"}
+                        title={showProviderKey ? "Hide" : "Show"}
+                        onClick={() => setShowProviderKey((visible) => !visible)}
+                      >
+                        {showProviderKey ? <EyeOff size={14} /> : <Eye size={14} />}
+                      </button>
+                    </div>
                   </label>
                 ) : null}
                 {selectedRuntimePreset?.configurableModelId ? (
@@ -656,7 +689,22 @@ export function RuntimePage({
               </section>
             </>
           ) : (
-            <div className="empty-state config-empty">No config channels</div>
+            <div className="empty-state config-empty runtime-empty-config">
+              <strong>{agentLabel(selectedRuntime)}</strong>
+              <span>{language === "zh" ? "尚无本地配置" : "No local config yet"}</span>
+              <div className="config-plugin-actions">
+                {localConfigImportSupported && onImportLocalConfig ? (
+                  <button className="control-btn compact secondary" type="button" onClick={() => void onImportLocalConfig(selectedRuntime)}>
+                    <RefreshCw size={13} />
+                    <span>{language === "zh" ? "一键导入本地默认配置" : "Import local defaults"}</span>
+                  </button>
+                ) : null}
+                <button className="control-btn compact secondary" type="button" onClick={onAddConfig}>
+                  <Plus size={13} />
+                  <span>{language === "zh" ? "新建配置" : "Create config"}</span>
+                </button>
+              </div>
+            </div>
           )}
         </section>
       </div>

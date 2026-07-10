@@ -70,6 +70,7 @@ describe("preload skill API", () => {
     expect(electronState.exposedApi).toHaveProperty("onScheduledWorkflowEvent");
     expect(electronState.exposedApi).toHaveProperty("queryRuntimeChannelBalance");
     expect(electronState.exposedApi).toHaveProperty("loadCodexDefaultConfig");
+    expect(electronState.exposedApi).toHaveProperty("importRuntimeLocalConfig");
     expect(electronState.exposedApi).toHaveProperty("refreshModelCatalog");
     expect(electronState.exposedApi).not.toHaveProperty("translateSkill");
   });

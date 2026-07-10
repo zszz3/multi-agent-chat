@@ -1140,6 +1140,7 @@ describe("AgentPage", () => {
         language="en"
         channels={savedKeyChannels}
         selectedChannelId="codex-openai"
+        selectedRuntimeId="codex"
         providerKeys={{}}
         codexPluginCatalog={codexPluginCatalog}
         pluginCatalogStatus="Loaded 2 plugins"
@@ -1153,6 +1154,7 @@ describe("AgentPage", () => {
         onSave={async () => undefined}
         onLoadCodexPluginCatalog={async () => undefined}
         onSelectChannel={() => undefined}
+        onSelectRuntime={() => undefined}
         onAddConfig={() => undefined}
         onOpenContextMenu={() => undefined}
         onDeleteConfig={() => undefined}
@@ -1166,6 +1168,10 @@ describe("AgentPage", () => {
     expect(html).toContain("CLI");
     expect(html).toContain("Provider");
     expect(html).toContain("aria-label=\"Provider API key\"");
+    expect(html).toContain('aria-label="Provider API key" type="password"');
+    expect(html).toContain('aria-label="Show provider API key"');
+    expect(html).toContain('aria-label="Show advanced secrets"');
+    expect(html).toContain('class="is-secret-masked"');
     expect(html).toContain("value=\"saved-key\"");
     expect(html).toContain("aria-label=\"Agent model id\"");
     expect(html).toContain("Plugins");
@@ -1180,6 +1186,42 @@ describe("AgentPage", () => {
     expect(html).toContain('class="runtime-choice-dot agent-openclaw"');
     expect(styles).toContain(".agent-provider-preset-list {\n  display: grid;\n  grid-template-columns: repeat(6, minmax(0, 1fr));");
     expect(styles).toContain("@media (max-width: 820px) {\n  .runtime-layout {\n    grid-template-columns: 1fr;");
+  });
+
+  test("keeps a runtime navigable when it has no config and offers local import", () => {
+    const html = renderToStaticMarkup(
+      <RuntimePage
+        language="zh"
+        channels={[channels[0]!]}
+        selectedChannelId=""
+        selectedRuntimeId="hermes"
+        providerKeys={{}}
+        codexPluginCatalog={[]}
+        pluginCatalogStatus=""
+        agentTestResults={{}}
+        testingAgentId={undefined}
+        agentTestTick={0}
+        onUpdateChannel={() => undefined}
+        onAddModel={() => undefined}
+        onUpdateModel={() => undefined}
+        onRemoveModel={() => undefined}
+        onSave={async () => undefined}
+        onLoadCodexPluginCatalog={async () => undefined}
+        onSelectChannel={() => undefined}
+        onSelectRuntime={() => undefined}
+        onAddConfig={() => undefined}
+        onImportLocalConfig={async () => undefined}
+        onOpenContextMenu={() => undefined}
+        onDeleteConfig={() => undefined}
+        onTestChannel={async () => undefined}
+        onUpdateProviderKey={() => undefined}
+      />,
+    );
+
+    expect(html).toContain('class="agent-provider-preset is-active" title="Hermes"');
+    expect(html).toContain("尚无本地配置");
+    expect(html).toContain("一键导入本地默认配置");
+    expect(html).toContain("新建配置");
   });
 
   test("shows the stored channel key ahead of stale provider key cache", () => {
@@ -1198,6 +1240,7 @@ describe("AgentPage", () => {
         language="en"
         channels={savedKeyChannels}
         selectedChannelId="codex-openai"
+        selectedRuntimeId="codex"
         providerKeys={{ deepseek: "stale-key" }}
         codexPluginCatalog={codexPluginCatalog}
         pluginCatalogStatus=""
@@ -1211,6 +1254,7 @@ describe("AgentPage", () => {
         onSave={async () => undefined}
         onLoadCodexPluginCatalog={async () => undefined}
         onSelectChannel={() => undefined}
+        onSelectRuntime={() => undefined}
         onAddConfig={() => undefined}
         onOpenContextMenu={() => undefined}
         onDeleteConfig={() => undefined}
@@ -1229,6 +1273,7 @@ describe("AgentPage", () => {
         language="en"
         channels={channels}
         selectedChannelId="codex-openai"
+        selectedRuntimeId="codex"
         providerKeys={{}}
         codexPluginCatalog={[]}
         pluginCatalogStatus=""
@@ -1242,6 +1287,7 @@ describe("AgentPage", () => {
         onSave={async () => undefined}
         onLoadCodexPluginCatalog={async () => undefined}
         onSelectChannel={() => undefined}
+        onSelectRuntime={() => undefined}
         onAddConfig={() => undefined}
         onOpenContextMenu={() => undefined}
         onDeleteConfig={() => undefined}
@@ -1264,6 +1310,7 @@ describe("AgentPage", () => {
         language="en"
         channels={channels}
         selectedChannelId="codex-openai"
+        selectedRuntimeId="codex"
         providerKeys={{}}
         codexPluginCatalog={[]}
         pluginCatalogStatus=""
@@ -1278,6 +1325,7 @@ describe("AgentPage", () => {
         onSave={async () => undefined}
         onLoadCodexPluginCatalog={async () => undefined}
         onSelectChannel={() => undefined}
+        onSelectRuntime={() => undefined}
         onAddConfig={() => undefined}
         onOpenContextMenu={() => undefined}
         onDeleteConfig={() => undefined}
@@ -1330,6 +1378,7 @@ describe("AgentPage", () => {
         language="en"
         channels={[defaultChannel]}
         selectedChannelId="codex-openai"
+        selectedRuntimeId="codex"
         providerKeys={{ [CODEX_DEFAULT_PRESET_ID]: "stale-key" }}
         codexPluginCatalog={[]}
         pluginCatalogStatus=""
@@ -1343,6 +1392,7 @@ describe("AgentPage", () => {
         onSave={async () => undefined}
         onLoadCodexPluginCatalog={async () => undefined}
         onSelectChannel={() => undefined}
+        onSelectRuntime={() => undefined}
         onAddConfig={() => undefined}
         onOpenContextMenu={() => undefined}
         onDeleteConfig={() => undefined}
@@ -1472,6 +1522,7 @@ describe("AgentPage", () => {
         language="en"
         channels={noisyChannels}
         selectedChannelId="repo-reviewer-channel"
+        selectedRuntimeId="codex"
         providerKeys={{}}
         codexPluginCatalog={[]}
         pluginCatalogStatus=""
@@ -1486,6 +1537,7 @@ describe("AgentPage", () => {
         onSave={async () => undefined}
         onLoadCodexPluginCatalog={async () => undefined}
         onSelectChannel={() => undefined}
+        onSelectRuntime={() => undefined}
         onAddConfig={() => undefined}
         onOpenContextMenu={() => undefined}
         onDeleteConfig={() => undefined}
@@ -1575,6 +1627,7 @@ describe("AgentPage", () => {
         language="en"
         channels={channels}
         selectedChannelId="claude-code"
+        selectedRuntimeId="claude"
         providerKeys={{}}
         codexPluginCatalog={[]}
         pluginCatalogStatus=""
@@ -1588,6 +1641,7 @@ describe("AgentPage", () => {
         onSave={async () => undefined}
         onLoadCodexPluginCatalog={async () => undefined}
         onSelectChannel={() => undefined}
+        onSelectRuntime={() => undefined}
         onAddConfig={() => undefined}
         onOpenContextMenu={() => undefined}
         onDeleteConfig={() => undefined}
@@ -1613,6 +1667,7 @@ describe("AgentPage", () => {
         language="zh"
         channels={channels}
         selectedChannelId="codex-openai"
+        selectedRuntimeId="codex"
         providerKeys={{}}
         codexPluginCatalog={codexPluginCatalog}
         pluginCatalogStatus=""
@@ -1649,6 +1704,7 @@ describe("AgentPage", () => {
         onSave={async () => undefined}
         onLoadCodexPluginCatalog={async () => undefined}
         onSelectChannel={() => undefined}
+        onSelectRuntime={() => undefined}
         onAddConfig={() => undefined}
         onOpenContextMenu={() => undefined}
         onDeleteConfig={() => undefined}
@@ -1671,6 +1727,7 @@ describe("AgentPage", () => {
         language="zh"
         channels={channels}
         selectedChannelId="codex-openai"
+        selectedRuntimeId="codex"
         providerKeys={{}}
         codexPluginCatalog={[]}
         pluginCatalogStatus=""
@@ -1696,6 +1753,7 @@ describe("AgentPage", () => {
         onSave={async () => undefined}
         onLoadCodexPluginCatalog={async () => undefined}
         onSelectChannel={() => undefined}
+        onSelectRuntime={() => undefined}
         onAddConfig={() => undefined}
         onOpenContextMenu={() => undefined}
         onDeleteConfig={() => undefined}

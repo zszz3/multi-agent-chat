@@ -234,6 +234,7 @@ export function AppShell() {
   const {
     configChannels,
     selectedConfigChannelId,
+    selectedRuntimeId,
     configStatus,
     codexPluginCatalog,
     pluginCatalogStatus,
@@ -244,6 +245,8 @@ export function AppShell() {
     balanceLoadingChannelId,
     configContextMenu,
     setSelectedConfigChannelId,
+    selectConfigChannel,
+    selectRuntime,
     setConfigContextMenu,
     addConfigChannel,
     openConfigContextMenu,
@@ -260,6 +263,7 @@ export function AppShell() {
     testRuntimeChannel,
     queryRuntimeChannelBalance,
     refreshModelCatalog,
+    importLocalConfig,
     confirmSaveBeforeSwitch,
   } = useRuntimeConfigManager({
     chatApi,
@@ -950,6 +954,7 @@ export function AppShell() {
             language={language}
             channels={configChannels}
             selectedChannelId={selectedConfigChannelId}
+            selectedRuntimeId={selectedRuntimeId}
             providerKeys={providerKeys}
             codexPluginCatalog={codexPluginCatalog}
             pluginCatalogStatus={pluginCatalogStatus}
@@ -966,8 +971,10 @@ export function AppShell() {
             onRemoveModel={removeConfigModel}
             onSave={saveChannelConfig}
             onLoadCodexPluginCatalog={loadCodexPluginCatalog}
-            onSelectChannel={setSelectedConfigChannelId}
+            onSelectChannel={selectConfigChannel}
+            onSelectRuntime={selectRuntime}
             onAddConfig={addConfigChannel}
+            onImportLocalConfig={importLocalConfig}
             onOpenContextMenu={openRuntimeConfigContextMenu}
             onDeleteConfig={deleteConfigChannel}
             onTestChannel={testRuntimeChannel}
