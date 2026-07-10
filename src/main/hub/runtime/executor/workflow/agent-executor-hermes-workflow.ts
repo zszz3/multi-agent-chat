@@ -1,13 +1,13 @@
 import type {
   AgentRuntime,
   WorkflowAgentResponse,
-} from "../../../shared/types";
-import { runtimeModelId } from "../../../shared/models";
-import { HermesRunner } from "../../agents/hermes/hermes-runner";
+} from "../../../../../shared/types";
+import { runtimeModelId } from "../../../../../shared/models";
+import { HermesRunner } from "../../../../agents/hermes/hermes-runner";
 import type {
   RuntimeChannelTestContext,
   RuntimeWorkflowRequestContext,
-} from "../../agents/runtime/runtime-driver";
+} from "../../../../agents/runtime/runtime-driver";
 import {
   modelFromRuntimeConfig,
   type RuntimeWorkflowExecutionOptions,

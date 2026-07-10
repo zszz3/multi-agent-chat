@@ -1,8 +1,8 @@
-import type { RuntimeConversation } from "../../../shared/types";
+import type { RuntimeConversation } from "../../../../shared/types";
 import {
   claudeRuntimeStateCodec,
   codexRuntimeStateCodec,
-} from "../../agents/runtime/runtime-state-codec";
+} from "../../../agents/runtime/runtime-state-codec";
 
 export function codexThreadIdFromConversation(conversation?: RuntimeConversation): string | undefined {
   return codexRuntimeStateCodec.decodeConversation(conversation)?.native.threadId;

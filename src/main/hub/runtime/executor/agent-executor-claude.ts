@@ -1,4 +1,4 @@
-import { ClaudeAgentSdkAdapter } from "../../agents/claude/claude-agent-sdk";
+import { ClaudeAgentSdkAdapter } from "../../../agents/claude/claude-agent-sdk";
 import { claudeSessionIdFromConversation } from "./agent-executor-conversation";
 import type { AgentExecutionContext, AgentExecutor } from "./agent-executor-types";
 

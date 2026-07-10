@@ -1,5 +1,5 @@
-import type { ChatMessage } from "../../../shared/types";
-import type { TaskState } from "../state/agent-hub-state";
+import type { ChatMessage } from "../../../../shared/types";
+import type { TaskState } from "../../state/agent-hub-state";
 
 export interface TaskRunResolvedAgent {
   agent: { id: string; name: string };

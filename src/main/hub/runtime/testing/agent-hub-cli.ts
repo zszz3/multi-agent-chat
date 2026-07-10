@@ -1,6 +1,6 @@
 import { rm } from "node:fs/promises";
-import { execCli, spawnCli } from "../../platform/cli-launcher";
-import { deleteCodexSessionFiles } from "./agent-executor-session-cleanup";
+import { execCli, spawnCli } from "../../../platform/cli-launcher";
+import { deleteCodexSessionFiles } from "../executor/agent-executor-session-cleanup";
 
 export type AgentTestStreamEmit = (event: {
   type: "assistant" | "tool" | "warning" | "error" | "assistant_delta";

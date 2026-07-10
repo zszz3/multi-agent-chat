@@ -1,4 +1,4 @@
-import { HermesRunner } from "../../agents/hermes/hermes-runner";
+import { HermesRunner } from "../../../agents/hermes/hermes-runner";
 import type {
   AgentExecutionContext,
   AgentExecutor,

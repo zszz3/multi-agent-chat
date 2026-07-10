@@ -82,7 +82,7 @@ import type { CodexRpcClient } from "../agents/codex/codex-rpc";
 import type { RuntimeCapabilities } from "../agents/runtime/runtime-capabilities";
 import type { InteractiveSessionContext, InteractiveSessionSnapshot, RuntimeDriverRegistry, RuntimeSurface } from "../agents/runtime/runtime-driver";
 import { RuntimeRouter } from "../agents/runtime/runtime-router";
-import { createRuntimeDriverRegistry, RuntimeAgentExecutorFactory, type AgentExecutorFactory } from "./runtime/agent-executor";
+import { createRuntimeDriverRegistry, RuntimeAgentExecutorFactory, type AgentExecutorFactory } from "./runtime/executor/agent-executor";
 import {
   askApiWorkflowAgent as askApiWorkflowAgentValue,
   testApiAgent as testApiAgentValue,
@@ -133,22 +133,22 @@ import type { PersistedAppStateV4 } from "./persisted/agent-hub-persistence";
 import {
   formatElapsed,
   sanitizeTestError,
-} from "./runtime/agent-hub-cli";
+} from "./runtime/testing/agent-hub-cli";
 import {
   testClaudeAgent as testClaudeAgentValue,
   testCodexAgent as testCodexAgentValue,
-} from "./runtime/agent-hub-agent-test";
-import { runAgentExecution as runAgentExecutionValue } from "./runtime/agent-hub-runner";
-import { runRuntimeChannelTest as runRuntimeChannelTestValue } from "./runtime/agent-hub-runtime-test";
+} from "./runtime/testing/agent-hub-agent-test";
+import { runAgentExecution as runAgentExecutionValue } from "./runtime/run/agent-hub-runner";
+import { runRuntimeChannelTest as runRuntimeChannelTestValue } from "./runtime/testing/agent-hub-runtime-test";
 import {
   dispatchTaskPromptExecution as dispatchTaskPromptExecutionValue,
   resolveTaskPromptExecution as resolveTaskPromptExecutionValue,
-} from "./runtime/agent-hub-task-run";
+} from "./runtime/run/agent-hub-task-run";
 import {
   cloneConversationForPolicy as cloneConversationForPolicyValue,
   defaultContinuationPolicy as defaultContinuationPolicyValue,
   selectExecutionMode as selectExecutionModeValue,
-} from "./runtime/agent-hub-runtime-policy";
+} from "./runtime/run/agent-hub-runtime-policy";
 import {
   codexPluginSummaries,
   respondToCodexServerRequest,

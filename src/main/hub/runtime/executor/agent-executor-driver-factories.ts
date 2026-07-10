@@ -1,10 +1,10 @@
-import type { AgentId, WorkflowAgentResponse } from "../../../shared/types";
+import type { AgentId, WorkflowAgentResponse } from "../../../../shared/types";
 import type {
   RuntimeChannelTestContext,
   RuntimeDriver,
   RuntimeSessionCleanupContext,
   RuntimeWorkflowRequestContext,
-} from "../../agents/runtime/runtime-driver";
+} from "../../../agents/runtime/runtime-driver";
 import { defaultInteractiveCapabilities, defaultOneShotCapabilities, support } from "./agent-executor-capabilities";
 
 type InteractiveResumeCapabilities = ReturnType<typeof defaultInteractiveCapabilities>["resume"];

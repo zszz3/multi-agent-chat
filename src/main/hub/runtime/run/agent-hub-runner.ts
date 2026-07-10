@@ -6,9 +6,9 @@ import type {
   RuntimeContinuationPolicy,
   RuntimeConversation,
   RuntimeExecutionMode,
-} from "../../../shared/types";
-import type { AgentExecutorFactory } from "./agent-executor";
-import type { ChatState, TaskState } from "../state/agent-hub-state";
+} from "../../../../shared/types";
+import type { AgentExecutorFactory } from "../executor/agent-executor";
+import type { ChatState, TaskState } from "../../state/agent-hub-state";
 
 export type HubRunState = ChatState | TaskState;
 

@@ -1,4 +1,4 @@
-import type { AgentId, AgentTestEvent, AgentTestResult } from "../../../shared/types";
+import type { AgentId, AgentTestEvent, AgentTestResult } from "../../../../shared/types";
 import { formatElapsed, sanitizeTestError } from "./agent-hub-cli";
 
 type AgentTestEmit = (event: Omit<AgentTestEvent, "agentId" | "timestamp">) => void;

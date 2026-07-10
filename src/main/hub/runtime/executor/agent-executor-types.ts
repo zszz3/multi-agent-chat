@@ -5,14 +5,14 @@ import type {
   AgentRuntime,
   RuntimeRequest,
   WorkflowAgentResponse,
-} from "../../../shared/types";
-import type { ClaudeAgentSdkRunInput } from "../../agents/claude/claude-agent-sdk";
-import type { CodexRpcClient } from "../../agents/codex/codex-rpc";
+} from "../../../../shared/types";
+import type { ClaudeAgentSdkRunInput } from "../../../agents/claude/claude-agent-sdk";
+import type { CodexRpcClient } from "../../../agents/codex/codex-rpc";
 import type {
   RuntimeChannelTestContext,
   RuntimeSessionCleanupContext,
   RuntimeWorkflowRequestContext,
-} from "../../agents/runtime/runtime-driver";
+} from "../../../agents/runtime/runtime-driver";
 
 export interface AgentExecutionContext extends RuntimeRequest {
   runId: string;

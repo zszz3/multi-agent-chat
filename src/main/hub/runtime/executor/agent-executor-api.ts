@@ -1,4 +1,4 @@
-import { apiRequestBody, apiRequestUrl, extractApiContent, resolveApiModel } from "../api/agent-hub-api";
+import { apiRequestBody, apiRequestUrl, extractApiContent, resolveApiModel } from "../../api/agent-hub-api";
 import type {
   AgentExecutionContext,
   AgentExecutor,

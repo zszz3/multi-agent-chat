@@ -3,9 +3,9 @@ import type {
   RuntimeContinuationPolicy,
   RuntimeConversation,
   RuntimeExecutionMode,
-} from "../../../shared/types";
-import type { RuntimeSurface } from "../../agents/runtime/runtime-driver";
-import type { RuntimeDriverRegistry } from "./agent-executor";
+} from "../../../../shared/types";
+import type { RuntimeSurface } from "../../../agents/runtime/runtime-driver";
+import type { RuntimeDriverRegistry } from "../executor/agent-executor";
 
 function surfaceSupportForRuntime(
   runtimeDrivers: Pick<RuntimeDriverRegistry, "maybeDriverFor">,

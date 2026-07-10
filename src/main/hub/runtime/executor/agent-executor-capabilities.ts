@@ -1,5 +1,5 @@
-import type { AgentId } from "../../../shared/types";
-import type { RuntimeSurfaceSupport } from "../../agents/runtime/runtime-driver";
+import type { AgentId } from "../../../../shared/types";
+import type { RuntimeSurfaceSupport } from "../../../agents/runtime/runtime-driver";
 
 function defaultResumeCapabilities() {
   return {

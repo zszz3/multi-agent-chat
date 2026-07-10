@@ -1,5 +1,5 @@
-import type { AgentChannel, AgentId, RuntimeRequest } from "../../../shared/types";
-import type { CodexRpcClient } from "../../agents/codex/codex-rpc";
+import type { AgentChannel, AgentId, RuntimeRequest } from "../../../../../shared/types";
+import type { CodexRpcClient } from "../../../../agents/codex/codex-rpc";
 
 export const WORKFLOW_AGENT_IDLE_TIMEOUT_MS = 10 * 60_000;
 export const WORKFLOW_DEVELOPER_INSTRUCTIONS =

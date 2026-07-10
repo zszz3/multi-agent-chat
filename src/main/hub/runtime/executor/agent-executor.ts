@@ -2,23 +2,23 @@ import type {
   AgentChannel,
   AgentId,
   WorkflowAgentResponse,
-} from "../../../shared/types";
-import { codexEnvironmentForChannel } from "../../agents/codex/codex-env";
-import { claudeCliModelForChannel } from "../../agents/claude/claude-env";
-import { ClaudeAgentSdkAdapter, type ClaudeAgentSdkRunInput } from "../../agents/claude/claude-agent-sdk";
-import { ClaudeAgentSdkInteractive } from "../../agents/claude/claude-agent-sdk-interactive";
-import { ClaudeInteractiveSession } from "../../agents/claude/claude-interactive-session";
-import { CodexInteractiveSession } from "../../agents/codex/codex-interactive-session";
-import { CodexRpcClient } from "../../agents/codex/codex-rpc";
-import { RuntimeRouter } from "../../agents/runtime/runtime-router";
-import { claudeRuntimeStateCodec, codexRuntimeStateCodec, hermesRuntimeStateCodec } from "../../agents/runtime/runtime-state-codec";
+} from "../../../../shared/types";
+import { codexEnvironmentForChannel } from "../../../agents/codex/codex-env";
+import { claudeCliModelForChannel } from "../../../agents/claude/claude-env";
+import { ClaudeAgentSdkAdapter, type ClaudeAgentSdkRunInput } from "../../../agents/claude/claude-agent-sdk";
+import { ClaudeAgentSdkInteractive } from "../../../agents/claude/claude-agent-sdk-interactive";
+import { ClaudeInteractiveSession } from "../../../agents/claude/claude-interactive-session";
+import { CodexInteractiveSession } from "../../../agents/codex/codex-interactive-session";
+import { CodexRpcClient } from "../../../agents/codex/codex-rpc";
+import { RuntimeRouter } from "../../../agents/runtime/runtime-router";
+import { claudeRuntimeStateCodec, codexRuntimeStateCodec, hermesRuntimeStateCodec } from "../../../agents/runtime/runtime-state-codec";
 import type {
   RuntimeChannelTestContext,
   RuntimeSessionCleanupContext,
   RuntimeWorkflowRequestContext,
-} from "../../agents/runtime/runtime-driver";
-import { RuntimeDriverRegistry } from "../../agents/runtime/runtime-driver";
-import { codexAppServerConfigArgs } from "../../channels/model-config";
+} from "../../../agents/runtime/runtime-driver";
+import { RuntimeDriverRegistry } from "../../../agents/runtime/runtime-driver";
+import { codexAppServerConfigArgs } from "../../../channels/model-config";
 import { createInteractiveRuntimeDriver, createOneShotRuntimeDriver } from "./agent-executor-driver-factories";
 import { deleteClaudeSessionArtifacts, deleteCodexSessionArtifacts } from "./agent-executor-session-cleanup";
 import { ApiAgentExecutor } from "./agent-executor-api";
@@ -39,9 +39,9 @@ import {
   runCodexWorkflow,
   runHermesChannelTest,
   runHermesWorkflow,
-} from "./agent-executor-workflow";
+} from "./workflow/agent-executor-workflow";
 
-export { RuntimeDriverRegistry } from "../../agents/runtime/runtime-driver";
+export { RuntimeDriverRegistry } from "../../../agents/runtime/runtime-driver";
 export type {
   AgentExecutionContext,
   AgentExecutor,

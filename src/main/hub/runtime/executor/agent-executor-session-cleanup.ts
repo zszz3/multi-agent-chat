@@ -2,9 +2,9 @@ import type { Dirent } from "node:fs";
 import { readdir, rm } from "node:fs/promises";
 import os from "node:os";
 import path from "node:path";
-import type { RuntimeConversation } from "../../../shared/types";
-import { execCli } from "../../platform/cli-launcher";
-import { codexHome } from "../../channels/model-config";
+import type { RuntimeConversation } from "../../../../shared/types";
+import { execCli } from "../../../platform/cli-launcher";
+import { codexHome } from "../../../channels/model-config";
 import { claudeSessionIdFromConversation, codexThreadIdFromConversation } from "./agent-executor-conversation";
 
 function claudeProjectStoragePath(workDir: string, sessionId: string): string {
