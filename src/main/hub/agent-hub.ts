@@ -1594,6 +1594,17 @@ export class AgentHub {
     return this.snapshot();
   }
 
+  async executeEvaluationAgent(configuredAgentId: string, prompt: string): Promise<{ output: string; durationMs: number }> {
+    const task = this.createTaskState({ configuredAgentId, prompt, workDir: this.workDir });
+    const resolved = this.resolveConfiguredAgent(task.configuredAgentId, task.modelId);
+    if (!resolved) throw new Error(`Agent ${configuredAgentId} is not available`);
+    const startedAt = Date.now();
+    await this.runChat(task, prompt, resolved);
+    if (task.lastError) throw new Error(task.lastError);
+    const output = task.messages.filter((message) => message.role === "assistant").map((message) => message.content).join("\n").trim();
+    return { output, durationMs: Date.now() - startedAt };
+  }
+
   private workflowDraftSessionKey(workflowId: string): string {
     return `workflow-draft:${workflowId}`;
   }

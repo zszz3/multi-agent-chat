@@ -15,6 +15,8 @@ import { UserSkillStore } from "../user-skill-store";
 import { SkillCategoryStore } from "../skill-category-store";
 import { McpRegistryStore } from "../mcp-registry-store";
 import { discoverMcpTools } from "../mcp-client";
+import { EvaluationStore } from "../evaluation-store";
+import { runEvaluation } from "../evaluation-runner";
 import { centeredWindowBounds } from "../platform/window-bounds";
 import { resolveBundledWorkflowsPath, resolvePreloadBundlePath } from "./app-paths";
 import { fetchOnlineSkills, ONLINE_SKILL_SOURCES } from "../../shared/online-skills";
@@ -34,6 +36,10 @@ import type {
   ImportOnlineSkillRequest,
   InstallSkillRequest,
   McpServerDefinition,
+  EvaluationDataset,
+  EvaluationEvaluator,
+  EvaluationExperiment,
+  EvaluationRun,
   PatchWorkflowDraftRequest,
   AnswerWorkflowGateRequest,
   PauseWorkflowNodeRequest,
@@ -70,6 +76,7 @@ const officialCatalog = new OfficialCatalogStore(path.join(app.getPath("userData
 const userSkillStore = new UserSkillStore(path.join(app.getPath("userData"), APP_DATABASE_FILE));
 const skillCategoryStore = new SkillCategoryStore(path.join(app.getPath("userData"), APP_DATABASE_FILE));
 const mcpRegistryStore = new McpRegistryStore(path.join(app.getPath("userData"), APP_DATABASE_FILE));
+const evaluationStore = new EvaluationStore(path.join(app.getPath("userData"), APP_DATABASE_FILE));
 
 let mainWindow: BrowserWindow | null = null;
 let ipcRegistered = false;
@@ -329,6 +336,27 @@ function registerIpcHandlers(): void {
       return mcpRegistryStore.recordTest(server, [], error instanceof Error ? error.message : String(error));
     }
   });
+  ipcMain.handle("evaluation:datasets:list", () => evaluationStore.listDatasets());
+  ipcMain.handle("evaluation:datasets:save", (_event, value: EvaluationDataset) => evaluationStore.saveDataset(value));
+  ipcMain.handle("evaluation:datasets:delete", (_event, id: string) => evaluationStore.deleteDataset(id));
+  ipcMain.handle("evaluation:evaluators:list", () => evaluationStore.listEvaluators());
+  ipcMain.handle("evaluation:evaluators:save", (_event, value: EvaluationEvaluator) => evaluationStore.saveEvaluator(value));
+  ipcMain.handle("evaluation:evaluators:delete", (_event, id: string) => evaluationStore.deleteEvaluator(id));
+  ipcMain.handle("evaluation:experiments:list", () => evaluationStore.listExperiments());
+  ipcMain.handle("evaluation:experiments:save", (_event, value: EvaluationExperiment) => evaluationStore.saveExperiment(value));
+  ipcMain.handle("evaluation:experiments:delete", (_event, id: string) => evaluationStore.deleteExperiment(id));
+  ipcMain.handle("evaluation:runs:list", (_event, experimentId?: string) => evaluationStore.listRuns(experimentId));
+  ipcMain.handle("evaluation:runs:save", (_event, value: EvaluationRun) => evaluationStore.saveRun(value));
+  ipcMain.handle("evaluation:experiments:run", async (_event, experimentId: string) => {
+    const experiment = (await evaluationStore.listExperiments()).find((item) => item.id === experimentId);
+    if (!experiment) throw new Error("Experiment not found");
+    const dataset = (await evaluationStore.listDatasets()).find((item) => item.id === experiment.datasetId);
+    if (!dataset) throw new Error("Dataset not found");
+    const evaluators = await evaluationStore.listEvaluators();
+    const agent = hub.snapshot().configuredAgents.find((item) => item.id === experiment.agentId);
+    const run = await runEvaluation({ experiment, dataset, evaluators, ...(agent?.currentRevisionId ? { agentRevisionId: agent.currentRevisionId } : {}), execute: (agentId, prompt) => hub.executeEvaluationAgent(agentId, prompt) });
+    return evaluationStore.saveRun(run);
+  });
   ipcMain.handle("runtime-channels:test", async (event, channelId: string) =>
     hub.testRuntimeChannel(channelId, (agentEvent) => event.sender.send("configured-agents:test-event", agentEvent)),
   );
@@ -559,6 +587,7 @@ app.on("before-quit", () => {
   officialCatalog.close();
   userSkillStore.close();
   mcpRegistryStore.close();
+  evaluationStore.close();
   skillCategoryStore.close();
 });
 

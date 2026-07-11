@@ -49,6 +49,7 @@ import {
 } from "./pages/skills/find-skill";
 import { AgentPage } from "./pages/agent/AgentPage";
 import { McpPage } from "./pages/mcp/McpPage";
+import { EvaluationPage } from "./pages/evaluation/EvaluationPage";
 import { useConfiguredAgentsManager } from "./pages/agent/hooks/useConfiguredAgentsManager";
 import { ChatPage } from "./pages/chat/ChatPage";
 import { chatConfigLocked, SlashCommandSuggestions, slashCommandSuggestionsFor } from "./pages/chat/chat-utils";
@@ -948,6 +949,8 @@ export function AppShell() {
           />
         ) : activeFeature === "mcp" ? (
           <McpPage language={language} />
+        ) : activeFeature === "datasets" || activeFeature === "evaluators" || activeFeature === "experiments" ? (
+          <EvaluationPage mode={activeFeature} language={language} agents={snapshot.configuredAgents} />
         ) : activeFeature === "runtimes" ? (
           <RuntimePage
             language={language}
