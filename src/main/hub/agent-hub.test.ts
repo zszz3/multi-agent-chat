@@ -4434,7 +4434,8 @@ fs.writeFileSync(${JSON.stringify(argsPath)}, process.argv.slice(2).join("\\n") 
         ],
         edges: [
           { id: "start->work", fromNodeId: "start", toNodeId: "work" },
-          { id: "work->end", fromNodeId: "work", toNodeId: "end" },
+          { id: "work->followup", fromNodeId: "work", toNodeId: "followup" },
+          { id: "followup->end", fromNodeId: "followup", toNodeId: "end" },
         ],
       },
     });
@@ -4533,7 +4534,8 @@ fs.writeFileSync(${JSON.stringify(argsPath)}, process.argv.slice(2).join("\\n") 
         ],
         edges: [
           { id: "start->work", fromNodeId: "start", toNodeId: "work" },
-          { id: "work->end", fromNodeId: "work", toNodeId: "end" },
+          { id: "work->followup", fromNodeId: "work", toNodeId: "followup" },
+          { id: "followup->end", fromNodeId: "followup", toNodeId: "end" },
         ],
       },
     });
@@ -4673,7 +4675,8 @@ fs.writeFileSync(${JSON.stringify(argsPath)}, process.argv.slice(2).join("\\n") 
         ],
         edges: [
           { id: "start->work", fromNodeId: "start", toNodeId: "work" },
-          { id: "work->end", fromNodeId: "work", toNodeId: "end" },
+          { id: "work->followup", fromNodeId: "work", toNodeId: "followup" },
+          { id: "followup->end", fromNodeId: "followup", toNodeId: "end" },
         ],
       },
     });
@@ -5020,11 +5023,13 @@ fs.writeFileSync(${JSON.stringify(argsPath)}, process.argv.slice(2).join("\\n") 
         nodes: [
           { id: "start", kind: "start", title: "Start", prompt: "" },
           { id: "work", kind: "agent", title: "Work", prompt: "Do the work." },
+          { id: "followup", kind: "agent", title: "Follow up", prompt: "Use the completed work." },
           { id: "end", kind: "end", title: "Done", prompt: "" },
         ],
         edges: [
           { id: "start->work", fromNodeId: "start", toNodeId: "work" },
-          { id: "work->end", fromNodeId: "work", toNodeId: "end" },
+          { id: "work->followup", fromNodeId: "work", toNodeId: "followup" },
+          { id: "followup->end", fromNodeId: "followup", toNodeId: "end" },
         ],
       },
     });
@@ -5043,7 +5048,9 @@ fs.writeFileSync(${JSON.stringify(argsPath)}, process.argv.slice(2).join("\\n") 
       status: "awaiting_input",
       detail: "Deploy to prod or staging?",
     });
-    // Gate must not run the final review while waiting for the human.
+    // Gate must block every descendant while waiting for the human.
+    expect(gatedRun.progress.find((item: any) => item.nodeId === "followup")).toMatchObject({ status: "queued" });
+    expect(contexts.some((context) => context.prompt.includes("Current node: Follow up"))).toBe(false);
     expect(gatedRun.progress.some((item: any) => item.nodeId === "__final_review__")).toBe(false);
     expect(gatedRun.events.some((event: any) => event.type === "gate_opened" && event.nodeId === "work" && event.question === "Deploy to prod or staging?")).toBe(true);
 
@@ -5228,7 +5235,8 @@ fs.writeFileSync(${JSON.stringify(argsPath)}, process.argv.slice(2).join("\\n") 
         ],
         edges: [
           { id: "start->work", fromNodeId: "start", toNodeId: "work" },
-          { id: "work->end", fromNodeId: "work", toNodeId: "end" },
+          { id: "work->followup", fromNodeId: "work", toNodeId: "followup" },
+          { id: "followup->end", fromNodeId: "followup", toNodeId: "end" },
         ],
       },
     });

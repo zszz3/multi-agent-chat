@@ -2562,6 +2562,7 @@ export class WorkflowRuntime {
           }
           pendingNodes = nextPendingNodes;
         }
+        if (activeRun && (activeRun.gatedNodeIds.size > 0 || activeRun.pausedNodeIds.size > 0)) return;
       }
 
       if (activeRun && activeRun.gatedNodeIds.size > 0) return;

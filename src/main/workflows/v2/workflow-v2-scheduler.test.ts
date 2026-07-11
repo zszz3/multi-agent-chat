@@ -155,4 +155,28 @@ describe("workflow-v2 scheduler", () => {
     expect(failedState.nodes.review!.status).toBe("blocked");
     expect(listWorkflowV2RunnableNodeIds(failedState)).toEqual([]);
   });
+  test("keeps descendants blocked while any predecessor is paused", () => {
+    let runState = createWorkflowV2RunState({ definition: definition(), maxParallelNodes: 3 });
+
+    runState = transitionWorkflowV2NodeState(runState, { nodeId: "plan", status: "running", now: 10 });
+    runState = transitionWorkflowV2NodeState(runState, { nodeId: "plan", status: "completed", now: 11 });
+    runState = transitionWorkflowV2NodeState(runState, { nodeId: "implement", status: "running", now: 12 });
+    runState = transitionWorkflowV2NodeState(runState, { nodeId: "docs", status: "running", now: 13 });
+    runState = transitionWorkflowV2NodeState(runState, { nodeId: "docs", status: "completed", now: 14 });
+    runState = transitionWorkflowV2NodeState(runState, {
+      nodeId: "implement",
+      status: "paused",
+      now: 15,
+      intervention: {
+        nodeId: "implement",
+        source: "validation",
+        reason: "Need user input",
+        allowedActions: ["continue"],
+        requestedAt: 15,
+      },
+    });
+
+    expect(runState.nodes.review).toMatchObject({ status: "blocked", blockedBy: ["implement"] });
+    expect(listWorkflowV2RunnableNodeIds(runState)).toEqual([]);
+  });
 });
