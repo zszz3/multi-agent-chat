@@ -54,7 +54,6 @@ import type {
   ScheduledWorkflowRunnerStatus,
   ScheduledWorkflowSchedule,
   ScheduledWorkflowDueEvent,
-  StartWorkflowRunRequest,
   TaskProgress,
   UninstallSkillRequest,
   UpdateAgentTeamRequest,
@@ -440,10 +439,6 @@ function registerIpcHandlers(): void {
   ipcMain.handle("workflow-node-conversation:interrupt", (_event, request: InterruptWorkflowNodeConversationRequest) => hub.interruptWorkflowNodeConversation(request));
   ipcMain.handle("workflow-run:start-node", (_event, request: StartWorkflowNodeRequest) => hub.startWorkflowNode(request));
   ipcMain.handle("workflow-run:answer-gate", (_event, request: AnswerWorkflowGateRequest) => hub.answerWorkflowGate(request));
-  ipcMain.handle("workflow-run:start", (_event, request: StartWorkflowRunRequest) => {
-    hub.startWorkflowRun(request);
-    return hub.snapshot();
-  });
   ipcMain.handle("workflow-run:finish", (_event, request: FinishWorkflowRunRequest) => {
     hub.finishWorkflowRun(request);
     return hub.snapshot();

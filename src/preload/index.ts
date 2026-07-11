@@ -51,7 +51,6 @@ import type {
   SkillTemplate,
   SkillCategory,
   AssignSkillCategoryRequest,
-  StartWorkflowRunRequest,
   TaskProgress,
   UninstalledSkillResult,
   UninstallSkillRequest,
@@ -135,7 +134,6 @@ const api = {
   interruptWorkflowNodeConversation: (request: InterruptWorkflowNodeConversationRequest): Promise<AppSnapshot> => ipcRenderer.invoke("workflow-node-conversation:interrupt", request),
   startWorkflowNode: (request: StartWorkflowNodeRequest): Promise<WorkflowOperationResult> => ipcRenderer.invoke("workflow-run:start-node", request),
   answerWorkflowGate: (request: AnswerWorkflowGateRequest): Promise<WorkflowOperationResult> => ipcRenderer.invoke("workflow-run:answer-gate", request),
-  startWorkflowRun: (request: StartWorkflowRunRequest): Promise<AppSnapshot> => ipcRenderer.invoke("workflow-run:start", request),
   finishWorkflowRun: (request: FinishWorkflowRunRequest): Promise<AppSnapshot> => ipcRenderer.invoke("workflow-run:finish", request),
   saveScheduledWorkflowRunnerConfig: (config: ScheduledWorkflowRunnerConfig): Promise<AppSnapshot> =>
     ipcRenderer.invoke("scheduled-workflows:runner-config:save", config),
