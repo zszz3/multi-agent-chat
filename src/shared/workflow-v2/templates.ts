@@ -45,7 +45,8 @@ function renderScriptSpec(
 ): WorkflowV2ScriptSpec {
   return {
     ...script,
-    code: renderTemplateValue(script.code, params),
+    ...(script.code !== undefined ? { code: renderTemplateValue(script.code, params) } : {}),
+    ...(script.args ? { args: script.args.map((argument) => renderTemplateValue(argument, params)) } : {}),
     ...(script.input !== undefined ? { input: renderTemplateValue(script.input, params) } : {}),
   };
 }

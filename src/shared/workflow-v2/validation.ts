@@ -162,10 +162,17 @@ function appendNodeValidationErrors(node: WorkflowV2Node, errors: string[]): voi
   }
 
   if (node.execModel === "script") {
-    if (!VALID_SCRIPT_LANGUAGES.has(node.script.language)) {
+    const typedCommand = typeof node.script.command === "string" && Array.isArray(node.script.args);
+    if (!typedCommand && node.script.language !== undefined && !VALID_SCRIPT_LANGUAGES.has(node.script.language)) {
       errors.push(`Workflow V2 script node ${node.id} has unsupported language ${String(node.script.language)}.`);
     }
-    if (!node.script.code.trim()) errors.push(`Workflow V2 script node ${node.id} must have script code.`);
+    if (!typedCommand && !node.script.code?.trim()) errors.push(`Workflow V2 script node ${node.id} must have script code or a typed command spec.`);
+    if (typedCommand) {
+      if (!node.script.command?.trim()) errors.push(`Workflow V2 script node ${node.id} must have a command.`);
+      if (node.script.cwdPolicy !== "workflow") errors.push(`Workflow V2 script node ${node.id} must use workflow cwdPolicy.`);
+      if (node.script.access !== "read-only" && node.script.access !== "workspace-write") errors.push(`Workflow V2 script node ${node.id} has invalid access policy.`);
+      if (node.script.args?.some((argument) => typeof argument !== "string" || argument.length > 2_000)) errors.push(`Workflow V2 script node ${node.id} has invalid command arguments.`);
+    }
     if (node.script.timeoutMs !== undefined && !isPositiveSafeInteger(node.script.timeoutMs)) {
       errors.push(`Workflow V2 script node ${node.id} must have a positive safe-integer timeoutMs.`);
     }

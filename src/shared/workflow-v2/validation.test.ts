@@ -1,6 +1,6 @@
 import { describe, expect, test } from "vitest";
 
-import type { WorkflowV2AuthoredDefinition, WorkflowV2Definition, WorkflowV2NodeTemplate } from "./definition";
+import type { WorkflowV2AuthoredDefinition, WorkflowV2Definition, WorkflowV2NodeTemplate, WorkflowV2ScriptLanguage } from "./definition";
 import { createWorkflowV2TemplateRegistry } from "./templates";
 import { compileAndValidateWorkflowV2Definition, validateWorkflowV2Definition } from "./validation";
 
@@ -93,7 +93,7 @@ describe("workflow-v2 validation", () => {
     const invalid = validDefinition();
     const node = invalid.nodes[1]!;
     if (node.execModel !== "script") throw new Error("expected script node");
-    node.script.language = "powershell" as unknown as typeof node.script.language;
+    node.script = { ...node.script, language: "powershell" as unknown as WorkflowV2ScriptLanguage };
 
     const result = validateWorkflowV2Definition(invalid);
 
@@ -203,7 +203,7 @@ describe("workflow-v2 validation", () => {
     expect(result.valid).toBe(false);
     expect(result.errors).toContain("Workflow V2 node llm-node must declare at least one output field.");
     expect(result.errors).toContain("Workflow V2 llm node llm-node must have a prompt.");
-    expect(result.errors).toContain("Workflow V2 script node script-node must have script code.");
+    expect(result.errors).toContain("Workflow V2 script node script-node must have script code or a typed command spec.");
     expect(result.errors).toContain("Workflow V2 script node script-node must have a safe-integer expectedExitCode.");
   });
 

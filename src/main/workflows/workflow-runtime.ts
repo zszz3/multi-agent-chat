@@ -135,6 +135,7 @@ export interface ExecuteWorkflowV2ScriptRequest {
   upstreamOutputs: readonly WorkflowV2ResultPacket[];
   signal: AbortSignal;
   timeoutMs: number;
+  approved: boolean;
 }
 
 interface WorkflowRuntimeDependencies {
@@ -2023,6 +2024,7 @@ export class WorkflowRuntime {
 
     const runScriptNode = async (request: {
       node: WorkflowV2ScriptNode;
+      planNode: WorkflowV2Plan["nodes"][number];
       upstreamOutputs: readonly WorkflowV2ResultPacket[];
     }): Promise<WorkflowV2WorkerOutput> => {
       const remainingScriptMs = assertWallClockBudget(request.node.id);
@@ -2032,6 +2034,13 @@ export class WorkflowRuntime {
         MAX_NODE_TIMER_DELAY_MS,
       );
       const controller = new AbortController();
+      const approved = request.node.script.access !== "workspace-write" || input.recoveryOverrides?.has(request.node.id) === true;
+      if (request.node.script.access === "workspace-write" && !approved) {
+        throw new WorkflowV2SupervisionSignal({
+          resolution: { action: "pause", question: `Approve workspace-write script node ${request.node.title}?`, reason: "Workspace-write script requires explicit approval." },
+          report: { nodeId: request.node.id, attempt: 1, phase: "approval", completedItems: [], remainingItems: ["Human approval"], blockers: ["Workspace-write capability is not approved."], evidence: [], safeToInterrupt: true, requestedAction: "need_input", reportedAt: Date.now() },
+        });
+      }
       this.activeRuns.get(runId)?.abortControllerByNodeId?.set(request.node.id, controller);
       let timeoutHandle: ReturnType<typeof setTimeout> | undefined;
       const deadline = new Promise<never>((_resolve, reject) => {
@@ -2050,6 +2059,7 @@ export class WorkflowRuntime {
           upstreamOutputs: request.upstreamOutputs,
           signal: controller.signal,
           timeoutMs,
+          approved,
         });
         output = await Promise.race([execution, deadline]);
       } catch (error) {

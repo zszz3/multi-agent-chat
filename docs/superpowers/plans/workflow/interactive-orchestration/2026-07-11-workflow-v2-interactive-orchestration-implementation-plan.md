@@ -58,13 +58,13 @@
 - Modify: app IPC/preload/shared public types.
 - Add focused tests for store, manager, runtime, IPC, and recovery.
 
-- [ ] Add failing tests proving repeated user turns reuse one runtime conversation ID.
-- [ ] Add durable conversation/message/completion-proposal contracts.
-- [ ] Implement create/send/resume/interrupt/close through runtime drivers.
-- [ ] Add `waiting_for_user` and `completion_proposed` semantic transitions.
-- [ ] Require explicit user confirm before authoritative completion/output commit.
-- [ ] Add restart recovery and typed non-resumable intervention.
-- [ ] Verify and commit Phase 03.
+- [x] Add failing tests proving repeated user turns reuse one runtime conversation ID.
+- [x] Add durable conversation/message/completion-proposal contracts.
+- [x] Implement create/send/resume/interrupt/close through runtime drivers.
+- [x] Add `waiting_for_user` and `completion_proposed` semantic transitions.
+- [x] Require explicit user confirm before authoritative completion/output commit.
+- [x] Add restart recovery and typed non-resumable intervention.
+- [x] Verify and commit Phase 03.
 
 ### Phase 04: Node Agent Floating Window
 
@@ -74,13 +74,13 @@
 - Modify: renderer public API typings and styles.
 - Add component/state utility tests where repository patterns support them.
 
-- [ ] Add failing projection tests for stable ordered conversation events.
-- [ ] Implement node click -> independent floating window.
-- [ ] Render durable history, streaming output, tools, runtime identity, and status.
-- [ ] Add interactive composer bound to the same node conversation.
-- [ ] Add confirm, continue, and reject completion-proposal actions.
-- [ ] Preserve graph context, unread state, and window-close semantics.
-- [ ] Verify typecheck/build/manual interaction and commit Phase 04.
+- [x] Add failing projection tests for stable ordered conversation events.
+- [x] Implement node click -> independent floating window.
+- [x] Render durable history, streaming output, tools, runtime identity, and status.
+- [x] Add interactive composer bound to the same node conversation.
+- [x] Add confirm, continue, and reject completion-proposal actions.
+- [x] Preserve graph context, unread state, and window-close semantics.
+- [x] Verify typecheck/build/manual interaction and commit Phase 04.
 
 ### Phase 05: Script Execution And Approval
 
@@ -92,13 +92,13 @@
 - Modify: renderer script-node detail and approval UI.
 - Add policy, runner, runtime, and UI projection tests.
 
-- [ ] Add failing allowlisted read-only and workspace-write approval tests.
-- [ ] Replace unrestricted/fail-all behavior with typed command/args policy.
-- [ ] Validate cwd, access, timeout, output schema, and approval before side effects.
-- [ ] Execute useful read-only script nodes end to end.
-- [ ] Pause workspace-write scripts for durable approval and resume exactly once.
-- [ ] Expose script details/output without creating Agent sessions.
-- [ ] Verify and commit Phase 05.
+- [x] Add failing allowlisted read-only and workspace-write approval tests.
+- [x] Replace unrestricted/fail-all behavior with typed command/args policy.
+- [x] Validate cwd, access, timeout, output schema, and approval before side effects.
+- [x] Execute useful read-only script nodes end to end.
+- [x] Pause workspace-write scripts for durable approval and resume exactly once.
+- [x] Expose script details/output without creating Agent sessions.
+- [x] Verify and commit Phase 05.
 
 ### Phase 06: Event-Driven Supervision And Leader UX
 
@@ -109,20 +109,20 @@
 - Modify: workflow renderer subscriptions and leader activity components.
 - Add supervision, leader, IPC, and renderer projection tests.
 
-- [ ] Add failing tests proving no fixed-interval status call is needed.
-- [ ] Separate activity detail from semantic state.
-- [ ] Implement quiet-period interrupt probes with cooldown and maximum count.
-- [ ] Persist leader priorities, blockers, mode recommendations, script candidates, risk, and revisions.
-- [ ] Render stable Leader Activity and user-required actions.
-- [ ] Verify no probe can complete a node or release descendants.
-- [ ] Run full verification, update specs/status evidence, and commit Phase 06.
+- [x] Add failing tests proving no fixed-interval status call is needed.
+- [x] Separate activity detail from semantic state.
+- [x] Implement quiet-period interrupt probes with cooldown and maximum count.
+- [x] Persist leader priorities, blockers, mode recommendations, script candidates, risk, and revisions.
+- [x] Render stable Leader Activity and user-required actions.
+- [x] Verify no probe can complete a node or release descendants.
+- [x] Run full verification, update specs/status evidence, and commit Phase 06.
 
 ## Final Verification
 
-- [ ] `npm run typecheck`
-- [ ] `npm test`
-- [ ] `npm run build`
-- [ ] Start the Electron app and manually verify A -> B user-wait blocking.
-- [ ] Manually verify multi-turn node conversation and explicit completion confirmation.
-- [ ] Manually verify script approval and event-driven stable UI.
-- [ ] Confirm unrelated `.idea`, `memory.md`, and historical `outputs/` remain untouched.
+- [x] `npm run typecheck`
+- [x] `npm test`
+- [x] `npm run build`
+- [x] Start the Electron app and manually verify A -> B user-wait blocking.
+- [x] Manually verify multi-turn node conversation and explicit completion confirmation.
+- [x] Manually verify script approval and event-driven stable UI.
+- [x] Confirm unrelated `.idea`, `memory.md`, and historical `outputs/` remain untouched.

@@ -9802,3 +9802,14 @@ textarea:focus-visible {
 .workflow-node-agent-window > footer { border-top: 1px solid var(--border); border-bottom: 0; align-items: end; }
 .workflow-node-agent-window > footer textarea { flex: 1; resize: vertical; min-height: 72px; }
 .workflow-node-agent-window > footer > div { display: flex; gap: 8px; align-items: center; }
+.workflow-leader-activity {
+  margin-top: 12px;
+  padding: 14px 16px;
+  border: 1px solid color-mix(in srgb, var(--accent) 34%, var(--border));
+  border-radius: 14px;
+  background: color-mix(in srgb, var(--accent) 6%, var(--panel));
+}
+.workflow-leader-activity header { display: flex; justify-content: space-between; gap: 12px; margin-bottom: 10px; }
+.workflow-leader-activity header span { color: var(--muted); text-transform: uppercase; font-size: 11px; }
+.workflow-leader-activity div { display: grid; grid-template-columns: 150px 1fr; gap: 10px; font-size: 13px; }
+.workflow-leader-activity p { margin: 0; color: var(--muted); }

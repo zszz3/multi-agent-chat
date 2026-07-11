@@ -764,6 +764,11 @@ export function WorkflowPage(props: WorkflowPageProps) {
                   })}
               </section>
             ) : null}
+            {runProgressVisible ? <section className="workflow-leader-activity" aria-label="Leader Activity">
+              <header><strong>Leader Activity</strong><span>{runProgress.some((item) => item.status === "failed") ? "blocked" : runProgress.some((item) => item.status === "paused" || item.status === "awaiting_input") ? "at-risk" : "healthy"}</span></header>
+              <div><b>Priorities</b><p>{runProgress.filter((item) => item.status === "running" || item.status === "queued").map((item) => item.title).join(" ? ") || "No runnable priority"}</p></div>
+              <div><b>Blocked / user action</b><p>{runProgress.filter((item) => item.status === "paused" || item.status === "awaiting_input").map((item) => `${item.title}: ${item.detail || "waiting for input"}`).join(" ? ") || "None"}</p></div>
+            </section> : null}
             {finalReportVisible ? (
               <section className="workflow-final-report" aria-label="Workflow final report">
                 <div className="workflow-final-report-head">

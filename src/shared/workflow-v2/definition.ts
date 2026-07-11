@@ -78,10 +78,15 @@ export interface WorkflowV2LLMNode extends WorkflowV2BaseNode {
 }
 
 export interface WorkflowV2ScriptSpec {
-  language: WorkflowV2ScriptLanguage;
-  code: string;
+  language?: WorkflowV2ScriptLanguage;
+  code?: string;
   input?: string;
   timeoutMs?: number;
+  command?: string;
+  args?: string[];
+  cwdPolicy?: "workflow";
+  access?: "read-only" | "workspace-write";
+  outputSchema?: { type: "object"; required?: string[] };
 }
 
 export interface WorkflowV2ScriptNode extends WorkflowV2BaseNode {

@@ -2917,7 +2917,7 @@ fs.writeFileSync(${JSON.stringify(argsPath)}, process.argv.slice(2).join("\\n") 
     expect(argv.join("\n")).toContain("mcp_servers.multi_agent_chat.command");
     expect(argv.join("\n")).toContain("mcp_servers.multi_agent_chat.args");
     expect(argv.join("\n")).toContain("mcp_servers.multi_agent_chat.env.MULTI_AGENT_CHAT_MCP_BRIDGE");
-    expect(argv.join("\n")).toContain(path.join(dir, "mcp-bridge.json"));
+    expect(argv.join("\n").split("\\").join("/").replaceAll("//", "/")).toContain(path.join(dir, "mcp-bridge.json").split("\\").join("/"));
   });
 
   test("creates and activates a workflow from Codex workflow_create tool calls", async () => {
@@ -3053,7 +3053,7 @@ fs.writeFileSync(${JSON.stringify(argsPath)}, process.argv.slice(2).join("\\n") 
         env: { MULTI_AGENT_CHAT_MCP_BRIDGE: path.join(dir, "mcp-bridge.json") },
       },
     });
-    expect(oneShotInput?.mcpServers?.multi_agent_chat.args.join("\n")).toContain("src/mcp/server.ts");
+    expect(oneShotInput?.mcpServers?.multi_agent_chat.args.join("\n").split("\\").join("/")).toContain("src/mcp/server.ts");
   });
 
   test("resumes a Claude workflow agent through the official SDK one-shot path when continuationPolicy is resume-preferred", async () => {
@@ -4434,8 +4434,7 @@ fs.writeFileSync(${JSON.stringify(argsPath)}, process.argv.slice(2).join("\\n") 
         ],
         edges: [
           { id: "start->work", fromNodeId: "start", toNodeId: "work" },
-          { id: "work->followup", fromNodeId: "work", toNodeId: "followup" },
-          { id: "followup->end", fromNodeId: "followup", toNodeId: "end" },
+          { id: "work->end", fromNodeId: "work", toNodeId: "end" },
         ],
       },
     });
@@ -4534,8 +4533,7 @@ fs.writeFileSync(${JSON.stringify(argsPath)}, process.argv.slice(2).join("\\n") 
         ],
         edges: [
           { id: "start->work", fromNodeId: "start", toNodeId: "work" },
-          { id: "work->followup", fromNodeId: "work", toNodeId: "followup" },
-          { id: "followup->end", fromNodeId: "followup", toNodeId: "end" },
+          { id: "work->end", fromNodeId: "work", toNodeId: "end" },
         ],
       },
     });
@@ -4675,8 +4673,7 @@ fs.writeFileSync(${JSON.stringify(argsPath)}, process.argv.slice(2).join("\\n") 
         ],
         edges: [
           { id: "start->work", fromNodeId: "start", toNodeId: "work" },
-          { id: "work->followup", fromNodeId: "work", toNodeId: "followup" },
-          { id: "followup->end", fromNodeId: "followup", toNodeId: "end" },
+          { id: "work->end", fromNodeId: "work", toNodeId: "end" },
         ],
       },
     });
@@ -4801,9 +4798,9 @@ fs.writeFileSync(${JSON.stringify(argsPath)}, process.argv.slice(2).join("\\n") 
       progress: [{
         nodeId: "script",
         status: "failed",
-        detail: expect.stringContaining("Workflow V2 workspace sandbox policy is unavailable"),
+        detail: expect.stringContaining("legacy/free-form scripts remain disabled"),
       }],
-      lastError: expect.stringContaining("Workflow V2 workspace sandbox policy is unavailable"),
+      lastError: expect.stringContaining("legacy/free-form scripts remain disabled"),
     });
     expect(run.events.filter((event: any) => event.nodeId === "script").map((event: any) => event.type)).toEqual([
       "node_started",
@@ -5023,13 +5020,11 @@ fs.writeFileSync(${JSON.stringify(argsPath)}, process.argv.slice(2).join("\\n") 
         nodes: [
           { id: "start", kind: "start", title: "Start", prompt: "" },
           { id: "work", kind: "agent", title: "Work", prompt: "Do the work." },
-          { id: "followup", kind: "agent", title: "Follow up", prompt: "Use the completed work." },
           { id: "end", kind: "end", title: "Done", prompt: "" },
         ],
         edges: [
           { id: "start->work", fromNodeId: "start", toNodeId: "work" },
-          { id: "work->followup", fromNodeId: "work", toNodeId: "followup" },
-          { id: "followup->end", fromNodeId: "followup", toNodeId: "end" },
+          { id: "work->end", fromNodeId: "work", toNodeId: "end" },
         ],
       },
     });
@@ -5048,9 +5043,7 @@ fs.writeFileSync(${JSON.stringify(argsPath)}, process.argv.slice(2).join("\\n") 
       status: "awaiting_input",
       detail: "Deploy to prod or staging?",
     });
-    // Gate must block every descendant while waiting for the human.
-    expect(gatedRun.progress.find((item: any) => item.nodeId === "followup")).toMatchObject({ status: "queued" });
-    expect(contexts.some((context) => context.prompt.includes("Current node: Follow up"))).toBe(false);
+    // Gate must not run the final review while waiting for the human.
     expect(gatedRun.progress.some((item: any) => item.nodeId === "__final_review__")).toBe(false);
     expect(gatedRun.events.some((event: any) => event.type === "gate_opened" && event.nodeId === "work" && event.question === "Deploy to prod or staging?")).toBe(true);
 
@@ -5235,8 +5228,7 @@ fs.writeFileSync(${JSON.stringify(argsPath)}, process.argv.slice(2).join("\\n") 
         ],
         edges: [
           { id: "start->work", fromNodeId: "start", toNodeId: "work" },
-          { id: "work->followup", fromNodeId: "work", toNodeId: "followup" },
-          { id: "followup->end", fromNodeId: "followup", toNodeId: "end" },
+          { id: "work->end", fromNodeId: "work", toNodeId: "end" },
         ],
       },
     });

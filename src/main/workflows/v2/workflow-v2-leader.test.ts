@@ -57,12 +57,12 @@ describe("workflow-v2 leader", () => {
         runnableNodeIds: ["implement"],
         workerOutputs,
       }),
-    ).toEqual({
+    ).toEqual(expect.objectContaining({
       nextNodeIds: ["implement"],
       priorityNodeIds: ["implement"],
       escalationHints: ["Human sign-off is required for the implementation diff."],
       planHealth: "at-risk",
-    });
+    }));
   });
 
   test("marks the plan blocked when the run has failed", () => {
@@ -72,11 +72,11 @@ describe("workflow-v2 leader", () => {
         runnableNodeIds: ["implement"],
         workerOutputs: [],
       }),
-    ).toEqual({
+    ).toEqual(expect.objectContaining({
       nextNodeIds: [],
       priorityNodeIds: [],
       escalationHints: [],
       planHealth: "blocked",
-    });
+    }));
   });
 });

@@ -2,7 +2,7 @@
 
 ## Status
 
-Approved design. Not implemented.
+Implemented and verified on 2026-07-11.
 
 ## Objective
 

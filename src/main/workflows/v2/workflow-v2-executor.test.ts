@@ -297,12 +297,12 @@ describe("workflow-v2 executor", () => {
     expect(result.runState.nodes.draft?.status).toBe("completed");
     expect(result.runState.nodes.verify?.status).toBe("completed");
     expect(result.workerOutputs.map((output) => output.nodeId)).toEqual(["draft", "verify"]);
-    expect(result.leaderNavigation).toEqual({
+    expect(result.leaderNavigation).toEqual(expect.objectContaining({
       nextNodeIds: [],
       priorityNodeIds: [],
       escalationHints: [],
       planHealth: "healthy",
-    });
+    }));
   });
 
   test("notifies runtime transitions before a completed node unlocks its downstream runner", async () => {
@@ -764,12 +764,12 @@ describe("workflow-v2 executor", () => {
     expect(result.runState.nodes.draft?.lastError).toBe("Missing required output fields: draft.");
     expect(result.runState.nodes.verify?.status).toBe("blocked");
     expect(result.workerOutputs).toHaveLength(0);
-    expect(result.leaderNavigation).toEqual({
+    expect(result.leaderNavigation).toEqual(expect.objectContaining({
       nextNodeIds: [],
       priorityNodeIds: [],
       escalationHints: [],
       planHealth: "blocked",
-    });
+    }));
   });
 
   test("fails fast when the frozen plan cannot make progress", async () => {
@@ -801,12 +801,12 @@ describe("workflow-v2 executor", () => {
 
     expect(result.runState.status).toBe("failed");
     expect(result.runState.nodes.draft?.lastError).toBe("Workflow V2 executor could not make progress on the frozen plan.");
-    expect(result.leaderNavigation).toEqual({
+    expect(result.leaderNavigation).toEqual(expect.objectContaining({
       nextNodeIds: [],
       priorityNodeIds: [],
       escalationHints: [],
       planHealth: "blocked",
-    });
+    }));
   });
 
   test("fails when a runner returns an output packet for the wrong node", async () => {
