@@ -1,4 +1,8 @@
 import { describe, expect, test, vi } from "vitest";
+import {
+  CLAUDE_LOCAL_DEFAULT_PRESET_ID,
+  CODEX_LOCAL_DEFAULT_PRESET_ID,
+} from "../../shared/provider-presets";
 import { loadRuntimeLocalConfig } from "./runtime-local-config";
 
 describe("runtime local config import", () => {
@@ -25,6 +29,7 @@ describe("runtime local config import", () => {
 
     expect(result.channel).toMatchObject({
       id: "codex-openai",
+      presetId: CODEX_LOCAL_DEFAULT_PRESET_ID,
       models: [{ id: "default" }, { id: "gpt-local" }],
       httpHeaders: { "x-tenant": "demo", Authorization: "Bearer plain-codex-token" },
     });
@@ -34,6 +39,19 @@ describe("runtime local config import", () => {
     const result = await loadRuntimeLocalConfig({
       runtimeId: "claude",
       executable: "claude",
+      existingChannel: {
+        id: "claude-code",
+        agentId: "claude",
+        label: "Claude Official",
+        presetId: "claude-code",
+        modelProvider: "anthropic",
+        providerName: "Anthropic",
+        baseUrl: "https://api.anthropic.com",
+        apiFormat: "anthropic",
+        httpHeaders: { Authorization: "Bearer stale" },
+        requestOverrides: { headers: { "x-stale": "1" } },
+        models: [{ id: "default", label: "Default" }],
+      },
       dependencies: {
         homeDir: "/home/demo",
         readTextFile: vi.fn(async () => JSON.stringify({
@@ -46,7 +64,13 @@ describe("runtime local config import", () => {
     });
 
     expect(result.channel.models).toEqual([{ id: "default", label: "Default" }, { id: "claude-local", label: "claude-local" }]);
+    expect(result.channel.presetId).toBe(CLAUDE_LOCAL_DEFAULT_PRESET_ID);
     expect(result.channel.environment?.ANTHROPIC_AUTH_TOKEN).toBe("plain-claude-token");
+    expect(result.channel.modelProvider).toBeUndefined();
+    expect(result.channel.providerName).toBeUndefined();
+    expect(result.channel.baseUrl).toBeUndefined();
+    expect(result.channel.httpHeaders).toBeUndefined();
+    expect(result.channel.requestOverrides).toBeUndefined();
   });
 
   test("imports Hermes model, endpoint, and API key from config.yaml", async () => {

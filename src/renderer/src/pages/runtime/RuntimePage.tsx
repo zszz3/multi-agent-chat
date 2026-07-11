@@ -2,7 +2,12 @@ import { useMemo, useState, type MouseEvent } from "react";
 import { CheckCircle2, Cpu, Eye, EyeOff, Plus, RefreshCw, Save, Trash2 } from "lucide-react";
 import { selectConfigChannelsForDisplay } from "../../../../shared/config-channels";
 import { DEFAULT_MODEL_ID } from "../../../../shared/models";
-import { AGENT_PROVIDER_PRESETS, CLAUDE_DEFAULT_PRESET_ID, CODEX_DEFAULT_PRESET_ID, type AgentProviderPreset } from "../../../../shared/provider-presets";
+import {
+  AGENT_PROVIDER_PRESETS,
+  CLAUDE_LOCAL_DEFAULT_PRESET_ID,
+  CODEX_LOCAL_DEFAULT_PRESET_ID,
+  type AgentProviderPreset,
+} from "../../../../shared/provider-presets";
 import { RUNTIME_IDS, runtimeDefinition } from "../../../../shared/runtime-catalog";
 import type {
   AgentChannel,
@@ -37,10 +42,11 @@ import {
 import { RuntimeProviderFields } from "./RuntimeProviderFields";
 
 const AGENTS: AgentId[] = [...RUNTIME_IDS];
-const PROVIDER_CATEGORY_ORDER = ["official", "cn_official", "cloud_provider", "aggregator", "third_party", "custom"];
+const PROVIDER_CATEGORY_ORDER = ["local", "official", "cn_official", "cloud_provider", "aggregator", "third_party", "custom"];
 
 function providerCategoryLabel(category: string, language: Language): string {
   const labels: Record<string, [string, string]> = {
+    local: ["本地配置", "Local config"],
     official: ["官方", "Official"],
     cn_official: ["国内官方 / Coding Plan", "China official / Coding plan"],
     cloud_provider: ["云服务商", "Cloud providers"],
@@ -237,13 +243,13 @@ export function RuntimePage({
 
   const applyRuntimePreset = async (preset: AgentProviderPreset): Promise<void> => {
     if (!selectedRuntimeChannelRecord) return;
-    if (preset.id === CODEX_DEFAULT_PRESET_ID) {
+    if (preset.id === CODEX_LOCAL_DEFAULT_PRESET_ID) {
       try {
         onStatusChange?.("");
         const config = onLoadCodexDefaultConfig
           ? await onLoadCodexDefaultConfig()
           : await loadCodexDefaultConfigFromRuntimeApi(window.multiAgentChat);
-        onUpdateProviderKey(CODEX_DEFAULT_PRESET_ID, config.apiKey ?? "");
+        onUpdateProviderKey(CODEX_LOCAL_DEFAULT_PRESET_ID, config.apiKey ?? "");
         const nextChannel = applyCodexDefaultConfigToChannel(selectedRuntimeChannelRecord, config);
         if (onReplaceChannelAndPersist) {
           await onReplaceChannelAndPersist(selectedRuntimeChannelRecord.id, nextChannel);
@@ -255,13 +261,13 @@ export function RuntimePage({
       }
       return;
     }
-    if (preset.id === CLAUDE_DEFAULT_PRESET_ID) {
+    if (preset.id === CLAUDE_LOCAL_DEFAULT_PRESET_ID) {
       try {
         onStatusChange?.("");
         const config = onLoadClaudeDefaultConfig
           ? await onLoadClaudeDefaultConfig()
           : await window.multiAgentChat.loadClaudeDefaultConfig();
-        onUpdateProviderKey(CLAUDE_DEFAULT_PRESET_ID, config.apiKey ?? "");
+        onUpdateProviderKey(CLAUDE_LOCAL_DEFAULT_PRESET_ID, config.apiKey ?? "");
         const nextChannel = applyClaudeDefaultConfigToChannel(selectedRuntimeChannelRecord, config);
         if (onReplaceChannelAndPersist) await onReplaceChannelAndPersist(selectedRuntimeChannelRecord.id, nextChannel);
         else updateSelectedRuntimeChannel(() => nextChannel);
@@ -282,7 +288,7 @@ export function RuntimePage({
     if (!selectedRuntimePreset) return;
     onUpdateProviderKey(selectedRuntimePreset.id, value);
     updateSelectedRuntimeChannel((channel) =>
-      selectedRuntimePreset.id === CODEX_DEFAULT_PRESET_ID
+      selectedRuntimePreset.id === CODEX_LOCAL_DEFAULT_PRESET_ID
         ? applyProviderApiKeyToChannel(channel, selectedRuntimePreset, value)
         : applyProviderPresetToChannel(channel, selectedRuntimePreset, value),
     );

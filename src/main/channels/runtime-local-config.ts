@@ -2,6 +2,10 @@ import { readFile } from "node:fs/promises";
 import os from "node:os";
 import path from "node:path";
 import { DEFAULT_MODEL_ID } from "../../shared/models";
+import {
+  CLAUDE_LOCAL_DEFAULT_PRESET_ID,
+  CODEX_LOCAL_DEFAULT_PRESET_ID,
+} from "../../shared/provider-presets";
 import { runtimeDefinition } from "../../shared/runtime-catalog";
 import type { AgentChannel, AgentId, AgentModelOption, CodexDefaultConfig } from "../../shared/types";
 import { execCli } from "../platform/cli-launcher";
@@ -67,7 +71,7 @@ function yamlScalar(raw: string, section: string, key: string): string | undefin
 function applyCodexConfig(channel: AgentChannel, config: CodexDefaultConfig): AgentChannel {
   const next: AgentChannel = {
     ...channel,
-    presetId: "codex-default",
+    presetId: CODEX_LOCAL_DEFAULT_PRESET_ID,
     models: modelOptions(config.modelId ?? undefined),
   };
   if (config.modelProvider) next.modelProvider = config.modelProvider;
@@ -111,14 +115,24 @@ async function loadClaudeConfig(
   const importedEnvironment = Object.fromEntries(
     Object.entries(environment).filter((entry): entry is [string, string] => typeof entry[1] === "string"),
   );
+  const nextChannel: AgentChannel = {
+    ...channel,
+    presetId: CLAUDE_LOCAL_DEFAULT_PRESET_ID,
+    models: modelOptions(modelId),
+  };
+  delete nextChannel.modelProvider;
+  delete nextChannel.providerName;
+  delete nextChannel.baseUrl;
+  delete nextChannel.httpHeaders;
+  delete nextChannel.apiFormat;
+  delete nextChannel.apiKeyField;
+  delete nextChannel.requestOverrides;
+  delete nextChannel.environment;
+  if (baseUrl) nextChannel.baseUrl = baseUrl;
+  if (Object.keys(importedEnvironment).length > 0) nextChannel.environment = importedEnvironment;
   return {
     source: sourcePath,
-    channel: {
-      ...channel,
-      models: modelOptions(modelId),
-      ...(baseUrl ? { baseUrl } : {}),
-      ...(Object.keys(importedEnvironment).length > 0 ? { environment: importedEnvironment } : {}),
-    },
+    channel: nextChannel,
   };
 }
 

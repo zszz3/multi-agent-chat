@@ -1,6 +1,10 @@
 import { DEFAULT_MODEL_ID } from "../../../../shared/models";
 import type { AgentChannel, AgentModelOption, AgentPluginConfig, ClaudeDefaultConfig, CodexDefaultConfig, ProviderBalanceResult } from "../../../../shared/types";
-import { CLAUDE_DEFAULT_PRESET_ID, CODEX_DEFAULT_PRESET_ID, type AgentProviderPreset } from "../../../../shared/provider-presets";
+import {
+  CLAUDE_LOCAL_DEFAULT_PRESET_ID,
+  CODEX_LOCAL_DEFAULT_PRESET_ID,
+  type AgentProviderPreset,
+} from "../../../../shared/provider-presets";
 import type { Language } from "../../app/language";
 import { missingAppCapabilityMessage } from "../../app/shell";
 import type { AgentTestUiState } from "./runtime-types";
@@ -99,7 +103,7 @@ export function applyCodexDefaultConfigToChannel(channel: AgentChannel, config: 
   const next: AgentChannel = {
     ...channel,
     agentId: "codex",
-    presetId: CODEX_DEFAULT_PRESET_ID,
+    presetId: CODEX_LOCAL_DEFAULT_PRESET_ID,
     models: defaultModelsForCodexConfig(config.modelId),
   };
 
@@ -107,6 +111,11 @@ export function applyCodexDefaultConfigToChannel(channel: AgentChannel, config: 
   delete next.providerName;
   delete next.baseUrl;
   delete next.wireApi;
+  delete next.apiFormat;
+  delete next.apiKeyField;
+  delete next.environment;
+  delete next.requestOverrides;
+  delete next.customUserAgent;
   delete next.httpHeaders;
   delete next.modelCatalogJson;
   delete next.modelReasoningEffort;
@@ -133,12 +142,17 @@ export function applyClaudeDefaultConfigToChannel(channel: AgentChannel, config:
   const next: AgentChannel = {
     ...channel,
     agentId: "claude",
-    presetId: CLAUDE_DEFAULT_PRESET_ID,
+    presetId: CLAUDE_LOCAL_DEFAULT_PRESET_ID,
     models: defaultModelsForCodexConfig(config.modelId),
   };
   delete next.modelProvider;
   delete next.providerName;
   delete next.baseUrl;
+  delete next.apiFormat;
+  delete next.apiKeyField;
+  delete next.environment;
+  delete next.requestOverrides;
+  delete next.customUserAgent;
   delete next.httpHeaders;
   if (config.baseUrl || config.apiKey) {
     next.modelProvider = "claude-default-anthropic";

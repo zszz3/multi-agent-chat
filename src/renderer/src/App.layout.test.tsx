@@ -69,7 +69,11 @@ import {
 } from "./App";
 import { DEFAULT_MODEL_ID } from "../../shared/models";
 import { generatedConfigChannels, normalizeConfigChannelsForStorage, selectConfigChannelsForDisplay } from "../../shared/config-channels";
-import { AGENT_PROVIDER_PRESETS, CLAUDE_DEFAULT_PRESET_ID, CODEX_DEFAULT_PRESET_ID } from "../../shared/provider-presets";
+import {
+  AGENT_PROVIDER_PRESETS,
+  CLAUDE_LOCAL_DEFAULT_PRESET_ID,
+  CODEX_LOCAL_DEFAULT_PRESET_ID,
+} from "../../shared/provider-presets";
 import { SKILL_TEMPLATES } from "../../shared/skill-templates";
 import { firstWorkflowQuestionForObjective } from "../../shared/workflow-agent";
 import { formatTime } from "./app/format";
@@ -1351,19 +1355,19 @@ describe("AgentPage", () => {
     const runtimeProviderPresets = AGENT_PROVIDER_PRESETS.filter((preset) => preset.runtimeAgentId === "codex");
     const channel: AgentChannel = {
       ...channels[0]!,
-      presetId: CODEX_DEFAULT_PRESET_ID,
+      presetId: CODEX_LOCAL_DEFAULT_PRESET_ID,
       modelProvider: "bridge",
       providerName: "Bridge",
       baseUrl: "https://bridge.example/v1",
     };
 
-    expect(resolveProviderPresetId(channel, runtimeProviderPresets)).toBe(CODEX_DEFAULT_PRESET_ID);
+    expect(resolveProviderPresetId(channel, runtimeProviderPresets)).toBe(CODEX_LOCAL_DEFAULT_PRESET_ID);
   });
 
   test("shows Codex Default loaded values and blank fallbacks in runtime inputs", () => {
     const defaultChannel: AgentChannel = {
       ...channels[0]!,
-      presetId: CODEX_DEFAULT_PRESET_ID,
+      presetId: CODEX_LOCAL_DEFAULT_PRESET_ID,
       label: "Codex Default",
       modelProvider: "bridge",
       providerName: "Bridge",
@@ -1382,7 +1386,7 @@ describe("AgentPage", () => {
         channels={[defaultChannel]}
         selectedChannelId="codex-openai"
         selectedRuntimeId="codex"
-        providerKeys={{ [CODEX_DEFAULT_PRESET_ID]: "stale-key" }}
+        providerKeys={{ [CODEX_LOCAL_DEFAULT_PRESET_ID]: "stale-key" }}
         codexPluginCatalog={[]}
         pluginCatalogStatus=""
         agentTestResults={{}}
@@ -1446,7 +1450,7 @@ describe("AgentPage", () => {
     );
 
     expect(mapped).toMatchObject({
-      presetId: CODEX_DEFAULT_PRESET_ID,
+      presetId: CODEX_LOCAL_DEFAULT_PRESET_ID,
       models: [{ id: DEFAULT_MODEL_ID, label: "Default" }],
     });
     expect(mapped.modelProvider).toBeUndefined();
@@ -1492,7 +1496,7 @@ describe("AgentPage", () => {
 
     expect(mapped).toMatchObject({
       agentId: "claude",
-      presetId: CLAUDE_DEFAULT_PRESET_ID,
+      presetId: CLAUDE_LOCAL_DEFAULT_PRESET_ID,
       modelProvider: "claude-default-anthropic",
       baseUrl: "https://claude.example/anthropic",
       httpHeaders: { Authorization: "Bearer claude-token" },
@@ -1672,6 +1676,8 @@ describe("AgentPage", () => {
 
     expect(html).toContain("Claude Code");
     expect(html).toContain('class="agent-provider-option is-active" aria-pressed="true" title="Claude Official">Claude Official</button>');
+    expect(html).toContain('class="agent-provider-option " aria-pressed="false" title="Default">Default</button>');
+    expect(html).toContain("Local config");
     expect(html).toContain(">DeepSeek<");
     expect(html).toContain(">Zhipu GLM<");
     expect(html).toContain(">Kimi<");

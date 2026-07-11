@@ -4,6 +4,8 @@ import { CC_SWITCH_PROVIDER_PRESETS } from "./cc-switch-provider-presets.generat
 
 export const CODEX_DEFAULT_PRESET_ID = "codex-default";
 export const CLAUDE_DEFAULT_PRESET_ID = "claude-code";
+export const CODEX_LOCAL_DEFAULT_PRESET_ID = "codex-local-default";
+export const CLAUDE_LOCAL_DEFAULT_PRESET_ID = "claude-local-default";
 export const HERMES_DEFAULT_PRESET_ID = "hermes-default";
 export const OPENCODE_DEFAULT_PRESET_ID = "opencode-default";
 export const OPENCLAW_DEFAULT_PRESET_ID = "openclaw-default";
@@ -578,6 +580,21 @@ const LEGACY_PROVIDER_PRESETS: AgentProviderPreset[] = [
 
 export const AGENT_PROVIDER_PRESETS: AgentProviderPreset[] = [
   ...CC_SWITCH_PROVIDER_PRESETS,
+  {
+    id: CODEX_LOCAL_DEFAULT_PRESET_ID,
+    label: "Default",
+    runtimeAgentId: "codex",
+    category: "local",
+    models: [{ id: DEFAULT_MODEL_ID, label: "Default" }],
+  },
+  {
+    id: CLAUDE_LOCAL_DEFAULT_PRESET_ID,
+    label: "Default",
+    runtimeAgentId: "claude",
+    category: "local",
+    apiFormat: "anthropic",
+    models: [{ id: DEFAULT_MODEL_ID, label: "Default" }],
+  },
   {
     id: "custom",
     label: "Custom",
