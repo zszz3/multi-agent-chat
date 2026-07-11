@@ -100,6 +100,11 @@ export function useWorkflowFeatureController({
           setSnapshot(next);
         }
       },
+      onStopRun: async () => {
+        if (!draft.workflowId || !activeRunId) return;
+        const result = await workflows.stopRun({ workflowId: draft.workflowId, runId: activeRunId });
+        if (!result.ok && result.error) setSnapshot(await workflows.patchDraft({ workflowId: draft.workflowId, error: result.error }));
+      },
       onSendNodeMessage: async (conversationId, message) => setSnapshot(await workflows.sendNodeMessage({ conversationId, message })),
       onCompleteNodeConversation: async (conversationId) => {
         const result = await workflows.completeNodeConversation({ conversationId });

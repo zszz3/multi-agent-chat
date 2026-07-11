@@ -52,6 +52,7 @@ import type {
   RunTaskRequest,
   SendWorkflowDraftReplyRequest,
   StartWorkflowNodeRequest,
+  StopWorkflowRunRequest,
   ScheduledWorkflowOperationResult,
   ScheduledWorkflowRun,
   ScheduledWorkflowRunStatus,
@@ -488,6 +489,7 @@ export class AgentHub {
       deleteTask: (taskId, options) => this.deleteTask(taskId, options),
       executeWorkflowV2Script: (input) => executeWorkflowV2ScriptWithPolicy(input),
       startWorkflowNodeConversation: (input) => this.workflowNodeConversations.start(input),
+      stopWorkflowNodeConversations: (workflowId, runId) => this.workflowNodeConversations.stopRun(workflowId, runId),
       createWorkflowV2Store: () => this.storagePath
         ? new WorkflowV2FileStore(path.dirname(this.storagePath))
         : undefined,
@@ -1354,6 +1356,10 @@ export class AgentHub {
 
   resolveWorkflowV2Intervention(input: ResolveWorkflowV2InterventionRequest): Promise<WorkflowOperationResult> {
     return this.workflowRuntime.resolveWorkflowV2Intervention(input);
+  }
+
+  stopWorkflowRun(input: StopWorkflowRunRequest): Promise<WorkflowOperationResult> {
+    return this.workflowRuntime.stopWorkflowRun(input);
   }
 
   async sendWorkflowNodeMessage(input: SendWorkflowNodeMessageRequest): Promise<AppSnapshot> {

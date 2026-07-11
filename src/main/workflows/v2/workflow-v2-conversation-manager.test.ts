@@ -85,4 +85,25 @@ describe("WorkflowV2ConversationManager", () => {
     expect(rejected.status).toBe("active");
     expect(rejected.completionProposal).toBeUndefined();
   });
+  test("stopping a run interrupts and closes every active node session", async () => {
+    const calls: string[] = [];
+    const manager = new WorkflowV2ConversationManager({
+      now: () => 30,
+      createSession: ({ nodeId }) => ({
+        sendPrompt: async () => undefined,
+        interrupt: async () => { calls.push(`${nodeId}:interrupt`); },
+        close: async () => { calls.push(`${nodeId}:close`); },
+        runtimeConversation: () => undefined,
+      }),
+    });
+    const first = await manager.start({ workflowId: "w", runId: "r", nodeId: "first", configuredAgentId: "a", modelId: "m", workDir: "C:/workspace", initialPrompt: "Start" });
+    const second = await manager.start({ workflowId: "w", runId: "r", nodeId: "second", configuredAgentId: "a", modelId: "m", workDir: "C:/workspace", initialPrompt: "Start" });
+
+    await manager.stopRun("w", "r");
+
+    expect(calls).toEqual(expect.arrayContaining(["first:interrupt", "first:close", "second:interrupt", "second:close"]));
+    expect(manager.get(first.conversationId)).toMatchObject({ status: "closed" });
+    expect(manager.get(second.conversationId)).toMatchObject({ status: "closed" });
+    expect(manager.get(first.conversationId)?.messages.at(-1)?.content).toBe("Workflow run stopped by user.");
+  });
 });

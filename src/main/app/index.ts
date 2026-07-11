@@ -47,6 +47,7 @@ import type {
   RunTaskRequest,
   SendWorkflowDraftReplyRequest,
   StartWorkflowNodeRequest,
+  StopWorkflowRunRequest,
   ScheduledWorkflowRun,
   ScheduledWorkflowRunnerConfig,
   ScheduledWorkflowRunnerStatus,
@@ -428,6 +429,7 @@ function registerIpcHandlers(): void {
   ipcMain.handle("workflow:delete", (_event, workflowId: string) => hub.deleteWorkflow(workflowId));
   ipcMain.handle("workflow-run:run-graph", (_event, request: RunWorkflowGraphRequest) => hub.runWorkflowGraph(request));
   ipcMain.handle("workflow-run:pause-node", (_event, request: PauseWorkflowNodeRequest) => hub.pauseWorkflowNode(request));
+  ipcMain.handle("workflow-run:stop", (_event, request: StopWorkflowRunRequest) => hub.stopWorkflowRun(request));
   ipcMain.handle("workflow-v2:intervention:resolve", (_event, request: ResolveWorkflowV2InterventionRequest) =>
     hub.resolveWorkflowV2Intervention(request),
   );

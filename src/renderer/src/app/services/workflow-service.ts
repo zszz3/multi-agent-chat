@@ -8,6 +8,7 @@ import type {
   RunWorkflowGraphRequest,
   SendWorkflowDraftReplyRequest,
   StartWorkflowNodeRequest,
+  StopWorkflowRunRequest,
   WorkflowOperationResult,
   CompleteWorkflowNodeConversationRequest,
   InterruptWorkflowNodeConversationRequest,
@@ -27,6 +28,7 @@ export interface WorkflowService {
   deleteWorkflow: (workflowId: string) => Promise<AppSnapshot>;
   runGraph: (request: RunWorkflowGraphRequest) => Promise<WorkflowOperationResult>;
   pauseNode: (request: PauseWorkflowNodeRequest) => Promise<WorkflowOperationResult>;
+  stopRun: (request: StopWorkflowRunRequest) => Promise<WorkflowOperationResult>;
   resolveIntervention: (request: ResolveWorkflowV2InterventionRequest) => Promise<WorkflowOperationResult>;
   startNode: (request: StartWorkflowNodeRequest) => Promise<WorkflowOperationResult>;
   answerGate: (request: AnswerWorkflowGateRequest) => Promise<WorkflowOperationResult>;
@@ -50,6 +52,7 @@ export function workflowService(): WorkflowService {
     deleteWorkflow: (workflowId) => api.deleteWorkflow(workflowId),
     runGraph: (request) => api.runWorkflowGraph(request),
     pauseNode: (request) => api.pauseWorkflowNode(request),
+    stopRun: (request) => api.stopWorkflowRun(request),
     resolveIntervention: (request) => api.resolveWorkflowV2Intervention(request),
     startNode: (request) => api.startWorkflowNode(request),
     answerGate: (request) => api.answerWorkflowGate(request),

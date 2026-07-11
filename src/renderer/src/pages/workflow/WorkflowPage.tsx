@@ -176,6 +176,7 @@ interface WorkflowPageLegacyProps {
   nodeConversations?: WorkflowController["nodeConversations"];
   onObjectiveChange: (value: string) => void;
   onPauseNode?: (nodeId: string) => MaybePromise;
+  onStopRun?: () => MaybePromise;
   onResolveIntervention?: (nodeId: string, action: WorkflowV2InterventionAction, reason?: string) => MaybePromise;
   onStartNode?: (nodeId: string) => MaybePromise;
   onAnswerGate?: (nodeId: string, answer: string) => MaybePromise;
@@ -232,6 +233,7 @@ export function WorkflowPage(props: WorkflowPageProps) {
   const nodeConversations = source.nodeConversations ?? [];
   const onObjectiveChange = source.onObjectiveChange;
   const onPauseNode = source.onPauseNode;
+  const onStopRun = source.onStopRun;
   const onResolveIntervention = source.onResolveIntervention;
   const onStartNode = source.onStartNode;
   const onAnswerGate = source.onAnswerGate;
@@ -556,10 +558,17 @@ export function WorkflowPage(props: WorkflowPageProps) {
             </button>
           ) : null}
           {graphVisible ? (
-            <button className="send-btn" onClick={() => void onRunGraph()} disabled={!validation.valid || running}>
-              <Play size={14} />
-              <span>{running ? workflowText.running : workflowText.runGraph}</span>
-            </button>
+            running && activeRunId && onStopRun ? (
+              <button className="control-btn danger" onClick={() => { if (window.confirm("Stop this workflow run? Completed work and history will be preserved, but this run cannot resume.")) void onStopRun(); }}>
+                <CircleStop size={14} />
+                <span>Stop workflow</span>
+              </button>
+            ) : (
+              <button className="send-btn" onClick={() => void onRunGraph()} disabled={!validation.valid || running}>
+                <Play size={14} />
+                <span>{workflowText.runGraph}</span>
+              </button>
+            )
           ) : null}
         </div>
       </header>

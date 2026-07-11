@@ -4029,6 +4029,8 @@ workflowGraph.upsert({
         channels={channels}
         workDir="/tmp/workspace"
         running
+        activeRunId="run-1"
+        onStopRun={() => undefined}
         contextDocument={"# Workflow Context\n\n## Clarify & Plan\nUse active turn guards."}
         runProgress={[
           { nodeId: "plan", title: "Clarify & Plan", status: "completed", detail: "Output captured" },
@@ -4052,7 +4054,7 @@ workflowGraph.upsert({
     expect(html).toContain("Output captured");
     expect(html).not.toContain("Workflow context");
     expect(html).not.toContain("Use active turn guards.");
-    expect(html).toContain("Running...");
+    expect(html).toContain("Stop workflow");
   });
 
   test("renders all allowed Workflow V2 intervention actions from one paused surface", () => {

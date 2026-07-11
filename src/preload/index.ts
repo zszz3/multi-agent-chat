@@ -40,6 +40,7 @@ import type {
   RunTaskRequest,
   SendWorkflowDraftReplyRequest,
   StartWorkflowNodeRequest,
+  StopWorkflowRunRequest,
   ScheduledWorkflowOperationResult,
   ScheduledWorkflowRun,
   ScheduledWorkflowRunnerConfig,
@@ -124,6 +125,7 @@ const api = {
   deleteWorkflow: (workflowId: string): Promise<AppSnapshot> => ipcRenderer.invoke("workflow:delete", workflowId),
   runWorkflowGraph: (request: RunWorkflowGraphRequest): Promise<WorkflowOperationResult> => ipcRenderer.invoke("workflow-run:run-graph", request),
   pauseWorkflowNode: (request: PauseWorkflowNodeRequest): Promise<WorkflowOperationResult> => ipcRenderer.invoke("workflow-run:pause-node", request),
+  stopWorkflowRun: (request: StopWorkflowRunRequest): Promise<WorkflowOperationResult> => ipcRenderer.invoke("workflow-run:stop", request),
   resolveWorkflowV2Intervention: (request: ResolveWorkflowV2InterventionRequest): Promise<WorkflowOperationResult> =>
     ipcRenderer.invoke("workflow-v2:intervention:resolve", request),
   sendWorkflowNodeMessage: (request: SendWorkflowNodeMessageRequest): Promise<AppSnapshot> => ipcRenderer.invoke("workflow-node-conversation:send", request),

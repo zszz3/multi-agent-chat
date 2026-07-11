@@ -996,6 +996,11 @@ export interface PauseWorkflowNodeRequest {
   nodeId: string;
 }
 
+export interface StopWorkflowRunRequest {
+  workflowId: string;
+  runId: string;
+}
+
 export interface StartWorkflowNodeRequest extends PauseWorkflowNodeRequest {}
 
 export interface ResolveWorkflowV2InterventionRequest extends PauseWorkflowNodeRequest {

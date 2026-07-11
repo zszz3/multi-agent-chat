@@ -7,6 +7,7 @@ import type {
   RunTaskRequest,
   RunWorkflowGraphRequest,
   StartWorkflowNodeRequest,
+  StopWorkflowRunRequest,
   TaskRun,
   WorkflowDraftState,
   WorkflowEvent,
@@ -156,6 +157,7 @@ interface WorkflowRuntimeDependencies {
     workDir: string;
     initialPrompt: string;
   }) => Promise<WorkflowNodeConversation>;
+  stopWorkflowNodeConversations: (workflowId: string, runId: string) => Promise<void>;
   createWorkflowV2Store?: () => WorkflowV2StorePort | undefined;
 }
 
@@ -561,6 +563,7 @@ interface WorkflowV2RecoveryOverride {
 
 export class WorkflowRuntime {
   private activeRuns = new Map<string, ActiveWorkflowRun>();
+  private stoppedRunIds = new Set<string>();
 
   constructor(private readonly deps: WorkflowRuntimeDependencies) {}
 
@@ -674,6 +677,41 @@ export class WorkflowRuntime {
       if (!activeRun || (activeRun.pausedNodeIds.size === 0 && activeRun.gatedNodeIds.size === 0)) this.activeRuns.delete(started.runId!);
     });
     return started;
+  }
+
+  async stopWorkflowRun(input: StopWorkflowRunRequest): Promise<WorkflowOperationResult> {
+    const snapshot = this.deps.snapshot();
+    const run = snapshot.workflowStore.runs.find((item) => item.workflowId === input.workflowId && item.runId === input.runId);
+    if (!run) return { ok: false, workflowId: input.workflowId, runId: input.runId, error: `Workflow run ${input.runId} was not found.` };
+    if (run.status !== "running") return { ok: false, workflowId: input.workflowId, runId: input.runId, error: "Only a running workflow can be stopped." };
+
+    this.stoppedRunIds.add(input.runId);
+    const activeRun = this.activeRuns.get(input.runId);
+    for (const controller of activeRun?.abortControllerByNodeId?.values() ?? []) controller.abort(new Error("Workflow stopped by user."));
+    const activeProgress = run.progress.filter((item) => item.status === "running" || item.status === "awaiting_input");
+    const activeNodeIds = new Set(activeProgress.map((item) => item.nodeId));
+    const taskIds = new Set<string>([
+      ...[...(activeRun?.taskIdByNodeId.entries() ?? [])]
+        .filter(([nodeId]) => activeNodeIds.has(nodeId))
+        .map(([, taskId]) => taskId),
+      ...activeProgress.map((item) => item.taskId).filter((taskId): taskId is string => Boolean(taskId)),
+    ]);
+    await Promise.all([...taskIds].map((taskId) => this.deps.stopTask(taskId).catch(() => undefined)));
+    await this.deps.stopWorkflowNodeConversations(input.workflowId, input.runId);
+    const progress = run.progress.map((item) => activeNodeIds.has(item.nodeId)
+      ? { ...item, status: "paused" as const, detail: "Workflow stopped by user" }
+      : item);
+    this.deps.finishWorkflowRun({
+      workflowId: input.workflowId,
+      runId: input.runId,
+      status: "stopped",
+      progress,
+      appendEvents: progress.filter((item) => activeNodeIds.has(item.nodeId)).map((item) => ({ type: "node_paused" as const, nodeId: item.nodeId, at: Date.now(), detail: "Workflow stopped by user" })),
+      contextDocument: run.contextDocument,
+      ...(run.finalReport ? { finalReport: run.finalReport } : {}),
+    });
+    this.activeRuns.delete(input.runId);
+    return { ok: true, workflowId: input.workflowId, runId: input.runId };
   }
 
   isRunning(runId: string): boolean {
@@ -2264,6 +2302,7 @@ export class WorkflowRuntime {
       });
 
       const finalReport = buildWorkflowV2FinalReport(plan, result.workerOutputs, result.runState.status);
+      if (this.stoppedRunIds.has(runId)) return;
       if (result.runState.status === "completed") {
         this.deps.finishWorkflowRun({
           workflowId: workflow.workflowId,
@@ -2300,6 +2339,7 @@ export class WorkflowRuntime {
         lastError,
       });
     } catch (error) {
+      if (this.stoppedRunIds.has(runId)) return;
       const message = error instanceof Error ? error.message : String(error);
       latestProgress = workflowProgressAfterFailure(latestProgress, message);
       this.deps.finishWorkflowRun({
@@ -2712,6 +2752,7 @@ export class WorkflowRuntime {
         detail: "Main agent report ready",
       });
       clearWorkflowRunProgressTaskId(WORKFLOW_FINAL_REVIEW_NODE_ID);
+      if (this.stoppedRunIds.has(runId)) return;
       this.deps.finishWorkflowRun({
         workflowId: workflow.workflowId,
         runId,
@@ -2723,6 +2764,7 @@ export class WorkflowRuntime {
       });
     } catch (error) {
       if (error instanceof WorkflowNodePausedError) return;
+      if (this.stoppedRunIds.has(runId)) return;
       const message = error instanceof Error ? error.message : String(error);
       latestRunProgress = workflowProgressAfterFailure(latestRunProgress, message);
       this.deps.finishWorkflowRun({

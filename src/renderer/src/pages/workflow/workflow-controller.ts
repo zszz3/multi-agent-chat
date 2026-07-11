@@ -71,6 +71,7 @@ export interface WorkflowController {
   nodeConversations?: WorkflowNodeConversation[];
   onObjectiveChange: (value: string) => void;
   onPauseNode?: (nodeId: string) => MaybePromise;
+  onStopRun?: () => MaybePromise;
   onResolveIntervention?: (nodeId: string, action: WorkflowV2InterventionAction, reason?: string) => MaybePromise;
   onStartNode?: (nodeId: string) => MaybePromise;
   onAnswerGate?: (nodeId: string, answer: string) => MaybePromise;

@@ -114,6 +114,21 @@ export class WorkflowV2ConversationManager {
     await this.sessionRequired(conversationId).interrupt();
   }
 
+  async stopRun(workflowId: string, runId: string): Promise<void> {
+    const conversations = this.listForRun(workflowId, runId).filter((conversation) => conversation.status !== "closed" && conversation.status !== "failed");
+    await Promise.allSettled(conversations.map(async (conversation) => {
+      const session = this.sessions.get(conversation.conversationId);
+      if (session) {
+        await Promise.allSettled([session.interrupt(), session.close()]);
+        this.sessions.delete(conversation.conversationId);
+      }
+      const mutable = this.mutableRequired(conversation.conversationId);
+      mutable.status = "closed";
+      this.appendMessage(mutable, "system", "Workflow run stopped by user.", this.deps.now());
+      this.changed(mutable);
+    }));
+  }
+
   get(conversationId: string): WorkflowNodeConversation | undefined {
     const conversation = this.conversations.get(conversationId);
     return conversation ? structuredClone(conversation) : undefined;

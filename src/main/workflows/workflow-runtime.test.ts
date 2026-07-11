@@ -363,6 +363,7 @@ async function workflowV2RuntimeFixture(input: {
     },
     executeWorkflowV2Script: input.executeScript,
     startWorkflowNodeConversation: async () => { throw new Error("Unexpected interactive workflow node in test."); },
+    stopWorkflowNodeConversations: async () => undefined,
     ...(input.store ? { createWorkflowV2Store: () => input.store! } : {}),
   });
 
@@ -416,6 +417,41 @@ function workflowV2InterventionRun(
 }
 
 describe("WorkflowRuntime Workflow V2 bridge", () => {
+  test("stops a running run without advancing queued descendants", async () => {
+    const fixture = await workflowV2RuntimeFixture({
+      executeScript: async () => ({ nodeId: "verify", summary: "unused", outputs: {}, evidence: [], proposals: [] }),
+    });
+    fixture.setRuns([{
+      runId: "run-v2-runtime",
+      workflowId: fixture.workflow.workflowId,
+      status: "running",
+      graphSnapshot: fixture.workflow.graph,
+      workflowV2Plan: fixture.workflow.workflowV2Plan!,
+      progress: [
+        { nodeId: "draft", title: "Draft", status: "running", taskId: "task-running" },
+        { nodeId: "verify", title: "Verify", status: "queued" },
+      ],
+      events: [],
+      contextDocument: "# Preserved context",
+      startedAt: 1,
+      finishedAt: undefined,
+      lastError: undefined,
+    }]);
+
+    const result = await fixture.runtime.stopWorkflowRun({ workflowId: fixture.workflow.workflowId, runId: "run-v2-runtime" });
+    const finished = await fixture.finished;
+
+    expect(result).toMatchObject({ ok: true, workflowId: fixture.workflow.workflowId, runId: "run-v2-runtime" });
+    expect(fixture.stopTaskIds).toEqual(["task-running"]);
+    expect(finished).toMatchObject({
+      status: "stopped",
+      contextDocument: "# Preserved context",
+      progress: [
+        { nodeId: "draft", status: "paused", taskId: "task-running" },
+        { nodeId: "verify", status: "queued" },
+      ],
+    });
+  });
   test("rejects a duplicate run when the run store is running even if the draft status was reset", async () => {
     const fixture = await workflowV2RuntimeFixture({
       executeScript: async () => {
