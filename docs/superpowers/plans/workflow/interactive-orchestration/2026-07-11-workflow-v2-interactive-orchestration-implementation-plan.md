@@ -40,12 +40,12 @@
 - Modify: renderer workflow plan/editor files under `src/renderer/src/pages/workflow/`
 - Test adjacent shared, planner, hub, and renderer utilities.
 
-- [ ] Add failing validation tests for missing/incompatible execution modes.
-- [ ] Add `one-shot | interactive | script` mode and typed mode configuration.
-- [ ] Add planner mode rationale/confidence and deterministic classification guidance.
-- [ ] Persist user mode overrides before plan freeze.
-- [ ] Show mode and rationale in plan/node UI.
-- [ ] Verify and commit Phase 02.
+- [x] Add failing validation tests for missing/incompatible execution modes.
+- [x] Add `one-shot | interactive | script` mode and typed mode configuration.
+- [x] Add planner mode rationale/confidence and deterministic classification guidance.
+- [x] Persist user mode overrides before plan freeze.
+- [x] Show mode and rationale in plan/node UI.
+- [x] Verify and commit Phase 02.
 
 ### Phase 03: Durable Node Conversations
 

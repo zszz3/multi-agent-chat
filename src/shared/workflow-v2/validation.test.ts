@@ -46,6 +46,29 @@ describe("workflow-v2 validation", () => {
     expect(result.topologicalNodeIds).toEqual(["plan", "apply"]);
   });
 
+  test("rejects execution modes incompatible with the node execution model", () => {
+    const invalid = validDefinition();
+    invalid.nodes[0]!.executionMode = "script";
+    invalid.nodes[1]!.executionMode = "interactive";
+
+    const result = validateWorkflowV2Definition(invalid);
+
+    expect(result.valid).toBe(false);
+    expect(result.errors).toEqual(expect.arrayContaining([
+      "Workflow V2 llm node plan cannot use script execution mode.",
+      "Workflow V2 script node apply must use script execution mode.",
+    ]));
+  });
+
+  test("rejects execution mode confidence outside zero to one", () => {
+    const invalid = validDefinition();
+    invalid.nodes[0]!.executionModeConfidence = 1.5;
+
+    const result = validateWorkflowV2Definition(invalid);
+
+    expect(result.valid).toBe(false);
+    expect(result.errors).toContain("Workflow V2 node plan execution mode confidence must be between 0 and 1.");
+  });
   test("accepts a negative safe integer expected exit code", () => {
     const definition = validDefinition();
     const node = definition.nodes[1]!;

@@ -3,6 +3,7 @@ import type {
   WorkflowV2ContextBudget,
   WorkflowV2Definition,
   WorkflowV2ExecModel,
+  WorkflowV2ExecutionMode,
   WorkflowV2ModelProfile,
   WorkflowV2Node,
   WorkflowV2NodeRole,
@@ -46,6 +47,9 @@ export interface WorkflowV2TaskPacket {
   title: string;
   role: WorkflowV2NodeRole;
   execModel: WorkflowV2ExecModel;
+  executionMode: WorkflowV2ExecutionMode;
+  executionModeRationale: string;
+  executionModeConfidence: number;
   modelProfile: WorkflowV2ModelProfile;
   objective: string;
   acceptanceCriteria: WorkflowV2AcceptanceCriterion[];
@@ -69,6 +73,9 @@ export interface WorkflowV2PlanNode {
   title: string;
   role: WorkflowV2NodeRole;
   execModel: WorkflowV2ExecModel;
+  executionMode: WorkflowV2ExecutionMode;
+  executionModeRationale: string;
+  executionModeConfidence: number;
   modelProfile: WorkflowV2ModelProfile;
   acceptanceCriteria: WorkflowV2AcceptanceCriterion[];
   budget: WorkflowV2BudgetEnvelope;
@@ -169,6 +176,7 @@ export function createWorkflowV2TaskPacket(input: {
 }): WorkflowV2TaskPacket {
   const role = resolveWorkflowV2NodeRole(input.node);
   const modelProfile = resolveWorkflowV2NodeModelProfile(input.node, input.roleRoutes);
+  const executionMode = resolveWorkflowV2ExecutionMode(input.node);
   const budget = {
     context: cloneContextBudget(input.node.execModel === "llm" ? input.node.contextBudget ?? input.defaultContextBudget : input.defaultContextBudget),
     ...(input.costBudget ? { cost: cloneCostBudget(input.costBudget) } : {}),
@@ -181,6 +189,9 @@ export function createWorkflowV2TaskPacket(input: {
     title: input.node.title,
     role,
     execModel: input.node.execModel,
+    executionMode: executionMode.mode,
+    executionModeRationale: executionMode.rationale,
+    executionModeConfidence: executionMode.confidence,
     modelProfile,
     objective: input.workflowObjective,
     acceptanceCriteria: nodeAcceptanceCriteria.length > 0 ? nodeAcceptanceCriteria : input.acceptanceCriteria.map(cloneAcceptanceCriterion),
@@ -208,6 +219,30 @@ export function deriveWorkflowV2DirectUpstreamDigest(
     }));
 }
 
+export function resolveWorkflowV2ExecutionMode(node: WorkflowV2Node): {
+  mode: WorkflowV2ExecutionMode;
+  rationale: string;
+  confidence: number;
+} {
+  const mode = node.executionMode ?? (node.execModel === "script" ? "script" : "one-shot");
+  if (mode === "script" && node.execModel !== "script") {
+    throw new Error(`Workflow V2 node ${node.id} cannot use script execution mode with ${node.execModel} execution.`);
+  }
+  if ((mode === "one-shot" || mode === "interactive") && node.execModel !== "llm") {
+    throw new Error(`Workflow V2 node ${node.id} cannot use ${mode} execution mode with ${node.execModel} execution.`);
+  }
+  const rationale = node.executionModeRationale?.trim()
+    || (mode === "interactive"
+      ? "The node requires multi-turn user clarification before completion."
+      : mode === "script"
+        ? "The node is deterministic and executes through the script runtime."
+        : "The node has bounded inputs and can complete in one agent turn.");
+  const confidence = node.executionModeConfidence ?? (node.executionMode === undefined ? 0.75 : 1);
+  if (!Number.isFinite(confidence) || confidence < 0 || confidence > 1) {
+    throw new Error(`Workflow V2 node ${node.id} execution mode confidence must be between 0 and 1.`);
+  }
+  return { mode, rationale, confidence };
+}
 export function resolveWorkflowV2NodeRole(node: WorkflowV2Node): WorkflowV2NodeRole {
   const role: unknown = node.role === undefined ? "executor" : node.role;
   if (!isWorkflowV2NodeRole(role)) {

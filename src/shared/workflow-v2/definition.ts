@@ -11,6 +11,7 @@ export type {
 
 export type WorkflowV2NodeRole = "orchestrator" | "executor" | "reviewer";
 export type WorkflowV2ExecModel = "llm" | "script";
+export type WorkflowV2ExecutionMode = "one-shot" | "interactive" | "script";
 export type WorkflowV2ModelProfile = "fast" | "balanced" | "expert";
 export type WorkflowV2ScriptLanguage = "python" | "typescript" | "bash";
 export type WorkflowV2ScriptSandboxMode = "sandbox" | "workspace" | "full";
@@ -59,6 +60,9 @@ export interface WorkflowV2BaseNode {
   hooks?: WorkflowV2NodeHooks;
   resourceLocks?: string[];
   executionLease?: WorkflowV2ExecutionLeasePolicy;
+  executionMode?: WorkflowV2ExecutionMode;
+  executionModeRationale?: string;
+  executionModeConfidence?: number;
 }
 
 export interface WorkflowV2LLMNode extends WorkflowV2BaseNode {

@@ -12,6 +12,7 @@ import {
   deriveWorkflowV2DirectUpstreamDigest,
   deriveWorkflowV2AcceptanceCriteria,
   resolveWorkflowV2NodeModelProfile,
+  resolveWorkflowV2ExecutionMode,
   resolveWorkflowV2NodeRole,
   workflowV2DefaultRoleRoutes,
 } from "../../../shared/workflow-v2/planning";
@@ -160,11 +161,15 @@ export async function buildWorkflowV2Plan(input: BuildWorkflowV2PlanRequest): Pr
       ...(budget.cost ? { costBudget: budget.cost } : {}),
     });
 
+    const executionMode = resolveWorkflowV2ExecutionMode(node);
     return {
       nodeId: node.id,
       title: node.title,
       role: resolveWorkflowV2NodeRole(node),
       execModel: node.execModel,
+      executionMode: executionMode.mode,
+      executionModeRationale: executionMode.rationale,
+      executionModeConfidence: executionMode.confidence,
       modelProfile: resolveWorkflowV2NodeModelProfile(node, roleDefaults),
       acceptanceCriteria: taskPacket.acceptanceCriteria.map((criterion) => ({ ...criterion })),
       budget: {

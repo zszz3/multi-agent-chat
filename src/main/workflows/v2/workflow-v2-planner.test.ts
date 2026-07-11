@@ -81,6 +81,43 @@ describe("workflow-v2 planner", () => {
     ]);
   });
 
+  test("freezes explicit and compatibility execution modes with rationale", async () => {
+    const source = definition();
+    const implement = source.nodes.find((node) => node.id === "implement");
+    if (!implement || implement.execModel !== "llm") throw new Error("expected implement llm node");
+    implement.executionMode = "interactive";
+    implement.executionModeRationale = "Collect multiple implementation constraints from the user.";
+    implement.executionModeConfidence = 0.9;
+    source.nodes.push({
+      id: "format",
+      kind: "format",
+      title: "Format",
+      execModel: "script",
+      sandboxMode: "sandbox",
+      script: { language: "typescript", code: "return input", timeoutMs: 1_000 },
+      outputFields: [{ key: "formatted", required: true }],
+    });
+    source.edges.push({ fromNodeId: "review", toNodeId: "format" });
+
+    const plan = await buildWorkflowV2Plan({ definition: source, approvedBy: "planner-agent", now: 2 });
+
+    expect(plan.nodes.map((node) => ({
+      nodeId: node.nodeId,
+      executionMode: node.executionMode,
+      rationale: node.executionModeRationale,
+      confidence: node.executionModeConfidence,
+    }))).toEqual([
+      expect.objectContaining({ nodeId: "orchestrate", executionMode: "one-shot" }),
+      {
+        nodeId: "implement",
+        executionMode: "interactive",
+        rationale: "Collect multiple implementation constraints from the user.",
+        confidence: 0.9,
+      },
+      expect.objectContaining({ nodeId: "review", executionMode: "one-shot" }),
+      expect.objectContaining({ nodeId: "format", executionMode: "script" }),
+    ]);
+  });
   test("normalizes plan identity and custom criteria at the planner boundary", async () => {
     const plan = await buildWorkflowV2Plan({
       definition: definition(),

@@ -106,6 +106,9 @@ describe("workflow-v2 planning contracts", () => {
       title: "Execute",
       role: "executor",
       execModel: "llm",
+      executionMode: "one-shot",
+      executionModeRationale: "The node has bounded inputs and can complete in one agent turn.",
+      executionModeConfidence: 0.75,
       modelProfile: "fast",
       objective: "Ship workflow v2 planning contracts",
       acceptanceCriteria: [

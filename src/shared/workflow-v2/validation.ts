@@ -109,6 +109,20 @@ function appendNodeValidationErrors(node: WorkflowV2Node, errors: string[]): voi
   if (!node.id.trim()) errors.push("Workflow V2 node id must not be empty.");
   if (!node.title.trim()) errors.push(`Workflow V2 node ${node.id} must have a title.`);
   if (!node.kind.trim()) errors.push(`Workflow V2 node ${node.id} must have a kind.`);
+  if (node.executionModeConfidence !== undefined && (
+    typeof node.executionModeConfidence !== "number"
+    || !Number.isFinite(node.executionModeConfidence)
+    || node.executionModeConfidence < 0
+    || node.executionModeConfidence > 1
+  )) {
+    errors.push(`Workflow V2 node ${node.id} execution mode confidence must be between 0 and 1.`);
+  }
+  if (node.execModel === "llm" && node.executionMode === "script") {
+    errors.push(`Workflow V2 llm node ${node.id} cannot use script execution mode.`);
+  }
+  if (node.execModel === "script" && node.executionMode !== undefined && node.executionMode !== "script") {
+    errors.push(`Workflow V2 script node ${node.id} must use script execution mode.`);
+  }
   if (node.role !== undefined && !isWorkflowV2NodeRole(node.role)) {
     errors.push(`Workflow V2 node ${node.id} has unsupported role ${String(node.role)}.`);
   }
