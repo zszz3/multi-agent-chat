@@ -28,7 +28,10 @@ export default defineConfig({
     build: {
       outDir: resolve(repoRoot, "out/main"),
       rollupOptions: {
-        input: resolve(repoRoot, "src/main/app/index.ts"),
+        input: {
+          index: resolve(repoRoot, "src/main/app/index.ts"),
+          "mcp-server": resolve(repoRoot, "src/mcp/server.ts"),
+        },
         external: ["electron"],
       },
     },

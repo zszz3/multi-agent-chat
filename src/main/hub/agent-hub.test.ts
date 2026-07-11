@@ -3092,11 +3092,11 @@ fs.writeFileSync(${JSON.stringify(argsPath)}, process.argv.slice(2).join("\\n") 
     expect(oneShotInput?.mcpServers).toMatchObject({
       multi_agent_chat: {
         type: "stdio",
-        command: "node",
-        env: { MULTI_AGENT_CHAT_MCP_BRIDGE: path.join(dir, "mcp-bridge.json") },
+        command: process.execPath,
+        env: { MULTI_AGENT_CHAT_MCP_BRIDGE: path.join(dir, "mcp-bridge.json"), ELECTRON_RUN_AS_NODE: "1" },
       },
     });
-    expect(oneShotInput?.mcpServers?.multi_agent_chat.args.join("\n").split("\\").join("/")).toContain("src/mcp/server.ts");
+    expect(oneShotInput?.mcpServers?.multi_agent_chat.args).toHaveLength(2);
   });
 
   test("resumes a Claude workflow agent through the official SDK one-shot path when continuationPolicy is resume-preferred", async () => {
