@@ -229,6 +229,18 @@ export function RuntimeProviderFields({ channel, language, onChange }: RuntimePr
         </>
       ) : null}
 
+      {channel.agentId === "openclaw" ? (
+        <label className="config-field config-field-wide">
+          <span>Gateway Token</span>
+          <input
+            aria-label="OpenClaw Gateway Token"
+            type={showSensitiveValues ? "text" : "password"}
+            value={channel.environment?.OPENCLAW_GATEWAY_TOKEN ?? ""}
+            onChange={(event) => onChange((current) => updateEnvironment(current, "OPENCLAW_GATEWAY_TOKEN", event.currentTarget.value))}
+          />
+        </label>
+      ) : null}
+
       <label className="config-field config-field-wide">
         <span>User-Agent</span>
         <input value={channel.customUserAgent ?? ""} onChange={(event) => onChange((current) => withOptionalString(current, "customUserAgent", event.currentTarget.value))} />

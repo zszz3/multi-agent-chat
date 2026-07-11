@@ -6,6 +6,8 @@ import {
   AGENT_PROVIDER_PRESETS,
   CLAUDE_LOCAL_DEFAULT_PRESET_ID,
   CODEX_LOCAL_DEFAULT_PRESET_ID,
+  OPENCODE_DEFAULT_PRESET_ID,
+  OPENCLAW_DEFAULT_PRESET_ID,
   type AgentProviderPreset,
 } from "../../../../shared/provider-presets";
 import { RUNTIME_IDS, runtimeDefinition } from "../../../../shared/runtime-catalog";
@@ -276,6 +278,14 @@ export function RuntimePage({
       }
       return;
     }
+    if (preset.id === OPENCODE_DEFAULT_PRESET_ID || preset.id === OPENCLAW_DEFAULT_PRESET_ID) {
+      if (!onImportLocalConfig) {
+        onStatusChange?.("Local default import requires a full app restart.");
+        return;
+      }
+      await onImportLocalConfig(selectedRuntime, selectedRuntimeChannelRecord.id);
+      return;
+    }
     const cachedProviderKeys = rememberProviderKeyFromChannel(providerKeys, selectedRuntimePreset, selectedRuntimeChannelRecord);
     const cachedSelectedProviderKey = selectedRuntimePreset ? cachedProviderKeys[selectedRuntimePreset.id] : undefined;
     if (selectedRuntimePreset?.usesApiKey && cachedSelectedProviderKey && cachedSelectedProviderKey !== providerKeys[selectedRuntimePreset.id]) {
@@ -288,7 +298,9 @@ export function RuntimePage({
     if (!selectedRuntimePreset) return;
     onUpdateProviderKey(selectedRuntimePreset.id, value);
     updateSelectedRuntimeChannel((channel) =>
-      selectedRuntimePreset.id === CODEX_LOCAL_DEFAULT_PRESET_ID
+      selectedRuntimePreset.id === CODEX_LOCAL_DEFAULT_PRESET_ID ||
+      selectedRuntimePreset.id === CLAUDE_LOCAL_DEFAULT_PRESET_ID ||
+      selectedRuntimePreset.id === OPENCODE_DEFAULT_PRESET_ID
         ? applyProviderApiKeyToChannel(channel, selectedRuntimePreset, value)
         : applyProviderPresetToChannel(channel, selectedRuntimePreset, value),
     );

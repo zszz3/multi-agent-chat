@@ -182,6 +182,11 @@ async function loadOpenCodeConfig(
     : provider;
   const baseUrl = optionalString(options.baseURL) ?? optionalString(options.baseUrl);
   const apiKey = optionalString(options.apiKey) ?? optionalString(options.token);
+  if (!modelId && !providerId && !baseUrl && !apiKey) {
+    throw new Error(
+      "OpenCode local config has no default model or provider. Set model to provider/model in ~/.config/opencode/opencode.jsonc first.",
+    );
+  }
   return {
     source: "opencode debug config",
     channel: {

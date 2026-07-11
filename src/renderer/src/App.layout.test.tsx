@@ -1231,6 +1231,51 @@ describe("AgentPage", () => {
     expect(html).toContain("新建配置");
   });
 
+  test("shows imported OpenClaw model and a revealable gateway token", () => {
+    const html = renderToStaticMarkup(
+      <RuntimePage
+        language="en"
+        channels={[{
+          id: "openclaw-default",
+          agentId: "openclaw",
+          label: "OpenClaw Default",
+          presetId: "openclaw-default",
+          environment: { OPENCLAW_GATEWAY_TOKEN: "gateway-token" },
+          models: [
+            { id: DEFAULT_MODEL_ID, label: "Default" },
+            { id: "provider/model", label: "provider/model" },
+          ],
+        }]}
+        selectedChannelId="openclaw-default"
+        selectedRuntimeId="openclaw"
+        providerKeys={{}}
+        codexPluginCatalog={[]}
+        pluginCatalogStatus=""
+        agentTestResults={{}}
+        testingAgentId={undefined}
+        agentTestTick={0}
+        onUpdateChannel={() => undefined}
+        onAddModel={() => undefined}
+        onUpdateModel={() => undefined}
+        onRemoveModel={() => undefined}
+        onSave={async () => undefined}
+        onLoadCodexPluginCatalog={async () => undefined}
+        onSelectChannel={() => undefined}
+        onSelectRuntime={() => undefined}
+        onAddConfig={() => undefined}
+        onImportLocalConfig={async () => undefined}
+        onOpenContextMenu={() => undefined}
+        onDeleteConfig={() => undefined}
+        onTestChannel={async () => undefined}
+        onUpdateProviderKey={() => undefined}
+      />,
+    );
+
+    expect(html).toContain('aria-label="OpenClaw Gateway Token" type="password" value="gateway-token"');
+    expect(html).toContain('value="provider/model"');
+    expect(html).toContain('aria-label="Show advanced secrets"');
+  });
+
   test("shows the stored channel key ahead of stale provider key cache", () => {
     const savedKeyChannels: AgentChannel[] = [
       {

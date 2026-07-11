@@ -562,6 +562,7 @@ const LEGACY_PROVIDER_PRESETS: AgentProviderPreset[] = [
     id: OPENCODE_DEFAULT_PRESET_ID,
     label: "Default",
     runtimeAgentId: "opencode",
+    usesApiKey: true,
     models: FALLBACK_MODEL_OPTIONS.opencode,
     configurableModelId: true,
     configurableModelLabel: "OpenCode model",
