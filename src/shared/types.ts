@@ -394,6 +394,8 @@ export interface TaskRun {
 
 export interface RunTaskRequest {
   prompt: string;
+  developerInstructions?: string;
+  contextDocument?: string;
   configuredAgentId: string;
   modelId?: string;
   workDir?: string;

@@ -4728,13 +4728,13 @@ fs.writeFileSync(${JSON.stringify(argsPath)}, process.argv.slice(2).join("\\n") 
       finalReport: expect.stringContaining("Worker finished through the V2 runtime."),
     });
     expect(contexts.map((context) => context.runKind)).toEqual(["task"]);
-    expect(contexts[0]?.prompt).toContain("Workflow V2 task packet");
-    expect(contexts[0]?.prompt).toContain('"role": "executor"');
-    expect(contexts[0]?.prompt).toContain('"modelProfile": "fast"');
-    expect(contexts[0]?.prompt).toContain("Do not invent execution behavior outside the approved plan.");
-    expect(contexts[0]?.prompt).toContain('"maxContextTokens": 2600');
-    expect(contexts[0]?.prompt).toContain("Do the work.");
-    expect(contexts[0]?.prompt).toContain('"upstreamOutputs": []');
+    expect(contexts[0]?.prompt).toBe("Do the work.");
+    expect(contexts[0]?.developerInstructions).toContain("Workflow V2 task packet");
+    expect(contexts[0]?.developerInstructions).toContain('"role": "executor"');
+    expect(contexts[0]?.developerInstructions).toContain('"modelProfile": "fast"');
+    expect(contexts[0]?.developerInstructions).toContain("Do not invent execution behavior outside the approved plan.");
+    expect(contexts[0]?.developerInstructions).toContain('"maxContextTokens": 2600');
+    expect(contexts[0]?.developerInstructions).toContain('"upstreamOutputs": []');
     expect(contexts[0]?.prompt).not.toContain("workflow judge");
     expect(contexts[0]?.prompt).not.toContain("main workflow agent");
 

@@ -193,6 +193,8 @@ export function restoreTaskState(raw: unknown, deps: RestoreTaskStateDeps): Task
     asOptionalString(record.workDir) ?? deps.workDir,
   );
   task.id = asOptionalString(record.id) ?? task.id;
+  task.developerInstructions = asOptionalString(record.developerInstructions);
+  task.contextDocument = asOptionalString(record.contextDocument);
   task.title = asOptionalString(record.title) ?? titleFromPrompt(record.prompt);
   task.progress = isTaskProgress(record.progress) ? record.progress : "todo";
   const status = isTaskRunStatus(record.status) ? record.status : "completed";

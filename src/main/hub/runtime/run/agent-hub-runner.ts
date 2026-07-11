@@ -55,8 +55,13 @@ export async function runAgentExecution(input: {
     input.markRunFailed(input.run, `${input.resolved.agent.name || input.resolved.agent.id} is not available on this machine.`);
     return;
   }
-  const developerInstructions =
-    input.run.kind === "task" ? input.taskDeveloperInstructions : input.chatDeveloperInstructions;
+  const developerInstructions = input.run.kind === "task"
+    ? [
+      input.taskDeveloperInstructions,
+      input.run.developerInstructions,
+      input.run.contextDocument ? `# Runtime context\n${input.run.contextDocument}` : undefined,
+    ].filter(Boolean).join("\n\n")
+    : input.chatDeveloperInstructions;
   const executionMode =
     input.run.kind === "chat"
       ? input.selectExecutionMode(input.resolved.runtimeAgentId, "chat", "oneshot")

@@ -15,6 +15,7 @@ import type {
   WorkflowV2ScriptNode,
 } from "../../shared/workflow-v2/definition";
 import type { WorkflowV2WorkerOutput } from "../../shared/workflow-v2/packets";
+import type { WorkflowNodeConversation } from "../../shared/workflow-v2/conversation";
 import { createWorkflowV2RunState } from "../../shared/workflow-v2/state";
 import { WORKFLOW_V2_STORAGE_SCHEMA_VERSION } from "../../shared/workflow-v2/storage";
 import type { WorkflowV2CostBudget, WorkflowV2ResultPacket } from "../../shared/workflow-v2/planning";
@@ -143,13 +144,13 @@ describe("workflowV2LlmNodePrompt", () => {
       baseWorkflowContextDocument: `${contextPrefix}${"x".repeat(10_000)}${contextSentinel}`,
     }));
 
-    expect(prompt).toContain("Workflow V2 task packet");
-    expect(prompt).toContain("Produce the implementation draft from the approved packet.");
-    expect(prompt).toContain("FIXED_STORAGE_PLAN_MUST_REMAIN");
-    expect(prompt).toContain("approximate character budget");
-    expect(prompt).toContain(contextPrefix);
-    expect(prompt).not.toContain(contextSentinel);
-    expect(prompt.length).toBeLessThanOrEqual(4_000 * 4);
+    expect(prompt.prompt).toBe("Produce the implementation draft from the approved packet.");
+    expect(prompt.developerInstructions).toContain("FIXED_STORAGE_PLAN_MUST_REMAIN");
+    expect(prompt.developerInstructions).not.toContain(contextPrefix);
+    expect(prompt.contextDocument).toContain("Workflow V2 task packet");
+    expect(prompt.contextDocument).toContain("approximate character budget");
+    expect(prompt.contextDocument).toContain(contextPrefix);
+    expect(prompt.contextDocument).not.toContain(contextSentinel);
   });
 
   test("fails closed when summarize fallback is required for oversized dynamic context", async () => {
@@ -181,7 +182,7 @@ describe("workflowV2LlmNodePrompt", () => {
         baseWorkflowContextDocument: contextSentinel,
       }));
 
-      expect(prompt).toContain(contextSentinel);
+      expect(prompt.contextDocument).toContain(contextSentinel);
     },
   );
 
@@ -244,6 +245,18 @@ async function workflowV2RuntimeFixture(input: {
   costBudget?: WorkflowV2CostBudget;
   llmArtifact?: string;
   taskFactory?: (request: RunTaskRequest, index: number) => TaskRun;
+  startWorkflowNodeConversation?: (input: {
+    workflowId: string;
+    runId: string;
+    nodeId: string;
+    configuredAgentId: string;
+    modelId: string;
+    workDir: string;
+    initialPrompt: string;
+    developerInstructions?: string;
+    contextDocument?: string;
+  }) => Promise<WorkflowNodeConversation>;
+  markWorkflowNodeConversationWaiting?: (conversationId: string, question: string) => WorkflowNodeConversation;
   store?: WorkflowV2StorePort;
   executeScript: (request: ExecuteWorkflowV2ScriptRequest) => Promise<WorkflowV2WorkerOutput>;
 }): Promise<{
@@ -362,7 +375,8 @@ async function workflowV2RuntimeFixture(input: {
       return snapshot();
     },
     executeWorkflowV2Script: input.executeScript,
-    startWorkflowNodeConversation: async () => { throw new Error("Unexpected interactive workflow node in test."); },
+    startWorkflowNodeConversation: input.startWorkflowNodeConversation ?? (async () => { throw new Error("Unexpected interactive workflow node in test."); }),
+    markWorkflowNodeConversationWaiting: input.markWorkflowNodeConversationWaiting ?? (() => { throw new Error("Unexpected interactive workflow node wait state in test."); }),
     stopWorkflowNodeConversations: async () => undefined,
     ...(input.store ? { createWorkflowV2Store: () => input.store! } : {}),
   });
@@ -582,13 +596,13 @@ describe("WorkflowRuntime Workflow V2 bridge", () => {
       },
       taskFactory: (request, index) => ({
         id: `task-${index}`,
-        title: request.prompt.includes("read-only, low-cost Workflow V2 llmHook") ? "Read-only hook" : "Workflow worker",
+        title: request.developerInstructions?.includes("read-only, low-cost Workflow V2 llmHook") ? "Read-only hook" : "Workflow worker",
         status: "completed",
         prompt: request.prompt,
         configuredAgentId: request.configuredAgentId,
         messages: [{
           role: "assistant",
-          content: request.prompt.includes("read-only, low-cost Workflow V2 llmHook")
+          content: request.developerInstructions?.includes("read-only, low-cost Workflow V2 llmHook")
             ? JSON.stringify({ severity: "low" })
             : JSON.stringify({
                 nodeId: "draft",
@@ -610,10 +624,10 @@ describe("WorkflowRuntime Workflow V2 bridge", () => {
 
     expect(finished.status).toBe("completed");
     expect(fixture.taskRequests).toHaveLength(2);
-    expect(fixture.taskRequests[0]?.prompt).toContain("# Hook-injected context");
-    expect(fixture.taskRequests[0]?.prompt).toContain("HOOK_CONTEXT_SENTINEL");
-    expect(fixture.taskRequests[1]?.prompt).toContain("Do not call tools, modify files, navigate the graph");
-    expect(fixture.taskRequests[1]?.prompt).toContain("Model profile: fast");
+    expect(fixture.taskRequests[0]?.contextDocument).toContain("# Hook-injected context");
+    expect(fixture.taskRequests[0]?.contextDocument).toContain("HOOK_CONTEXT_SENTINEL");
+    expect(fixture.taskRequests[1]?.developerInstructions).toContain("Do not call tools, modify files, navigate the graph");
+    expect(fixture.taskRequests[1]?.developerInstructions).toContain("Model profile: fast");
     expect(persistedStates.at(-1)?.nodeControl.draft?.hookVariables).toEqual({
       scope: "HOOK_CONTEXT_SENTINEL",
       risk: { severity: "low" },
@@ -1081,8 +1095,8 @@ describe("WorkflowRuntime Workflow V2 bridge", () => {
       continuationPolicy: "resume-required",
       runtimeConversation: resumeConversation,
     });
-    expect(fixture.taskRequests[0]?.prompt).toContain("# Recovery checkpoint");
-    expect(fixture.taskRequests[0]?.prompt).toContain("checkpoint-from-progress-probe");
+    expect(fixture.taskRequests[0]?.contextDocument).toContain("# Recovery checkpoint");
+    expect(fixture.taskRequests[0]?.contextDocument).toContain("checkpoint-from-progress-probe");
   });
 
   test("skips an intervened node and continues eligible downstream work", async () => {
@@ -1236,8 +1250,8 @@ describe("WorkflowRuntime Workflow V2 bridge", () => {
     expect(resolved.ok).toBe(true);
     expect(finished.status).toBe("completed");
     expect(fixture.taskRequests).toHaveLength(1);
-    expect(fixture.taskRequests[0]?.prompt).toContain("# Human intervention resolution");
     expect(fixture.taskRequests[0]?.prompt).toContain(humanAnswer);
+    expect(fixture.taskRequests[0]?.developerInstructions).toContain(humanAnswer);
   });
 
   test.each([
@@ -1328,8 +1342,8 @@ describe("WorkflowRuntime Workflow V2 bridge", () => {
     expect(resolved.ok).toBe(true);
     expect(finished.status).toBe("completed");
     expect(fixture.taskRequests).toHaveLength(2);
-    expect(fixture.taskRequests[0]?.prompt).toContain("# Human intervention resolution");
-    expect(/"modelProfile":\s*"expert"/.test(fixture.taskRequests[0]?.prompt ?? "")).toBe(expectsExpertProfile);
+    expect(fixture.taskRequests[0]?.developerInstructions).toContain("mandatory independent review");
+    expect(/"modelProfile":\s*"expert"/.test(fixture.taskRequests[0]?.contextDocument ?? "")).toBe(expectsExpertProfile);
     expect(fixture.taskRequests[1]?.prompt).toContain("independent Workflow V2 reviewer");
   });
 
@@ -1753,6 +1767,48 @@ describe("WorkflowRuntime Workflow V2 bridge", () => {
     expect(finished.status).toBe("completed");
   });
 
+  test("upgrades a one-shot node to interactive when it requests user input and blocks downstream execution", async () => {
+    const conversationStarts: Array<{ initialPrompt: string; developerInstructions?: string; contextDocument?: string }> = [];
+    const waitingQuestions: string[] = [];
+    const scriptRequests: ExecuteWorkflowV2ScriptRequest[] = [];
+    const question = "Which deployment region and retention policy should I use?";
+    const fixture = await workflowV2RuntimeFixture({
+      taskFactory: (request) => ({
+        id: "task-input-request", title: "Workflow V2 LLM node", status: "running", running: true,
+        progress: "in_progress", prompt: request.prompt, configuredAgentId: request.configuredAgentId,
+        modelId: request.modelId ?? "model-a", workDir: request.workDir ?? "/tmp/workflow-v2-runtime",
+        messages: [{ id: "assistant-input-request", role: "assistant", content: question, timestamp: 1, events: [{
+          id: "event-input-request", type: "user_input_request", content: question, timestamp: 1,
+          requestId: "request-1", requestState: "live",
+        }] }],
+        pendingAssistantMessageId: undefined, lastError: undefined, createdAt: 1, updatedAt: 1,
+      }),
+      startWorkflowNodeConversation: async (input) => {
+        conversationStarts.push(input);
+        return { conversationId: "workflow-node-conversation", workflowId: input.workflowId, runId: input.runId,
+          nodeId: input.nodeId, configuredAgentId: input.configuredAgentId, modelId: input.modelId, workDir: input.workDir,
+          status: "active", messages: [], createdAt: 1, updatedAt: 1, lastActivityAt: 1 };
+      },
+      markWorkflowNodeConversationWaiting: (_conversationId, prompt) => {
+        waitingQuestions.push(prompt);
+        return { conversationId: "workflow-node-conversation" } as WorkflowNodeConversation;
+      },
+      executeScript: async (request) => { scriptRequests.push(request); throw new Error("downstream script must remain blocked"); },
+    });
+
+    fixture.runtime.runWorkflowGraph({ workflowId: fixture.workflow.workflowId });
+    const finished = await fixture.finished;
+
+    expect(finished.status).toBe("stopped");
+    expect(fixture.stopTaskIds).toContain("task-input-request");
+    expect(conversationStarts).toHaveLength(1);
+    expect(conversationStarts[0]?.initialPrompt).toBe("Produce the implementation draft from the approved packet.");
+    expect(conversationStarts[0]?.developerInstructions).toContain("upgraded from one-shot to interactive");
+    expect(conversationStarts[0]?.contextDocument).toContain(question);
+    expect(waitingQuestions).toEqual([question]);
+    expect(scriptRequests).toHaveLength(0);
+  });
+
   test("branches before legacy execution and runs llm then script nodes with direct upstream outputs", async () => {
     const proposalReason = "runtime-control-only";
     const scriptRequests: ExecuteWorkflowV2ScriptRequest[] = [];
@@ -1795,14 +1851,14 @@ describe("WorkflowRuntime Workflow V2 bridge", () => {
       modelId: "model-a",
       workDir: "/tmp/workflow-v2-runtime",
     });
-    expect(fixture.taskRequests[0]?.prompt).toContain("Workflow V2 task packet");
-    expect(fixture.taskRequests[0]?.prompt).toContain('"nodeId": "draft"');
-    expect(fixture.taskRequests[0]?.prompt).toContain("Produce the implementation draft from the approved packet.");
-    expect(fixture.taskRequests[0]?.prompt).toContain('"upstreamOutputs": []');
-    expect(fixture.taskRequests[0]?.prompt).toContain("# Base context");
-    expect(fixture.taskRequests[0]?.prompt).toContain("Workflow Storage Plan");
-    expect(fixture.taskRequests[0]?.prompt).toContain("Return only one structured JSON worker-output packet");
-    expect(fixture.taskRequests[0]?.prompt).toContain('"maxCompletionTokens": 321');
+    expect(fixture.taskRequests[0]?.prompt).toBe("Produce the implementation draft from the approved packet.");
+    expect(fixture.taskRequests[0]?.developerInstructions).toContain("Workflow Storage Plan");
+    expect(fixture.taskRequests[0]?.developerInstructions).toContain("Return only one structured JSON worker-output packet");
+    expect(fixture.taskRequests[0]?.contextDocument).toContain("Workflow V2 task packet");
+    expect(fixture.taskRequests[0]?.contextDocument).toContain('"nodeId": "draft"');
+    expect(fixture.taskRequests[0]?.contextDocument).toContain('"upstreamOutputs": []');
+    expect(fixture.taskRequests[0]?.contextDocument).toContain("# Base context");
+    expect(fixture.taskRequests[0]?.contextDocument).toContain('"maxCompletionTokens": 321');
     expect(fixture.taskRequests[0]?.prompt).not.toContain("workflow judge");
     expect(fixture.taskRequests[0]?.prompt).not.toContain("main workflow agent");
 

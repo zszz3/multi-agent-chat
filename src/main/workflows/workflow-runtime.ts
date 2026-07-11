@@ -156,7 +156,10 @@ interface WorkflowRuntimeDependencies {
     modelId: string;
     workDir: string;
     initialPrompt: string;
+    developerInstructions?: string;
+    contextDocument?: string;
   }) => Promise<WorkflowNodeConversation>;
+  markWorkflowNodeConversationWaiting: (conversationId: string, question: string) => WorkflowNodeConversation;
   stopWorkflowNodeConversations: (workflowId: string, runId: string) => Promise<void>;
   createWorkflowV2Store?: () => WorkflowV2StorePort | undefined;
 }
@@ -333,13 +336,19 @@ function isWorkflowV2RoleDefaults(value: unknown): value is WorkflowV2Plan["role
   });
 }
 
+export interface WorkflowV2LlmNodeMessages {
+  prompt: string;
+  developerInstructions: string;
+  contextDocument: string;
+}
+
 export function workflowV2LlmNodePrompt(input: {
   node: WorkflowV2LLMNode;
   taskPacket: WorkflowV2TaskPacket;
   upstreamOutputs: readonly WorkflowV2ResultPacket[];
   baseWorkflowContextDocument: string;
   storagePlanDocument: string;
-}): string {
+}): WorkflowV2LlmNodeMessages {
   if (!isValidWorkflowV2ContextBudget(input.taskPacket.budget.context)) {
     throw new Error(`Workflow V2 LLM node ${input.node.id} received an invalid context budget.`);
   }
@@ -356,29 +365,38 @@ export function workflowV2LlmNodePrompt(input: {
   ].join("\n");
   const contextCharacterBudget = input.taskPacket.budget.context.maxContextTokens * 4;
   if (taskPacketDocument.length > contextCharacterBudget) {
-    throw new Error(
-      `Workflow V2 LLM node ${input.node.id} fixed context exceeds maxContextTokens approximate budget; this is not an exact tokenizer count.`,
-    );
+    throw new Error(`Workflow V2 LLM node ${input.node.id} fixed context exceeds maxContextTokens approximate budget; this is not an exact tokenizer count.`);
   }
   const dynamicCharacterBudget = contextCharacterBudget - taskPacketDocument.length;
-  const truncatedDynamicContext = dynamicContextSource.slice(0, dynamicCharacterBudget);
-  const buildPrompt = (dynamicContext: string): string => [
-    "Execute exactly one node from a frozen Workflow V2 plan.",
-    "Do not infer graph navigation, run a judge, request a retry, or perform final review.",
-    "",
-    "Workflow V2 task packet:",
+  const maxPromptTokens = input.taskPacket.budget.cost?.maxPromptTokens;
+  const fixedDeveloperCharacterEstimate = input.storagePlanDocument.length + 1_200;
+  const fullCharacterEstimate = input.node.prompt.length + taskPacketDocument.length + dynamicContextSource.length + fixedDeveloperCharacterEstimate;
+  if (maxPromptTokens !== undefined && fullCharacterEstimate > maxPromptTokens * 4) {
+    throw new Error(`Workflow V2 LLM node ${input.node.id} prompt budget exceeded maxPromptTokens; this is an approximate character check, not an exact tokenizer count.`);
+  }
+  const dynamicContext = selectWorkflowV2DynamicContext({
+    nodeId: input.node.id,
+    source: dynamicContextSource,
+    characterBudget: dynamicCharacterBudget,
+    fallbackPolicy: input.taskPacket.budget.context.summaryFallbackPolicy,
+  });
+  const contextDocument = [
+    "# Workflow V2 task packet",
     taskPacketDocument,
     "",
-    "Node prompt:",
-    input.node.prompt,
-    "",
-    `Dynamic execution context (approximate character budget: ${dynamicCharacterBudget}; this is not an exact tokenizer count):`,
+    `# Dynamic execution context (approximate character budget: ${dynamicCharacterBudget})`,
     dynamicContext || "[dynamic context omitted by budget]",
+  ].join("\n");
+  const developerInstructions = [
+    "Execute exactly one node from a frozen Workflow V2 plan.",
+    "Do not infer graph navigation, run a judge, request a retry, or perform final review.",
+    "Do not treat developer instructions or runtime context as user-provided facts.",
+    "If required user information is missing, request user input instead of guessing.",
+    "A one-shot node that requests user input will be upgraded to an interactive node.",
     "",
-    "Workflow storage plan:",
     input.storagePlanDocument,
     "",
-    "Return only one structured JSON worker-output packet with this shape:",
+    "Return only one structured JSON worker-output packet when the node can complete:",
     JSON.stringify({
       nodeId: input.node.id,
       summary: "concise summary",
@@ -389,26 +407,10 @@ export function workflowV2LlmNodePrompt(input: {
       proposals: [],
     }, null, 2),
     "Worker proposals are data for the leader only; they must not mutate downstream behavior.",
-    // RunTask currently has no completion-token option. maxCompletionTokens remains visible in the task packet,
-    // but this runtime does not claim to enforce it.
   ].join("\n");
-  // Preserve the existing full-prompt fail-fast before applying a fallback policy that may itself reject overflow.
-  const promptForBudgetCheck = buildPrompt(truncatedDynamicContext);
-  const maxPromptTokens = input.taskPacket.budget.cost?.maxPromptTokens;
-  if (maxPromptTokens !== undefined && promptForBudgetCheck.length > maxPromptTokens * 4) {
-    throw new Error(
-      `Workflow V2 LLM node ${input.node.id} prompt budget exceeded maxPromptTokens; this is an approximate character check, not an exact tokenizer count.`,
-    );
-  }
-  const dynamicContext = selectWorkflowV2DynamicContext({
-    nodeId: input.node.id,
-    source: dynamicContextSource,
-    characterBudget: dynamicCharacterBudget,
-    fallbackPolicy: input.taskPacket.budget.context.summaryFallbackPolicy,
-  });
-  return dynamicContext === truncatedDynamicContext ? promptForBudgetCheck : buildPrompt(dynamicContext);
-}
 
+  return { prompt: input.node.prompt, developerInstructions, contextDocument };
+}
 function selectWorkflowV2DynamicContext(input: {
   nodeId: string;
   source: string;
@@ -559,6 +561,13 @@ interface WorkflowV2RecoveryOverride {
   modelProfile?: WorkflowV2ModelProfile;
   forceIndependentReview: boolean;
   instruction: string;
+  userInput?: string;
+}
+
+class WorkflowV2OneShotInputRequestSignal extends Error {
+  constructor(readonly task: TaskRun, readonly question: string) {
+    super("One-shot workflow node requested user input.");
+  }
 }
 
 export class WorkflowRuntime {
@@ -1214,6 +1223,7 @@ export class WorkflowRuntime {
       recoveryOverrides.set(input.nodeId, {
         forceIndependentReview: false,
         instruction: resolutionReason,
+        ...(input.reason?.trim() ? { userInput: input.reason.trim() } : {}),
       });
     } else if (input.action === "escalate") {
       recoveryOverrides.set(input.nodeId, {
@@ -1582,7 +1592,12 @@ export class WorkflowRuntime {
       });
     };
 
-    const waitForTask = async (taskId: string, nodeId: string, timeoutMs = WORKFLOW_TASK_TIMEOUT_MS): Promise<TaskRun> => {
+    const waitForTask = async (
+      taskId: string,
+      nodeId: string,
+      timeoutMs = WORKFLOW_TASK_TIMEOUT_MS,
+      detectUserInputRequest = false,
+    ): Promise<TaskRun> => {
       const startedAt = Date.now();
       while (true) {
         assertWallClockBudget(nodeId);
@@ -1592,6 +1607,12 @@ export class WorkflowRuntime {
         const task = latestSnapshot.tasks.find((item) => item.id === taskId);
         if (!task) throw new Error(`Workflow V2 task ${taskId} was deleted before completion.`);
         await throwIfWorkflowV2ManuallyPaused(nodeId, task);
+        if (detectUserInputRequest) {
+          const requestEvent = task.messages
+            .flatMap((message) => message.events ?? [])
+            .find((event) => event.type === "user_input_request" && event.requestState !== "resolved");
+          if (requestEvent?.content.trim()) throw new WorkflowV2OneShotInputRequestSignal(task, requestEvent.content.trim());
+        }
         if (task.status === "completed") return task;
         if (task.status === "failed" || task.status === "stopped") {
           throw new Error(task.lastError || `Workflow V2 task ${task.title} ${task.status}.`);
@@ -1657,7 +1678,7 @@ export class WorkflowRuntime {
     }): Promise<TaskRun> => {
       const policy = input.node.executionLease;
       if (!policy) {
-        return waitForTask(input.initialTask.id, input.node.id);
+        return waitForTask(input.initialTask.id, input.node.id, WORKFLOW_TASK_TIMEOUT_MS, true);
       }
 
       let currentTask = input.initialTask;
@@ -1689,6 +1710,10 @@ export class WorkflowRuntime {
         if (!task) throw new Error(`Workflow V2 task ${currentTask.id} was deleted before completion.`);
         currentTask = task;
         await throwIfWorkflowV2ManuallyPaused(input.node.id, task);
+        const requestEvent = task.messages
+          .flatMap((message) => message.events ?? [])
+          .find((event) => event.type === "user_input_request" && event.requestState !== "resolved");
+        if (requestEvent?.content.trim()) throw new WorkflowV2OneShotInputRequestSignal(task, requestEvent.content.trim());
         if (task.status === "completed") return task;
         if (task.status === "failed" || task.status === "stopped") {
           throw new Error(task.lastError || `Workflow V2 task ${task.title} ${task.status}.`);
@@ -1934,7 +1959,7 @@ export class WorkflowRuntime {
       const effectiveTaskPacket = recoveryOverride?.modelProfile
         ? { ...request.taskPacket, modelProfile: recoveryOverride.modelProfile }
         : request.taskPacket;
-      const prompt = workflowV2LlmNodePrompt({
+      const messages = workflowV2LlmNodePrompt({
         node: request.node,
         taskPacket: effectiveTaskPacket,
         upstreamOutputs: request.upstreamOutputs,
@@ -1952,26 +1977,15 @@ export class WorkflowRuntime {
       const recoveryConversation = consumedRecoveryNodeIds.has(request.node.id)
         ? undefined
         : input.resumeConversations?.get(request.node.id);
-      const effectivePrompt = [
-        prompt,
-        ...(recoveryCheckpoint
-          ? [
-              "",
-              "# Recovery checkpoint",
-              "Resume the interrupted node attempt from this checkpoint. It is control context, not a completed result:",
-              recoveryCheckpoint,
-            ]
-          : []),
-        ...(recoveryOverride
-          ? [
-              "",
-              "# Human intervention resolution",
-              recoveryOverride.instruction,
-              ...(recoveryOverride.modelProfile ? [`Effective model profile: ${recoveryOverride.modelProfile}`] : []),
-              ...(recoveryOverride.forceIndependentReview ? ["This attempt requires independent semantic review."] : []),
-            ]
-          : []),
-      ].join("\n");
+      const effectivePrompt = [messages.prompt, recoveryOverride?.userInput].filter(Boolean).join("\n\n");
+      const effectiveDeveloperInstructions = [
+        messages.developerInstructions,
+        ...(recoveryCheckpoint ? ["A recovery checkpoint is included in runtime context; treat it as control context, not a completed result."] : []),
+        ...(recoveryOverride ? [recoveryOverride.instruction] : []),
+        ...(recoveryOverride?.modelProfile ? [`Effective model profile: ${recoveryOverride.modelProfile}`] : []),
+        ...(recoveryOverride?.forceIndependentReview ? ["This attempt requires independent semantic review."] : []),
+      ].join("\n\n");
+      const effectiveContextDocument = [messages.contextDocument, recoveryCheckpoint ? `# Recovery checkpoint\n${recoveryCheckpoint}` : ""].filter(Boolean).join("\n\n");
       if (request.planNode.executionMode === "interactive") {
         const conversation = await this.deps.startWorkflowNodeConversation({
           workflowId: workflow.workflowId,
@@ -1980,15 +1994,14 @@ export class WorkflowRuntime {
           configuredAgentId,
           modelId,
           workDir: workflowWorkDir,
-          initialPrompt: [
-            effectivePrompt,
-            "",
-            "# Interactive node protocol",
-            "This is a persistent multi-turn conversation. Do not guess missing user information.",
-            "Ask concise questions whenever required information is incomplete.",
+          initialPrompt: effectivePrompt,
+          developerInstructions: [
+            effectiveDeveloperInstructions,
+            "This is a persistent multi-turn conversation. Ask concise questions whenever required information is incomplete.",
             "Do not claim the node is complete until all acceptance criteria are satisfied.",
-            "When the work is complete, return the required structured JSON worker-output packet so the user can explicitly confirm it.",
-          ].join("\n"),
+            "When complete, return the structured worker-output packet for explicit user confirmation.",
+          ].join("\n\n"),
+          contextDocument: effectiveContextDocument,
         });
         throw new WorkflowV2SupervisionSignal({
           resolution: {
@@ -2014,6 +2027,8 @@ export class WorkflowRuntime {
       runtimeAttemptByNodeId.set(request.node.id, attempt);
       const task = await startModelTask(request.node.id, {
         prompt: effectivePrompt,
+        developerInstructions: effectiveDeveloperInstructions,
+        contextDocument: effectiveContextDocument,
         configuredAgentId,
         modelId,
         workDir: workflowWorkDir,
@@ -2050,6 +2065,45 @@ export class WorkflowRuntime {
         });
         return output;
       } catch (error) {
+        if (error instanceof WorkflowV2OneShotInputRequestSignal) {
+          await this.deps.stopTask(error.task.id);
+          const conversation = await this.deps.startWorkflowNodeConversation({
+            workflowId: workflow.workflowId,
+            runId,
+            nodeId: request.node.id,
+            configuredAgentId,
+            modelId,
+            workDir: workflowWorkDir,
+            initialPrompt: effectivePrompt,
+            developerInstructions: [
+              effectiveDeveloperInstructions,
+              "This node was upgraded from one-shot to interactive because the previous agent requested user input.",
+              "Continue as a persistent multi-turn conversation and ask concise follow-up questions until all required information is complete.",
+            ].join("\n\n"),
+            contextDocument: [effectiveContextDocument, `# One-shot input request\n${error.question}`].filter(Boolean).join("\n\n"),
+          });
+          this.deps.markWorkflowNodeConversationWaiting(conversation.conversationId, error.question);
+          archiveTaskId = undefined;
+          throw new WorkflowV2SupervisionSignal({
+            resolution: {
+              action: "pause",
+              question: error.question,
+              reason: "One-shot node requested user input and was upgraded to interactive execution.",
+            },
+            report: {
+              nodeId: request.node.id,
+              attempt,
+              phase: "interactive upgrade",
+              completedItems: [],
+              remainingItems: ["User input"],
+              blockers: [error.question],
+              evidence: [],
+              safeToInterrupt: true,
+              requestedAction: "need_input",
+              reportedAt: Date.now(),
+            },
+          });
+        }
         if (
           error instanceof WorkflowV2SupervisionSignal
           && (error.resolution.action === "pause" || error.resolution.action === "escalate")
@@ -2168,14 +2222,14 @@ export class WorkflowRuntime {
           runContext: truncateWorkflowContext(context.runContext, 6_000),
         }), 12_000);
         const task = await startModelTask(`hook:${context.nodeId}`, {
-          prompt: [
+          prompt: hookPrompt,
+          developerInstructions: [
             "Run one read-only, low-cost Workflow V2 llmHook.",
             "Model profile: fast.",
             "Do not call tools, modify files, navigate the graph, judge node completion, or request workflow control.",
             "Return one JSON value only.",
-            `Hook instruction: ${hookPrompt}`,
-            `Hook context: ${boundedHookContext}`,
           ].join("\n\n"),
+          contextDocument: boundedHookContext,
           configuredAgentId,
           modelId,
           workDir: workflowWorkDir,

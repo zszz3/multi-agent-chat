@@ -490,6 +490,7 @@ export class AgentHub {
       deleteTask: (taskId, options) => this.deleteTask(taskId, options),
       executeWorkflowV2Script: (input) => executeWorkflowV2ScriptWithPolicy(input),
       startWorkflowNodeConversation: (input) => this.workflowNodeConversations.start(input),
+      markWorkflowNodeConversationWaiting: (conversationId, question) => this.workflowNodeConversations.markWaitingForUser(conversationId, question),
       stopWorkflowNodeConversations: (workflowId, runId) => this.workflowNodeConversations.stopRun(workflowId, runId),
       createWorkflowV2Store: () => this.storagePath
         ? new WorkflowV2FileStore(path.dirname(this.storagePath))
@@ -1803,7 +1804,7 @@ export class AgentHub {
       runtime: resolved.runtime,
       channelId: resolved.channel.id,
       workDir: input.workDir,
-      developerInstructions: WORKFLOW_DEVELOPER_INSTRUCTIONS,
+      developerInstructions: [WORKFLOW_DEVELOPER_INSTRUCTIONS, input.developerInstructions, input.contextDocument ? `# Runtime context\n${input.contextDocument}` : undefined].filter(Boolean).join("\n\n"),
       emit: (event) => {
         if (event.type === "runtime_conversation") latestRuntimeConversation = this.runtimeRouter.cloneConversation(event.runtimeConversation);
         input.emit(event);
@@ -2158,6 +2159,8 @@ export class AgentHub {
       input.workDir?.trim() || this.workDir,
     );
     task.continuationPolicy = input.continuationPolicy ?? "fresh";
+    task.developerInstructions = input.developerInstructions?.trim() || undefined;
+    task.contextDocument = input.contextDocument?.trim() || undefined;
     task.runtimeConversation = this.cloneConversationForPolicy(task.continuationPolicy, input.runtimeConversation);
     return task;
   }

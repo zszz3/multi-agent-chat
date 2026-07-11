@@ -21,6 +21,8 @@ export interface CreateWorkflowNodeConversationInput {
   modelId: string;
   workDir: string;
   initialPrompt: string;
+  developerInstructions?: string;
+  contextDocument?: string;
 }
 
 export class WorkflowV2ConversationManager {

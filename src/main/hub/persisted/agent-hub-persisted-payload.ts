@@ -87,6 +87,8 @@ export function buildPersistedPayload(input: {
       id: task.id,
       title: task.title,
       prompt: task.prompt,
+      ...(task.developerInstructions ? { developerInstructions: task.developerInstructions } : {}),
+      ...(task.contextDocument ? { contextDocument: task.contextDocument } : {}),
       configuredAgentId: task.configuredAgentId,
       modelId: task.modelId,
       workDir: task.workDir,

@@ -59,6 +59,8 @@ export interface PersistedTaskRunRecord {
   id: string;
   title: string;
   prompt: string;
+  developerInstructions?: string;
+  contextDocument?: string;
   configuredAgentId: string;
   modelId?: string;
   workDir: string;
