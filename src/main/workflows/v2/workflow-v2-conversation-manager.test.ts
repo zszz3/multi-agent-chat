@@ -8,6 +8,25 @@ function output() {
 }
 
 describe("WorkflowV2ConversationManager", () => {
+  test("publishes the conversation before the initial agent turn finishes", async () => {
+    let release!: () => void;
+    const initialTurn = new Promise<void>((resolve) => { release = resolve; });
+    const manager = new WorkflowV2ConversationManager({
+      now: () => 5,
+      createSession: () => ({
+        sendPrompt: () => initialTurn,
+        interrupt: async () => undefined,
+        close: async () => undefined,
+        runtimeConversation: () => undefined,
+      }),
+    });
+
+    const started = await manager.start({ workflowId: "w", runId: "r", nodeId: "interactive", configuredAgentId: "a", modelId: "m", workDir: "C:/workspace", initialPrompt: "Collect requirements" });
+
+    expect(started).toMatchObject({ status: "active", nodeId: "interactive" });
+    expect(manager.get(started.conversationId)?.messages).toEqual([expect.objectContaining({ role: "user", content: "Collect requirements" })]);
+    release();
+  });
   test("reuses one interactive session across multiple user turns and requires confirmation", async () => {
     let now = 10;
     let createCount = 0;

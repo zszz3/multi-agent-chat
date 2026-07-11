@@ -174,6 +174,8 @@ interface WorkflowPageLegacyProps {
   contextDocument?: string;
   finalReport?: string;
   nodeConversations?: WorkflowController["nodeConversations"];
+  nodeTasks?: WorkflowController["nodeTasks"];
+  workflowV2Plan?: WorkflowController["workflowV2Plan"];
   onObjectiveChange: (value: string) => void;
   onPauseNode?: (nodeId: string) => MaybePromise;
   onStopRun?: () => MaybePromise;
@@ -231,6 +233,8 @@ export function WorkflowPage(props: WorkflowPageProps) {
   const contextDocument = source.contextDocument ?? "";
   const finalReport = source.finalReport ?? "";
   const nodeConversations = source.nodeConversations ?? [];
+  const nodeTasks = source.nodeTasks ?? [];
+  const workflowV2Plan = source.workflowV2Plan;
   const onObjectiveChange = source.onObjectiveChange;
   const onPauseNode = source.onPauseNode;
   const onStopRun = source.onStopRun;
@@ -293,7 +297,7 @@ export function WorkflowPage(props: WorkflowPageProps) {
   const [interventionPendingNodeId, setInterventionPendingNodeId] = useState<string | undefined>(undefined);
   const [outputFiles, setOutputFiles] = useState<Array<{ name: string; path: string }>>([]);
   const [editingWorkflowNodeId, setEditingWorkflowNodeId] = useState<string | undefined>(undefined);
-  const [openNodeConversationId, setOpenNodeConversationId] = useState<string | undefined>(undefined);
+  const [openNodeAgentNodeId, setOpenNodeAgentNodeId] = useState<string | undefined>(undefined);
   const [filePreview, setFilePreview] = useState<LocalFilePreview | undefined>(undefined);
   const [filePreviewError, setFilePreviewError] = useState<string | undefined>(undefined);
   const [filePreviewLoadingPath, setFilePreviewLoadingPath] = useState<string | undefined>(undefined);
@@ -302,11 +306,18 @@ export function WorkflowPage(props: WorkflowPageProps) {
   const grillTranscriptRef = useRef<HTMLElement>(null);
   const grillStickRef = useRef(true);
   const editingWorkflowNode = graph.nodes.find((node) => node.id === editingWorkflowNodeId);
-  const openNodeConversation = nodeConversations.find((conversation) => conversation.conversationId === openNodeConversationId);
-  const openNodeConversationGraphNode = graph.nodes.find((node) => node.id === openNodeConversation?.nodeId);
+  const openNodeConversation = nodeConversations.find((conversation) => conversation.nodeId === openNodeAgentNodeId);
+  const openNodeConversationGraphNode = graph.nodes.find((node) => node.id === openNodeAgentNodeId);
+  const openNodeTaskId = openNodeAgentNodeId ? runProgressByNodeId.get(openNodeAgentNodeId)?.taskId : undefined;
+  const openNodeTask = nodeTasks.find((task) => task.id === openNodeTaskId);
   const nodePositionProps = topologyLocked
     ? {}
     : { onNodePositionChange: (nodeId: string, position: { x: number; y: number }) => onUpdateNode(nodeId, { position }) };
+
+  useEffect(() => {
+    const waitingConversation = nodeConversations.find((conversation) => conversation.status === "waiting_for_user" || conversation.status === "active");
+    if (waitingConversation && !openNodeAgentNodeId) setOpenNodeAgentNodeId(waitingConversation.nodeId);
+  }, [nodeConversations, openNodeAgentNodeId]);
 
   useEffect(() => {
     const transcript = grillTranscriptRef.current;
@@ -398,9 +409,9 @@ export function WorkflowPage(props: WorkflowPageProps) {
     const openNodeEditor = (event: MouseEvent) => {
       event.preventDefault();
       event.stopPropagation();
-      const conversation = nodeConversations.find((candidate) => candidate.nodeId === node.id);
-      if (conversation) {
-        setOpenNodeConversationId(conversation.conversationId);
+      const executionMode = workflowV2Plan?.nodes.find((candidate) => candidate.nodeId === node.id)?.executionMode;
+      if (node.kind === "agent" && (Boolean(activeRunId) || executionMode === "interactive" || nodeConversations.some((candidate) => candidate.nodeId === node.id))) {
+        setOpenNodeAgentNodeId(node.id);
         return;
       }
       setEditingWorkflowNodeId(node.id);
@@ -887,14 +898,15 @@ export function WorkflowPage(props: WorkflowPageProps) {
         </section>
       ) : null}
 
-      {openNodeConversation && openNodeConversationGraphNode ? <WorkflowNodeAgentWindow
-        conversation={openNodeConversation}
+      {openNodeConversationGraphNode ? <WorkflowNodeAgentWindow
+        {...(openNodeConversation ? { conversation: openNodeConversation } : {})}
+        {...(openNodeTask ? { task: openNodeTask } : {})}
         nodeTitle={openNodeConversationGraphNode.title}
-        onClose={() => setOpenNodeConversationId(undefined)}
-        {...(onSendNodeMessage ? { onSend: (message: string) => onSendNodeMessage(openNodeConversation.conversationId, message) } : {})}
-        {...(onCompleteNodeConversation ? { onConfirm: () => onCompleteNodeConversation(openNodeConversation.conversationId) } : {})}
-        {...(onRejectNodeCompletion ? { onReject: (instruction: string) => onRejectNodeCompletion(openNodeConversation.conversationId, instruction) } : {})}
-        {...(onInterruptNodeConversation ? { onInterrupt: () => onInterruptNodeConversation(openNodeConversation.conversationId) } : {})}
+        onClose={() => setOpenNodeAgentNodeId(undefined)}
+        {...(onSendNodeMessage && openNodeConversation ? { onSend: (message: string) => onSendNodeMessage(openNodeConversation.conversationId, message) } : {})}
+        {...(onCompleteNodeConversation && openNodeConversation ? { onConfirm: () => onCompleteNodeConversation(openNodeConversation.conversationId) } : {})}
+        {...(onRejectNodeCompletion && openNodeConversation ? { onReject: (instruction: string) => onRejectNodeCompletion(openNodeConversation.conversationId, instruction) } : {})}
+        {...(onInterruptNodeConversation && openNodeConversation ? { onInterrupt: () => onInterruptNodeConversation(openNodeConversation.conversationId) } : {})}
       /> : null}
 
       <section className="composer workflow-composer">

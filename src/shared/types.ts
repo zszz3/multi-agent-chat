@@ -953,6 +953,10 @@ export interface StartWorkflowRunRequest {
   contextDocument?: string;
 }
 
+export interface ListWorkflowOutputsRequest {
+  workflowId: string;
+  runId: string;
+}
 export interface RunWorkflowGraphRequest {
   workflowId: string;
   contextDocument?: string;

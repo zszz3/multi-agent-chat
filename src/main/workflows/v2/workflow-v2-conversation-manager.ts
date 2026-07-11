@@ -59,8 +59,16 @@ export class WorkflowV2ConversationManager {
     this.appendMessage(conversation, "user", input.initialPrompt, now);
     conversation.status = "active";
     this.changed(conversation);
-    await session.sendPrompt(input.initialPrompt);
-    this.syncRuntimeConversation(conversationId);
+    void session.sendPrompt(input.initialPrompt)
+      .then(() => this.syncRuntimeConversation(conversationId))
+      .catch((error) => {
+        const mutable = this.conversations.get(conversationId);
+        if (!mutable || mutable.status === "closed") return;
+        const message = error instanceof Error ? error.message : String(error);
+        this.appendMessage(mutable, "system", message, this.deps.now(), "error");
+        mutable.status = "failed";
+        this.changed(mutable);
+      });
     return this.getRequired(conversationId);
   }
 

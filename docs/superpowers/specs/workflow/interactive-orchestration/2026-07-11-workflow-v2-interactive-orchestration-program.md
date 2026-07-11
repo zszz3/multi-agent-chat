@@ -73,3 +73,7 @@ Durable backend events are the source of truth. UI timers may affect presentatio
 ## Program Definition Of Done
 
 All six phases are implemented in order; migration and recovery are tested; node conversations survive UI close and app restart where supported; script safety fails closed; no dependency bypass remains; no fixed-interval agent-status polling remains; and the leader surface provides observable decisions beyond the main branch behavior.
+
+## Run Output Isolation Correction
+
+New workflow runs use exactly one user-facing output directory: `outputs/<workflowId>/<runId>/`. All node documents for that run are written directly into this directory. Output discovery and registered-artifact projection are scoped to the current `runId`; they never scan or merge the entire `outputs/` tree. Existing historical output directories are not migrated.

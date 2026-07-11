@@ -4,6 +4,7 @@ import type {
   ConfiguredAgent,
   LocalFilePreview,
   RegisteredArtifact,
+  TaskRun,
   WorkflowDraftState,
   WorkflowGraph,
   WorkflowGraphNode,
@@ -11,6 +12,7 @@ import type {
   WorkflowRunProgressItem,
   WorkflowStatus,
   WorkflowV2InterventionAction,
+  WorkflowV2Plan,
 } from "../../../../shared/types";
 import type { WorkflowNodeConversation } from "../../../../shared/workflow-v2/conversation";
 import type { Language } from "../../app/language";
@@ -69,6 +71,8 @@ export interface WorkflowController {
   contextDocument?: string;
   finalReport?: string;
   nodeConversations?: WorkflowNodeConversation[];
+  nodeTasks?: TaskRun[];
+  workflowV2Plan?: WorkflowV2Plan;
   onObjectiveChange: (value: string) => void;
   onPauseNode?: (nodeId: string) => MaybePromise;
   onStopRun?: () => MaybePromise;

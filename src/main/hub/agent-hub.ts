@@ -44,6 +44,7 @@ import type {
   ResolveWorkflowV2InterventionRequest,
   ProviderBalanceResult,
   RunWorkflowGraphRequest,
+  ListWorkflowOutputsRequest,
   RunAgentTeamRequest,
   RuntimeContinuationPolicy,
   RuntimeConversation,
@@ -474,7 +475,7 @@ export class AgentHub {
         } catch {
           this.workflowNodeConversations.markWaitingForUser(
             conversation.conversationId,
-            "????????????????????????????",
+            content.trim() || "Please provide the remaining information this node needs.",
           );
         }
       },
@@ -1585,8 +1586,8 @@ export class AgentHub {
     return { ok: true, artifact };
   }
 
-  async listWorkflowOutputs(workflowId: string): Promise<Array<{ name: string; path: string }>> {
-    return listWorkflowOutputsValue(this.workflowStore.workflows.get(workflowId), this.workDir);
+  async listWorkflowOutputs(request: ListWorkflowOutputsRequest): Promise<Array<{ name: string; path: string }>> {
+    return listWorkflowOutputsValue(this.workflowStore.workflows.get(request.workflowId), this.workDir, request.workflowId, request.runId);
   }
 
   workflowWorkDir(workflowId: string): string | undefined {

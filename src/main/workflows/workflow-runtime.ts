@@ -1980,7 +1980,15 @@ export class WorkflowRuntime {
           configuredAgentId,
           modelId,
           workDir: workflowWorkDir,
-          initialPrompt: effectivePrompt,
+          initialPrompt: [
+            effectivePrompt,
+            "",
+            "# Interactive node protocol",
+            "This is a persistent multi-turn conversation. Do not guess missing user information.",
+            "Ask concise questions whenever required information is incomplete.",
+            "Do not claim the node is complete until all acceptance criteria are satisfied.",
+            "When the work is complete, return the required structured JSON worker-output packet so the user can explicitly confirm it.",
+          ].join("\n"),
         });
         throw new WorkflowV2SupervisionSignal({
           resolution: {

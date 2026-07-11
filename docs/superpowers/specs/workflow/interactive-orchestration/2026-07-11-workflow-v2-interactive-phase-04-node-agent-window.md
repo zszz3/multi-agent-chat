@@ -2,7 +2,7 @@
 
 ## Status
 
-Implemented and verified on 2026-07-11.
+Re-audited and corrected on 2026-07-11. The earlier completion claim was inaccurate because node clicks could still fall back to the legacy editor while the interactive session was starting.
 
 ## Objective
 
@@ -65,3 +65,12 @@ Stop if the backend cannot provide a durable snapshot plus ordered event stream.
 ## Acceptance Criteria
 
 Users can inspect a node as a real sub-agent conversation, send information into the same session, and explicitly control completion without losing graph context.
+
+## Corrective Implementation Notes
+
+- Interactive conversation creation is non-blocking: the durable conversation is emitted before the initial runtime turn finishes.
+- Clicking a running agent node always opens the node-agent window. It never falls back to the legacy node editor.
+- Interactive nodes show a connecting state until the durable conversation arrives, then enable the independent composer.
+- One-shot nodes use the same window to show their real task messages and runtime identity in read-only mode.
+- The legacy editor remains only for pre-run graph configuration.
+- Interactive prompts explicitly support multi-turn information gathering and descendants remain blocked until the user confirms completion.

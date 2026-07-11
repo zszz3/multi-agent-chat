@@ -44,6 +44,7 @@ import type {
   ResolveWorkflowV2InterventionRequest,
   RunAgentTeamRequest,
   RunWorkflowGraphRequest,
+  ListWorkflowOutputsRequest,
   RunTaskRequest,
   SendWorkflowDraftReplyRequest,
   StartWorkflowNodeRequest,
@@ -360,7 +361,7 @@ function registerIpcHandlers(): void {
     const result = mainWindow ? await dialog.showOpenDialog(mainWindow, options) : await dialog.showOpenDialog(options);
     return result.canceled ? undefined : result.filePaths[0];
   });
-  ipcMain.handle("workflow:outputs:list", (_event, workflowId: string) => hub.listWorkflowOutputs(workflowId));
+  ipcMain.handle("workflow:outputs:list", (_event, request: ListWorkflowOutputsRequest) => hub.listWorkflowOutputs(request));
   ipcMain.handle("file:read-text", async (_event, filePath: string) =>
     createLocalTextFilePreviewUnderRoots(filePath, hub.allowedFileRoots(), app.getPath("home")),
   );

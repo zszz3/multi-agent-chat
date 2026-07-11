@@ -122,18 +122,16 @@ export function truncateWorkflowContext(content: string, limit = 2400): string {
 }
 
 /**
- * Storage plan relative to the workflow's own working directory. Each workflow
- * runs in a dedicated dir, so memory/outputs live flat inside it rather than
- * being namespaced by workflow id. `workflowDir` (when the workflow has a
- * dedicated dir) makes these relative paths; a legacy nested layout is used only
- * as a fallback for workflows without their own dir.
+ * Storage plan relative to the workflow working directory. New runs always use
+ * one isolated output directory per workflow run: outputs/<workflowId>/<runId>.
+ * The legacy fallback remains only for workflows without a dedicated workDir.
  */
 export function workflowStoragePlanFor(workflowId: string, runId: string, hasDedicatedDir = true): WorkflowStoragePlan {
+  const safeWorkflowId = workflowId.replace(/[^a-zA-Z0-9_-]/g, "_") || "workflow";
   const safeRunId = runId.replace(/[^a-zA-Z0-9_-]/g, "_") || "run";
   if (hasDedicatedDir) {
-    return { memoryPath: "memory.md", outputDir: `outputs/${safeRunId}` };
+    return { memoryPath: "memory.md", outputDir: `outputs/${safeWorkflowId}/${safeRunId}` };
   }
-  const safeWorkflowId = workflowId.replace(/[^a-zA-Z0-9_-]/g, "_") || "workflow";
   const baseDir = `${WORKFLOW_STORAGE_ROOT}/${safeWorkflowId}`;
   return {
     memoryPath: `${baseDir}/memory.md`,
@@ -155,7 +153,8 @@ export function workflowStoragePlanDocument(plan: WorkflowStoragePlan): string {
     `- Output document directory: ${plan.outputDir}`,
     "",
     "All agent nodes should treat the Workflow Context in the app as the source of shared memory.",
-    "If an agent creates user-facing documents, write them under the output document directory and report the exact relative file path.",
+    "If an agent creates user-facing documents, write every file directly under the output document directory and report the exact relative file path.",
+    "Do not create per-node output directories or write into another workflow run directory.",
   ].join("\n");
 }
 

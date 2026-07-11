@@ -6,6 +6,7 @@ import type {
   PauseWorkflowNodeRequest,
   ResolveWorkflowV2InterventionRequest,
   RunWorkflowGraphRequest,
+  ListWorkflowOutputsRequest,
   SendWorkflowDraftReplyRequest,
   StartWorkflowNodeRequest,
   StopWorkflowRunRequest,
@@ -36,7 +37,7 @@ export interface WorkflowService {
   completeNodeConversation: (request: CompleteWorkflowNodeConversationRequest) => Promise<WorkflowOperationResult>;
   rejectNodeCompletion: (request: RejectWorkflowNodeCompletionRequest) => Promise<AppSnapshot>;
   interruptNodeConversation: (request: InterruptWorkflowNodeConversationRequest) => Promise<AppSnapshot>;
-  listOutputs: (workflowId: string) => Promise<Array<{ name: string; path: string }>>;
+  listOutputs: (request: ListWorkflowOutputsRequest) => Promise<Array<{ name: string; path: string }>>;
 }
 
 export function workflowService(): WorkflowService {
@@ -60,6 +61,6 @@ export function workflowService(): WorkflowService {
     completeNodeConversation: (request) => api.completeWorkflowNodeConversation(request),
     rejectNodeCompletion: (request) => api.rejectWorkflowNodeCompletion(request),
     interruptNodeConversation: (request) => api.interruptWorkflowNodeConversation(request),
-    listOutputs: (workflowId) => api.listWorkflowOutputs(workflowId),
+    listOutputs: (request) => api.listWorkflowOutputs(request),
   };
 }

@@ -72,3 +72,7 @@ Stop implementation if the runtime abstraction cannot expose stable conversation
 ## Acceptance Criteria
 
 An interactive node behaves like a real underlying Agent conversation and remains topology-safe until explicit completion confirmation.
+
+## Corrective Implementation Notes
+
+`start()` publishes the durable conversation and returns immediately after session creation. The initial runtime prompt runs asynchronously; its failure is recorded on the same conversation instead of blocking workflow state projection or failing before the user can see the node surface.

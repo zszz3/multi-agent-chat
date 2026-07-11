@@ -7,7 +7,7 @@ describe("workflowStoragePlanFor", () => {
   test("isolates new workflow outputs by sanitized run id", () => {
     expect(workflowStoragePlanFor("workflow-1", "run:2026/07/11")).toEqual({
       memoryPath: "memory.md",
-      outputDir: "outputs/run_2026_07_11",
+      outputDir: "outputs/workflow-1/run_2026_07_11",
     });
   });
 
