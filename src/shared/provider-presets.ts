@@ -585,6 +585,7 @@ export const AGENT_PROVIDER_PRESETS: AgentProviderPreset[] = [
     label: "Default",
     runtimeAgentId: "codex",
     category: "local",
+    usesApiKey: true,
     models: [{ id: DEFAULT_MODEL_ID, label: "Default" }],
   },
   {
@@ -593,6 +594,7 @@ export const AGENT_PROVIDER_PRESETS: AgentProviderPreset[] = [
     runtimeAgentId: "claude",
     category: "local",
     apiFormat: "anthropic",
+    usesApiKey: true,
     models: [{ id: DEFAULT_MODEL_ID, label: "Default" }],
   },
   {

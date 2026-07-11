@@ -1408,7 +1408,9 @@ describe("AgentPage", () => {
       />,
     );
 
-    expect(html).not.toContain('aria-label="Provider API key"');
+    expect(html).toContain('aria-label="Provider API key" type="password"');
+    expect(html).toContain('value="sk-default"');
+    expect(html).toContain('aria-label="Show provider API key"');
     expect(html).not.toContain("value=\"stale-key\"");
     expect(html).toContain("value=\"Bridge\"");
     expect(html).toContain("value=\"bridge\"");

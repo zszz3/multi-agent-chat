@@ -523,6 +523,7 @@ model_provider = "bridge"
 model = "gpt-5.5"
 model_reasoning_effort = "high"
 model_catalog_json = "{\\"models\\":[]}"
+experimental_features = ["provider-routing", "plugins"]
 
 [model_providers.bridge]
 name = "Bridge"

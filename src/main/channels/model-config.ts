@@ -150,23 +150,27 @@ function readKnownToml(raw: string): Record<string, Record<string, unknown>> {
     const line = stripInlineComment(rawLine);
     if (!line) continue;
 
-    if (line.startsWith("[") || line.endsWith("]")) {
+    if (line.startsWith("[")) {
       const sectionMatch = line.match(/^\[([^\]]+)\]$/);
-      if (!sectionMatch?.[1]) throw new Error(`Invalid TOML section: ${line}`);
+      if (!sectionMatch?.[1]) continue;
       activeSection = sectionMatch[1].trim();
       sections[activeSection] ??= {};
       continue;
     }
 
     const separator = line.indexOf("=");
-    if (separator < 0) throw new Error(`Invalid TOML line: ${line}`);
+    if (separator < 0) continue;
     const key = unquoteTomlKey(line.slice(0, separator));
-    if (!key) throw new Error(`Invalid TOML key: ${line}`);
+    if (!key) continue;
     const value = line.slice(separator + 1).trim();
-    const inlineTable = parseTomlInlineTable(value);
-    const section = sections[activeSection] ?? {};
-    section[key] = inlineTable ?? parseTomlScalar(value);
-    sections[activeSection] = section;
+    try {
+      const inlineTable = parseTomlInlineTable(value);
+      const section = sections[activeSection] ?? {};
+      section[key] = inlineTable ?? parseTomlScalar(value);
+      sections[activeSection] = section;
+    } catch {
+      // Unsupported TOML values must not hide otherwise valid provider fields.
+    }
   }
 
   return sections;
