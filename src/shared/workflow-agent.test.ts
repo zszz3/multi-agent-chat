@@ -23,6 +23,10 @@ describe("workflow agent prompt", () => {
     expect(prompt).toContain("Workflow storage plan");
     expect(prompt).toContain("shared memory");
     expect(prompt).toContain("output documents");
+    expect(prompt).toContain("Use one-shot only when every required input is already available");
+    expect(prompt).toContain("Use interactive whenever the node may need clarification");
+    expect(prompt).toContain("even if the expected question is simple");
+    expect(prompt).toContain("only a fallback for misclassification");
   });
 
   test("provides a fillable workflow graph code template", () => {
