@@ -13,8 +13,8 @@ import type {
   WorkflowGrillMessage,
   WorkflowRunProgressItem,
 } from "../../../shared/types";
-import { DEFAULT_MODEL_ID, defaultChannelForAgent } from "../../../shared/models";
-import { runtimeLabel } from "../../../shared/runtime-catalog";
+import { DEFAULT_MODEL_ID, FALLBACK_MODEL_OPTIONS, defaultChannelForAgent } from "../../../shared/models";
+import { runtimeDefinition, runtimeLabel } from "../../../shared/runtime-catalog";
 import type { AgentProviderPreset } from "../../../shared/provider-presets";
 import { truncateWorkflowContext } from "../pages/workflow/workflow-utils";
 
@@ -78,12 +78,19 @@ export function uniqueId(base: string, existingIds: string[]): string {
 }
 
 export function createChannel(agentId: AgentId, existingIds: string[]): AgentChannel {
-  const id = uniqueId(`${agentId}-config`, existingIds);
+  const definition = runtimeDefinition(agentId);
+  const useDefaultIdentity = !existingIds.includes(definition.defaultChannel.id);
+  const id = useDefaultIdentity
+    ? definition.defaultChannel.id
+    : uniqueId(`${agentId}-config`, existingIds);
   return {
+    ...(useDefaultIdentity ? definition.defaultChannel : {}),
     id,
     agentId,
-    label: `New ${runtimeLabel(agentId)} Config`,
-    models: [{ id: DEFAULT_MODEL_ID, label: "Default" }],
+    label: useDefaultIdentity ? definition.defaultChannel.label : `New ${runtimeLabel(agentId)} Config`,
+    models: FALLBACK_MODEL_OPTIONS[agentId].some((model) => model.id === DEFAULT_MODEL_ID)
+      ? FALLBACK_MODEL_OPTIONS[agentId]
+      : [{ id: DEFAULT_MODEL_ID, label: "Default" }, ...FALLBACK_MODEL_OPTIONS[agentId]],
   };
 }
 

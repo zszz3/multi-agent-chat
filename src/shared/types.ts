@@ -25,6 +25,13 @@ export interface ModelCatalogRefreshResult {
   snapshot: AppSnapshot;
 }
 
+export interface RuntimeLocalConfigImportResult {
+  runtimeId: AgentId;
+  channelId: string;
+  source: string;
+  snapshot: AppSnapshot;
+}
+
 export interface AgentPluginConfig {
   id: string;
   enabled: boolean;

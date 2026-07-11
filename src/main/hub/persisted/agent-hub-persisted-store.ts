@@ -10,7 +10,7 @@ import type {
 } from "../../../shared/types";
 import type { SqliteAppStore } from "./sqlite-store";
 import { restoreScheduledWorkflowStoreCollections, restoreWorkflowStoreCollections } from "../workflow/agent-hub-workflow-restore";
-import { asRecord, type PersistedAppStateV4 } from "./agent-hub-persistence";
+import { asRecord, type PersistedAppStateV5 } from "./agent-hub-persistence";
 
 export async function loadPersistedPayload(input: {
   storagePath: string;
@@ -58,23 +58,6 @@ export async function loadPersistedPayload(input: {
       shouldBootstrapPersist: false,
     };
   }
-}
-
-export function isPersistedAppStateV4(raw: unknown): raw is PersistedAppStateV4 {
-  const record = asRecord(raw);
-  return Boolean(
-    record
-      && record.version === 4
-      && typeof record.workDir === "string"
-      && Array.isArray(record.sessions)
-      && Array.isArray(record.messages)
-      && Array.isArray(record.events)
-      && Array.isArray(record.tasks)
-      && Array.isArray(record.taskMessages)
-      && Array.isArray(record.taskEvents)
-      && Array.isArray(record.teams)
-      && Array.isArray(record.teamRuns),
-  );
 }
 
 export function restoreWorkflowStoreState(input: {
@@ -135,7 +118,7 @@ export function restoreScheduledWorkflowStoreState(input: {
 export async function writePersistedPayload(input: {
   storagePath: string;
   sqliteStore: SqliteAppStore | undefined;
-  payload: PersistedAppStateV4;
+  payload: PersistedAppStateV5;
 }): Promise<void> {
   if (input.sqliteStore) {
     await input.sqliteStore.save(input.payload);

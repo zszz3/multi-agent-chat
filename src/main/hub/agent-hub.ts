@@ -41,6 +41,7 @@ import type {
   RuntimeConversation,
   RuntimeBindingSnapshot,
   RuntimeExecutionMode,
+  RuntimeLocalConfigImportResult,
   RunTaskRequest,
   SendWorkflowDraftReplyRequest,
   StartWorkflowNodeRequest,
@@ -103,6 +104,7 @@ import {
   normalizeChannels,
   saveModelChannels as writeModelChannels,
 } from "../channels/model-config";
+import { loadRuntimeLocalConfig } from "../channels/runtime-local-config";
 import { SqliteAppStore } from "./persisted/sqlite-store";
 import { WorkflowRuntime, type WorkflowRunStateUpdate } from "../workflows/workflow-runtime";
 import { WorkflowStore } from "../workflow-store";
@@ -136,7 +138,7 @@ import {
   isWorkflowGraphNodeKind,
   isWorkflowRunNodeStatus,
 } from "./persisted/agent-hub-persistence";
-import type { PersistedAppStateV4 } from "./persisted/agent-hub-persistence";
+import type { PersistedAppStateV5 } from "./persisted/agent-hub-persistence";
 import { runAgentExecution as runAgentExecutionValue } from "./runtime/run/agent-hub-runner";
 import { runRuntimeChannelTest as runRuntimeChannelTestValue } from "./runtime/testing/agent-hub-runtime-test";
 import { RUNTIME_CHANNEL_TEST_PROMPT } from "./runtime/executor/runtime-test-constants";
@@ -200,12 +202,12 @@ import {
 } from "./persisted/agent-hub-state-restore";
 import { buildPersistedPayload } from "./persisted/agent-hub-persisted-payload";
 import {
-  isPersistedAppStateV4 as isPersistedAppStateV4Value,
   loadPersistedPayload as loadPersistedPayloadValue,
   restoreScheduledWorkflowStoreState as restoreScheduledWorkflowStoreStateValue,
   restoreWorkflowStoreState as restoreWorkflowStoreStateValue,
   writePersistedPayload,
 } from "./persisted/agent-hub-persisted-store";
+import { migratePersistedAppState } from "./persisted/agent-hub-persisted-migrations";
 import {
   installRestoredChats as installRestoredChatsValue,
   installRestoredTasks as installRestoredTasksValue,
@@ -471,10 +473,14 @@ export class AgentHub {
     this.sqliteStore = loaded.sqliteStore;
 
     if (loaded.payload !== undefined) {
-      if (!this.restorePersistedState(loaded.payload)) {
+      const migration = migratePersistedAppState(loaded.payload);
+      const restored = migration ? this.restorePersistedState(migration.payload) : false;
+      if (!restored) {
         this.reinitializePersistedState();
       }
-      if (!Array.isArray(asRecord(loaded.payload)?.channels) || !this.isPersistedAppStateV4(loaded.payload)) {
+      if (migration?.migrated
+        || !Array.isArray(asRecord(loaded.payload)?.channels)
+        || !migration) {
         await this.persistState();
       }
       return;
@@ -527,6 +533,32 @@ export class AgentHub {
 
   async loadClaudeDefaultConfig(): Promise<ClaudeDefaultConfig> {
     return readClaudeDefaultConfig();
+  }
+
+  async importRuntimeLocalConfig(runtimeId: AgentId, channelId?: string): Promise<RuntimeLocalConfigImportResult> {
+    const existingChannel = channelId
+      ? this.channels.find((channel) => channel.id === channelId)
+      : this.channels.find((channel) => channel.agentId === runtimeId);
+    if (channelId && !existingChannel) throw new Error(`Config channel not found: ${channelId}`);
+    if (existingChannel && existingChannel.agentId !== runtimeId) {
+      throw new Error(`Config channel ${existingChannel.id} belongs to ${existingChannel.agentId}, not ${runtimeId}.`);
+    }
+
+    const imported = await loadRuntimeLocalConfig({
+      runtimeId,
+      executable: this.executables[runtimeId],
+      ...(existingChannel ? { existingChannel } : {}),
+    });
+    const nextChannels = existingChannel
+      ? this.channels.map((channel) => (channel.id === existingChannel.id ? imported.channel : channel))
+      : [...this.channels, imported.channel];
+    const snapshot = await this.saveModelChannels(nextChannels);
+    return {
+      runtimeId,
+      channelId: imported.channel.id,
+      source: imported.source,
+      snapshot,
+    };
   }
 
   async listCodexPluginCatalog(): Promise<CodexPluginCatalogItem[]> {
@@ -2436,8 +2468,9 @@ export class AgentHub {
   }
 
   private restorePersistedState(raw: unknown): boolean {
-    if (!this.isPersistedAppStateV4(raw)) return false;
-    const record = raw as PersistedAppStateV4 & Record<string, unknown>;
+    const migration = migratePersistedAppState(raw);
+    if (!migration) return false;
+    const record = migration.payload as PersistedAppStateV5 & Record<string, unknown>;
     if (Array.isArray(record.channels)) {
       this.channels = normalizeConfigChannelsForStorage(normalizeChannels(record.channels));
     }
@@ -2462,10 +2495,6 @@ export class AgentHub {
     if (!this.restoreWorkflowStore(record.workflowStore)) return false;
     this.restoreScheduledWorkflowStore(record.scheduledWorkflowStore);
     return true;
-  }
-
-  private isPersistedAppStateV4(raw: unknown): raw is PersistedAppStateV4 {
-    return isPersistedAppStateV4Value(raw);
   }
 
   private reinitializePersistedState(): void {
@@ -2672,7 +2701,7 @@ export class AgentHub {
     }, PERSIST_DEBOUNCE_MS);
   }
 
-  private buildPersistedPayload(): PersistedAppStateV4 {
+  private buildPersistedPayload(): PersistedAppStateV5 {
     return buildPersistedPayload({
       activeChatId: this.activeChatId,
       activeTaskId: this.activeTaskId,

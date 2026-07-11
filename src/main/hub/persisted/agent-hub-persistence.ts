@@ -139,6 +139,12 @@ export interface PersistedAppStateV4 {
   configuredAgents?: ConfiguredAgent[];
 }
 
+export interface PersistedAppStateV5 extends Omit<PersistedAppStateV4, "version"> {
+  version: 5;
+}
+
+export type PersistedAppState = PersistedAppStateV4 | PersistedAppStateV5;
+
 export function isAgentId(value: unknown): value is AgentId {
   return isRuntimeId(value);
 }

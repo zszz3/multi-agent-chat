@@ -407,6 +407,12 @@ export function createDefaultChannels(codexModels = FALLBACK_MODEL_OPTIONS.codex
   }));
 }
 
+export function appendMissingRuntimeDefaultChannels(channels: AgentChannel[]): AgentChannel[] {
+  const configuredRuntimeIds = new Set(channels.map((channel) => channel.agentId));
+  const missingDefaults = createDefaultChannels().filter((channel) => !configuredRuntimeIds.has(channel.agentId));
+  return missingDefaults.length > 0 ? [...channels, ...missingDefaults] : channels;
+}
+
 export async function loadModelChannels(configPath: string, codexCommand = "codex"): Promise<AgentChannel[]> {
   try {
     const raw = await readFile(configPath, "utf8");

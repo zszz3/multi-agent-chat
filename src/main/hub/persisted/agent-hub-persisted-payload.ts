@@ -13,7 +13,7 @@ import { buildWorkflowSnapshot, cloneTeamMember } from "../team/agent-team-workf
 import type { AgentTeamState, ChatState, TaskState, TeamRunState } from "../state/agent-hub-state";
 import {
   cloneRuntimeState,
-  type PersistedAppStateV4,
+  type PersistedAppStateV5,
   type PersistedAgentTeamRecord,
   type PersistedChatEventRecord,
   type PersistedChatMessageRecord,
@@ -41,7 +41,7 @@ export function buildPersistedPayload(input: {
   cloneConversation: (conversation: RuntimeConversation) => RuntimeConversation;
   workflowStore: WorkflowStoreState;
   scheduledWorkflowStore: ScheduledWorkflowStoreState;
-}): PersistedAppStateV4 {
+}): PersistedAppStateV5 {
   const sessions: PersistedChatSessionRecord[] = [];
   const messages: PersistedChatMessageRecord[] = [];
   const events: PersistedChatEventRecord[] = [];
@@ -161,7 +161,7 @@ export function buildPersistedPayload(input: {
   void input.artifacts;
 
   return {
-    version: 4,
+    version: 5,
     activeChatId: input.activeChatId ?? null,
     activeTaskId: input.activeTaskId ?? null,
     activeTeamId: input.activeTeamId ?? null,
