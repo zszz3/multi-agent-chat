@@ -81,14 +81,21 @@ export function restoreConfiguredAgentState(
   const channelId = asOptionalString(record.channelId);
   const normalizedChannelId = channelId && deps.channelById(channelId)?.agentId === runtimeAgentId ? channelId : fallbackChannelId;
   const modelId = asOptionalString(record.modelId);
+  const normalizedModelId = modelId && isModelForChannel(runtimeAgentId, normalizedChannelId, modelId, deps.channels)
+    ? modelId
+    : defaultModelForAgent(runtimeAgentId);
+  const model = deps.channelById(normalizedChannelId)?.models.find((item) => item.id === normalizedModelId);
+  const reasoningEffort = asOptionalString(record.reasoningEffort);
   return {
     id,
     name,
     description: asOptionalString(record.description) ?? "",
     runtimeAgentId,
     channelId: normalizedChannelId,
-    modelId: modelId && isModelForChannel(runtimeAgentId, normalizedChannelId, modelId, deps.channels) ? modelId : defaultModelForAgent(runtimeAgentId),
+    modelId: normalizedModelId,
+    ...(reasoningEffort && model?.reasoningEfforts?.includes(reasoningEffort) ? { reasoningEffort } : {}),
     tags: asArray(record.tags).map((tag) => asOptionalString(tag)).filter((tag): tag is string => Boolean(tag)),
+    ...(record.managed === true ? { managed: true } : {}),
     createdAt: asNumber(record.createdAt, now),
     updatedAt: asNumber(record.updatedAt, now),
   };

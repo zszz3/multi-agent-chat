@@ -1,8 +1,19 @@
 import { describe, expect, test, vi } from "vitest";
 import type { AgentEvent } from "../../../shared/types";
-import { ClaudeAgentSdkAdapter } from "./claude-agent-sdk";
+import { ClaudeAgentSdkAdapter, createClaudeSdkQueryOptions } from "./claude-agent-sdk";
 
 describe("ClaudeAgentSdkAdapter", () => {
+  test("passes an isolated provider environment to Claude Code", () => {
+    const env = { PATH: "/bin", ANTHROPIC_AUTH_TOKEN: "test-key" };
+    expect(
+      createClaudeSdkQueryOptions({
+        cwd: "/tmp/project",
+        env,
+        onEvent: () => undefined,
+      }).env,
+    ).toEqual(env);
+  });
+
   test("runs Claude one-shot through the official SDK single-message path", async () => {
     const events: AgentEvent[] = [];
     const runOneShot = vi.fn(async function* (input: { prompt: string; options?: Record<string, unknown> }) {
@@ -37,7 +48,7 @@ describe("ClaudeAgentSdkAdapter", () => {
     );
   });
 
-  test("passes Claude SDK query options for cwd, model, resume, and appended system instructions", async () => {
+  test("passes Claude SDK query options for cwd, model, resume, mcp servers, and appended system instructions", async () => {
     const runOneShot = vi.fn(async function* (input: { prompt: string; options?: Record<string, unknown> }) {
       yield { type: "result", subtype: "success", result: "done", session_id: "claude-session-2" };
       expect(input).toMatchObject({
@@ -47,6 +58,13 @@ describe("ClaudeAgentSdkAdapter", () => {
           model: "claude-opus",
           resume: "claude-session-1",
           env: { PATH: "/bin", ANTHROPIC_BASE_URL: "https://example.com/anthropic" },
+          mcpServers: {
+            multi_agent_chat: {
+              type: "stdio",
+              command: "node",
+              args: ["server.js"],
+            },
+          },
           systemPrompt: {
             type: "preset",
             preset: "claude_code",
@@ -64,6 +82,13 @@ describe("ClaudeAgentSdkAdapter", () => {
       developerInstructions: "Keep answers short.",
       resumeSessionId: "claude-session-1",
       env: { PATH: "/bin", ANTHROPIC_BASE_URL: "https://example.com/anthropic" },
+      mcpServers: {
+        multi_agent_chat: {
+          type: "stdio",
+          command: "node",
+          args: ["server.js"],
+        },
+      },
       onEvent: () => undefined,
     });
 

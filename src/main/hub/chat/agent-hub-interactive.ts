@@ -20,6 +20,7 @@ import type { ChatState } from "../state/agent-hub-state";
 export interface ResolvedConfiguredAgentForInteractive {
   runtimeAgentId: AgentId;
   modelId: string;
+  reasoningEffort?: string;
   runtime: AgentRuntime | undefined;
   channel: AgentChannel;
 }
@@ -83,7 +84,10 @@ export function buildInteractiveChatContext(input: {
     runtimeId: input.resolved.runtimeAgentId,
     executionMode,
     continuationPolicy,
-    runtimeConfig: { model: input.resolved.modelId },
+    runtimeConfig: {
+      model: input.resolved.modelId,
+      ...(input.resolved.reasoningEffort ? { reasoningEffort: input.resolved.reasoningEffort } : {}),
+    },
     ...(runtimeConversation ? { runtimeConversation } : {}),
     runtime: input.resolved.runtime as AgentRuntime,
     channelId: input.resolved.channel.id,

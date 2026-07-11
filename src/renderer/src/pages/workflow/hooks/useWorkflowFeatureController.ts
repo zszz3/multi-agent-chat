@@ -33,10 +33,13 @@ export function useWorkflowFeatureController({
     snapshot.workflowStore.runs.find((run) => run.workflowId === draft.workflowId && run.status === "running")?.runId ??
     draft.workflowRunIds[draft.workflowRunIds.length - 1];
   const artifacts = (snapshot.artifacts ?? []).filter((artifact) => artifact.target === draft.workflowId || artifact.target === activeRunId);
+  const activeWorkflow = snapshot.workflowStore.workflows.find((workflow) => workflow.workflowId === draft.workflowId);
 
   return useMemo(
     () => ({
       ...(draft.workflowId ? { workflowId: draft.workflowId } : {}),
+      sourceType: activeWorkflow?.sourceType ?? "user",
+      topologyLocked: activeWorkflow?.topologyLocked === true,
       title: draft.workflowTitle,
       status: draft.workflowStatus,
       graph: draft.workflowGraph,
@@ -119,6 +122,8 @@ export function useWorkflowFeatureController({
     }),
     [
       activeRunId,
+      activeWorkflow?.sourceType,
+      activeWorkflow?.topologyLocked,
       artifacts,
       draft,
       language,

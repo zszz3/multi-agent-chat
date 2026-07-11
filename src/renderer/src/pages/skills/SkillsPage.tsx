@@ -1,7 +1,7 @@
 import { useEffect, useMemo, useState } from "react";
-import { Bot, FolderOpen, MessageSquareText, Save, Send, X } from "lucide-react";
+import { Bot, FolderOpen, MessageSquareText, Plus, Save, Search, Send, Trash2, X } from "lucide-react";
 import { ONLINE_SKILL_SOURCES, fetchOnlineSkills, type OnlineSkillResult } from "../../../../shared/online-skills";
-import type { ConfiguredAgent, ImportedSkillResult, InstalledSkillResult, RuntimeConversation, SkillInstallTarget, SkillTemplate, UninstalledSkillResult } from "../../../../shared/types";
+import type { AssignSkillCategoryRequest, ConfiguredAgent, ImportedSkillResult, InstalledSkillResult, RuntimeConversation, SkillCategory, SkillInstallTarget, SkillTemplate, UninstalledSkillResult } from "../../../../shared/types";
 import { resolveFindSkillConfiguredAgentId } from "../../app/agents";
 import { shouldSendComposerKey } from "../../app/composer";
 import type { Language } from "../../app/language";
@@ -15,6 +15,7 @@ import {
   skillDisplayDescription,
   skillDisplayName,
 } from "./find-skill";
+import { filterSkills } from "./skill-library-filter";
 
 const SKILL_INSTALL_TARGETS: Array<{ id: SkillInstallTarget; label: string; path: string }> = [
   { id: "codex", label: "Codex", path: "~/.codex/skills" },
@@ -41,21 +42,33 @@ function targetLabel(target: SkillInstallTarget): string {
 
 export function SkillsPage({
   language,
+  officialSkills = [],
+  userSkills = [],
+  categories = [],
   templates,
   configuredAgents = [],
   onImportOnlineSkill,
   onRevealSkillInFinder,
   onInstallSkill,
   onUninstallSkill,
+  onDeleteUserSkill,
+  onCreateCategory,
+  onAssignCategory,
   defaultFindSkillChatOpen = false,
 }: {
   language: Language;
-  templates: SkillTemplate[];
+  officialSkills?: SkillTemplate[];
+  userSkills?: SkillTemplate[];
+  categories?: SkillCategory[];
+  templates?: SkillTemplate[];
   configuredAgents?: ConfiguredAgent[];
   onImportOnlineSkill?: (skill: OnlineSkillResult) => Promise<ImportedSkillResult>;
   onRevealSkillInFinder?: (filePath: string) => Promise<void>;
-  onInstallSkill?: (templateId: string, target: SkillInstallTarget) => Promise<InstalledSkillResult>;
+  onInstallSkill?: (templateId: string, target: SkillInstallTarget, sourceType: "official" | "user") => Promise<InstalledSkillResult>;
   onUninstallSkill?: (templateId: string, target: SkillInstallTarget) => Promise<UninstalledSkillResult>;
+  onDeleteUserSkill?: (templateId: string) => Promise<void>;
+  onCreateCategory?: (name: string) => Promise<SkillCategory>;
+  onAssignCategory?: (request: AssignSkillCategoryRequest) => Promise<void>;
   defaultFindSkillChatOpen?: boolean;
 }) {
   const title = language === "zh" ? "技能库" : "Skill library";
@@ -63,19 +76,23 @@ export function SkillsPage({
   const noConfiguredAgents = language === "zh" ? "暂无配置的 Agent" : "No configured agents";
   const description =
     language === "zh"
-      ? `${templates.length} 个内置技能，随应用开箱即用；需要线上候选时可让 Find skill 帮你找。`
-      : `${templates.length} bundled skills, ready to use. Use Find skill when you need online candidates.`;
+      ? `${officialSkills.length} 个官方技能，${userSkills.length} 个我的技能。`
+      : `${officialSkills.length} official skills and ${userSkills.length} user skills.`;
   const localDescription =
     language === "zh"
       ? "内置技能随应用一起维护。第三方 skill 只会通过 Find skill 候选预览，不会自动安装。"
       : "Bundled skills are maintained with the app. Third-party skills are only previewed through Find skill candidates and are never installed automatically.";
-  const localTitle = language === "zh" ? "内置技能" : "Bundled skills";
+  const officialTitle = language === "zh" ? "官方技能" : "Official skills";
+  const userTitle = language === "zh" ? "我的技能" : "My skills";
   const searchingText = language === "zh" ? "搜索中..." : "Searching...";
   const localInstall = language === "zh" ? "本地安装" : "Local install";
   const installLinks = language === "zh" ? "安装/更新链接" : "Install/update links";
   const removeLinks = language === "zh" ? "删除本地链接" : "Remove local links";
   const translateToZh = language === "zh" ? "查看中文" : "View Chinese";
   const showOriginal = language === "zh" ? "查看原文" : "Show original";
+  const allCategories = language === "zh" ? "全部分类" : "All categories";
+  const uncategorized = language === "zh" ? "未分类" : "Uncategorized";
+  const searchSkillsPlaceholder = language === "zh" ? "搜索名称、描述或标签" : "Search names, descriptions, or tags";
   const findSkillTitle = "Find skill";
   const findSkillDescription =
     language === "zh"
@@ -97,6 +114,11 @@ export function SkillsPage({
   const [installStatusTone, setInstallStatusTone] = useState<"success" | "error" | undefined>();
   const [translationStatus, setTranslationStatus] = useState("");
   const [showTranslatedSkill, setShowTranslatedSkill] = useState(false);
+  const [skillSearch, setSkillSearch] = useState("");
+  const [categoryFilterId, setCategoryFilterId] = useState("all");
+  const [creatingCategory, setCreatingCategory] = useState(false);
+  const [newCategoryName, setNewCategoryName] = useState("");
+  const [categoryActionRunning, setCategoryActionRunning] = useState(false);
   const [findSkillChatOpen, setFindSkillChatOpen] = useState(defaultFindSkillChatOpen);
   const [findSkillConfiguredAgentId, setFindSkillConfiguredAgentId] = useState(() => resolveFindSkillConfiguredAgentId(undefined, configuredAgents));
   const [findSkillInput, setFindSkillInput] = useState("");
@@ -105,19 +127,41 @@ export function SkillsPage({
   const [findSkillMessages, setFindSkillMessages] = useState<Array<{ id: string; role: "assistant" | "user" | "error"; content: string }>>(() => [
     { id: "find-skill-welcome", role: "assistant", content: findSkillWelcome },
   ]);
-  const localSkillItems = useMemo(
-    () => templates.map((template) => ({ ...template, itemKey: `local:${template.id}`, kind: "local" as const })),
-    [templates],
+  const legacyOfficialSkills = templates ?? [];
+  const officialSkillItems = useMemo(
+    () => [...officialSkills, ...legacyOfficialSkills].map((template) => ({ ...template, sourceType: "official" as const, itemKey: `official:${template.id}`, kind: "official" as const })),
+    [legacyOfficialSkills, officialSkills],
+  );
+  const userSkillItems = useMemo(
+    () => userSkills.map((template) => ({ ...template, sourceType: "user" as const, itemKey: `user:${template.id}`, kind: "user" as const })),
+    [userSkills],
+  );
+  const filteredOfficialSkillItems = useMemo(
+    () => filterSkills(officialSkillItems, { query: skillSearch, categoryId: categoryFilterId }),
+    [categoryFilterId, officialSkillItems, skillSearch],
+  );
+  const filteredUserSkillItems = useMemo(
+    () => filterSkills(userSkillItems, { query: skillSearch, categoryId: categoryFilterId }),
+    [categoryFilterId, skillSearch, userSkillItems],
   );
   const onlineSkillItems = useMemo(
     () => onlineResults.map((skill) => ({ ...skill, itemKey: `online:${skill.id}`, kind: "online" as const })),
     [onlineResults],
   );
   const selectedOnlineSkill = onlineSkillItems.find((skill) => skill.itemKey === selectedOnlineSkillKey);
-  const selectedSkill = selectedOnlineSkill ?? localSkillItems.find((skill) => skill.itemKey === selectedSkillKey) ?? localSkillItems[0];
+  const selectedSkill = selectedOnlineSkill
+    ?? filteredOfficialSkillItems.find((skill) => skill.itemKey === selectedSkillKey)
+    ?? filteredUserSkillItems.find((skill) => skill.itemKey === selectedSkillKey)
+    ?? filteredOfficialSkillItems[0]
+    ?? filteredUserSkillItems[0];
   const selectedSkillSourceUrl = selectedSkill ? (selectedSkill.kind === "online" ? selectedSkill.url : selectedSkill.sourceUrl) : undefined;
   const selectedSkillSourcePath = selectedSkill ? (selectedSkill.kind === "online" ? selectedSkill.path : selectedSkill.sourcePath) : undefined;
   const activeFindSkillConfiguredAgentId = resolveFindSkillConfiguredAgentId(findSkillConfiguredAgentId, configuredAgents);
+
+  function categoryDisplayName(category: SkillCategory): string {
+    if (language !== "zh" || !category.system) return category.name;
+    return ({ explore: "探索", coding: "编程", writing: "写作", productivity: "效率", life: "生活" } as Record<string, string>)[category.id] ?? category.name;
+  }
 
   useEffect(() => {
     const nextConfiguredAgentId = resolveFindSkillConfiguredAgentId(findSkillConfiguredAgentId, configuredAgents);
@@ -261,7 +305,7 @@ export function SkillsPage({
   }
 
   async function applyInstallSelection(action: "install" | "uninstall"): Promise<void> {
-    if (!selectedSkill || selectedSkill.kind !== "local" || !onInstallSkill) return;
+    if (!selectedSkill || selectedSkill.kind === "online" || !onInstallSkill) return;
     const targets = selectedInstallTargets;
     if (targets.length === 0) return;
     setInstallAction(action);
@@ -272,7 +316,7 @@ export function SkillsPage({
       for (const target of targets) {
         setInstallingTarget(target);
         if (action === "install") {
-          const result = await onInstallSkill(selectedSkill.id, target);
+          const result = await onInstallSkill(selectedSkill.id, target, selectedSkill.sourceType);
           results.push(`${targetLabel(target)}: ${result.path}`);
         } else {
           if (!onUninstallSkill) throw new Error("技能卸载能力需要重启应用后生效。");
@@ -314,6 +358,45 @@ export function SkillsPage({
     );
   }
 
+  async function assignSelectedCategory(categoryId: string): Promise<void> {
+    if (!selectedSkill || selectedSkill.kind === "online" || !onAssignCategory) return;
+    setCategoryActionRunning(true);
+    setInstallStatus("");
+    setInstallStatusTone(undefined);
+    try {
+      await onAssignCategory({ sourceType: selectedSkill.sourceType, skillId: selectedSkill.id, categoryId });
+      setInstallStatus(language === "zh" ? "分类已更新。" : "Category updated.");
+      setInstallStatusTone("success");
+    } catch (error) {
+      setInstallStatus(error instanceof Error ? error.message : String(error));
+      setInstallStatusTone("error");
+    } finally {
+      setCategoryActionRunning(false);
+    }
+  }
+
+  async function createAndAssignCategory(): Promise<void> {
+    const name = newCategoryName.trim();
+    if (!name || !onCreateCategory || !selectedSkill || selectedSkill.kind === "online") return;
+    setCategoryActionRunning(true);
+    setInstallStatus("");
+    setInstallStatusTone(undefined);
+    try {
+      const category = await onCreateCategory(name);
+      await onAssignCategory?.({ sourceType: selectedSkill.sourceType, skillId: selectedSkill.id, categoryId: category.id });
+      setCategoryFilterId(category.id);
+      setNewCategoryName("");
+      setCreatingCategory(false);
+      setInstallStatus(language === "zh" ? `已新建并归类到“${category.name}”。` : `Created and assigned to “${category.name}”.`);
+      setInstallStatusTone("success");
+    } catch (error) {
+      setInstallStatus(error instanceof Error ? error.message : String(error));
+      setInstallStatusTone("error");
+    } finally {
+      setCategoryActionRunning(false);
+    }
+  }
+
   return (
     <section className="skills-page">
       <header className="skills-header">
@@ -333,18 +416,50 @@ export function SkillsPage({
         <aside className="skill-list-panel">
           <div className="skill-list-head">
             <div>
-              <h3>{localTitle}</h3>
+              <h3>{officialTitle}</h3>
               <p>{localDescription}</p>
             </div>
-            <span>{localSkillItems.length}</span>
+            <span>{filteredOfficialSkillItems.length + filteredUserSkillItems.length}</span>
           </div>
+          <label className="skill-library-search">
+            <Search size={13} />
+            <input
+              type="search"
+              value={skillSearch}
+              placeholder={searchSkillsPlaceholder}
+              aria-label={searchSkillsPlaceholder}
+              onChange={(event) => {
+                setSkillSearch(event.currentTarget.value);
+                setSelectedOnlineSkillKey(undefined);
+              }}
+            />
+            {skillSearch ? (
+              <button type="button" onClick={() => setSkillSearch("")} aria-label={language === "zh" ? "清除搜索" : "Clear search"}>
+                <X size={12} />
+              </button>
+            ) : null}
+          </label>
+          <select
+            className="skill-category-filter"
+            value={categoryFilterId}
+            aria-label={language === "zh" ? "按分类筛选" : "Filter by category"}
+            onChange={(event) => {
+              setCategoryFilterId(event.currentTarget.value);
+              setSelectedOnlineSkillKey(undefined);
+            }}
+          >
+            <option value="all">{allCategories}</option>
+            {categories.map((category) => (
+              <option key={category.id} value={category.id}>{categoryDisplayName(category)}</option>
+            ))}
+          </select>
           <div className="skill-list-scroll" aria-label="Skill list">
-            {localSkillItems.length === 0 ? (
+            {officialSkillItems.length === 0 && userSkillItems.length === 0 ? (
               <div className="empty-state config-empty">{noSkills}</div>
             ) : (
               <div className="skill-list-group">
-                <span>{localTitle}</span>
-                {localSkillItems.map((skill) => (
+                {filteredOfficialSkillItems.length > 0 ? <span>{officialTitle} · {filteredOfficialSkillItems.length}</span> : null}
+                {filteredOfficialSkillItems.map((skill) => (
                   <button
                     key={skill.itemKey}
                     className={`skill-list-item ${selectedSkill?.itemKey === skill.itemKey ? "is-active" : ""}`}
@@ -363,6 +478,31 @@ export function SkillsPage({
                     <span>{skill.tags.join(", ")}</span>
                   </button>
                 ))}
+                {filteredUserSkillItems.length > 0 ? <span>{userTitle} · {filteredUserSkillItems.length}</span> : null}
+                {filteredUserSkillItems.map((skill) => (
+                  <button
+                    key={skill.itemKey}
+                    className={`skill-list-item ${selectedSkill?.itemKey === skill.itemKey ? "is-active" : ""}`}
+                    type="button"
+                    onClick={() => {
+                      setSelectedSkillKey(skill.itemKey);
+                      setSelectedOnlineSkillKey(undefined);
+                      setInstallStatus("");
+                      setInstallStatusTone(undefined);
+                      setTranslationStatus("");
+                      setShowTranslatedSkill(false);
+                    }}
+                  >
+                    <strong>{skillDisplayName(skill)}</strong>
+                    <small>{skillDisplayDescription(skill)}</small>
+                    <span>{skill.tags.join(", ")}</span>
+                  </button>
+                ))}
+                {filteredOfficialSkillItems.length === 0 && filteredUserSkillItems.length === 0 ? (
+                  <div className="empty-state config-empty">
+                    {language === "zh" ? "没有匹配的技能" : "No matching skills"}
+                  </div>
+                ) : null}
               </div>
             )}
           </div>
@@ -373,7 +513,7 @@ export function SkillsPage({
             <>
               <header className="skill-detail-head">
                 <div>
-                  <span>{selectedSkill.sourceLabel ?? (selectedSkill.kind === "online" ? selectedSkill.sourceLabel : localTitle)}</span>
+                  <span>{selectedSkill.sourceLabel ?? (selectedSkill.kind === "official" ? officialTitle : selectedSkill.kind === "user" ? userTitle : selectedSkill.sourceLabel)}</span>
                   <h3>{skillDisplayName(selectedSkill)}</h3>
                   <p>{skillDisplayDescription(selectedSkill)}</p>
                 </div>
@@ -385,7 +525,33 @@ export function SkillsPage({
               </div>
               <div className="skill-detail-body-head">
                 <div>
-                  {selectedSkill.kind === "local" && selectedSkillSourcePath && onRevealSkillInFinder ? (
+                  {selectedSkill.kind !== "online" && onAssignCategory ? (
+                    <div className="skill-category-editor">
+                      <select
+                        value={selectedSkill.categoryId ?? ""}
+                        aria-label={language === "zh" ? "技能分类" : "Skill category"}
+                        disabled={categoryActionRunning}
+                        onChange={(event) => void assignSelectedCategory(event.currentTarget.value)}
+                      >
+                        <option value="" disabled>{uncategorized}</option>
+                        {categories.map((category) => (
+                          <option key={category.id} value={category.id}>{categoryDisplayName(category)}</option>
+                        ))}
+                      </select>
+                      {onCreateCategory ? (
+                        <button
+                          className="icon-btn compact secondary"
+                          type="button"
+                          aria-label={language === "zh" ? "新建分类" : "Create category"}
+                          title={language === "zh" ? "新建分类" : "Create category"}
+                          onClick={() => setCreatingCategory((current) => !current)}
+                        >
+                          <Plus size={13} />
+                        </button>
+                      ) : null}
+                    </div>
+                  ) : null}
+                  {selectedSkill.kind !== "online" && selectedSkillSourcePath && onRevealSkillInFinder ? (
                     <button
                       className="control-btn compact secondary"
                       type="button"
@@ -408,20 +574,66 @@ export function SkillsPage({
                       {sourceUrlLabel(selectedSkillSourceUrl)}
                     </a>
                   ) : null}
-                  {selectedSkill.kind === "local" && onInstallSkill ? (
+                  {selectedSkill.kind !== "online" && onInstallSkill ? (
                     <button className="control-btn compact skill-install-trigger" type="button" onClick={() => setInstallDialogOpen(true)} disabled={Boolean(installingTarget)}>
                       <Save size={13} />
                       <span>{localInstall}</span>
                     </button>
                   ) : null}
+                  {selectedSkill.kind === "user" && onDeleteUserSkill ? (
+                    <button
+                      className="control-btn compact danger"
+                      type="button"
+                      onClick={() => {
+                        void onDeleteUserSkill(selectedSkill.id)
+                          .then(() => {
+                            setSelectedSkillKey(undefined);
+                            setInstallStatus(language === "zh" ? "已删除我的技能。" : "User skill deleted.");
+                            setInstallStatusTone("success");
+                          })
+                          .catch((error) => {
+                            setInstallStatus(error instanceof Error ? error.message : String(error));
+                            setInstallStatusTone("error");
+                          });
+                      }}
+                    >
+                      <Trash2 size={13} />
+                      <span>{language === "zh" ? "删除" : "Delete"}</span>
+                    </button>
+                  ) : null}
                 </div>
+                {creatingCategory && selectedSkill.kind !== "online" ? (
+                  <form
+                    className="skill-category-create"
+                    onSubmit={(event) => {
+                      event.preventDefault();
+                      void createAndAssignCategory();
+                    }}
+                  >
+                    <input
+                      autoFocus
+                      value={newCategoryName}
+                      maxLength={40}
+                      placeholder={language === "zh" ? "新分类名称" : "New category name"}
+                      aria-label={language === "zh" ? "新分类名称" : "New category name"}
+                      onChange={(event) => setNewCategoryName(event.currentTarget.value)}
+                    />
+                    <button className="control-btn compact" type="submit" disabled={!newCategoryName.trim() || categoryActionRunning}>
+                      <Save size={13} />
+                      <span>{language === "zh" ? "创建" : "Create"}</span>
+                    </button>
+                    <button className="icon-btn compact secondary" type="button" onClick={() => setCreatingCategory(false)} aria-label={language === "zh" ? "取消" : "Cancel"}>
+                      <X size={13} />
+                    </button>
+                  </form>
+                ) : null}
               </div>
               <div className={`skill-install-feedback ${installStatusTone ?? ""}`} role="status" aria-live="polite">
                 {installStatus || (language === "zh" ? "安装结果会显示在这里。" : "Install results will appear here.")}
               </div>
               {translationStatus ? <div className="skill-translation-note">{translationStatus}</div> : null}
               <MarkdownDocument className="skill-detail-body" text={showTranslatedSkill && selectedSkill.translationZh ? selectedSkill.translationZh : selectedSkill.prompt} />
-              {installDialogOpen && selectedSkill.kind === "local" ? (
+              {installDialogOpen && selectedSkill.kind !== "online" ? (
                 <div className="skill-install-modal-backdrop" role="presentation" onClick={() => setInstallDialogOpen(false)}>
                   <section className="skill-install-modal" role="dialog" aria-modal="true" aria-label={localInstall} onClick={(event) => event.stopPropagation()}>
                     <header>

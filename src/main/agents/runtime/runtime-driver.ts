@@ -9,6 +9,7 @@ import type {
   RuntimeConversation,
   RuntimeExecutionMode,
   RuntimeRequest,
+  WorkflowGraph,
   WorkflowAgentEvent,
   WorkflowAgentResponse,
 } from "../../../shared/types";
@@ -39,6 +40,11 @@ export interface InteractiveSessionContext extends RuntimeRequest {
   developerInstructions: string;
   emit: (event: AgentEvent) => void;
   syncState?: (state: InteractiveSessionSnapshot) => void;
+  onWorkflowGraph?: (payload: {
+    graph: WorkflowGraph;
+    workflowId?: string;
+    revision?: number;
+  }) => void;
 }
 
 export interface RuntimeWorkflowRequestContext extends RuntimeRequest {

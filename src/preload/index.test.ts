@@ -36,6 +36,9 @@ describe("preload skill API", () => {
     expect(electronState.exposedApi).toHaveProperty("installSkill");
     expect(electronState.exposedApi).toHaveProperty("uninstallSkill");
     expect(electronState.exposedApi).toHaveProperty("searchOnlineSkills");
+    expect(electronState.exposedApi).toHaveProperty("listSkillCategories");
+    expect(electronState.exposedApi).toHaveProperty("createSkillCategory");
+    expect(electronState.exposedApi).toHaveProperty("assignSkillCategory");
     expect(electronState.exposedApi).toHaveProperty("revealPathInFinder");
     expect(electronState.exposedApi).toHaveProperty("getKeepAwake");
     expect(electronState.exposedApi).toHaveProperty("setKeepAwake");
@@ -60,6 +63,7 @@ describe("preload skill API", () => {
     expect(electronState.exposedApi).toHaveProperty("queryRuntimeChannelBalance");
     expect(electronState.exposedApi).toHaveProperty("loadCodexDefaultConfig");
     expect(electronState.exposedApi).toHaveProperty("loadClaudeDefaultConfig");
+    expect(electronState.exposedApi).toHaveProperty("refreshModelCatalog");
     expect(electronState.exposedApi).not.toHaveProperty("translateSkill");
   });
 
@@ -129,9 +133,13 @@ describe("AgentHub runtime recovery wiring", () => {
       );
 
       vi.resetModules();
-      vi.doMock("../main/agents/runtime/detect", () => ({
-        detectAgentRuntimes: vi.fn(async () => []),
-      }));
+      vi.doMock("../main/agents/runtime/detect", async () => {
+        const actual = await vi.importActual<typeof import("../main/agents/runtime/detect")>("../main/agents/runtime/detect");
+        return {
+          ...actual,
+          detectAgentRuntimes: vi.fn(async () => []),
+        };
+      });
       const { AgentHub } = await import("../main/hub/agent-hub");
       hub = new AgentHub({ codex: "missing-codex-for-test", claude: "missing-claude-for-test" });
       await hub.loadPersistedState(storagePath);

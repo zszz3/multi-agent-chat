@@ -1,4 +1,5 @@
 import type { AgentChannel, ConfiguredAgent, RuntimeBindingSnapshot } from "../../../shared/types";
+import { isRuntimeId } from "../../../shared/runtime-catalog";
 
 function cloneChannel(channel: AgentChannel): AgentChannel {
   return {
@@ -42,7 +43,7 @@ export function restoreRuntimeBindingSnapshot(raw: unknown): RuntimeBindingSnaps
   const agent = record.configuredAgent;
   const channel = record.channel;
   if (!agent || !channel || typeof record.modelId !== "string") return undefined;
-  if (record.runtimeAgentId !== "codex" && record.runtimeAgentId !== "claude" && record.runtimeAgentId !== "api") return undefined;
+  if (!isRuntimeId(record.runtimeAgentId)) return undefined;
   if (
     typeof agent.id !== "string" ||
     typeof agent.name !== "string" ||

@@ -16,6 +16,7 @@ export interface ClaudeAgentSdkRunInput {
   modelId?: string;
   developerInstructions?: string;
   resumeSessionId?: string;
+  mcpServers?: Options["mcpServers"];
   onEvent: (event: AgentEvent) => void;
   abortController?: AbortController;
   env?: NodeJS.ProcessEnv;
@@ -48,6 +49,7 @@ export function createClaudeSdkQueryOptions(input: {
   modelId?: string;
   developerInstructions?: string;
   resumeSessionId?: string;
+  mcpServers?: Options["mcpServers"];
   onEvent: (event: AgentEvent) => void;
   abortController?: AbortController;
   env?: NodeJS.ProcessEnv;
@@ -68,6 +70,7 @@ export function createClaudeSdkQueryOptions(input: {
     cwd: input.cwd,
     ...(input.modelId ? { model: input.modelId } : {}),
     ...(input.resumeSessionId ? { resume: input.resumeSessionId } : {}),
+    ...(input.mcpServers ? { mcpServers: input.mcpServers } : {}),
     systemPrompt,
     permissionMode: "default",
     canUseTool: createClaudeSdkPermissionHandler(input.onEvent),

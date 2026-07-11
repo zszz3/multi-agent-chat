@@ -44,6 +44,8 @@ export interface WorkflowSidebarController {
 
 export interface WorkflowController {
   workflowId?: string;
+  sourceType?: "official" | "user";
+  topologyLocked?: boolean;
   title?: string;
   status?: WorkflowStatus;
   graph: WorkflowGraph;

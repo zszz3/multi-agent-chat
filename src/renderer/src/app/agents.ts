@@ -1,25 +1,20 @@
 import { DEFAULT_MODEL_ID } from "../../../shared/models";
+import { runtimeDefinition, runtimeLabel } from "../../../shared/runtime-catalog";
 import type { AgentChannel, AgentId, AgentModelOption, AgentRuntime, ConfiguredAgent } from "../../../shared/types";
 
 export function agentLabel(agentId: AgentId): string {
-  if (agentId === "codex") return "Codex";
-  if (agentId === "claude") return "Claude Code";
-  if (agentId === "hermes") return "Hermes";
-  return "API";
+  return runtimeLabel(agentId);
 }
 
 export function agentAccent(agentId: AgentId): string {
-  if (agentId === "codex") return "agent-codex";
-  if (agentId === "claude") return "agent-claude";
-  if (agentId === "hermes") return "agent-hermes";
-  return "agent-api";
+  return `agent-${agentId}`;
 }
 
 export function fallbackRuntime(agentId: AgentId): AgentRuntime {
   return {
     id: agentId,
     label: agentLabel(agentId),
-    command: agentId,
+    command: runtimeDefinition(agentId).executable,
     version: null,
     available: false,
     error: "Detecting",

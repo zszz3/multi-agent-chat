@@ -24,11 +24,10 @@ export { shouldSendComposerKey } from "./app/composer";
 export { resolveConfiguredAgentChannel, resolveFindSkillConfiguredAgentId } from "./app/agents";
 export type { Language } from "./app/language";
 export { chatConfigLocked, SlashCommandSuggestions, slashCommandSuggestionsFor } from "./pages/chat/chat-utils";
-export { ConfigPage } from "./pages/config/ConfigPage";
+export { AgentPage } from "./pages/agent/AgentPage";
 export { ChatPage } from "./pages/chat/ChatPage";
 export { ChatControls } from "./pages/chat/ChatControls";
 export { ChatHistoryPanel } from "./pages/chat/ChatHistoryPanel";
-export { SettingsPage } from "./pages/settings/SettingsPage";
 export { RuntimePage } from "./pages/runtime/RuntimePage";
 export {
   applyCodexDefaultConfigToChannel,

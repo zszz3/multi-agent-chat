@@ -1,7 +1,8 @@
 import { mkdir, readdir, readFile, writeFile } from "node:fs/promises";
 import os from "node:os";
 import path from "node:path";
-import { DEFAULT_MODEL_ID, FALLBACK_MODEL_OPTIONS, runtimeModelId } from "../../shared/models";
+import { CURRENT_CODEX_MODELS, DEFAULT_MODEL_ID, FALLBACK_MODEL_OPTIONS, runtimeModelId } from "../../shared/models";
+import { isRuntimeId, RUNTIME_DEFINITIONS } from "../../shared/runtime-catalog";
 import type {
   AgentChannel,
   AgentId,
@@ -16,12 +17,6 @@ import { codexChannelNeedsChatRouting, codexChatRouterUrlForChannel } from "../b
 import { execCli } from "../platform/cli-launcher";
 const CONFIG_VERSION = 1;
 const BUILT_IN_CODEX_PROVIDER_IDS = new Set(["openai"]);
-const DEEPSEEK_CLAUDE_MODELS: AgentModelOption[] = [
-  { id: DEFAULT_MODEL_ID, label: "Default (DeepSeek Flash)" },
-  { id: "claude-haiku-4-5", label: "DeepSeek V4 Flash" },
-  { id: "claude-opus-4-8", label: "DeepSeek V4 Pro" },
-];
-
 interface ModelChannelsFile {
   version: typeof CONFIG_VERSION;
   channels: AgentChannel[];
@@ -31,12 +26,14 @@ interface CodexAuthFile {
   OPENAI_API_KEY?: unknown;
 }
 
-function isAgentId(value: unknown): value is AgentId {
-  return value === "codex" || value === "claude" || value === "api";
-}
-
 function asString(value: unknown): string | undefined {
   return typeof value === "string" && value.trim() ? value.trim() : undefined;
+}
+
+function asStringArray(value: unknown): string[] | undefined {
+  if (!Array.isArray(value)) return undefined;
+  const strings = [...new Set(value.map(asString).filter((item): item is string => Boolean(item)))];
+  return strings.length > 0 ? strings : undefined;
 }
 
 function sanitizeProfilePart(value: string): string {
@@ -200,9 +197,13 @@ function normalizeModels(models: unknown, fallback: AgentModelOption[]): AgentMo
       const record = item as Record<string, unknown>;
       const id = asString(record.id);
       if (!id || normalized.some((model) => model.id === id)) continue;
+      const reasoningEfforts = asStringArray(record.reasoningEfforts);
+      const defaultReasoningEffort = asString(record.defaultReasoningEffort);
       normalized.push({
         id,
         label: asString(record.label) ?? id,
+        ...(reasoningEfforts ? { reasoningEfforts } : {}),
+        ...(defaultReasoningEffort ? { defaultReasoningEffort } : {}),
       });
     }
   }
@@ -212,6 +213,36 @@ function normalizeModels(models: unknown, fallback: AgentModelOption[]): AgentMo
   return [{ id: DEFAULT_MODEL_ID, label: "Default" }, ...source];
 }
 
+function addCurrentCodexModels(models: AgentModelOption[]): AgentModelOption[] {
+  const currentIds = new Set(CURRENT_CODEX_MODELS.map((model) => model.id));
+  const defaultModel = models.find((model) => model.id === DEFAULT_MODEL_ID);
+  const current = CURRENT_CODEX_MODELS.map((model) => ({
+    ...model,
+    ...(models.find((existing) => existing.id === model.id)?.label
+      ? { label: models.find((existing) => existing.id === model.id)!.label }
+      : {}),
+    reasoningEfforts: [...(model.reasoningEfforts ?? [])],
+  }));
+  const remaining = models.filter((model) => model.id !== DEFAULT_MODEL_ID && !currentIds.has(model.id));
+  return [...(defaultModel ? [defaultModel] : []), ...current, ...remaining];
+}
+
+function primaryClaudeProviderModels(models: AgentModelOption[], environment: Record<string, string> | undefined): AgentModelOption[] {
+  const primaryModelId = environment?.ANTHROPIC_MODEL;
+  if (!primaryModelId) return models;
+  const primary = models.find((model) => model.id === primaryModelId) ?? { id: primaryModelId, label: primaryModelId };
+  return [{ id: DEFAULT_MODEL_ID, label: "Default" }, primary];
+}
+
+function isCodexOfficialChannel(channel: AgentChannel): boolean {
+  return channel.agentId === "codex" && (
+    channel.modelProvider === "openai" ||
+    channel.id === "codex-openai" ||
+    channel.id === "codex-official" ||
+    channel.presetId === "codex-default"
+  );
+}
+
 function normalizeHeaders(raw: unknown): Record<string, string> | undefined {
   if (!raw || typeof raw !== "object" || Array.isArray(raw)) return undefined;
   const headers: Record<string, string> = {};
@@ -219,6 +250,16 @@ function normalizeHeaders(raw: unknown): Record<string, string> | undefined {
     if (typeof value === "string") headers[key] = value;
   }
   return Object.keys(headers).length > 0 ? headers : undefined;
+}
+
+function normalizeJsonObject(raw: unknown): Record<string, unknown> | undefined {
+  if (!raw || typeof raw !== "object" || Array.isArray(raw)) return undefined;
+  try {
+    const value = JSON.parse(JSON.stringify(raw)) as Record<string, unknown>;
+    return Object.keys(value).length > 0 ? value : undefined;
+  } catch {
+    return undefined;
+  }
 }
 
 function normalizePlugins(raw: unknown): AgentPluginConfig[] | undefined {
@@ -241,7 +282,7 @@ function normalizeChannel(raw: unknown): AgentChannel | null {
   if (!raw || typeof raw !== "object") return null;
   const record = raw as Record<string, unknown>;
   const id = asString(record.id);
-  if (!id || !isAgentId(record.agentId)) return null;
+  if (!id || !isRuntimeId(record.agentId)) return null;
 
   const channel: AgentChannel = {
     id,
@@ -256,7 +297,6 @@ function normalizeChannel(raw: unknown): AgentChannel | null {
   if (presetId) channel.presetId = presetId;
   const modelProvider = asString(record.modelProvider);
   if (modelProvider) channel.modelProvider = modelProvider;
-  if (channel.agentId === "claude" && modelProvider === "deepseek-anthropic") channel.models = DEEPSEEK_CLAUDE_MODELS;
   const providerName = asString(record.providerName);
   if (providerName) channel.providerName = providerName;
   const baseUrl = asString(record.baseUrl);
@@ -269,6 +309,30 @@ function normalizeChannel(raw: unknown): AgentChannel | null {
   if (modelReasoningEffort) channel.modelReasoningEffort = modelReasoningEffort;
   const httpHeaders = normalizeHeaders(record.httpHeaders);
   if (httpHeaders) channel.httpHeaders = httpHeaders;
+  if (
+    record.apiFormat === "anthropic" ||
+    record.apiFormat === "openai_chat" ||
+    record.apiFormat === "openai_responses" ||
+    record.apiFormat === "gemini_native"
+  ) {
+    channel.apiFormat = record.apiFormat;
+  }
+  if (record.apiKeyField === "ANTHROPIC_AUTH_TOKEN" || record.apiKeyField === "ANTHROPIC_API_KEY") {
+    channel.apiKeyField = record.apiKeyField;
+  }
+  if (typeof record.isFullUrl === "boolean") channel.isFullUrl = record.isFullUrl;
+  const customUserAgent = asString(record.customUserAgent);
+  if (customUserAgent) channel.customUserAgent = customUserAgent;
+  const environment = normalizeHeaders(record.environment);
+  if (environment) channel.environment = environment;
+  if (isCodexOfficialChannel(channel)) channel.models = addCurrentCodexModels(channel.models);
+  if (channel.agentId === "claude") channel.models = primaryClaudeProviderModels(channel.models, environment);
+  if (record.requestOverrides && typeof record.requestOverrides === "object" && !Array.isArray(record.requestOverrides)) {
+    const requestOverrides = record.requestOverrides as Record<string, unknown>;
+    const headers = normalizeHeaders(requestOverrides.headers);
+    const body = normalizeJsonObject(requestOverrides.body);
+    if (headers || body) channel.requestOverrides = { ...(headers ? { headers } : {}), ...(body ? { body } : {}) };
+  }
   const plugins = normalizePlugins(record.plugins);
   if (plugins) channel.plugins = plugins;
 
@@ -298,15 +362,28 @@ export function parseCodexModelCatalog(raw: string): AgentModelOption[] {
       const id = asString(record.slug) ?? asString(record.id);
       if (!id || record.visibility === "hidden") return null;
       const priority = typeof record.priority === "number" && Number.isFinite(record.priority) ? record.priority : 9999;
+      const reasoningEfforts = Array.isArray(record.supported_reasoning_levels)
+        ? record.supported_reasoning_levels
+            .map((level) => asString(level && typeof level === "object" ? (level as Record<string, unknown>).effort : undefined))
+            .filter((effort): effort is string => Boolean(effort))
+        : undefined;
+      const defaultReasoningEffort = asString(record.default_reasoning_level);
       return {
         id,
         label: asString(record.display_name) ?? asString(record.label) ?? id,
         priority,
+        ...(reasoningEfforts && reasoningEfforts.length > 0 ? { reasoningEfforts } : {}),
+        ...(defaultReasoningEffort ? { defaultReasoningEffort } : {}),
       };
     })
     .filter((item): item is AgentModelOption & { priority: number } => Boolean(item))
     .sort((left, right) => left.priority - right.priority)
-    .map(({ id, label }) => ({ id, label }));
+    .map(({ id, label, reasoningEfforts, defaultReasoningEffort }) => ({
+      id,
+      label,
+      ...(reasoningEfforts ? { reasoningEfforts } : {}),
+      ...(defaultReasoningEffort ? { defaultReasoningEffort } : {}),
+    }));
 }
 
 export async function detectCodexModels(command = "codex"): Promise<AgentModelOption[]> {
@@ -321,31 +398,13 @@ export async function detectCodexModels(command = "codex"): Promise<AgentModelOp
 }
 
 export function createDefaultChannels(codexModels = FALLBACK_MODEL_OPTIONS.codex.filter((model) => model.id !== DEFAULT_MODEL_ID)): AgentChannel[] {
-  return [
-    {
-      id: "codex-openai",
-      agentId: "codex",
-      label: "Codex OpenAI",
-      modelProvider: "openai",
-      providerName: "OpenAI",
-      models: normalizeModels(codexModels, FALLBACK_MODEL_OPTIONS.codex),
-    },
-    {
-      id: "claude-code",
-      agentId: "claude",
-      label: "Claude Code",
-      models: FALLBACK_MODEL_OPTIONS.claude,
-    },
-    {
-      id: "api-openai",
-      agentId: "api",
-      label: "OpenAI API",
-      providerName: "OpenAI",
-      modelProvider: "openai-api",
-      baseUrl: "https://api.openai.com/v1",
-      models: FALLBACK_MODEL_OPTIONS.api,
-    },
-  ];
+  return RUNTIME_DEFINITIONS.map((definition) => ({
+    ...definition.defaultChannel,
+    agentId: definition.id,
+    models: definition.id === "codex"
+      ? normalizeModels(codexModels, FALLBACK_MODEL_OPTIONS.codex)
+      : FALLBACK_MODEL_OPTIONS[definition.id],
+  }));
 }
 
 export async function loadModelChannels(configPath: string, codexCommand = "codex"): Promise<AgentChannel[]> {
@@ -418,7 +477,7 @@ function pushBooleanConfigOverride(args: string[], key: string, value: boolean):
   args.push("-c", `${key}=${value ? "true" : "false"}`);
 }
 
-export function codexAppServerConfigArgs(channel: AgentChannel | undefined, modelId: string): string[] {
+export function codexAppServerConfigArgs(channel: AgentChannel | undefined, modelId: string, reasoningEffort?: string): string[] {
   if (!channel || channel.agentId !== "codex") return [];
 
   const args: string[] = [];
@@ -427,7 +486,8 @@ export function codexAppServerConfigArgs(channel: AgentChannel | undefined, mode
   const model = runtimeModelId(modelId);
   if (model) pushConfigOverride(args, "model", model);
 
-  if (channel.modelReasoningEffort) pushConfigOverride(args, "model_reasoning_effort", channel.modelReasoningEffort);
+  const effectiveReasoningEffort = reasoningEffort?.trim() || channel.modelReasoningEffort;
+  if (effectiveReasoningEffort) pushConfigOverride(args, "model_reasoning_effort", effectiveReasoningEffort);
   if (channel.modelCatalogJson) pushConfigOverride(args, "model_catalog_json", channel.modelCatalogJson);
   for (const plugin of channel.plugins ?? []) {
     pushBooleanConfigOverride(args, pluginConfigKey(plugin.id), plugin.enabled);

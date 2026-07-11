@@ -1,15 +1,16 @@
 import type {
-  AgentId,
   RuntimeConversation,
   WorkflowAgentEvent,
-  WorkflowAgentRequest,
   WorkflowAgentResponse,
   WorkflowDraftState,
   WorkflowGraph,
 } from "../../../shared/types";
 import { replaceWorkflowDraftMessage } from "./agent-hub-workflow-draft";
 import { runWorkflowDraftReply } from "./agent-hub-workflow-agent";
-import { beginWorkflowDraftReply } from "./agent-hub-workflow-draft-reply-state";
+import {
+  beginWorkflowDraftReply,
+  type WorkflowDraftInteractiveRequest,
+} from "./agent-hub-workflow-draft-reply-state";
 
 export interface ActiveWorkflowDraftRequest {
   requestId: string;
@@ -27,11 +28,9 @@ export async function dispatchWorkflowDraftReply(input: {
   storeWorkflow: (workflow: WorkflowDraftState) => void;
   storeActiveRequest: (workflowId: string, request: ActiveWorkflowDraftRequest) => void;
   emit: () => void;
-  defaultRuntimeId: AgentId;
-  resolveRuntimeId: (configuredAgentId: string, modelId: string) => AgentId | undefined;
   defaultWorkDir: string;
-  askWorkflowAgent: (
-    request: WorkflowAgentRequest,
+  askWorkflowDraftAgent: (
+    request: WorkflowDraftInteractiveRequest,
     onEvent?: (event: WorkflowAgentEvent) => void,
   ) => Promise<WorkflowAgentResponse>;
   handleEvent: (workflowId: string, event: WorkflowAgentEvent) => void;
@@ -60,10 +59,8 @@ export async function dispatchWorkflowDraftReply(input: {
   await runWorkflowDraftReply({
     started,
     reply: text,
-    defaultRuntimeId: input.defaultRuntimeId,
-    resolveRuntimeId: input.resolveRuntimeId,
     defaultWorkDir: input.defaultWorkDir,
-    askWorkflowAgent: input.askWorkflowAgent,
+    askWorkflowDraftAgent: input.askWorkflowDraftAgent,
     handleEvent: input.handleEvent,
     completeRequest: input.completeRequest,
     failRequest: input.failRequest,

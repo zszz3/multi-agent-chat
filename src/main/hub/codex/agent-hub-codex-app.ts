@@ -1,6 +1,12 @@
 import type { CodexPluginCatalogItem } from "../../../shared/types";
 import { CodexRpcClient } from "../../agents/codex/codex-rpc";
 import { asArray, asBoolean, asOptionalString, asRecord } from "../persisted/agent-hub-persistence";
+import type { CodexWorkflowToolCallResult } from "./agent-hub-codex-workflow-tools";
+
+export interface CodexServerRequestOptions {
+  handleWorkflowToolCall?: (params: Record<string, unknown>) => CodexWorkflowToolCallResult;
+  onWorkflowGraph?: (payload: { graph: import("../../../shared/types").WorkflowGraph; workflowId?: string; revision?: number }) => void;
+}
 
 export function codexSlashHelpText(): string {
   return [
@@ -140,6 +146,7 @@ export function respondToCodexServerRequest(
   id: number,
   method: string,
   params: Record<string, unknown>,
+  options: CodexServerRequestOptions = {},
 ): void {
   if (method === "item/commandExecution/requestApproval" || method === "execCommandApproval") {
     client.respond(id, { decision: "accept" });
@@ -158,6 +165,21 @@ export function respondToCodexServerRequest(
     return;
   }
   if (method === "item/tool/call" || method === "mcp/dynamicToolCall") {
+    const toolResult = options.handleWorkflowToolCall?.(params);
+    if (toolResult?.handled) {
+      if (toolResult.graph && toolResult.workflowId) {
+        options.onWorkflowGraph?.({
+          graph: toolResult.graph,
+          workflowId: toolResult.workflowId,
+          ...(toolResult.revision !== undefined ? { revision: toolResult.revision } : {}),
+        });
+      }
+      client.respond(id, {
+        contentItems: [{ type: "inputText", text: JSON.stringify(toolResult.payload ?? { ok: toolResult.success !== false }) }],
+        success: toolResult.success !== false,
+      });
+      return;
+    }
     client.respond(id, {
       contentItems: [{ type: "inputText", text: "Multi Agent Chat does not handle Codex tool calls in the demo." }],
       success: false,

@@ -26,7 +26,6 @@ This file is not an implementation plan.
 
 This program contract is derived from:
 
-- `docs/workflow-v2-design.md`
 - `docs/workflow-v2/overview-and-boundaries.md`
 - `docs/workflow-v2/roles-and-routing.md`
 - `docs/workflow-v2/graph-and-nodes.md`

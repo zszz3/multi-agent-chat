@@ -1,4 +1,5 @@
 import { randomUUID } from "node:crypto";
+import { runtimeLabel } from "../../../shared/runtime-catalog";
 import type { AgentChannel, AgentId, ChatMessage } from "../../../shared/types";
 
 export function createAssistantMessage(content = "", local = false): ChatMessage {
@@ -45,7 +46,10 @@ export function cloneAgentChannel(channel: AgentChannel): AgentChannel {
     id: channel.id,
     agentId: channel.agentId,
     label: channel.label,
-    models: channel.models.map((model) => ({ ...model })),
+    models: channel.models.map((model) => ({
+      ...model,
+      ...(model.reasoningEfforts ? { reasoningEfforts: [...model.reasoningEfforts] } : {}),
+    })),
   };
   if (channel.profileName !== undefined) cloned.profileName = channel.profileName;
   if (channel.presetId !== undefined) cloned.presetId = channel.presetId;
@@ -53,6 +57,17 @@ export function cloneAgentChannel(channel: AgentChannel): AgentChannel {
   if (channel.providerName !== undefined) cloned.providerName = channel.providerName;
   if (channel.baseUrl !== undefined) cloned.baseUrl = channel.baseUrl;
   if (channel.wireApi !== undefined) cloned.wireApi = channel.wireApi;
+  if (channel.apiFormat !== undefined) cloned.apiFormat = channel.apiFormat;
+  if (channel.apiKeyField !== undefined) cloned.apiKeyField = channel.apiKeyField;
+  if (channel.isFullUrl !== undefined) cloned.isFullUrl = channel.isFullUrl;
+  if (channel.customUserAgent !== undefined) cloned.customUserAgent = channel.customUserAgent;
+  if (channel.environment !== undefined) cloned.environment = { ...channel.environment };
+  if (channel.requestOverrides !== undefined) {
+    cloned.requestOverrides = {
+      ...(channel.requestOverrides.headers ? { headers: { ...channel.requestOverrides.headers } } : {}),
+      ...(channel.requestOverrides.body ? { body: structuredClone(channel.requestOverrides.body) } : {}),
+    };
+  }
   if (channel.modelCatalogJson !== undefined) cloned.modelCatalogJson = channel.modelCatalogJson;
   if (channel.modelReasoningEffort !== undefined) cloned.modelReasoningEffort = channel.modelReasoningEffort;
   if (channel.httpHeaders !== undefined) cloned.httpHeaders = { ...channel.httpHeaders };
@@ -61,8 +76,5 @@ export function cloneAgentChannel(channel: AgentChannel): AgentChannel {
 }
 
 export function agentLabel(agentId: AgentId): string {
-  if (agentId === "codex") return "Codex";
-  if (agentId === "claude") return "Claude Code";
-  if (agentId === "hermes") return "Hermes";
-  return "API";
+  return runtimeLabel(agentId);
 }

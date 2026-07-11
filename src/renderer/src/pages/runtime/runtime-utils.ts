@@ -34,7 +34,9 @@ export function agentTestEventLabel(type: AgentTestUiState["transcript"][number]
 
 export function applyProviderPresetToChannel(channel: AgentChannel, preset: AgentProviderPreset, apiKey = ""): AgentChannel {
   const presetModelIds = new Set(preset.models.map((model) => model.id));
-  const customModels = channel.models.filter((model) => model.id !== DEFAULT_MODEL_ID && !presetModelIds.has(model.id));
+  const customModels = channel.presetId === preset.id
+    ? channel.models.filter((model) => model.id !== DEFAULT_MODEL_ID && !presetModelIds.has(model.id))
+    : [];
   const next: AgentChannel = {
     ...channel,
     agentId: preset.runtimeAgentId,
@@ -45,6 +47,9 @@ export function applyProviderPresetToChannel(channel: AgentChannel, preset: Agen
   delete next.modelProvider;
   delete next.baseUrl;
   delete next.wireApi;
+  delete next.apiFormat;
+  delete next.apiKeyField;
+  delete next.environment;
   delete next.modelReasoningEffort;
   delete next.modelCatalogJson;
   delete next.httpHeaders;
@@ -52,6 +57,9 @@ export function applyProviderPresetToChannel(channel: AgentChannel, preset: Agen
   if (preset.modelProvider) next.modelProvider = preset.modelProvider;
   if (preset.baseUrl) next.baseUrl = preset.baseUrl;
   if (preset.wireApi) next.wireApi = preset.wireApi;
+  if (preset.apiFormat) next.apiFormat = preset.apiFormat;
+  if (preset.apiKeyField) next.apiKeyField = preset.apiKeyField;
+  if (preset.environment) next.environment = { ...preset.environment };
   if (preset.modelReasoningEffort) next.modelReasoningEffort = preset.modelReasoningEffort;
   if (preset.extraHeaders) next.httpHeaders = { ...preset.extraHeaders };
   const normalizedApiKey = apiKey.trim();
@@ -168,6 +176,7 @@ export function applyProviderApiKeyToChannel(channel: AgentChannel, preset: Agen
 export function resolveProviderPresetId(channel: AgentChannel | undefined, presets: AgentProviderPreset[]): string | undefined {
   if (!channel) return undefined;
   if (channel.presetId && presets.some((preset) => preset.id === channel.presetId)) return channel.presetId;
+  if (presets.some((preset) => preset.id === channel.id)) return channel.id;
   return (
     presets.find(
       (preset) =>
