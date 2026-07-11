@@ -97,7 +97,7 @@ describe("AgentHub runtime recovery wiring", () => {
       await writeFile(
         storagePath,
         JSON.stringify({
-          version: 4,
+          version: 5,
           activeChatId: "chat-1",
           workDir: dir,
           sessions: [

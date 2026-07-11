@@ -13,6 +13,7 @@ const node: WorkflowV2LLMNode = {
   kind: "implementation",
   title: "Implement",
   execModel: "llm",
+        executionMode: "one-shot",
   prompt: "Implement the change",
   outputFields: [{ key: "patch", required: true }],
 };

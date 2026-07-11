@@ -60,10 +60,6 @@ function optional(target: RecordValue, key: string, value: unknown): void {
   if (value !== null && value !== undefined) target[key] = value;
 }
 
-function tableExists(db: DatabaseSync, name: string): boolean {
-  return Boolean(db.prepare("select 1 from sqlite_master where type = 'table' and name = ?").get(name));
-}
-
 function rowCount(db: DatabaseSync, table: string): number {
   const row = asRecord(db.prepare(`select count(*) as count from ${table}`).get());
   return asNumber(row.count);
@@ -80,7 +76,7 @@ export class SqliteAppStore {
     if (!auxRow.payload && rowCount(db, "chats") === 0 && rowCount(db, "workflows") === 0) return undefined;
 
     const payload = asRecord(parseJson(auxRow.payload));
-    payload.version = Number(this.readSetting(db, "payload_version") ?? "4");
+    payload.version = Number(this.readSetting(db, "payload_version") ?? "5");
     payload.activeChatId = this.nullableSetting(db, "active_chat_id");
     payload.workDir = this.readSetting(db, "work_dir") ?? "";
     payload.sessions = this.loadChats(db);
@@ -110,24 +106,13 @@ export class SqliteAppStore {
     db.exec("pragma busy_timeout = 5000");
     createNormalizedSchema(db);
     this.db = db;
-    this.migrateLegacyState(db);
     return db;
-  }
-
-  private migrateLegacyState(db: DatabaseSync): void {
-    if (!tableExists(db, "app_state")) return;
-    const row = asRecord(db.prepare("select payload from app_state where id = 1").get());
-    const legacy = asRecord(parseJson(row.payload));
-    if (legacy.version === 4 && rowCount(db, "chats") === 0 && rowCount(db, "workflows") === 0) {
-      this.saveNormalized(db, legacy);
-    }
-    if (!tableExists(db, "legacy_app_state")) db.exec("alter table app_state rename to legacy_app_state");
   }
 
   private saveNormalized(db: DatabaseSync, raw: unknown): void {
     const payload = asRecord(raw);
-    if (payload.version !== 4 && payload.version !== 5) {
-      throw new Error("SQLite persistence only supports app state versions 4 and 5");
+    if (payload.version !== 5) {
+      throw new Error("SQLite persistence only supports app state version 5");
     }
     db.exec("begin immediate");
     try {
@@ -178,9 +163,6 @@ export class SqliteAppStore {
       delete from workflow_runs;
       delete from workflow_run_progress;
       delete from workflow_draft_messages;
-      delete from workflow_edges;
-      delete from workflow_nodes;
-      delete from workflow_graphs;
       delete from workflows;
       delete from app_settings;
     `);
@@ -294,10 +276,10 @@ export class SqliteAppStore {
       const workflowId = asString(workflow.workflowId);
       db.prepare(
         `insert into workflows
-         (id, source_type, topology_locked, title, status, revision, configured_agent_id, model_id, objective, work_dir, graph_ready,
+         (id, source_type, topology_locked, title, status, revision, configured_agent_id, model_id, objective, work_dir,
           reply, error, run_context_document, context_document, final_report, runtime_conversation_json,
           definition_json, workflow_v2_plan_json, created_at, updated_at)
-         values (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+         values (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`
       ).run(
         workflowId,
         workflow.sourceType === "official" ? "official" : "user",
@@ -309,7 +291,6 @@ export class SqliteAppStore {
         asString(workflow.modelId),
         asString(workflow.objective),
         asOptionalString(workflow.workDir) ?? null,
-        workflow.graphReady === true ? 1 : 0,
         asString(workflow.reply),
         asOptionalString(workflow.error) ?? null,
         asString(workflow.runContextDocument),
@@ -321,9 +302,6 @@ export class SqliteAppStore {
         asNumber(workflow.createdAt),
         asNumber(workflow.updatedAt),
       );
-      const draftGraphId = `workflow:${workflowId}:revision:${asNumber(workflow.revision)}`;
-      this.saveGraph(db, draftGraphId, workflowId, asNumber(workflow.revision), null, workflow.graph, asNumber(workflow.updatedAt));
-
       asArray(workflow.messages).forEach((message, sequence) => {
         db.prepare(
           "insert into workflow_draft_messages (id, workflow_id, role, content, sequence) values (?, ?, ?, ?, ?)",
@@ -352,57 +330,15 @@ export class SqliteAppStore {
     }
   }
 
-  private saveGraph(
-    db: DatabaseSync,
-    graphId: string,
-    workflowId: string,
-    revision: number | null,
-    runId: string | null,
-    rawGraph: unknown,
-    createdAt: number,
-  ): void {
-    const graph = asRecord(rawGraph);
-    db.prepare(
-      "insert into workflow_graphs (id, workflow_id, revision, run_id, title, objective, created_at) values (?, ?, ?, ?, ?, ?, ?)",
-    ).run(graphId, workflowId, revision, runId, asString(graph.title), asString(graph.objective), createdAt);
-    asArray(graph.nodes).forEach((node, sequence) => {
-      const position = asRecord(node.position);
-      db.prepare(
-        `insert into workflow_nodes
-         (graph_id, node_id, kind, title, prompt, configured_agent_id, model_id, position_x, position_y, sequence)
-         values (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
-      ).run(
-        graphId,
-        asString(node.id),
-        asString(node.kind),
-        asString(node.title),
-        asString(node.prompt),
-        asOptionalString(node.configuredAgentId) ?? null,
-        asOptionalString(node.modelId) ?? null,
-        asOptionalNumber(position.x) ?? null,
-        asOptionalNumber(position.y) ?? null,
-        sequence,
-      );
-    });
-    asArray(graph.edges).forEach((edge, sequence) => {
-      db.prepare(
-        "insert into workflow_edges (graph_id, edge_id, from_node_id, to_node_id, sequence) values (?, ?, ?, ?, ?)",
-      ).run(graphId, asString(edge.id), asString(edge.fromNodeId), asString(edge.toNodeId), sequence);
-    });
-  }
-
   private saveRun(db: DatabaseSync, workflowId: string, run: RecordValue, sequence: number): void {
     const runId = asString(run.runId);
-    const workflowRow = asRecord(db.prepare("select revision from workflows where id = ?").get(workflowId));
-    const graphId = `workflow:${workflowId}:revision:${asNumber(workflowRow.revision)}`;
     db.prepare(
       `insert into workflow_runs
-       (id, workflow_id, graph_id, workflow_v2_plan_json, status, context_document, final_report, started_at, finished_at, last_error)
-       values (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+       (id, workflow_id, workflow_v2_plan_json, status, context_document, final_report, started_at, finished_at, last_error)
+       values (?, ?, ?, ?, ?, ?, ?, ?, ?)`,
     ).run(
       runId,
       workflowId,
-      graphId,
       json(run.workflowV2Plan),
       asString(run.status),
       asString(run.contextDocument),
@@ -551,9 +487,6 @@ export class SqliteAppStore {
 
   private loadWorkflow(db: DatabaseSync, row: RecordValue): RecordValue {
     const workflowId = asString(row.id);
-    const graphRow = asRecord(
-      db.prepare("select * from workflow_graphs where workflow_id = ? and revision = ?").get(workflowId, row.revision),
-    );
     const runIds = db
       .prepare("select run_id from workflow_run_order where workflow_id = ? order by sequence")
       .all(workflowId)
@@ -568,8 +501,6 @@ export class SqliteAppStore {
       configuredAgentId: row.configured_agent_id,
       modelId: row.model_id,
       objective: row.objective,
-      graph: this.loadGraph(db, graphRow),
-      graphReady: row.graph_ready === 1,
       messages: db
         .prepare("select id, role, content from workflow_draft_messages where workflow_id = ? order by sequence")
         .all(workflowId)
@@ -614,32 +545,6 @@ export class SqliteAppStore {
     optional(run, "lastError", row.last_error);
     optional(run, "workflowV2Plan", parseJson(row.workflow_v2_plan_json));
     return run;
-  }
-
-  private loadGraph(db: DatabaseSync, graphRow: RecordValue): RecordValue {
-    const graphId = asString(graphRow.id);
-    const nodes = db
-      .prepare("select * from workflow_nodes where graph_id = ? order by sequence")
-      .all(graphId)
-      .map(asRecord)
-      .map((row) => {
-        const node: RecordValue = {
-          id: row.node_id,
-          kind: row.kind,
-          title: row.title,
-          prompt: row.prompt,
-        };
-        optional(node, "configuredAgentId", row.configured_agent_id);
-        optional(node, "modelId", row.model_id);
-        if (row.position_x !== null && row.position_y !== null) node.position = { x: row.position_x, y: row.position_y };
-        return node;
-      });
-    const edges = db
-      .prepare("select * from workflow_edges where graph_id = ? order by sequence")
-      .all(graphId)
-      .map(asRecord)
-      .map((row) => ({ id: row.edge_id, fromNodeId: row.from_node_id, toNodeId: row.to_node_id }));
-    return { title: graphRow.title, objective: graphRow.objective, nodes, edges };
   }
 
   private loadProgress(db: DatabaseSync, table: string, ownerColumn: string, ownerId: string): RecordValue[] {

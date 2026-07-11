@@ -1,11 +1,28 @@
 export interface SqliteSchemaDatabase {
   exec(sql: string): void;
-  prepare(sql: string): { all(...params: unknown[]): unknown[]; run(...params: unknown[]): unknown };
+  prepare(sql: string): { all(...params: unknown[]): unknown[]; get(...params: unknown[]): unknown; run(...params: unknown[]): unknown };
 }
 
-const SCHEMA_VERSION = 2;
+const SCHEMA_VERSION = 3;
 
 export function createNormalizedSchema(db: SqliteSchemaDatabase): void {
+  db.exec(`create table if not exists schema_migrations (version integer primary key, applied_at integer not null);`);
+  const hasV3 = Boolean(db.prepare("select 1 from schema_migrations where version = ?").get(SCHEMA_VERSION));
+  if (!hasV3) {
+    db.exec(`
+      drop table if exists workflow_event_artifacts;
+      drop table if exists workflow_events;
+      drop table if exists workflow_run_nodes;
+      drop table if exists workflow_run_order;
+      drop table if exists workflow_runs;
+      drop table if exists workflow_run_progress;
+      drop table if exists workflow_draft_messages;
+      drop table if exists workflow_edges;
+      drop table if exists workflow_nodes;
+      drop table if exists workflow_graphs;
+      drop table if exists workflows;
+    `);
+  }
   db.exec(`
     create table if not exists schema_migrations (
       version integer primary key,
@@ -80,7 +97,6 @@ export function createNormalizedSchema(db: SqliteSchemaDatabase): void {
       model_id text not null,
       objective text not null,
       work_dir text,
-      graph_ready integer not null,
       reply text not null,
       error text,
       run_context_document text not null,
@@ -91,36 +107,6 @@ export function createNormalizedSchema(db: SqliteSchemaDatabase): void {
       workflow_v2_plan_json text,
       created_at integer not null,
       updated_at integer not null
-    );
-    create table if not exists workflow_graphs (
-      id text primary key,
-      workflow_id text not null references workflows(id) on delete cascade,
-      revision integer,
-      run_id text unique,
-      title text not null,
-      objective text not null,
-      created_at integer not null
-    );
-    create table if not exists workflow_nodes (
-      graph_id text not null references workflow_graphs(id) on delete cascade,
-      node_id text not null,
-      kind text not null,
-      title text not null,
-      prompt text not null,
-      configured_agent_id text,
-      model_id text,
-      position_x real,
-      position_y real,
-      sequence integer not null,
-      primary key (graph_id, node_id)
-    );
-    create table if not exists workflow_edges (
-      graph_id text not null references workflow_graphs(id) on delete cascade,
-      edge_id text not null,
-      from_node_id text not null,
-      to_node_id text not null,
-      sequence integer not null,
-      primary key (graph_id, edge_id)
     );
     create table if not exists workflow_draft_messages (
       id text primary key,
@@ -142,7 +128,6 @@ export function createNormalizedSchema(db: SqliteSchemaDatabase): void {
     create table if not exists workflow_runs (
       id text primary key,
       workflow_id text not null references workflows(id) on delete cascade,
-      graph_id text not null references workflow_graphs(id),
       workflow_v2_plan_json text,
       status text not null,
       context_document text not null,

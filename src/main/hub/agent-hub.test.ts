@@ -904,7 +904,7 @@ describe("AgentHub chat sessions", () => {
     await writeFile(
       storagePath,
       JSON.stringify({
-        version: 4,
+        version: 5,
         activeChatId: "chat-1",
         workDir: dir,
         sessions: [
@@ -980,7 +980,7 @@ describe("AgentHub chat sessions", () => {
     await writeFile(
       storagePath,
       JSON.stringify({
-        version: 4,
+        version: 5,
         activeChatId: "chat-1",
         workDir: dir,
         sessions: [
@@ -2983,7 +2983,6 @@ fs.writeFileSync(${JSON.stringify(argsPath)}, process.argv.slice(2).join("\\n") 
       workflowId: expect.stringMatching(/^wf_/),
       title: "MCP Planned Workflow",
       objective: "Build a workflow through MCP",
-      graphReady: true,
       messages: [
         { role: "user", content: "Create the workflow with the MCP workflow_create tool." },
         { role: "assistant", content: "Workflow created through MCP." },
@@ -3056,7 +3055,7 @@ fs.writeFileSync(${JSON.stringify(argsPath)}, process.argv.slice(2).join("\\n") 
     expect(oneShotInput).toMatchObject({
       prompt: "Plan the repo",
       cwd: dir,
-      developerInstructions: expect.stringContaining("workflow builder"),
+      developerInstructions: expect.stringContaining("Workflow V2 Manager"),
     });
     expect(oneShotInput?.resumeSessionId).toBeUndefined();
   });
@@ -3137,7 +3136,7 @@ fs.writeFileSync(${JSON.stringify(argsPath)}, process.argv.slice(2).join("\\n") 
     expect(oneShotInput).toMatchObject({
       prompt: "Continue the repo plan",
       cwd: dir,
-      developerInstructions: expect.stringContaining("workflow builder"),
+      developerInstructions: expect.stringContaining("Workflow V2 Manager"),
       resumeSessionId: "claude-session-9",
     });
   });
@@ -3521,7 +3520,7 @@ fs.writeFileSync(${JSON.stringify(argsPath)}, process.argv.slice(2).join("\\n") 
     await writeFile(
       storagePath,
       JSON.stringify({
-        version: 4,
+        version: 5,
         activeChatId: "chat-1",
         workDir: dir,
         sessions: [
@@ -3656,7 +3655,7 @@ fs.writeFileSync(${JSON.stringify(argsPath)}, process.argv.slice(2).join("\\n") 
     await writeFile(
       storagePath,
       JSON.stringify({
-        version: 4,
+        version: 5,
         activeChatId: "chat-1",
         workDir: dir,
         sessions: [
@@ -3935,62 +3934,6 @@ fs.writeFileSync(${JSON.stringify(argsPath)}, process.argv.slice(2).join("\\n") 
     ]);
   });
 
-  test("compacts generated execution channel records when restoring app state", async () => {
-    const dir = await mkdtemp(path.join(os.tmpdir(), "multi-agent-chat-generated-channels-"));
-    const storagePath = path.join(dir, "app-chats.json");
-    const realChannel: AgentChannel = {
-      id: "codex-deepseek",
-      agentId: "codex",
-      label: "Codex DeepSeek",
-      providerName: "DeepSeek",
-      modelProvider: "deepseek",
-      models: [{ id: DEFAULT_MODEL_ID, label: "Default" }],
-    };
-
-    await writeFile(
-      storagePath,
-      JSON.stringify({
-        version: 4,
-        activeChatId: null,
-        workDir: "C:/tmp/project",
-        channels: [
-          realChannel,
-          {
-            ...realChannel,
-            id: "repo-reviewer-channel",
-            label: "Repo Reviewer Runtime",
-          },
-          {
-            ...realChannel,
-            id: "codex-multi-agent-repo-reviewer-default",
-            label: "Codex multi-agent-repo-reviewer-default",
-          },
-        ],
-        sessions: [],
-        messages: [],
-        events: [],
-        tasks: [],
-        taskMessages: [],
-        taskEvents: [],
-        teams: [],
-        teamRuns: [],
-      }),
-      "utf8",
-    );
-
-    const restored = new AgentHub();
-    await restored.loadPersistedState(storagePath);
-
-    expect(restored.snapshot().channels.map((channel) => channel.id)).toEqual([
-      "codex-deepseek",
-      "claude-code",
-      "api-openai",
-      "hermes-default",
-      "opencode-default",
-      "openclaw-default",
-    ]);
-  });
-
   test("does not salvage legacy JSON history into SQLite storage", async () => {
     const dir = await mkdtemp(path.join(os.tmpdir(), "multi-agent-chat-sqlite-"));
     const legacyPath = path.join(dir, "app-chats.json");
@@ -3998,7 +3941,7 @@ fs.writeFileSync(${JSON.stringify(argsPath)}, process.argv.slice(2).join("\\n") 
     await writeFile(
       legacyPath,
       JSON.stringify({
-        version: 4,
+        version: 5,
         activeChatId: "chat-legacy",
         workDir: "/tmp/legacy-project",
         sessions: [
@@ -4080,7 +4023,6 @@ fs.writeFileSync(${JSON.stringify(argsPath)}, process.argv.slice(2).join("\\n") 
       configuredAgentId: "default-agent",
       title: "sample repo review",
       objective: "Review sample repo",
-      graphReady: true,
       graph: {
         title: "sample repo review",
         objective: "Review sample repo",
@@ -4119,6 +4061,7 @@ fs.writeFileSync(${JSON.stringify(argsPath)}, process.argv.slice(2).join("\\n") 
             kind: "planner",
             title: "Plan",
             execModel: "llm",
+        executionMode: "one-shot",
             role: "orchestrator",
             prompt: "Plan the review",
             outputFields: [{ key: "planDoc", required: true }],
@@ -4128,6 +4071,7 @@ fs.writeFileSync(${JSON.stringify(argsPath)}, process.argv.slice(2).join("\\n") 
             kind: "implementation",
             title: "Inventory",
             execModel: "llm",
+        executionMode: "one-shot",
             prompt: "Map repo.",
             outputFields: [{ key: "inventoryDoc", required: true }],
           },
@@ -4175,7 +4119,6 @@ fs.writeFileSync(${JSON.stringify(argsPath)}, process.argv.slice(2).join("\\n") 
       title: "sample repo review",
       objective: "Review sample repo",
       revision: 3,
-      graphReady: true,
       contextDocument: expect.stringContaining("Added architecture note."),
       runProgress: [{ nodeId: "inventory", status: "completed" }],
       workflowV2Plan: {
@@ -4201,8 +4144,7 @@ fs.writeFileSync(${JSON.stringify(argsPath)}, process.argv.slice(2).join("\\n") 
       objective: "Review sample repo",
       revision: 3,
       status: "draft",
-      graphReady: true,
-      graph: { title: "sample repo review" },
+      definition: { objective: "Review sample repo" },
       messages: [{ id: "m-1", role: "user" }, { id: "m-2", role: "assistant" }],
       runProgress: [{ nodeId: "inventory", status: "completed", detail: "Output captured" }],
       runContextDocument: "# Workflow Context\n\n## Inventory (inventory)\nMapped repo.",
@@ -4244,49 +4186,9 @@ fs.writeFileSync(${JSON.stringify(argsPath)}, process.argv.slice(2).join("\\n") 
       title: "Renamed workflow",
       objective: "Review sample repo",
       revision: 2,
-      graph: { title: "Original workflow", objective: "Review sample repo" },
+      definition: { objective: "Review sample repo" },
     });
     expect(snapshot.workflowDraft.title).toBe("Renamed workflow");
-  });
-
-  test("preserves explicit node positions through create and update", () => {
-    const hub = new AgentHub();
-    const created = createV2Workflow(hub, {
-      title: "Positioned workflow",
-      objective: "Pin nodes",
-      graph: {
-        title: "Positioned workflow",
-        objective: "Pin nodes",
-        nodes: [
-          { id: "start", kind: "start", title: "Start", prompt: "", position: { x: 12, y: 34 } },
-          { id: "inventory", kind: "agent", title: "Inventory", prompt: "Map repo."},
-          { id: "end", kind: "end", title: "Done", prompt: "" },
-        ],
-        edges: [
-          { id: "start->inventory", fromNodeId: "start", toNodeId: "inventory" },
-          { id: "inventory->end", fromNodeId: "inventory", toNodeId: "end" },
-        ],
-      },
-    });
-
-    const graphOf = (workflowId: string) =>
-      (hub as any).snapshot().workflowStore.workflows.find((item: any) => item.workflowId === workflowId).graph;
-    const createdNodes = new Map<string, any>(graphOf(created.workflowId).nodes.map((node: any) => [node.id, node]));
-    expect(createdNodes.get("start").position).toEqual({ x: 12, y: 34 });
-    expect(createdNodes.get("inventory").position).toBeUndefined();
-
-    (hub as any).updateWorkflow({
-      workflowId: created.workflowId,
-      graph: {
-        ...graphOf(created.workflowId),
-        nodes: graphOf(created.workflowId).nodes.map((node: any) =>
-          node.id === "inventory" ? { ...node, position: { x: 200, y: 80 } } : node,
-        ),
-      },
-    });
-    const updatedNodes = new Map<string, any>(graphOf(created.workflowId).nodes.map((node: any) => [node.id, node]));
-    expect(updatedNodes.get("inventory").position).toEqual({ x: 200, y: 80 });
-    expect(updatedNodes.get("start").position).toEqual({ x: 12, y: 34 });
   });
 
   test("deletes a workflow draft with its runs and selects the next remaining workflow", async () => {
@@ -4374,7 +4276,6 @@ fs.writeFileSync(${JSON.stringify(argsPath)}, process.argv.slice(2).join("\\n") 
       title: "Untitled workflow",
       status: "draft",
       objective: "",
-      graphReady: false,
       messages: [],
       runProgress: [],
       runContextDocument: "",
@@ -4426,6 +4327,7 @@ fs.writeFileSync(${JSON.stringify(argsPath)}, process.argv.slice(2).join("\\n") 
             kind: "planner",
             title: "Plan",
             execModel: "llm",
+        executionMode: "one-shot",
             role: "orchestrator",
             prompt: "Plan the work",
             outputFields: [{ key: "planDoc", required: true }],
@@ -4435,6 +4337,7 @@ fs.writeFileSync(${JSON.stringify(argsPath)}, process.argv.slice(2).join("\\n") 
             kind: "implementation",
             title: "Execute",
             execModel: "llm",
+        executionMode: "one-shot",
             prompt: "Implement the plan",
             outputFields: [{ key: "diff", required: true }],
           },
@@ -4490,7 +4393,7 @@ fs.writeFileSync(${JSON.stringify(argsPath)}, process.argv.slice(2).join("\\n") 
       title: "Still running",
       resetRunState: true,
     });
-    const duplicate = hub.runWorkflowGraph({ workflowId: created.workflowId });
+    const duplicate = hub.runWorkflow({ workflowId: created.workflowId });
 
     expect(patched.workflowStore.workflows.find((workflow) => workflow.workflowId === created.workflowId)).toMatchObject({
       status: "running",
@@ -4517,8 +4420,10 @@ fs.writeFileSync(${JSON.stringify(argsPath)}, process.argv.slice(2).join("\\n") 
         graphVersion: 1,
         objective: "Broken",
         nodes: [
-          { id: "a", kind: "implementation", title: "A", execModel: "llm", executionMode: "one-shot", prompt: "A", outputFields: [{ key: "result", required: true }] },
-          { id: "b", kind: "implementation", title: "B", execModel: "llm", executionMode: "one-shot", prompt: "B", outputFields: [{ key: "result", required: true }] },
+          { id: "a", kind: "implementation", title: "A", execModel: "llm",
+        executionMode: "one-shot", prompt: "A", outputFields: [{ key: "result", required: true }] },
+          { id: "b", kind: "implementation", title: "B", execModel: "llm",
+        executionMode: "one-shot", prompt: "B", outputFields: [{ key: "result", required: true }] },
         ],
         edges: [
           { fromNodeId: "a", toNodeId: "b" },
@@ -4618,6 +4523,7 @@ fs.writeFileSync(${JSON.stringify(argsPath)}, process.argv.slice(2).join("\\n") 
             kind: "planner",
             title: "Plan",
             execModel: "llm",
+        executionMode: "one-shot",
             role: "orchestrator",
             prompt: "Plan the work",
             outputFields: [{ key: "planDoc", required: true }],
@@ -4627,6 +4533,7 @@ fs.writeFileSync(${JSON.stringify(argsPath)}, process.argv.slice(2).join("\\n") 
             kind: "implementation",
             title: "Work",
             execModel: "llm",
+        executionMode: "one-shot",
             prompt: "Work.",
             outputFields: [{ key: "diff", required: true }],
           },
@@ -4758,6 +4665,7 @@ fs.writeFileSync(${JSON.stringify(argsPath)}, process.argv.slice(2).join("\\n") 
             kind: "implementation",
             title: "Work",
             execModel: "llm",
+        executionMode: "one-shot",
             prompt: "Do the work.",
             outputFields: [{ key: "diff", required: true }],
             constraints: [{ key: "stay_scoped", description: "Do not invent execution behavior outside the approved plan." }],
@@ -4771,8 +4679,8 @@ fs.writeFileSync(${JSON.stringify(argsPath)}, process.argv.slice(2).join("\\n") 
       workflowV2Plan: planned.plan!,
     });
 
-    expect(typeof (hub as any).runWorkflowGraph).toBe("function");
-    const started = await (hub as any).runWorkflowGraph({
+    expect(typeof (hub as any).runWorkflow).toBe("function");
+    const started = await (hub as any).runWorkflow({
       workflowId: created.workflowId,
       contextDocument: "# Initial context",
     });
@@ -4845,6 +4753,7 @@ fs.writeFileSync(${JSON.stringify(argsPath)}, process.argv.slice(2).join("\\n") 
           kind: "verification",
           title: "Script",
           execModel: "script",
+        executionMode: "script",
           sandboxMode: "workspace",
           script: { language: "bash", code: "printf unsafe", timeoutMs: 1_000 },
           outputFields: [{ key: "stdout", required: true }],
@@ -4854,7 +4763,7 @@ fs.writeFileSync(${JSON.stringify(argsPath)}, process.argv.slice(2).join("\\n") 
     });
     hub.patchWorkflowDraft({ workflowId: created.workflowId, workflowV2Plan: planned.plan! });
 
-    const started = await (hub as any).runWorkflowGraph({ workflowId: created.workflowId });
+    const started = await (hub as any).runWorkflow({ workflowId: created.workflowId });
     const snapshot = await waitFor(
       () => hub.snapshot() as any,
       (value) => value.workflowStore.runs.some((run: any) => run.workflowId === created.workflowId && run.status === "failed"),
@@ -4908,8 +4817,10 @@ fs.writeFileSync(${JSON.stringify(argsPath)}, process.argv.slice(2).join("\\n") 
         graphVersion: 1,
         objective: "Pause one node",
         nodes: [
-          { id: "work", kind: "implementation", title: "Work", execModel: "llm", executionMode: "one-shot", prompt: "Do the work.", outputFields: [{ key: "result", required: true }] },
-          { id: "followup", kind: "implementation", title: "Follow up", execModel: "llm", executionMode: "one-shot", prompt: "Use the work output.", outputFields: [{ key: "result", required: true }] },
+          { id: "work", kind: "implementation", title: "Work", execModel: "llm",
+        executionMode: "one-shot", prompt: "Do the work.", outputFields: [{ key: "result", required: true }] },
+          { id: "followup", kind: "implementation", title: "Follow up", execModel: "llm",
+        executionMode: "one-shot", prompt: "Use the work output.", outputFields: [{ key: "result", required: true }] },
         ],
         edges: [{ fromNodeId: "work", toNodeId: "followup" }],
       },
@@ -4929,7 +4840,7 @@ fs.writeFileSync(${JSON.stringify(argsPath)}, process.argv.slice(2).join("\\n") 
         ],
       },
     });
-    const started = (hub as any).runWorkflowGraph({ workflowId: created.workflowId });
+    const started = (hub as any).runWorkflow({ workflowId: created.workflowId });
     expect(started).toMatchObject({ ok: true });
     await waitFor(
       () => hub.snapshot() as any,
@@ -5003,8 +4914,10 @@ fs.writeFileSync(${JSON.stringify(argsPath)}, process.argv.slice(2).join("\\n") 
         graphVersion: 1,
         objective: "Resume one node",
         nodes: [
-          { id: "work", kind: "implementation", title: "Work", execModel: "llm", executionMode: "one-shot", prompt: "Do the work.", outputFields: [{ key: "result", required: true }] },
-          { id: "followup", kind: "implementation", title: "Follow up", execModel: "llm", executionMode: "one-shot", prompt: "Use the work output.", outputFields: [{ key: "result", required: true }] },
+          { id: "work", kind: "implementation", title: "Work", execModel: "llm",
+        executionMode: "one-shot", prompt: "Do the work.", outputFields: [{ key: "result", required: true }] },
+          { id: "followup", kind: "implementation", title: "Follow up", execModel: "llm",
+        executionMode: "one-shot", prompt: "Use the work output.", outputFields: [{ key: "result", required: true }] },
         ],
         edges: [{ fromNodeId: "work", toNodeId: "followup" }],
       },
@@ -5024,7 +4937,7 @@ fs.writeFileSync(${JSON.stringify(argsPath)}, process.argv.slice(2).join("\\n") 
         ],
       },
     });
-    const started = (hub as any).runWorkflowGraph({ workflowId: created.workflowId });
+    const started = (hub as any).runWorkflow({ workflowId: created.workflowId });
     await waitFor(
       () => hub.snapshot() as any,
       (value) => value.workflowStore.runs.some((run: any) => run.runId === started.runId && run.progress.some((item: any) => item.nodeId === "work" && item.status === "running" && item.taskId)),
@@ -5095,7 +5008,8 @@ fs.writeFileSync(${JSON.stringify(argsPath)}, process.argv.slice(2).join("\\n") 
         graphVersion: 1,
         objective: "Ask a human when needed",
         nodes: [
-          { id: "work", kind: "implementation", title: "Work", execModel: "llm", executionMode: "interactive", prompt: "Ask the user which environment to deploy to, then finish the work.", outputFields: [{ key: "result", required: true }] },
+          { id: "work", kind: "implementation", title: "Work", execModel: "llm",
+        executionMode: "interactive", prompt: "Ask the user which environment to deploy to, then finish the work.", outputFields: [{ key: "result", required: true }] },
         ],
         edges: [],
       },
@@ -5113,7 +5027,7 @@ fs.writeFileSync(${JSON.stringify(argsPath)}, process.argv.slice(2).join("\\n") 
         ],
       },
     });
-    const started = (hub as any).runWorkflowGraph({ workflowId: created.workflowId });
+    const started = (hub as any).runWorkflow({ workflowId: created.workflowId });
 
     const pausedSnapshot = await waitFor(
       () => hub.snapshot() as any,
@@ -5282,7 +5196,8 @@ fs.writeFileSync(${JSON.stringify(argsPath)}, process.argv.slice(2).join("\\n") 
         graphVersion: 1,
         objective: "Run from scheduled event",
         nodes: [
-          { id: "work", kind: "implementation", title: "Work", execModel: "llm", executionMode: "one-shot", prompt: "Do the scheduled work.", outputFields: [{ key: "result", required: true }] },
+          { id: "work", kind: "implementation", title: "Work", execModel: "llm",
+        executionMode: "one-shot", prompt: "Do the scheduled work.", outputFields: [{ key: "result", required: true }] },
         ],
         edges: [],
       },

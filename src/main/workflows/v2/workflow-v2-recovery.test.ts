@@ -21,8 +21,10 @@ function definition(): WorkflowV2Definition {
     graphVersion: 1,
     objective: "Recover completed and paused work",
     nodes: [
-      { id: "first", kind: "worker", title: "First", execModel: "llm", prompt: "First", outputFields: [{ key: "value", required: true }] },
-      { id: "second", kind: "worker", title: "Second", execModel: "llm", prompt: "Second", outputFields: [{ key: "value", required: true }] },
+      { id: "first", kind: "worker", title: "First", execModel: "llm",
+        executionMode: "one-shot", prompt: "First", outputFields: [{ key: "value", required: true }] },
+      { id: "second", kind: "worker", title: "Second", execModel: "llm",
+        executionMode: "one-shot", prompt: "Second", outputFields: [{ key: "value", required: true }] },
     ],
     edges: [{ fromNodeId: "first", toNodeId: "second" }],
   };

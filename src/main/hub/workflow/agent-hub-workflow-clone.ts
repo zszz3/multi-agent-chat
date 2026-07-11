@@ -8,9 +8,6 @@ import type {
   ScheduledWorkflowSchedule,
   ScheduledWorkflowStoreState,
   WorkflowDraftState,
-  WorkflowGraph,
-  WorkflowGraphEdge,
-  WorkflowGraphNode,
   WorkflowRunState,
   WorkflowStatus,
   WorkflowStoreState,
@@ -23,44 +20,6 @@ import {
   normalizeScheduledWorkflowWeekdays,
 } from "../persisted/agent-hub-persistence";
 import { cloneWorkflowV2Plan } from "../../../shared/workflow-v2/planning";
-
-export function cloneWorkflowGraphNode(node: WorkflowGraphNode): WorkflowGraphNode {
-  const cloned: WorkflowGraphNode = {
-    id: node.id,
-    kind: node.kind,
-    title: node.title,
-    prompt: node.prompt,
-  };
-  if (
-    node.position &&
-    typeof node.position.x === "number" &&
-    typeof node.position.y === "number" &&
-    Number.isFinite(node.position.x) &&
-    Number.isFinite(node.position.y)
-  ) {
-    cloned.position = { x: node.position.x, y: node.position.y };
-  }
-  if (typeof node.configuredAgentId === "string" && node.configuredAgentId) cloned.configuredAgentId = node.configuredAgentId;
-  if (typeof node.modelId === "string" && node.modelId) cloned.modelId = node.modelId;
-  return cloned;
-}
-
-export function cloneWorkflowGraphEdge(edge: WorkflowGraphEdge): WorkflowGraphEdge {
-  return {
-    id: edge.id,
-    fromNodeId: edge.fromNodeId,
-    toNodeId: edge.toNodeId,
-  };
-}
-
-export function cloneWorkflowGraph(graph: WorkflowGraph): WorkflowGraph {
-  return {
-    title: graph.title,
-    objective: graph.objective,
-    nodes: graph.nodes.map((node) => cloneWorkflowGraphNode(node)),
-    edges: graph.edges.map((edge) => cloneWorkflowGraphEdge(edge)),
-  };
-}
 
 export function normalizeWorkflowStatus(status: WorkflowStatus): WorkflowStatus {
   return status === "running" || status === "completed" || status === "failed" || status === "stopped" ? status : "draft";
@@ -155,16 +114,14 @@ export function cloneWorkflowDraft(input: {
   const { draft, normalizeConfiguredAgentId, normalizeModelId, cloneConversation, now = Date.now() } = input;
   return {
     workflowId: draft.workflowId || `wf_${randomUUID()}`,
-    title: draft.title || draft.graph.title || draft.objective || "Untitled workflow",
+    title: draft.title || draft.definition.objective || draft.objective || "Untitled workflow",
     status: normalizeWorkflowStatus(draft.status),
     revision: Number.isFinite(draft.revision) && draft.revision > 0 ? Math.floor(draft.revision) : 1,
     configuredAgentId: normalizeConfiguredAgentId(draft.configuredAgentId),
     modelId: normalizeModelId(draft.configuredAgentId, draft.modelId),
     objective: draft.objective,
-    ...(draft.definition ? { definition: structuredClone(draft.definition) } : {}),
+    definition: structuredClone(draft.definition),
     ...(draft.workDir ? { workDir: draft.workDir } : {}),
-    graph: cloneWorkflowGraph(draft.graph),
-    graphReady: draft.graphReady,
     messages: draft.messages.map((message) => ({
       id: message.id,
       role: message.role,

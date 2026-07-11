@@ -416,8 +416,8 @@ export interface WorkflowAgentResponse {
 }
 
 export type WorkflowAgentEvent =
+  | { requestId: string; type: "workflow_created"; workflowId: string; revision?: number; content: string }
   | { requestId: string; type: "delta"; content: string }
-  | { requestId: string; type: "workflow_graph"; graph: WorkflowGraph; workflowId?: string; revision?: number; content?: string }
   | { requestId: string; type: "completed"; content: string; runtimeConversation?: RuntimeConversation }
   | { requestId: string; type: "error"; error: string };
 
@@ -545,48 +545,6 @@ export interface RunAgentTeamRequest {
   workDir?: string;
 }
 
-export type WorkflowGraphNodeKind = "start" | "agent" | "end";
-
-export interface WorkflowGraphNode {
-  id: string;
-  kind: WorkflowGraphNodeKind;
-  title: string;
-  prompt: string;
-  /**
-   * Optional per-node agent/model override. When set, this agent node runs with
-   * this configured agent (and model) instead of the workflow-level default.
-   */
-  configuredAgentId?: string | undefined;
-  modelId?: string | undefined;
-  /**
-   * Optional explicit canvas position. When set, the workflow board pins the
-   * node here instead of auto-layout; agents (via MCP) and user drags both write
-   * this. Omit it to let the auto wrapping layout place the node.
-   */
-  position?: { x: number; y: number };
-}
-
-export interface WorkflowGraphEdge {
-  id: string;
-  fromNodeId: string;
-  toNodeId: string;
-}
-
-export interface WorkflowGraph {
-  title: string;
-  objective: string;
-  nodes: WorkflowGraphNode[];
-  edges: WorkflowGraphEdge[];
-}
-
-export interface WorkflowGraphValidation {
-  valid: boolean;
-  errors: string[];
-  startNodeIds: string[];
-  executableNodeIds: string[];
-  topologicalNodeIds: string[];
-}
-
 export interface WorkflowGrillMessage {
   id: string;
   role: "assistant" | "user";
@@ -694,15 +652,13 @@ export interface WorkflowDraftState {
   configuredAgentId: string;
   modelId: string;
   objective: string;
-  definition?: WorkflowV2Definition;
+  definition: WorkflowV2Definition;
   /**
    * Dedicated working directory for this workflow. All node agents run with this
    * as their cwd, and outputs/memory are written under it. Defaults to a
    * per-workflow directory; can be pointed at a real project dir when needed.
    */
   workDir?: string;
-  graph: WorkflowGraph;
-  graphReady: boolean;
   messages: WorkflowGrillMessage[];
   reply: string;
   error: string | undefined;
@@ -860,18 +816,15 @@ export interface WorkflowOperationResult {
   runId?: string;
   revision?: number;
   error?: string;
-  validation?: WorkflowGraphValidation;
 }
 
 export interface CreateWorkflowRequest {
   title: string;
   objective: string;
-  definition?: WorkflowV2Definition;
-  graph: WorkflowGraph;
+  definition: WorkflowV2Definition;
   configuredAgentId?: string;
   modelId?: string;
   workDir?: string;
-  graphReady?: boolean;
   messages?: WorkflowGrillMessage[];
   reply?: string;
   error?: string;
@@ -900,8 +853,7 @@ export interface PatchWorkflowDraftRequest {
   modelId?: string;
   objective?: string;
   workDir?: string | null;
-  graph?: WorkflowGraph;
-  graphReady?: boolean;
+  definition?: WorkflowV2Definition;
   messages?: WorkflowGrillMessage[];
   reply?: string;
   error?: string | null;
@@ -924,10 +876,9 @@ export interface UpdateWorkflowRequest {
   expectedRevision?: number;
   title?: string;
   objective?: string;
-  graph?: WorkflowGraph;
+  definition?: WorkflowV2Definition;
   configuredAgentId?: string;
   modelId?: string;
-  graphReady?: boolean;
   messages?: WorkflowGrillMessage[];
   reply?: string;
   error?: string;
@@ -960,7 +911,7 @@ export interface ListWorkflowOutputsRequest {
   workflowId: string;
   runId: string;
 }
-export interface RunWorkflowGraphRequest {
+export interface RunWorkflowRequest {
   workflowId: string;
   contextDocument?: string;
 }

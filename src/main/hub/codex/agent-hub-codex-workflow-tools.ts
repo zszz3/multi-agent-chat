@@ -2,12 +2,9 @@ import type {
   CreateWorkflowRequest,
   WorkflowArtifactReference,
   WorkflowDraftState,
-  WorkflowGraph,
   WorkflowOperationResult,
 } from "../../../shared/types";
-import { validateWorkflowGraph } from "../../../shared/workflow-graph";
 import { validateWorkflowV2Definition } from "../../../shared/workflow-v2/validation";
-import { projectWorkflowV2DefinitionToLegacyCanvas } from "../../../shared/workflow-v2/projection";
 import type { WorkflowV2Definition } from "../../../shared/workflow-v2/definition";
 import { asOptionalString, asRecord } from "../persisted/agent-hub-persistence";
 
@@ -17,7 +14,6 @@ export interface CodexWorkflowToolCallResult {
   handled: boolean;
   success?: boolean;
   payload?: Record<string, unknown>;
-  graph?: WorkflowGraph;
   workflowId?: string;
   revision?: number;
 }
@@ -90,13 +86,6 @@ function findToolInput(value: unknown, depth = 0): Record<string, unknown> | und
   return undefined;
 }
 
-function workflowGraph(value: unknown): WorkflowGraph | undefined {
-  const record = asRecord(value);
-  return record && Array.isArray(record.nodes) && Array.isArray(record.edges)
-    ? record as unknown as WorkflowGraph
-    : undefined;
-}
-
 export function handleCodexWorkflowToolCall(
   params: Record<string, unknown>,
   deps: CodexWorkflowToolDependencies,
@@ -111,13 +100,10 @@ export function handleCodexWorkflowToolCall(
       return { handled: true, success: false, payload: { ok: false, error: validation?.errors[0] ?? "workflow_create requires a valid Workflow V2 definition." } };
     }
     const title = asOptionalString(input.title) ?? definition.objective;
-    const graph = projectWorkflowV2DefinitionToLegacyCanvas(definition, title);
     const request: CreateWorkflowRequest = {
       title,
       objective: asOptionalString(input.objective) ?? definition.objective,
       definition,
-      graph,
-      graphReady: true,
     };
     const configuredAgentId = asOptionalString(input.configuredAgentId);
     if (configuredAgentId) request.configuredAgentId = configuredAgentId;
@@ -131,7 +117,6 @@ export function handleCodexWorkflowToolCall(
       handled: true,
       success: result.ok,
       payload: (workflow ? { ...result, workflow } : result) as Record<string, unknown>,
-      ...(result.ok && workflow ? { graph: workflow.graph } : {}),
       ...(result.workflowId ? { workflowId: result.workflowId } : {}),
       ...(result.revision !== undefined ? { revision: result.revision } : {}),
     };

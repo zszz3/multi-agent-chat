@@ -24,11 +24,10 @@ export function beginWorkflowDraftReply(input: {
   return {
     next: input.cloneDraft({
       ...(starting ? workflowWithoutFinalReport : input.workflow),
-      title: input.workflow.title || input.workflow.graph.title || "Untitled workflow",
+      title: input.workflow.title || input.workflow.definition.objective || "Untitled workflow",
       status: input.workflow.status === "running" ? input.workflow.status : "draft",
       revision: input.workflow.revision + 1,
       objective: starting ? input.reply : input.workflow.objective,
-      graphReady: starting ? false : input.workflow.graphReady,
       messages: [
         ...input.workflow.messages,
         { id: `grill-user-${now}`, role: "user", content: input.reply },

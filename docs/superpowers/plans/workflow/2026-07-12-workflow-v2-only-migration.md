@@ -23,7 +23,7 @@
 - [x] Define workflow create requests around `WorkflowV2Definition`; update/store removal continues in Task 2.
 - [x] Publish a strict MCP JSON schema for LLM/script nodes, execution modes, output fields, and dependency edges.
 - [x] Require Manager-created LLM nodes to state `executionMode`; user-input-dependent nodes must be `interactive`.
-- [ ] Remove `workflowGraph.upsert` fallback and legacy graph parser usage.
+- [x] Remove `workflowGraph.upsert` fallback and legacy graph parser usage.
 - [x] Verify MCP and Manager creation preserve interactive execution mode and immediately freeze a V2 plan.
 
 ### Task 2: Replace Store And Persistence
@@ -36,11 +36,11 @@
 - Modify: `src/main/hub/persisted/agent-hub-persistence.ts`
 - Test: `src/main/hub/workflow/agent-hub-workflow-restore.test.ts`
 
-- [ ] Store editable V2 definitions and optional frozen plans only.
-- [ ] Delete legacy graph cloning, normalization, and restoration branches.
-- [ ] Reject old persisted workflow records rather than converting them.
-- [ ] Ensure graph edits invalidate the frozen plan deterministically.
-- [ ] Verify save/restore retains execution modes and scripts.
+- [x] Store editable V2 definitions and optional frozen plans only.
+- [x] Delete legacy graph cloning, normalization, and restoration branches.
+- [x] Reject old persisted workflow records rather than converting them.
+- [x] Ensure graph edits invalidate the frozen plan deterministically.
+- [x] Verify save/restore retains execution modes and scripts.
 
 ### Task 3: Make V2 The Only Runtime
 
@@ -52,11 +52,11 @@
 - Test: `src/main/workflows/workflow-runtime.test.ts`
 - Test: `src/main/hub/agent-hub.test.ts`
 
-- [ ] Require an approved frozen V2 plan before a run starts.
-- [ ] Delete legacy `executeRun`, judge, retry, final-review, and gate execution paths.
-- [ ] Keep only V2 dependency settlement, one-shot, interactive, script, supervision, and recovery paths.
-- [ ] Ensure `waiting_for_user`, `completion_proposed`, and paused states never release descendants.
-- [ ] Verify one-shot/interactive/script execution through the main-process boundary.
+- [x] Require an approved frozen V2 plan before a run starts.
+- [x] Delete legacy `executeRun`, judge, retry, final-review, and gate execution paths.
+- [x] Keep only V2 dependency settlement, one-shot, interactive, script, supervision, and recovery paths.
+- [x] Ensure `waiting_for_user`, `completion_proposed`, and paused states never release descendants.
+- [x] Verify one-shot/interactive/script execution through the main-process boundary.
 
 ### Task 4: Replace Renderer Workflow Domain
 
@@ -68,11 +68,11 @@
 - Modify: `src/renderer/src/pages/workflow/WorkflowCanvasBoard.tsx`
 - Test: `src/renderer/src/App.layout.test.tsx`
 
-- [ ] Render V2 definitions directly and expose execution mode on every executable node.
-- [ ] Edit LLM/script-specific fields without legacy node kinds.
-- [ ] Open the node-agent window for interactive nodes before a run starts.
-- [ ] Remove legacy gate input and legacy graph assumptions.
-- [ ] Verify authoring, plan approval, run, and node conversation UX.
+- [x] Render V2 definitions directly and expose execution mode on every executable node.
+- [x] Edit LLM/script-specific fields without legacy node kinds.
+- [x] Open the node-agent window for interactive nodes before a run starts.
+- [x] Remove legacy gate input and legacy graph assumptions.
+- [x] Verify authoring, plan approval, run, and node conversation UX.
 
 ### Task 5: Delete Legacy Workflow Surface
 
@@ -82,20 +82,20 @@
 - Update: all remaining imports found by repository search
 - Update: workflow documentation and READMEs
 
-- [ ] Remove `WorkflowGraph`, `WorkflowGraphNode`, and legacy validation types.
-- [ ] Remove bundled legacy workflow definitions or rewrite them as V2 definitions.
-- [ ] Remove compatibility IPC/MCP request shapes and fallback parser code.
-- [ ] Confirm repository search finds no legacy graph/runtime identifiers.
-- [ ] Update authoritative docs to state V2-only support.
+- [x] Remove `WorkflowGraph`, `WorkflowGraphNode`, and legacy validation types.
+- [x] Remove bundled legacy workflow definitions or rewrite them as V2 definitions.
+- [x] Remove compatibility IPC/MCP request shapes and fallback parser code.
+- [x] Confirm repository search finds no legacy graph/runtime identifiers.
+- [x] Update authoritative docs to state V2-only support.
 
 ### Task 6: Completion Verification
 
 **Files:**
 - Test: repository-wide
 
-- [ ] Run `npm run typecheck`.
-- [ ] Run `npm test`.
-- [ ] Run `npm run build`.
-- [ ] Search for `WorkflowGraph`, `workflowGraph.upsert`, `executeRun`, and legacy workflow-run helpers; expect no production hits.
-- [ ] Create a workflow whose first node asks for mood input and prove the node is frozen as `interactive` before execution.
-- [ ] Commit each completed migration slice without staging `.idea/workspace.xml`, `memory.md`, or `outputs/`.
+- [x] Run `npm run typecheck`.
+- [x] Run `npm test`.
+- [x] Run `npm run build`.
+- [x] Search for `WorkflowGraph`, `workflowGraph.upsert`, `executeRun`, and legacy workflow-run helpers; expect no production hits.
+- [x] Create a workflow whose first node asks for mood input and prove the node is frozen as `interactive` before execution.
+- [x] Commit each completed migration slice without staging `.idea/workspace.xml`, `memory.md`, or `outputs/`.

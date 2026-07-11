@@ -3,7 +3,6 @@ import type {
   WorkflowAgentEvent,
   WorkflowAgentResponse,
   WorkflowDraftState,
-  WorkflowGraph,
 } from "../../../shared/types";
 import { replaceWorkflowDraftMessage } from "./agent-hub-workflow-draft";
 import { runWorkflowDraftReply } from "./agent-hub-workflow-agent";

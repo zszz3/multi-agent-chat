@@ -15,7 +15,7 @@ export function WorkflowNodeAgentWindow({ conversation, task, nodeTitle, onClose
 }) {
   const [message, setMessage] = useState("");
   const [rejecting, setRejecting] = useState(false);
-  const acceptsInput = conversation?.status === "active" || conversation?.status === "waiting_for_user" || conversation?.status === "completion_proposed";
+  const acceptsInput = conversation?.status === "waiting_for_user" || (conversation?.status === "completion_proposed" && rejecting);
   const submit = async () => {
     const content = message.trim();
     if (!content) return;

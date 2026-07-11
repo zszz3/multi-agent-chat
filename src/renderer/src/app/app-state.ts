@@ -224,7 +224,7 @@ export interface WorkflowDraftPersistInput {
   workflowIds: string[];
   objective: string;
   messages: WorkflowGrillMessage[];
-  graphReady: boolean;
+  definitionReady: boolean;
   reply: string;
   error: string | undefined;
   runProgress: WorkflowRunProgressItem[];
@@ -238,7 +238,7 @@ export function workflowDraftShouldPersist(input: WorkflowDraftPersistInput): bo
   const hasContent = Boolean(
     input.objective.trim() ||
       input.messages.length > 0 ||
-      input.graphReady ||
+      input.definitionReady ||
       input.reply.trim() ||
       input.error ||
       input.runProgress.length > 0 ||

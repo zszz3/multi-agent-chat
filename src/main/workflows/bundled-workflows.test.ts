@@ -23,7 +23,8 @@ describe("loadBundledWorkflows", () => {
           graphVersion: 1,
           objective: "obj",
           nodes: [
-            { id: "render", kind: "render", title: "??", execModel: "llm", executionMode: "one-shot", prompt: "??:\n__RESUME_GUIDE__\n??:\n__RESUME_TEMPLATE__\n??", outputFields: [] },
+            { id: "render", kind: "render", title: "??", execModel: "llm",
+        executionMode: "one-shot", prompt: "??:\n__RESUME_GUIDE__\n??:\n__RESUME_TEMPLATE__\n??", outputFields: [] },
           ],
           edges: [],
         },

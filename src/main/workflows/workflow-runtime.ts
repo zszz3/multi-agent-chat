@@ -5,7 +5,7 @@ import type {
   PauseWorkflowNodeRequest,
   ResolveWorkflowV2InterventionRequest,
   RunTaskRequest,
-  RunWorkflowGraphRequest,
+  RunWorkflowRequest,
   StartWorkflowNodeRequest,
   StopWorkflowRunRequest,
   TaskRun,
@@ -557,7 +557,7 @@ export class WorkflowRuntime {
 
   constructor(private readonly deps: WorkflowRuntimeDependencies) {}
 
-  runWorkflowGraph(input: RunWorkflowGraphRequest): WorkflowOperationResult {
+  runWorkflow(input: RunWorkflowRequest): WorkflowOperationResult {
     const snapshot = this.deps.snapshot();
     const workflow = snapshot.workflowStore.workflows.find((item) => item.workflowId === input.workflowId);
     if (!workflow) return { ok: false, error: `Workflow ${input.workflowId} was not found.` };
@@ -1898,42 +1898,11 @@ export class WorkflowRuntime {
       } catch (error) {
         if (error instanceof WorkflowV2OneShotInputRequestSignal) {
           await this.deps.stopTask(error.task.id);
-          const conversation = await this.deps.startWorkflowNodeConversation({
-            workflowId: workflow.workflowId,
-            runId,
-            nodeId: request.node.id,
-            configuredAgentId,
-            modelId,
-            workDir: workflowWorkDir,
-            initialPrompt: effectivePrompt,
-            developerInstructions: [
-              effectiveDeveloperInstructions,
-              "This node was upgraded from one-shot to interactive because the previous agent requested user input.",
-              "Continue as a persistent multi-turn conversation and ask concise follow-up questions until all required information is complete.",
-            ].join("\n\n"),
-            contextDocument: [effectiveContextDocument, `# One-shot input request\n${error.question}`].filter(Boolean).join("\n\n"),
-          });
-          this.deps.markWorkflowNodeConversationWaiting(conversation.conversationId, error.question);
           archiveTaskId = undefined;
-          throw new WorkflowV2SupervisionSignal({
-            resolution: {
-              action: "pause",
-              question: error.question,
-              reason: "One-shot node requested user input and was upgraded to interactive execution.",
-            },
-            report: {
-              nodeId: request.node.id,
-              attempt,
-              phase: "interactive upgrade",
-              completedItems: [],
-              remainingItems: ["User input"],
-              blockers: [error.question],
-              evidence: [],
-              safeToInterrupt: true,
-              requestedAction: "need_input",
-              reportedAt: Date.now(),
-            },
-          });
+          throw new Error(
+            `Workflow V2 one-shot node ${request.node.id} requested user input: ${error.question}. `
+            + "Replan this node as interactive before running the workflow.",
+          );
         }
         if (
           error instanceof WorkflowV2SupervisionSignal

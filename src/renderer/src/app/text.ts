@@ -56,7 +56,7 @@ export const UI_TEXT = {
     },
     workflow: {
       newWorkflow: "新建 Workflow",
-      runGraph: "运行图",
+      runWorkflow: "运行图",
       running: "运行中...",
       executableNodes: "可执行节点",
       noWorkDir: "未选择工作目录",
@@ -143,7 +143,7 @@ export const UI_TEXT = {
     },
     workflow: {
       newWorkflow: "New workflow",
-      runGraph: "Run Graph",
+      runWorkflow: "Run Graph",
       running: "Running...",
       executableNodes: "executable nodes",
       noWorkDir: "No work directory selected",

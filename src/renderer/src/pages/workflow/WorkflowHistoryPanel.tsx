@@ -45,10 +45,10 @@ export function WorkflowHistoryPanel({
       onContextMenu={workflow.sourceType === "official" ? undefined : (event) => onOpenContextMenu?.(event, workflow.workflowId)}
     >
       <strong>{workflow.title}</strong>
-      <span>{`${workflow.status} · ${workflow.graph.nodes.length} nodes · rev ${workflow.revision}`}</span>
+      <span>{`${workflow.status} · ${workflow.definition.nodes.length} nodes · rev ${workflow.revision}`}</span>
       <small>
         {workflow.objective ||
-          (workflow.graphReady || workflow.runProgress.length > 0 || Boolean(workflow.contextDocument || workflow.runContextDocument || workflow.finalReport)
+          (workflow.definition.nodes.length > 0 || workflow.runProgress.length > 0 || Boolean(workflow.contextDocument || workflow.runContextDocument || workflow.finalReport)
             ? "未保存目标"
             : "未开始")}
       </small>

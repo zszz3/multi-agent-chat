@@ -27,6 +27,7 @@ function definition(workflowId = "workflow-recovery"): WorkflowV2Definition {
         kind: "implementation",
         title: "Draft",
         execModel: "llm",
+        executionMode: "one-shot",
         prompt: "Draft the change.",
         outputFields: [{ key: "draft", required: true }],
       },
@@ -35,6 +36,7 @@ function definition(workflowId = "workflow-recovery"): WorkflowV2Definition {
         kind: "verification",
         title: "Verify",
         execModel: "script",
+        executionMode: "script",
         sandboxMode: "workspace",
         script: { language: "bash", code: "true", timeoutMs: 1_000 },
         outputFields: [{ key: "verified", required: true }],
@@ -59,13 +61,7 @@ async function fixture(): Promise<{
     configuredAgentId: "agent-a",
     modelId: "model-a",
     objective: workflowDefinition.objective,
-    graph: {
-      title: "Recovery workflow",
-      objective: workflowDefinition.objective,
-      nodes: [{ id: "draft", kind: "agent", title: "Draft", prompt: "Draft the change." }],
-      edges: [],
-    },
-    graphReady: true,
+    definition: workflowDefinition,
     messages: [],
     reply: "",
     error: undefined,
@@ -188,19 +184,6 @@ describe("Workflow V2 AgentHub durable restore", () => {
       title: "Startup recovery",
       objective: "Reconcile durable state",
       definition: workflowDefinition,
-      graph: {
-        title: "Startup recovery",
-        objective: "Reconcile durable state",
-        nodes: [
-          { id: "start", kind: "start", title: "Start", prompt: "" },
-          { id: "draft", kind: "agent", title: "Draft", prompt: "Draft." },
-          { id: "end", kind: "end", title: "End", prompt: "" },
-        ],
-        edges: [
-          { id: "start->draft", fromNodeId: "start", toNodeId: "draft" },
-          { id: "draft->end", fromNodeId: "draft", toNodeId: "end" },
-        ],
-      },
     });
     expect(created).toMatchObject({ ok: true, workflowId: expect.any(String) });
     const workflowId = created.workflowId!;

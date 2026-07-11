@@ -4,9 +4,6 @@ import type {
   ChatMessage,
   WorkflowArtifactReference,
   WorkflowEvent,
-  WorkflowGraph,
-  WorkflowGraphEdge,
-  WorkflowGraphNode,
   WorkflowRunProgressItem,
   WorkflowStatus,
 } from "../../../shared/types";
@@ -21,7 +18,6 @@ import {
   isChatEventType,
   isInteractionRequestState,
   isMessageRole,
-  isWorkflowGraphNodeKind,
   isWorkflowRunNodeStatus,
 } from "../persisted/agent-hub-persistence";
 import { createAssistantMessage } from "../chat/agent-hub-ui";
@@ -38,54 +34,6 @@ export function restoreWorkflowDraftStatus(value: unknown): WorkflowStatus {
 export function restoreWorkflowRunStatus(value: unknown): WorkflowStatus {
   const status = restoreWorkflowStatus(value);
   return status === "running" ? "failed" : status;
-}
-
-export function restoreWorkflowGraph(raw: unknown): WorkflowGraph | undefined {
-  const record = asRecord(raw);
-  if (!record) return undefined;
-  const title = asOptionalString(record.title);
-  const objective = asOptionalString(record.objective);
-  if (!title || !objective) return undefined;
-  const nodes = asArray(record.nodes)
-    .map((node) => restoreWorkflowGraphNode(node))
-    .filter((node): node is WorkflowGraphNode => Boolean(node));
-  const edges = asArray(record.edges)
-    .map((edge) => restoreWorkflowGraphEdge(edge))
-    .filter((edge): edge is WorkflowGraphEdge => Boolean(edge));
-  if (nodes.length === 0) return undefined;
-  return { title, objective, nodes, edges };
-}
-
-export function restoreWorkflowGraphNode(raw: unknown): WorkflowGraphNode | undefined {
-  const record = asRecord(raw);
-  if (!record || !isWorkflowGraphNodeKind(record.kind)) return undefined;
-  const id = asOptionalString(record.id);
-  const title = asOptionalString(record.title);
-  const prompt = asOptionalString(record.prompt);
-  if (!id || title === undefined || prompt === undefined) return undefined;
-  const node: WorkflowGraphNode = { id, kind: record.kind, title, prompt };
-  const position = asRecord(record.position);
-  if (position && typeof position.x === "number" && typeof position.y === "number" && Number.isFinite(position.x) && Number.isFinite(position.y)) {
-    node.position = { x: position.x, y: position.y };
-  }
-  const configuredAgentId = asOptionalString(record.configuredAgentId);
-  if (configuredAgentId) node.configuredAgentId = configuredAgentId;
-  const modelId = asOptionalString(record.modelId);
-  if (modelId) node.modelId = modelId;
-  return node;
-}
-
-export function restoreWorkflowGraphEdge(raw: unknown): WorkflowGraphEdge | undefined {
-  const record = asRecord(raw);
-  if (!record) return undefined;
-  const fromNodeId = asOptionalString(record.fromNodeId);
-  const toNodeId = asOptionalString(record.toNodeId);
-  if (!fromNodeId || !toNodeId) return undefined;
-  return {
-    id: asOptionalString(record.id) || `${fromNodeId}->${toNodeId}`,
-    fromNodeId,
-    toNodeId,
-  };
 }
 
 export function restoreWorkflowRunProgressItem(raw: unknown): WorkflowRunProgressItem | undefined {

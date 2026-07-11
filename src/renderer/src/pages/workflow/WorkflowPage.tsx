@@ -10,8 +10,7 @@ import type {
   ConfiguredAgent,
   LocalFilePreview,
   RegisteredArtifact,
-  WorkflowGraph,
-  WorkflowGraphNode,
+  WorkflowV2Definition,
   WorkflowGrillMessage,
   WorkflowRunProgressItem,
   WorkflowStatus,
@@ -49,7 +48,7 @@ type MaybePromise = void | Promise<void>;
 
 const WORKFLOW_TEXT = {
   zh: {
-    runGraph: "运行图",
+    runWorkflow: "运行图",
     running: "运行中...",
     executableNodes: "可执行节点",
     noWorkDir: "未选择工作目录",
@@ -90,7 +89,7 @@ const WORKFLOW_TEXT = {
     taskPlaceholder: "描述工作流任务...",
   },
   en: {
-    runGraph: "Run Graph",
+    runWorkflow: "Run Graph",
     running: "Running...",
     executableNodes: "executable nodes",
     noWorkDir: "No work directory selected",
@@ -155,8 +154,8 @@ interface WorkflowPageLegacyProps {
   topologyLocked?: boolean;
   title?: string;
   status?: WorkflowStatus;
-  graph: WorkflowGraph;
-  graphReady: boolean;
+  definition: WorkflowV2Definition;
+  definitionReady: boolean;
   objective: string;
   messages: WorkflowGrillMessage[];
   reply: string;
@@ -188,11 +187,11 @@ interface WorkflowPageLegacyProps {
   onInterruptNodeConversation?: WorkflowController["onInterruptNodeConversation"];
   onSelectConfiguredAgent: (configuredAgentId: string) => void;
   onSelectModel?: (modelId: string) => void;
-  onDraftGraph: () => void;
+  onBuildDefinition: () => void;
   onReplyChange: (value: string) => void;
   onSendReply: () => void;
-  onUpdateNode: (nodeId: string, update: Partial<WorkflowGraphNode>) => void;
-  onRunGraph: () => MaybePromise;
+  onUpdateNode: (nodeId: string, update: Partial<WorkflowV2Node>) => void;
+  onRunWorkflow: () => MaybePromise;
   onResetSession: () => MaybePromise;
   onStopGrill?: () => void;
   onChooseWorkDir?: () => MaybePromise;
@@ -214,8 +213,9 @@ export function WorkflowPage(props: WorkflowPageProps) {
   const topologyLocked = source.topologyLocked === true;
   const title = source.title;
   const status = source.status ?? "draft";
-  const graph = source.graph;
-  const graphReady = source.graphReady;
+  const definition = source.definition;
+  const graph = definition;
+  const definitionReady = source.definitionReady;
   const objective = source.objective;
   const messages = source.messages;
   const reply = source.reply;
@@ -247,11 +247,11 @@ export function WorkflowPage(props: WorkflowPageProps) {
   const onInterruptNodeConversation = source.onInterruptNodeConversation;
   const onSelectConfiguredAgent = source.onSelectConfiguredAgent;
   const onSelectModel = source.onSelectModel ?? (() => undefined);
-  const onDraftGraph = source.onDraftGraph;
+  const onBuildDefinition = source.onBuildDefinition;
   const onReplyChange = source.onReplyChange;
   const onSendReply = source.onSendReply;
   const onUpdateNode = source.onUpdateNode;
-  const onRunGraph = source.onRunGraph;
+  const onRunWorkflow = source.onRunWorkflow;
   const onStopGrill = source.onStopGrill ?? (() => undefined);
   const onChooseWorkDir = source.onChooseWorkDir ?? (() => undefined);
   const onReadOutputFile = source.onReadOutputFile;
@@ -259,8 +259,7 @@ export function WorkflowPage(props: WorkflowPageProps) {
   const language = source.language ?? "en";
   const defaultGraphExpanded = source.defaultGraphExpanded ?? false;
   const workflowText = WORKFLOW_TEXT[language];
-  const definition = workflowV2Plan?.definition;
-  const validation = definition ? validateWorkflowV2Definition(definition) : { valid: false, errors: ["Workflow V2 plan is required."], warnings: [], topologicalNodeIds: [] };
+  const validation = validateWorkflowV2Definition(definition);
   const workflowStarted = messages.length > 0;
   const grillComplete = Math.max(0, messages.filter((message) => message.role === "user").length - 1) >= WORKFLOW_TOTAL_QUESTION_COUNT;
   const runtimeMap = new Map(runtimes.map((runtime) => [runtime.id, runtime]));
@@ -282,8 +281,8 @@ export function WorkflowPage(props: WorkflowPageProps) {
   const contextDocumentVisible = contextDocument.trim().length > 0;
   const finalReportVisible = finalReport.trim().length > 0;
   const runProgressSignature = runProgress.map((item) => `${item.nodeId}:${item.status}`).join("|");
-  const graphVisible = graphReady || runProgressVisible || contextDocumentVisible || finalReportVisible;
-  const workflowDisplayTitle = title?.trim() || (graphReady ? graph.title : "New workflow");
+  const graphVisible = definitionReady || runProgressVisible || contextDocumentVisible || finalReportVisible;
+  const workflowDisplayTitle = title?.trim() || (definitionReady ? graph.objective || "Untitled workflow" : "New workflow");
   const composerValue = workflowStarted ? reply : objective;
   const composerPlaceholder = workflowStarted
     ? graphVisible
@@ -306,14 +305,11 @@ export function WorkflowPage(props: WorkflowPageProps) {
   const outputDocumentsVisible = outputDocuments.length > 0;
   const grillTranscriptRef = useRef<HTMLElement>(null);
   const grillStickRef = useRef(true);
-  const editingWorkflowNode = graph.nodes.find((node) => node.id === editingWorkflowNodeId);
   const openNodeConversation = nodeConversations.find((conversation) => conversation.nodeId === openNodeAgentNodeId);
   const openNodeConversationGraphNode = graph.nodes.find((node) => node.id === openNodeAgentNodeId);
   const openNodeTaskId = openNodeAgentNodeId ? runProgressByNodeId.get(openNodeAgentNodeId)?.taskId : undefined;
   const openNodeTask = nodeTasks.find((task) => task.id === openNodeTaskId);
-  const nodePositionProps = topologyLocked
-    ? {}
-    : { onNodePositionChange: (nodeId: string, position: { x: number; y: number }) => onUpdateNode(nodeId, { position }) };
+  const nodePositionProps = {};
 
   useEffect(() => {
     const waitingConversation = nodeConversations.find((conversation) => conversation.status === "waiting_for_user" || conversation.status === "active");
@@ -459,89 +455,6 @@ export function WorkflowPage(props: WorkflowPageProps) {
     );
   }
 
-  function renderWorkflowNodeEditor(node: WorkflowGraphNode): ReactElement {
-    const disabled = running;
-    const editorAgentId = node.configuredAgentId || configuredAgentId;
-    const editorAgentConfig = configuredAgentById(editorAgentId, configuredAgents);
-    const editorAgentName = editorAgentConfig?.name || editorAgentId || "default";
-    const editorModelId = node.modelId || (node.configuredAgentId ? editorAgentConfig?.modelId : modelId) || modelId;
-    const upstreamTitles = graph.edges
-      .filter((edge) => edge.toNodeId === node.id)
-      .map((edge) => graph.nodes.find((item) => item.id === edge.fromNodeId))
-      .filter((item): item is WorkflowGraphNode => Boolean(item && item.kind === "agent"))
-      .map((item) => item.title);
-
-    return (
-      <section className="workflow-node-edit-overlay" role="dialog" aria-modal="true" aria-label="Edit workflow node" onClick={() => setEditingWorkflowNodeId(undefined)}>
-        <article className="workflow-node-edit-modal" onClick={(event) => event.stopPropagation()} onContextMenu={(event) => event.stopPropagation()}>
-          <header>
-            <div>
-              <strong>{node.title}</strong>
-              <span>{node.kind === "agent" ? "Agent node" : node.kind === "start" ? "Start node" : "End node"}</span>
-            </div>
-            <button className="icon-btn" type="button" onClick={() => setEditingWorkflowNodeId(undefined)} aria-label="Close workflow node editor">
-              <X size={15} />
-            </button>
-          </header>
-          <label className="workflow-node-edit-field">
-            <span>Title</span>
-            <input aria-label={`Node ${node.id} title`} value={node.title} disabled={disabled || topologyLocked} onChange={(event) => onUpdateNode(node.id, { title: event.currentTarget.value })} />
-          </label>
-          {node.kind === "agent" ? (
-            <label className="workflow-node-edit-field">
-              <span>Prompt</span>
-              <textarea
-                aria-label={`Node ${node.id} prompt`}
-                value={node.prompt}
-                disabled={disabled}
-                onChange={(event) => onUpdateNode(node.id, { prompt: event.currentTarget.value })}
-                rows={8}
-              />
-            </label>
-          ) : null}
-          {node.kind === "agent" ? (
-            <label className="workflow-node-edit-field">
-              <span>{workflowText.nodeAgentField}</span>
-              <select
-                aria-label={`Node ${node.id} agent`}
-                value={node.configuredAgentId ?? ""}
-                disabled={disabled}
-                onChange={(event) => onUpdateNode(node.id, { configuredAgentId: event.currentTarget.value || undefined })}
-              >
-                <option value="">{`${workflowText.nodeAgentDefault}（${configuredAgentById(configuredAgentId, configuredAgents)?.name || configuredAgentId || "default"}）`}</option>
-                {configuredAgents.map((agent) => (
-                  <option key={agent.id} value={agent.id}>
-                    {agent.name}
-                  </option>
-                ))}
-              </select>
-            </label>
-          ) : null}
-          {node.kind === "agent" ? (
-            <div className="workflow-node-edit-info" aria-label="Node runtime inputs and outputs">
-              <div className="workflow-node-edit-info-row">
-                <span>{workflowText.nodeInfoAgent}</span>
-                <strong>{editorAgentName} · {editorModelId}</strong>
-              </div>
-              <div className="workflow-node-edit-info-row">
-                <span>{workflowText.nodeInfoObjective}</span>
-                <strong>{objective || "—"}</strong>
-              </div>
-              <div className="workflow-node-edit-info-row">
-                <span>{workflowText.nodeInfoInputs}</span>
-                <strong>{upstreamTitles.length > 0 ? upstreamTitles.join("、") : workflowText.nodeInfoNoUpstream}</strong>
-              </div>
-              <div className="workflow-node-edit-info-row">
-                <span>{workflowText.nodeInfoOutput}</span>
-                <strong>{workflowText.nodeInfoOutputValue}</strong>
-              </div>
-            </div>
-          ) : null}
-        </article>
-      </section>
-    );
-  }
-
   return (
     <>
       <header className="chat-header workflow-chat-header">
@@ -576,9 +489,9 @@ export function WorkflowPage(props: WorkflowPageProps) {
                 <span>Stop workflow</span>
               </button>
             ) : (
-              <button className="send-btn" onClick={() => void onRunGraph()} disabled={!validation.valid || running}>
+              <button className="send-btn" onClick={() => void onRunWorkflow()} disabled={!validation.valid || running}>
                 <Play size={14} />
-                <span>{workflowText.runGraph}</span>
+                <span>{workflowText.runWorkflow}</span>
               </button>
             )
           ) : null}
@@ -624,7 +537,7 @@ export function WorkflowPage(props: WorkflowPageProps) {
           <section className="workflow-result-card" aria-label={workflowText.result}>
             <div className="workflow-result-card-head">
               <div>
-                <strong>{graph.title}</strong>
+                <strong>{graph.objective || "Untitled workflow"}</strong>
                 <span>{validation.valid ? workflowText.dagValid : workflowText.dagInvalid}</span>
               </div>
               <div className="workflow-validation-row-actions">
@@ -648,7 +561,6 @@ export function WorkflowPage(props: WorkflowPageProps) {
                   <X size={15} />
                 </button>
                 {definition ? <WorkflowCanvasBoard definition={definition} expanded renderNodeCard={(node) => renderWorkflowNodeCard(node, false)} /> : null}
-                {editingWorkflowNode ? renderWorkflowNodeEditor(editingWorkflowNode) : null}
               </>
             ) : (
               definition ? <WorkflowCanvasBoard definition={definition} runProgressByNodeId={runProgressByNodeId} onExpand={() => setGraphExpanded(true)} renderNodeCard={(node) => renderWorkflowNodeCard(node, true)} /> : null
@@ -950,7 +862,7 @@ export function WorkflowPage(props: WorkflowPageProps) {
             />
             <div className="workflow-composer-actions">
               {!graphVisible && grillComplete ? (
-                <button className="control-btn compact secondary" onClick={onDraftGraph} disabled={running}>
+                <button className="control-btn compact secondary" onClick={onBuildDefinition} disabled={running}>
                   <Wand2 size={14} />
                   <span>Generate Graph</span>
                 </button>

@@ -43,7 +43,7 @@ import type {
   PauseWorkflowNodeRequest,
   ResolveWorkflowV2InterventionRequest,
   ProviderBalanceResult,
-  RunWorkflowGraphRequest,
+  RunWorkflowRequest,
   ListWorkflowOutputsRequest,
   RunAgentTeamRequest,
   RuntimeContinuationPolicy,
@@ -75,9 +75,6 @@ import type {
   WorkflowArtifactReference,
   WorkflowDraftState,
   WorkflowEvent,
-  WorkflowGraph,
-  WorkflowGraphEdge,
-  WorkflowGraphNode,
   WorkflowOperationResult,
   WorkflowRunState,
   WorkflowStatus,
@@ -86,9 +83,7 @@ import type {
 } from "../../shared/types";
 import { normalizeConfigChannelsForStorage } from "../../shared/config-channels";
 import { DEFAULT_MODEL_ID, defaultChannelForAgent, defaultModelForAgent, isModelForChannel } from "../../shared/models";
-import { createWorkflowGraphFromObjective, validateWorkflowGraph } from "../../shared/workflow-graph";
 import type { WorkflowV2Definition } from "../../shared/workflow-v2/definition";
-import { projectWorkflowV2DefinitionToLegacyCanvas } from "../../shared/workflow-v2/projection";
 import { defaultWorkflowWorkDirSuffix } from "../../shared/workflow-v2/runtime-utils";
 import { detectAgentRuntimes, resolveRuntimeExecutables } from "../agents/runtime/detect";
 import { InteractiveSessionManager } from "../agents/runtime/interactive-session-manager";
@@ -153,7 +148,6 @@ import {
   isInteractionRequestState,
   isMessageRole,
   isTaskProgress,
-  isWorkflowGraphNodeKind,
   isWorkflowRunNodeStatus,
 } from "./persisted/agent-hub-persistence";
 import type { PersistedAppStateV5 } from "./persisted/agent-hub-persistence";
@@ -207,9 +201,6 @@ import {
   workflowWorkDir as workflowWorkDirValue,
 } from "./state/agent-hub-artifacts";
 import {
-  restoreWorkflowGraph,
-} from "./state/agent-hub-restore";
-import {
   restoreChatState as restoreChatStateValue,
   restoreConfiguredAgentState,
   restoreRuntimeState as restoreRuntimeStateValue,
@@ -225,7 +216,7 @@ import {
   restoreWorkflowStoreState as restoreWorkflowStoreStateValue,
   writePersistedPayload,
 } from "./persisted/agent-hub-persisted-store";
-import { migratePersistedAppState } from "./persisted/agent-hub-persisted-migrations";
+import { isPersistedAppStateV5 } from "./persisted/agent-hub-persisted-migrations";
 import {
   installRestoredChats as installRestoredChatsValue,
   installRestoredTasks as installRestoredTasksValue,
@@ -261,7 +252,6 @@ import {
 import {
   contextAppendLimitError as contextAppendLimitErrorValue,
   formatWorkflowContextAppend as formatWorkflowContextAppendValue,
-  workflowLimitError as workflowLimitErrorValue,
 } from "./workflow/agent-hub-workflow-inputs";
 import {
   finishWorkflowRunState as finishWorkflowRunStateValue,
@@ -274,9 +264,6 @@ import {
   cloneScheduledWorkflowSchedule as cloneScheduledWorkflowScheduleValue,
   cloneScheduledWorkflowStore as cloneScheduledWorkflowStoreValue,
   cloneWorkflowDraft as cloneWorkflowDraftValue,
-  cloneWorkflowGraph as cloneWorkflowGraphValue,
-  cloneWorkflowGraphEdge as cloneWorkflowGraphEdgeValue,
-  cloneWorkflowGraphNode as cloneWorkflowGraphNodeValue,
   cloneWorkflowRun as cloneWorkflowRunValue,
   cloneWorkflowStore as cloneWorkflowStoreValue,
   normalizeWorkflowStatus as normalizeWorkflowStatusValue,
@@ -529,18 +516,16 @@ export class AgentHub {
     this.sqliteStore = loaded.sqliteStore;
 
     if (loaded.payload !== undefined) {
-      const migration = migratePersistedAppState(loaded.payload);
-      const restored = migration ? this.restorePersistedState(migration.payload) : false;
+      const restored = this.restorePersistedState(loaded.payload);
       if (!restored) {
         this.reinitializePersistedState();
       }
       const reconciledWorkflowV2 = restored
         ? await this.reconcileRestoredWorkflowV2Runs()
         : false;
-      if (migration?.migrated
-        || reconciledWorkflowV2
-        || !Array.isArray(asRecord(loaded.payload)?.channels)
-        || !migration) {
+      if (reconciledWorkflowV2
+        || !restored
+        || !Array.isArray(asRecord(loaded.payload)?.channels)) {
         await this.persistState();
       }
       return;
@@ -980,17 +965,16 @@ export class AgentHub {
   createWorkflowDraft(input: CreateWorkflowDraftRequest = {}): AppSnapshot {
     if (this.workflowStore.workflows.size >= MAX_WORKFLOW_COUNT) return this.snapshot();
     const now = Date.now();
-    const graph = createWorkflowGraphFromObjective("");
+    const workflowId = `wf_${randomUUID()}`;
     const workflow = this.cloneWorkflowDraft({
-      workflowId: `wf_${randomUUID()}`,
-      title: input.title?.trim() || graph.title,
+      workflowId,
+      title: input.title?.trim() || "Untitled workflow",
       status: "draft",
       revision: 1,
       configuredAgentId: this.normalizeWorkflowConfiguredAgentId(input.configuredAgentId),
       modelId: this.normalizeModelIdForConfiguredAgent(input.configuredAgentId, input.modelId),
       objective: "",
-      graph,
-      graphReady: false,
+      definition: { workflowId, graphVersion: 1, objective: "", nodes: [], edges: [] },
       messages: [],
       reply: "",
       error: undefined,
@@ -1136,8 +1120,6 @@ export class AgentHub {
         modelId: "",
         objective: def.objective,
         definition: structuredClone(def.definition),
-        graph: projectWorkflowV2DefinitionToLegacyCanvas(def.definition, def.title),
-        graphReady: true,
         messages: [],
         reply: "",
         error: undefined,
@@ -1202,15 +1184,20 @@ export class AgentHub {
     if (input.expectedRevision !== undefined && input.expectedRevision !== current.revision) {
       return { ok: false, workflowId: current.workflowId, revision: current.revision, error: "Workflow changed since you read it. Call workflow_get and retry." };
     }
-    const graph = input.graph ?? current.graph;
-    const limitError = this.workflowLimitError(graph, input.title ?? current.title, input.objective ?? current.objective);
-    if (limitError) return { ok: false, workflowId: current.workflowId, revision: current.revision, error: limitError };
-    const validation = validateWorkflowGraph(graph);
-    if (!validation.valid) return { ok: false, workflowId: current.workflowId, revision: current.revision, error: validation.errors[0] ?? "Workflow graph is invalid.", validation };
+    const definition = input.definition ? structuredClone(input.definition) : structuredClone(current.definition);
+    if (input.objective !== undefined) definition.objective = input.objective;
+    if (definition.nodes.length > MAX_WORKFLOW_NODE_COUNT) {
+      return { ok: false, workflowId: current.workflowId, revision: current.revision, error: `Workflow V2 definition exceeds ${MAX_WORKFLOW_NODE_COUNT} nodes.` };
+    }
+    if (definition.edges.length > MAX_WORKFLOW_EDGE_COUNT) {
+      return { ok: false, workflowId: current.workflowId, revision: current.revision, error: `Workflow V2 definition exceeds ${MAX_WORKFLOW_EDGE_COUNT} edges.` };
+    }
+    const validation = validateWorkflowV2Definition(definition);
+    if (!validation.valid) return { ok: false, workflowId: current.workflowId, revision: current.revision, error: validation.errors[0] ?? "Workflow V2 definition is invalid." };
     const next = updateWorkflowDraftStateValue({
       current,
       request: input,
-      graph,
+      definition,
       configuredAgentId:
         input.configuredAgentId !== undefined ? this.normalizeWorkflowConfiguredAgentId(input.configuredAgentId) : current.configuredAgentId,
       modelId:
@@ -1221,7 +1208,7 @@ export class AgentHub {
     });
     this.workflowStore.workflows.set(next.workflowId, next);
     this.emit();
-    return { ok: true, workflowId: next.workflowId, revision: next.revision, validation };
+    return { ok: true, workflowId: next.workflowId, revision: next.revision };
   }
 
   appendWorkflowContext(input: AppendWorkflowContextRequest): WorkflowOperationResult {
@@ -1292,8 +1279,8 @@ export class AgentHub {
     return { ok: true, workflowId: workflow.workflowId, runId: run.runId, revision: workflow.revision };
   }
 
-  runWorkflowGraph(input: RunWorkflowGraphRequest): WorkflowOperationResult {
-    const result = this.workflowRuntime.runWorkflowGraph(input);
+  runWorkflow(input: RunWorkflowRequest): WorkflowOperationResult {
+    const result = this.workflowRuntime.runWorkflow(input);
     if (!result.ok && result.error) {
       const workflow = this.workflowStore.workflows.get(input.workflowId);
       if (workflow) {
@@ -1435,7 +1422,7 @@ export class AgentHub {
       recordScheduledWorkflowRun: (run) => {
         this.recordScheduledWorkflowRun(run);
       },
-      runWorkflowGraph: (request) => this.runWorkflowGraph(request),
+      runWorkflow: (request) => this.runWorkflow(request),
       finishScheduledWorkflowRun: (runId, request) => {
         this.finishScheduledWorkflowRun(runId, request);
       },
@@ -1923,15 +1910,14 @@ export class AgentHub {
         channelId: resolved.channel.id,
         workDir: input.workDir,
         developerInstructions: WORKFLOW_DEVELOPER_INSTRUCTIONS,
-        onWorkflowGraph: ({ graph, workflowId, revision }) => {
+        onWorkflowCreated: ({ workflowId, revision }) => {
           if (settled) return;
           timeout?.refresh();
           onEvent?.({
             requestId: input.requestId,
-            type: "workflow_graph",
-            graph,
-            content: "Workflow graph created through MCP.",
-            ...(workflowId ? { workflowId } : {}),
+            type: "workflow_created",
+            workflowId,
+            content: "Workflow V2 definition created through MCP.",
             ...(revision !== undefined ? { revision } : {}),
           });
         },
@@ -2203,25 +2189,12 @@ export class AgentHub {
     return teamMembersFromRunStepsValue(steps, (members) => this.normalizeTeamMembers(members));
   }
 
-  private cloneWorkflowGraphNode(node: WorkflowGraphNode): WorkflowGraphNode {
-    return cloneWorkflowGraphNodeValue(node);
-  }
-
-  private cloneWorkflowGraphEdge(edge: WorkflowGraphEdge): WorkflowGraphEdge {
-    return cloneWorkflowGraphEdgeValue(edge);
-  }
-
-  private cloneWorkflowGraph(graph: WorkflowGraph): WorkflowGraph {
-    return cloneWorkflowGraphValue(graph);
-  }
-
   private applyWorkflowDraftPatch(current: WorkflowDraftState, patch: PatchWorkflowDraftRequest): WorkflowDraftState {
     return applyWorkflowDraftPatchValue({
       current,
       patch,
       normalizeConfiguredAgentId: (configuredAgentId) => this.normalizeWorkflowConfiguredAgentId(configuredAgentId),
       normalizeModelId: (configuredAgentId, modelId) => this.normalizeModelIdForConfiguredAgent(configuredAgentId, modelId),
-      cloneGraph: (graph) => this.cloneWorkflowGraph(graph),
       cloneConversation: (conversation) => this.runtimeRouter.cloneConversation(conversation),
       cloneDraft: (draft) => this.cloneWorkflowDraft(draft),
     });
@@ -2238,56 +2211,29 @@ export class AgentHub {
     return undefined;
   }
 
-  private handleWorkflowDraftGraphEvent(
-    workflowId: string,
-    event: Extract<WorkflowAgentEvent, { type: "workflow_graph" }>,
-    activeRequest: ActiveWorkflowDraftRequest,
-  ): void {
-    const targetWorkflowId = event.workflowId && this.workflowStore.workflows.has(event.workflowId)
-      ? event.workflowId
-      : workflowId;
-    const sourceWorkflow = this.workflowStore.workflows.get(workflowId);
-    const targetWorkflow = this.workflowStore.workflows.get(targetWorkflowId);
-    if (!targetWorkflow) return;
-
-    const content = event.content ?? "Workflow graph created.";
-    activeRequest.content = content;
-    const baseMessages = targetWorkflow.messages.length > 0 ? targetWorkflow.messages : sourceWorkflow?.messages ?? [];
-    const messages = baseMessages.some((message) => message.id === activeRequest.assistantMessageId)
-      ? this.replaceWorkflowDraftMessage(baseMessages, activeRequest.assistantMessageId, content)
-      : [...baseMessages, { id: activeRequest.assistantMessageId, role: "assistant" as const, content }];
-
-    if (targetWorkflowId !== workflowId) {
-      this.activeWorkflowDraftRequests.delete(workflowId);
-      this.activeWorkflowDraftRequests.set(targetWorkflowId, activeRequest);
-      this.workflowStore.workflows.delete(workflowId);
-    }
-
-    const { finalReport: _finalReport, ...targetWithoutFinalReport } = targetWorkflow;
-    this.workflowStore.workflows.set(targetWorkflowId, this.cloneWorkflowDraft({
-      ...targetWithoutFinalReport,
-      title: event.graph.title || targetWorkflow.title,
-      status: targetWorkflow.status === "running" ? "running" : "draft",
-      revision: targetWorkflow.revision + 1,
-      objective: event.graph.objective || targetWorkflow.objective,
-      graph: this.cloneWorkflowGraph(event.graph),
-      graphReady: true,
-      messages,
-      reply: "",
-      error: undefined,
-      runProgress: [],
-      runContextDocument: "",
-      runIds: [],
-      updatedAt: Date.now(),
-    }));
-    this.workflowStore.activeId = targetWorkflowId;
-    this.emit();
-  }
-
   private handleWorkflowDraftAgentEvent(workflowId: string, event: WorkflowAgentEvent): void {
-    const activeRequest = this.activeWorkflowDraftRequests.get(workflowId);
-    if (event.type === "workflow_graph" && activeRequest?.requestId === event.requestId) {
-      this.handleWorkflowDraftGraphEvent(workflowId, event, activeRequest);
+    if (event.type === "workflow_created") {
+      const activeRequest = this.activeWorkflowDraftRequests.get(workflowId);
+      const targetWorkflow = this.workflowStore.workflows.get(event.workflowId);
+      if (!activeRequest || activeRequest.requestId !== event.requestId || !targetWorkflow) return;
+      activeRequest.content = event.content;
+      const sourceWorkflow = this.workflowStore.workflows.get(workflowId);
+      const sourceMessages = sourceWorkflow?.messages ?? [];
+      const messages = sourceMessages.some((message) => message.id === activeRequest.assistantMessageId)
+        ? this.replaceWorkflowDraftMessage(sourceMessages, activeRequest.assistantMessageId, event.content)
+        : [...sourceMessages, { id: activeRequest.assistantMessageId, role: "assistant" as const, content: event.content }];
+      const runtimeConversation = sourceWorkflow?.runtimeConversation ?? targetWorkflow.runtimeConversation;
+      this.workflowStore.workflows.set(event.workflowId, this.cloneWorkflowDraft({
+        ...targetWorkflow,
+        messages,
+        ...(runtimeConversation ? { runtimeConversation } : {}),
+        updatedAt: Date.now(),
+      }));
+      this.activeWorkflowDraftRequests.delete(workflowId);
+      this.activeWorkflowDraftRequests.set(event.workflowId, activeRequest);
+      if (workflowId !== event.workflowId) this.workflowStore.workflows.delete(workflowId);
+      this.workflowStore.activeId = event.workflowId;
+      this.emit();
       return;
     }
     const reduced = reduceWorkflowDraftReplyEventValue({
@@ -2328,7 +2274,6 @@ export class AgentHub {
       content,
       runtimeConversation,
       thinkingMessage: WORKFLOW_THINKING_MESSAGE,
-      cloneGraph: (graph) => this.cloneWorkflowGraph(graph),
       cloneConversation: (conversation) => this.runtimeRouter.cloneConversation(conversation),
       cloneDraft: (draft) => this.cloneWorkflowDraft(draft),
     });
@@ -2429,19 +2374,6 @@ export class AgentHub {
 
   private normalizeWorkflowConfiguredAgentId(configuredAgentId: string | undefined): string {
     return this.configuredAgentOrDefault(configuredAgentId)?.id ?? "";
-  }
-
-  private workflowLimitError(graph: WorkflowGraph, title: string, objective: string): string | undefined {
-    return workflowLimitErrorValue({
-      graph,
-      title,
-      objective,
-      maxTitleChars: MAX_WORKFLOW_TITLE_CHARS,
-      maxObjectiveChars: MAX_WORKFLOW_OBJECTIVE_CHARS,
-      maxNodeCount: MAX_WORKFLOW_NODE_COUNT,
-      maxEdgeCount: MAX_WORKFLOW_EDGE_COUNT,
-      maxNodePromptChars: MAX_WORKFLOW_NODE_PROMPT_CHARS,
-    });
   }
 
   private contextAppendLimitError(input: AppendWorkflowContextRequest): string | undefined {
@@ -2627,9 +2559,8 @@ export class AgentHub {
   }
 
   private restorePersistedState(raw: unknown): boolean {
-    const migration = migratePersistedAppState(raw);
-    if (!migration) return false;
-    const record = migration.payload as PersistedAppStateV5 & Record<string, unknown>;
+    if (!isPersistedAppStateV5(raw)) return false;
+    const record = raw as PersistedAppStateV5 & Record<string, unknown>;
     if (Array.isArray(record.channels)) {
       this.channels = normalizeConfigChannelsForStorage(normalizeChannels(record.channels));
     }

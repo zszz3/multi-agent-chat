@@ -15,6 +15,7 @@ function validDefinition(): WorkflowV2Definition {
         kind: "plan",
         title: "Plan",
         execModel: "llm",
+        executionMode: "one-shot",
         role: "orchestrator",
         outputFields: [{ key: "plan", required: true }],
         prompt: "Create the implementation plan.",
@@ -24,6 +25,7 @@ function validDefinition(): WorkflowV2Definition {
         kind: "apply",
         title: "Apply",
         execModel: "script",
+        executionMode: "script",
         role: "executor",
         outputFields: [{ key: "result", required: true }],
         script: {
@@ -44,6 +46,16 @@ describe("workflow-v2 validation", () => {
     expect(result.valid).toBe(true);
     expect(result.errors).toEqual([]);
     expect(result.topologicalNodeIds).toEqual(["plan", "apply"]);
+  });
+
+  test("rejects nodes that omit execution mode", () => {
+    const invalid = validDefinition();
+    delete invalid.nodes[0]!.executionMode;
+
+    const result = validateWorkflowV2Definition(invalid);
+
+    expect(result.valid).toBe(false);
+    expect(result.errors).toContain("Workflow V2 node plan must declare execution mode explicitly.");
   });
 
   test("rejects execution modes incompatible with the node execution model", () => {
@@ -178,6 +190,7 @@ describe("workflow-v2 validation", () => {
           kind: "review",
           title: "Review",
           execModel: "llm",
+        executionMode: "one-shot",
           outputFields: [],
           prompt: "",
         },
@@ -186,6 +199,7 @@ describe("workflow-v2 validation", () => {
           kind: "transform",
           title: "Transform",
           execModel: "script",
+        executionMode: "script",
           outputFields: [{ key: "artifact" }],
           script: {
             language: "python",

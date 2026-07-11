@@ -77,6 +77,7 @@ describe("workflow-v2 storage contracts", () => {
         kind: "worker",
         title: "Worker",
         execModel: "llm",
+        executionMode: "one-shot",
         prompt: "Run",
         outputFields: [{ key: "result", required: true }],
       }],

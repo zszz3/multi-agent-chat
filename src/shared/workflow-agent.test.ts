@@ -4,57 +4,31 @@ import {
   firstWorkflowQuestionForObjective,
   nextWorkflowQuestion,
   WORKFLOW_FOLLOW_UP_QUESTIONS,
-  WORKFLOW_GRAPH_CODE_TEMPLATE,
+  WORKFLOW_V2_DEFINITION_TEMPLATE,
 } from "./workflow-agent";
 
-describe("workflow agent prompt", () => {
-  test("describes the loop engineering agent contract", () => {
-    const prompt = buildWorkflowAgentPrompt({ objective: "我要生成 loop engineering agent" });
-
-    expect(prompt).toContain("Loop Engineering Agent");
-    expect(prompt).toContain("我要生成 loop engineering agent");
-    expect(prompt).toContain("Ask exactly one question");
-    expect(prompt).toContain("recommended answer");
-    expect(prompt).toContain("DAG");
+describe("workflow V2 manager prompt", () => {
+  test("requires V2 creation and correct interaction classification", () => {
+    const prompt = buildWorkflowAgentPrompt({ objective: "Determine the user's mood from user input" });
+    expect(prompt).toContain("Workflow V2 Manager");
     expect(prompt).toContain("workflow_create");
-    expect(prompt).toContain("workflowGraph.upsert");
-    expect(prompt).toContain("Fallback output code template");
-    expect(prompt).toContain(WORKFLOW_GRAPH_CODE_TEMPLATE);
-    expect(prompt).toContain("Workflow storage plan");
-    expect(prompt).toContain("shared memory");
-    expect(prompt).toContain("output documents");
-    expect(prompt).toContain("Use one-shot only when every required input is already available");
-    expect(prompt).toContain("Use interactive whenever the node may need clarification");
-    expect(prompt).toContain("even if the expected question is simple");
-    expect(prompt).toContain("only a fallback for misclassification");
+    expect(prompt).toContain("WorkflowV2Definition");
+    expect(prompt).toContain("it must use executionMode interactive");
+    expect(prompt).toContain("Never classify an input-dependent node as one-shot");
+    expect(prompt).toContain("execModel script");
   });
 
-  test("provides a fillable workflow graph code template", () => {
-    expect(WORKFLOW_GRAPH_CODE_TEMPLATE).toContain("workflowGraph.upsert({");
-    expect(WORKFLOW_GRAPH_CODE_TEMPLATE).toContain("nodes:");
-    expect(WORKFLOW_GRAPH_CODE_TEMPLATE).toContain("edges:");
-    expect(WORKFLOW_GRAPH_CODE_TEMPLATE).toContain('kind: "start"');
-    expect(WORKFLOW_GRAPH_CODE_TEMPLATE).toContain('kind: "agent"');
-    expect(WORKFLOW_GRAPH_CODE_TEMPLATE).toContain('kind: "end"');
-    expect(WORKFLOW_GRAPH_CODE_TEMPLATE).not.toContain("agentId");
-    expect(WORKFLOW_GRAPH_CODE_TEMPLATE).not.toContain("channelId");
-    expect(WORKFLOW_GRAPH_CODE_TEMPLATE).not.toContain("modelId");
+  test("provides a valid-shape V2 definition example", () => {
+    const definition = JSON.parse(WORKFLOW_V2_DEFINITION_TEMPLATE);
+    expect(definition).toMatchObject({ graphVersion: 1, nodes: [{ execModel: "llm",
+        executionMode: "interactive" }] });
+    expect(definition.nodes.some((node: { kind: string }) => node.kind === "start" || node.kind === "end")).toBe(false);
   });
 
-  test("builds the first grill question with a recommended answer from the submitted workflow task", () => {
-    const question = firstWorkflowQuestionForObjective("我想review一下 ./sample-repo 的代码，生成一份学习文档");
-
-    expect(question).toContain("sample-repo");
-    expect(question).toContain("代码");
-    expect(question).toContain("推荐答案：");
-    expect(question).toContain("学习文档");
-    expect(question).not.toContain("只读 review");
-    expect(question).not.toContain("最终交付物是什么");
-  });
-
-  test("all workflow follow-up questions include a recommended answer", () => {
+  test("questions include a recommended answer", () => {
+    expect(firstWorkflowQuestionForObjective("review a repository")).toContain("Recommended answer");
     for (let index = 0; index < WORKFLOW_FOLLOW_UP_QUESTIONS.length; index += 1) {
-      expect(nextWorkflowQuestion(index + 1)).toContain("推荐答案：");
+      expect(nextWorkflowQuestion(index + 1)).toContain("Recommended answer");
     }
   });
 });

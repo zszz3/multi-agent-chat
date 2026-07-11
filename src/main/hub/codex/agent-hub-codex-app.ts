@@ -5,7 +5,7 @@ import type { CodexWorkflowToolCallResult } from "./agent-hub-codex-workflow-too
 
 export interface CodexServerRequestOptions {
   handleWorkflowToolCall?: (params: Record<string, unknown>) => CodexWorkflowToolCallResult;
-  onWorkflowGraph?: (payload: { graph: import("../../../shared/types").WorkflowGraph; workflowId?: string; revision?: number }) => void;
+  onWorkflowCreated?: (payload: { workflowId: string; revision?: number }) => void;
 }
 
 export function codexSlashHelpText(): string {
@@ -167,9 +167,8 @@ export function respondToCodexServerRequest(
   if (method === "item/tool/call" || method === "mcp/dynamicToolCall") {
     const toolResult = options.handleWorkflowToolCall?.(params);
     if (toolResult?.handled) {
-      if (toolResult.graph && toolResult.workflowId) {
-        options.onWorkflowGraph?.({
-          graph: toolResult.graph,
+      if (toolResult.success && toolResult.workflowId) {
+        options.onWorkflowCreated?.({
           workflowId: toolResult.workflowId,
           ...(toolResult.revision !== undefined ? { revision: toolResult.revision } : {}),
         });

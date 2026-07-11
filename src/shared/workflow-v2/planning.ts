@@ -224,7 +224,10 @@ export function resolveWorkflowV2ExecutionMode(node: WorkflowV2Node): {
   rationale: string;
   confidence: number;
 } {
-  const mode = node.executionMode ?? (node.execModel === "script" ? "script" : "one-shot");
+  if (!node.executionMode) {
+    throw new Error(`Workflow V2 node ${node.id} must declare execution mode explicitly.`);
+  }
+  const mode = node.executionMode;
   if (mode === "script" && node.execModel !== "script") {
     throw new Error(`Workflow V2 node ${node.id} cannot use script execution mode with ${node.execModel} execution.`);
   }
@@ -237,7 +240,7 @@ export function resolveWorkflowV2ExecutionMode(node: WorkflowV2Node): {
       : mode === "script"
         ? "The node is deterministic and executes through the script runtime."
         : "The node has bounded inputs and can complete in one agent turn.");
-  const confidence = node.executionModeConfidence ?? (node.executionMode === undefined ? 0.75 : 1);
+  const confidence = node.executionModeConfidence ?? 1;
   if (!Number.isFinite(confidence) || confidence < 0 || confidence > 1) {
     throw new Error(`Workflow V2 node ${node.id} execution mode confidence must be between 0 and 1.`);
   }

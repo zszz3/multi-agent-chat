@@ -26,7 +26,7 @@
 明确的非目标（本期不做）：
 
 - 独立的 Goal 实体 / 跨 run 复用 / acceptanceCriteria 管理界面。goal 只是 run 上的
-  一段文本（复用 `WorkflowGraph.objective`）。
+  一段文本（复用 `WorkflowV2Definition.objective`）。
 - 跨进程崩溃恢复。约定：Electron app 退出即中断 run。
 - Codex/Claude 会话真续跑。第一版 resume = 重跑该 node；真续跑（Codex
   `turn/interrupt` + `thread/resume`）作为后续增强。
@@ -44,7 +44,7 @@
 
 复用现有类型（`src/shared/types.ts`），只做增量：
 
-- `WorkflowGraph.objective` 即 run 的目标文本。补一个可选的完成判断字段
+- `WorkflowV2Definition.objective` 即 run 的目标文本。补一个可选的完成判断字段
   （done criteria），由生成 workflow 的 agent 顺带产出，用户不手填。
 - `WorkflowRunProgressItem` 升级为节点运行态投影（已有 `paused` 状态值）：
   - `status: blocked | ready | running | paused | judging | completed | failed`
@@ -81,7 +81,7 @@ runtime 自动推进，默认体验与现在一致（全自动）：
 每个 node 启动时 runtime 自动拼装，agent 不读整个聊天：
 
 ```
-# 总目标        ← WorkflowGraph.objective (+ done criteria)
+# 总目标        ← WorkflowV2Definition.objective (+ done criteria)
 # 你的任务       ← 当前 node 的 prompt
 # 上游产出       ← 上游 node 的 artifactRefs（主）+ summary（辅）
 # 输出要求       ← 产出放哪 / 是否结构化 / 遗留问题

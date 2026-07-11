@@ -6,8 +6,8 @@ import type {
   RegisteredArtifact,
   TaskRun,
   WorkflowDraftState,
-  WorkflowGraph,
-  WorkflowGraphNode,
+  WorkflowV2Definition,
+  WorkflowV2Node,
   WorkflowGrillMessage,
   WorkflowRunProgressItem,
   WorkflowStatus,
@@ -52,8 +52,8 @@ export interface WorkflowController {
   topologyLocked?: boolean;
   title?: string;
   status?: WorkflowStatus;
-  graph: WorkflowGraph;
-  graphReady: boolean;
+  definition: WorkflowV2Definition;
+  definitionReady: boolean;
   objective: string;
   messages: WorkflowGrillMessage[];
   reply: string;
@@ -85,11 +85,11 @@ export interface WorkflowController {
   onInterruptNodeConversation?: (conversationId: string) => MaybePromise;
   onSelectConfiguredAgent: (configuredAgentId: string) => void;
   onSelectModel?: (modelId: string) => void;
-  onDraftGraph: () => void;
+  onBuildDefinition: () => void;
   onReplyChange: (value: string) => void;
   onSendReply: () => void;
-  onUpdateNode: (nodeId: string, update: Partial<WorkflowGraphNode>) => void;
-  onRunGraph: () => MaybePromise;
+  onUpdateNode: (nodeId: string, update: Partial<WorkflowV2Node>) => void;
+  onRunWorkflow: () => MaybePromise;
   onResetSession: () => MaybePromise;
   onStopGrill?: () => void;
   onChooseWorkDir?: () => MaybePromise;

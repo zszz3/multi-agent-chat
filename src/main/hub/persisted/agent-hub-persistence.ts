@@ -22,7 +22,6 @@ import {
   type TeamRunStep,
   type TeamRunStepStatus,
   type WorkflowDraftState,
-  type WorkflowGraphNode,
   type WorkflowRunNodeStatus,
   type WorkflowStoreState,
 } from "../../../shared/types";
@@ -117,8 +116,8 @@ export interface PersistedTeamRunRecord {
   updatedAt: number;
 }
 
-export interface PersistedAppStateV4 {
-  version: 4;
+export interface PersistedAppStateV5 {
+  version: 5;
   activeChatId: string | null;
   activeTaskId?: string | null;
   activeTeamId?: string | null;
@@ -139,11 +138,7 @@ export interface PersistedAppStateV4 {
   configuredAgents?: ConfiguredAgent[];
 }
 
-export interface PersistedAppStateV5 extends Omit<PersistedAppStateV4, "version"> {
-  version: 5;
-}
-
-export type PersistedAppState = PersistedAppStateV4 | PersistedAppStateV5;
+export type PersistedAppState = PersistedAppStateV5;
 
 export function isAgentId(value: unknown): value is AgentId {
   return isRuntimeId(value);
@@ -194,10 +189,6 @@ export function isRuntimeAttachmentState(value: unknown): value is ChatRuntimeSe
 
 export function isAgentTeamMode(value: unknown): value is AgentTeamMode {
   return value === "pipeline" || value === "parallel" || value === "supervisor";
-}
-
-export function isWorkflowGraphNodeKind(value: unknown): value is WorkflowGraphNode["kind"] {
-  return value === "start" || value === "agent" || value === "end";
 }
 
 export function isWorkflowDraftMessageRole(value: unknown): value is WorkflowDraftState["messages"][number]["role"] {

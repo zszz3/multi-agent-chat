@@ -42,8 +42,8 @@ export function useWorkflowFeatureController({
       topologyLocked: activeWorkflow?.topologyLocked === true,
       title: draft.workflowTitle,
       status: draft.workflowStatus,
-      graph: draft.workflowGraph,
-      graphReady: draft.workflowGraphReady,
+      definition: draft.workflowDefinition,
+      definitionReady: draft.workflowDefinitionReady,
       objective: draft.workflowObjective,
       messages: draft.workflowMessages,
       reply: draft.workflowReply,
@@ -120,8 +120,8 @@ export function useWorkflowFeatureController({
       onSelectModel: (modelId: string) => {
         void draft.selectModel(modelId);
       },
-      onDraftGraph: () => {
-        void draft.draftWorkflowGraph();
+      onBuildDefinition: () => {
+        void draft.buildWorkflowDefinition();
       },
       onReplyChange: draft.setWorkflowReply,
       onSendReply: () => {
@@ -130,8 +130,8 @@ export function useWorkflowFeatureController({
       onUpdateNode: (nodeId: string, update) => {
         void draft.updateWorkflowNode(nodeId, update);
       },
-      onRunGraph: async () => {
-        const result = await runner.runWorkflowGraphInternal();
+      onRunWorkflow: async () => {
+        const result = await runner.runWorkflowInternal();
         if (!result.ok && result.error && draft.workflowId) {
           const next = await workflows.patchDraft({ workflowId: draft.workflowId, error: result.error });
           setSnapshot(next);

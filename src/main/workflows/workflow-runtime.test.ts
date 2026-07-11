@@ -218,6 +218,7 @@ function workflowV2Definition(): WorkflowV2Definition {
         kind: "implementation",
         title: "Draft",
         execModel: "llm",
+        executionMode: "one-shot",
         prompt: "Produce the implementation draft from the approved packet.",
         outputFields: [{ key: "draft", required: true }],
       },
@@ -226,6 +227,7 @@ function workflowV2Definition(): WorkflowV2Definition {
         kind: "verification",
         title: "Verify",
         execModel: "script",
+        executionMode: "script",
         sandboxMode: "workspace",
         script: {
           language: "bash",
@@ -287,13 +289,7 @@ async function workflowV2RuntimeFixture(input: {
     modelId: "model-a",
     objective: definition.objective,
     workDir: "/tmp/workflow-v2-runtime",
-    graph: {
-      title: "Intentionally invalid legacy graph",
-      objective: "V2 execution must branch before legacy validation",
-      nodes: [],
-      edges: [],
-    },
-    graphReady: true,
+    definition,
     messages: [],
     reply: "",
     error: undefined,
@@ -461,7 +457,7 @@ describe("WorkflowRuntime Workflow V2 bridge", () => {
     fixture.workflow.status = "draft";
     fixture.setRuns([workflowV2InterventionRun(fixture.workflow, "running", "running")]);
 
-    const result = fixture.runtime.runWorkflowGraph({ workflowId: fixture.workflow.workflowId });
+    const result = fixture.runtime.runWorkflow({ workflowId: fixture.workflow.workflowId });
 
     expect(result).toEqual({
       ok: false,
@@ -486,7 +482,7 @@ describe("WorkflowRuntime Workflow V2 bridge", () => {
       workflowV2InterventionRun(fixture.workflow, previousStatus, previousStatus === "stopped" ? "queued" : "completed"),
     ]);
 
-    const result = fixture.runtime.runWorkflowGraph({ workflowId: fixture.workflow.workflowId });
+    const result = fixture.runtime.runWorkflow({ workflowId: fixture.workflow.workflowId });
     await fixture.finished;
 
     expect(result).toMatchObject({ ok: true, workflowId: fixture.workflow.workflowId });
@@ -537,7 +533,7 @@ describe("WorkflowRuntime Workflow V2 bridge", () => {
       },
     });
 
-    fixture.runtime.runWorkflowGraph({ workflowId: fixture.workflow.workflowId });
+    fixture.runtime.runWorkflow({ workflowId: fixture.workflow.workflowId });
     const finished = await fixture.finished;
 
     expect(finished.status).toBe("completed");
@@ -605,7 +601,7 @@ describe("WorkflowRuntime Workflow V2 bridge", () => {
       },
     });
 
-    fixture.runtime.runWorkflowGraph({ workflowId: fixture.workflow.workflowId });
+    fixture.runtime.runWorkflow({ workflowId: fixture.workflow.workflowId });
     const finished = await fixture.finished;
 
     expect(finished.status).toBe("completed");
@@ -722,7 +718,7 @@ describe("WorkflowRuntime Workflow V2 bridge", () => {
       },
     });
 
-    const started = fixture.runtime.runWorkflowGraph({ workflowId: fixture.workflow.workflowId });
+    const started = fixture.runtime.runWorkflow({ workflowId: fixture.workflow.workflowId });
     const finished = await fixture.finished;
 
     expect(started).toMatchObject({ ok: true, workflowId: fixture.workflow.workflowId });
@@ -790,7 +786,7 @@ describe("WorkflowRuntime Workflow V2 bridge", () => {
       },
     });
 
-    fixture.runtime.runWorkflowGraph({ workflowId: fixture.workflow.workflowId });
+    fixture.runtime.runWorkflow({ workflowId: fixture.workflow.workflowId });
     const finished = await fixture.finished;
 
     expect(finished.status).toBe("stopped");
@@ -831,7 +827,7 @@ describe("WorkflowRuntime Workflow V2 bridge", () => {
       }),
     });
 
-    fixture.runtime.runWorkflowGraph({ workflowId: fixture.workflow.workflowId });
+    fixture.runtime.runWorkflow({ workflowId: fixture.workflow.workflowId });
     const finished = await fixture.finished;
 
     expect(finished.status).toBe("completed");
@@ -862,7 +858,7 @@ describe("WorkflowRuntime Workflow V2 bridge", () => {
       },
     });
 
-    fixture.runtime.runWorkflowGraph({ workflowId: fixture.workflow.workflowId });
+    fixture.runtime.runWorkflow({ workflowId: fixture.workflow.workflowId });
     const finished = await fixture.finished;
 
     expect(finished.status).toBe("failed");
@@ -887,7 +883,7 @@ describe("WorkflowRuntime Workflow V2 bridge", () => {
         throw new Error("script runner should not be called");
       },
     });
-    fixture.runtime.runWorkflowGraph({ workflowId: fixture.workflow.workflowId });
+    fixture.runtime.runWorkflow({ workflowId: fixture.workflow.workflowId });
     while (fixture.taskRequests.length === 0) await Promise.resolve();
     const running = workflowV2InterventionRun(fixture.workflow, "running", "running");
     running.runId = "run-v2-runtime";
@@ -1431,7 +1427,7 @@ describe("WorkflowRuntime Workflow V2 bridge", () => {
     const plan = fixture.workflow.workflowV2Plan!;
     plan.nodes = [structuredClone(plan.nodes[0]!), structuredClone(plan.nodes[0]!)];
 
-    const result = fixture.runtime.runWorkflowGraph({ workflowId: fixture.workflow.workflowId });
+    const result = fixture.runtime.runWorkflow({ workflowId: fixture.workflow.workflowId });
 
     expect(result).toEqual({
       ok: false,
@@ -1492,7 +1488,7 @@ describe("WorkflowRuntime Workflow V2 bridge", () => {
     });
     mutatePlan(fixture.workflow.workflowV2Plan!);
 
-    const result = fixture.runtime.runWorkflowGraph({ workflowId: fixture.workflow.workflowId });
+    const result = fixture.runtime.runWorkflow({ workflowId: fixture.workflow.workflowId });
 
     expect(result).toMatchObject({
       ok: false,
@@ -1514,7 +1510,7 @@ describe("WorkflowRuntime Workflow V2 bridge", () => {
       },
     });
 
-    fixture.runtime.runWorkflowGraph({ workflowId: fixture.workflow.workflowId });
+    fixture.runtime.runWorkflow({ workflowId: fixture.workflow.workflowId });
     const finished = await fixture.finished;
 
     expect(fixture.taskRequests).toEqual([]);
@@ -1537,7 +1533,7 @@ describe("WorkflowRuntime Workflow V2 bridge", () => {
       },
     });
 
-    fixture.runtime.runWorkflowGraph({ workflowId: fixture.workflow.workflowId });
+    fixture.runtime.runWorkflow({ workflowId: fixture.workflow.workflowId });
     const finished = await fixture.finished;
 
     expect(fixture.taskRequests).toEqual([]);
@@ -1565,7 +1561,7 @@ describe("WorkflowRuntime Workflow V2 bridge", () => {
       planNode.taskPacket.budget.context.maxContextTokens = 1;
     }
 
-    fixture.runtime.runWorkflowGraph({ workflowId: fixture.workflow.workflowId });
+    fixture.runtime.runWorkflow({ workflowId: fixture.workflow.workflowId });
     const finished = await fixture.finished;
 
     expect(fixture.taskRequests).toEqual([]);
@@ -1595,7 +1591,7 @@ describe("WorkflowRuntime Workflow V2 bridge", () => {
         },
       });
 
-      fixture.runtime.runWorkflowGraph({
+      fixture.runtime.runWorkflow({
         workflowId: fixture.workflow.workflowId,
         contextDocument: `${"x".repeat(10_000)}${contextSentinel}`,
       });
@@ -1630,6 +1626,7 @@ describe("WorkflowRuntime Workflow V2 bridge", () => {
         kind: "verification",
         title: "Script only",
         execModel: "script",
+        executionMode: "script",
         sandboxMode: "workspace",
         script: { language: "bash", code: "printf should-not-run" },
         outputFields: [{ key: "verified", required: true }],
@@ -1646,7 +1643,7 @@ describe("WorkflowRuntime Workflow V2 bridge", () => {
       },
     });
 
-    fixture.runtime.runWorkflowGraph({ workflowId: fixture.workflow.workflowId });
+    fixture.runtime.runWorkflow({ workflowId: fixture.workflow.workflowId });
     const finished = await fixture.finished;
 
     expect(fixture.taskRequests).toEqual([]);
@@ -1672,6 +1669,7 @@ describe("WorkflowRuntime Workflow V2 bridge", () => {
         kind: "verification",
         title: "Script only",
         execModel: "script",
+        executionMode: "script",
         sandboxMode: "workspace",
         script: { language: "bash", code: "printf late", timeoutMs: 5_000 },
         outputFields: [{ key: "verified", required: true }],
@@ -1701,7 +1699,7 @@ describe("WorkflowRuntime Workflow V2 bridge", () => {
       },
     });
 
-    fixture.runtime.runWorkflowGraph({ workflowId: fixture.workflow.workflowId });
+    fixture.runtime.runWorkflow({ workflowId: fixture.workflow.workflowId });
     const finished = await fixture.finished;
 
     expect(observedTimeoutMs).toBeGreaterThan(0);
@@ -1725,6 +1723,7 @@ describe("WorkflowRuntime Workflow V2 bridge", () => {
         kind: "verification",
         title: "Script only",
         execModel: "script",
+        executionMode: "script",
         sandboxMode: "workspace",
         script: { language: "bash", code: "printf bounded", timeoutMs: Number.MAX_SAFE_INTEGER },
         outputFields: [{ key: "verified", required: true }],
@@ -1745,7 +1744,7 @@ describe("WorkflowRuntime Workflow V2 bridge", () => {
       },
     });
 
-    fixture.runtime.runWorkflowGraph({ workflowId: fixture.workflow.workflowId });
+    fixture.runtime.runWorkflow({ workflowId: fixture.workflow.workflowId });
     const finished = await fixture.finished;
 
     expect(observedTimeoutMs).toBeGreaterThan(0);
@@ -1753,7 +1752,7 @@ describe("WorkflowRuntime Workflow V2 bridge", () => {
     expect(finished.status).toBe("completed");
   });
 
-  test("upgrades a one-shot node to interactive when it requests user input and blocks downstream execution", async () => {
+  test("fails a one-shot node that requests user input and blocks downstream execution", async () => {
     const conversationStarts: Array<{ initialPrompt: string; developerInstructions?: string; contextDocument?: string }> = [];
     const waitingQuestions: string[] = [];
     const scriptRequests: ExecuteWorkflowV2ScriptRequest[] = [];
@@ -1782,16 +1781,13 @@ describe("WorkflowRuntime Workflow V2 bridge", () => {
       executeScript: async (request) => { scriptRequests.push(request); throw new Error("downstream script must remain blocked"); },
     });
 
-    fixture.runtime.runWorkflowGraph({ workflowId: fixture.workflow.workflowId });
+    fixture.runtime.runWorkflow({ workflowId: fixture.workflow.workflowId });
     const finished = await fixture.finished;
 
-    expect(finished.status).toBe("stopped");
+    expect(finished.status).toBe("failed");
     expect(fixture.stopTaskIds).toContain("task-input-request");
-    expect(conversationStarts).toHaveLength(1);
-    expect(conversationStarts[0]?.initialPrompt).toBe("Produce the implementation draft from the approved packet.");
-    expect(conversationStarts[0]?.developerInstructions).toContain("upgraded from one-shot to interactive");
-    expect(conversationStarts[0]?.contextDocument).toContain(question);
-    expect(waitingQuestions).toEqual([question]);
+    expect(conversationStarts).toHaveLength(0);
+    expect(waitingQuestions).toHaveLength(0);
     expect(scriptRequests).toHaveLength(0);
   });
 
@@ -1824,7 +1820,7 @@ describe("WorkflowRuntime Workflow V2 bridge", () => {
       },
     });
 
-    const started = fixture.runtime.runWorkflowGraph({
+    const started = fixture.runtime.runWorkflow({
       workflowId: fixture.workflow.workflowId,
       contextDocument: "# Base context\nUse the approved implementation constraints.",
     });
@@ -1901,7 +1897,7 @@ describe("WorkflowRuntime Workflow V2 bridge", () => {
       },
     });
 
-    fixture.runtime.runWorkflowGraph({ workflowId: fixture.workflow.workflowId });
+    fixture.runtime.runWorkflow({ workflowId: fixture.workflow.workflowId });
     const finished = await fixture.finished;
 
     expect(finished).toMatchObject({

@@ -85,13 +85,12 @@ export async function runCodexWorkflow(
       onRequest: (id, method, params) => {
         if (client) {
           respondToCodexRuntimeServerRequest(options, client, id, method, params, {
-            onWorkflowGraph: ({ graph, workflowId, revision }) => {
+            onWorkflowCreated: ({ workflowId, revision }) => {
               input.onEvent?.({
                 requestId: input.requestId,
-                type: "workflow_graph",
-                graph,
-                content: "Workflow graph created through MCP.",
-                ...(workflowId ? { workflowId } : {}),
+                type: "workflow_created",
+                workflowId,
+                content: "Workflow V2 definition created through MCP.",
                 ...(revision !== undefined ? { revision } : {}),
               });
             },

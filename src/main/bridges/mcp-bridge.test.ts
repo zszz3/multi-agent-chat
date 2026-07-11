@@ -243,23 +243,18 @@ describe("MCP bridge", () => {
     const create = await bridgeRequest("/mcp/workflow/create", bridge.token, {
       title: "Review workflow",
       objective: "Review example service",
-      graph: {
-        title: "Review workflow",
+      definition: {
+        workflowId: "mcp-review-placeholder",
+        graphVersion: 1,
         objective: "Review example service",
-        nodes: [
-          { id: "start", kind: "start", title: "Start", prompt: "" },
-          { id: "review", kind: "agent", title: "Review", prompt: "Review code."},
-          { id: "end", kind: "end", title: "Done", prompt: "" },
-        ],
-        edges: [
-          { id: "start->review", fromNodeId: "start", toNodeId: "review" },
-          { id: "review->end", fromNodeId: "review", toNodeId: "end" },
-        ],
+        nodes: [{ id: "review", kind: "agent", title: "Review", execModel: "llm",
+        executionMode: "one-shot", prompt: "Review code.", outputFields: [{ key: "result", required: true }] }],
+        edges: [],
       },
     });
     expect(create.status).toBe(200);
     const created = (await create.json()) as any;
-    expect(created).toMatchObject({ ok: true, revision: 1, validation: { valid: true } });
+    expect(created).toMatchObject({ ok: true, revision: 1 });
     expect(created.workflowId).toMatch(/^wf_/);
 
     const list = (await (await bridgeRequest("/mcp/workflow/list", bridge.token, {})).json()) as any;
@@ -269,7 +264,7 @@ describe("MCP bridge", () => {
         title: "Review workflow",
         status: "draft",
         revision: 1,
-        nodeCount: 3,
+        nodeCount: 1,
       }),
     ]);
 

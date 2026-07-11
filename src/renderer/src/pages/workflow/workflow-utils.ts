@@ -1,5 +1,4 @@
 import type { WorkflowRunNodeStatus, WorkflowRunProgressItem } from "../../../../shared/types";
-import { parseWorkflowGraphUpsert } from "../../../../shared/workflow-graph";
 import {
   truncateWorkflowContext,
   workflowStoragePlanDocument,
@@ -22,8 +21,7 @@ export function isMarkdownFilePath(path: string): boolean {
 }
 
 export function workflowAssistantDisplayContent(content: string): string {
-  const graph = parseWorkflowGraphUpsert(content);
-  return graph ? `Workflow graph ready: ${graph.title}` : content;
+  return content;
 }
 
 export interface WorkflowOutputDocument {

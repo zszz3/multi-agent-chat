@@ -5,14 +5,12 @@ import path from "node:path";
 import type { AddressInfo } from "node:net";
 import type { AgentHub } from "../hub/agent-hub";
 import { isRuntimeId } from "../../shared/runtime-catalog";
-import type { AgentChannel, ConfiguredAgent, CreateWorkflowRequest, RegisterArtifactRequest, UpdateWorkflowRequest, WorkflowArtifactReference, WorkflowGraph, AppendWorkflowRunContextRequest, ImportOnlineSkillRequest } from "../../shared/types";
+import type { AgentChannel, ConfiguredAgent, CreateWorkflowRequest, RegisterArtifactRequest, UpdateWorkflowRequest, WorkflowArtifactReference, AppendWorkflowRunContextRequest, ImportOnlineSkillRequest } from "../../shared/types";
 import { SKILL_TEMPLATES } from "../../shared/skill-templates";
 import { importOnlineSkillToLibrary, listImportedSkillTemplates } from "../skills/skill-installer";
 import { fetchOnlineSkills, ONLINE_SKILL_SOURCES } from "../../shared/online-skills";
-import { validateWorkflowGraph } from "../../shared/workflow-graph";
 import type { WorkflowV2Definition } from "../../shared/workflow-v2/definition";
 import { validateWorkflowV2Definition } from "../../shared/workflow-v2/validation";
-import { projectWorkflowV2DefinitionToLegacyCanvas } from "../../shared/workflow-v2/projection";
 import { DEFAULT_MODEL_ID, defaultChannelForAgent, defaultModelForAgent, isModelForChannel } from "../../shared/models";
 
 export interface McpBridgeServer {
@@ -92,7 +90,7 @@ function workflowListPayload(hub: AgentHub): unknown {
       revision: workflow.revision,
       updatedAt: workflow.updatedAt,
       lastRunStatus: workflow.runProgress.length > 0 ? workflow.runProgress.at(-1)?.status : undefined,
-      nodeCount: workflow.graph.nodes.length,
+      nodeCount: workflow.definition.nodes.length,
     })),
   };
 }
@@ -290,16 +288,14 @@ async function routeWorkflowRequest(hub: AgentHub, route: string, body: unknown,
     return workflow ? { ok: true, workflow } : { ok: false, error: `Workflow ${workflowId} was not found.` };
   }
     if (route === "/mcp/workflow/create") {
-      const definition = record.definition as WorkflowV2Definition;
-      const validation = validateWorkflowV2Definition(definition);
-      if (!validation.valid) return { ok: false, error: validation.errors[0] ?? "Invalid Workflow V2 definition." };
-      const title = typeof record.title === "string" ? record.title : definition.objective;
-      const request: CreateWorkflowRequest = {
-        title,
-        objective: typeof record.objective === "string" ? record.objective : definition.objective,
-        definition,
-        graph: projectWorkflowV2DefinitionToLegacyCanvas(definition, title),
-      };
+    const definition = record.definition as WorkflowV2Definition;
+    const validation = validateWorkflowV2Definition(definition);
+    if (!validation.valid) return { ok: false, error: validation.errors[0] ?? "Invalid Workflow V2 definition." };
+    const request: CreateWorkflowRequest = {
+      title: typeof record.title === "string" ? record.title : definition.objective,
+      objective: typeof record.objective === "string" ? record.objective : definition.objective,
+      definition,
+    };
     const configuredAgentId = asString(record.configuredAgentId);
     if (configuredAgentId) request.configuredAgentId = configuredAgentId;
     const workDir = asString(record.workDir);
@@ -315,15 +311,15 @@ async function routeWorkflowRequest(hub: AgentHub, route: string, body: unknown,
     if (typeof record.expectedRevision === "number") request.expectedRevision = record.expectedRevision;
     if (typeof record.title === "string") request.title = record.title;
     if (typeof record.objective === "string") request.objective = record.objective;
-    if (record.graph) request.graph = record.graph as WorkflowGraph;
+    if (record.definition) request.definition = record.definition as WorkflowV2Definition;
     return hub.updateWorkflow(request);
   }
   if (route === "/mcp/workflow/validate") {
     const workflowId = typeof record.workflowId === "string" ? record.workflowId : "";
     const workflow = workflowId ? hub.snapshot().workflowStore.workflows.find((item) => item.workflowId === workflowId) : undefined;
-    const graph = (record.graph as WorkflowGraph | undefined) ?? workflow?.graph;
-    if (!graph) return { ok: false, error: "workflow_validate requires graph or workflowId." };
-    const validation = validateWorkflowGraph(graph);
+    const definition = (record.definition as WorkflowV2Definition | undefined) ?? workflow?.definition;
+    if (!definition) return { ok: false, error: "workflow_validate requires definition or workflowId." };
+    const validation = validateWorkflowV2Definition(definition);
     return { ok: validation.valid, validation, error: validation.valid ? undefined : validation.errors[0] };
   }
   if (route === "/mcp/workflow/context/append") {

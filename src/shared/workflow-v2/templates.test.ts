@@ -10,6 +10,7 @@ describe("workflow-v2 templates", () => {
         id: "research",
         kind: "research",
         execModel: "llm",
+        executionMode: "one-shot",
         prompt: "Research {{params.topic}} in scope {{params.scope}}.",
         outputFields: [{ key: "summary", required: true }],
         role: "executor",
@@ -50,6 +51,7 @@ describe("workflow-v2 templates", () => {
         kind: "research",
         title: "Targeted Research",
         execModel: "llm",
+        executionMode: "one-shot",
         outputFields: [{ key: "summary", required: true }],
         role: "executor",
         modelProfile: "fast",
@@ -72,6 +74,7 @@ describe("workflow-v2 templates", () => {
         id: "json-export",
         kind: "export",
         execModel: "script",
+        executionMode: "script",
         script: {
           language: "typescript",
           code: "console.log('{{params.payload}}')",
@@ -95,6 +98,7 @@ describe("workflow-v2 templates", () => {
     expect(compiled.nodes[0]).toMatchObject({
       id: "n1",
       execModel: "script",
+        executionMode: "script",
       script: { language: "typescript", code: "console.log('ok')" },
       sandboxMode: "workspace",
     });
@@ -105,6 +109,7 @@ describe("workflow-v2 templates", () => {
       id: "hooked",
       kind: "worker",
       execModel: "llm",
+        executionMode: "one-shot",
       prompt: "Run {{params.topic}}.",
       outputFields: [{ key: "result", required: true }],
       hooks: {

@@ -48,7 +48,7 @@ export function createCodexDriver(options: RuntimeAgentExecutorFactoryOptions): 
                 modelFromRuntimeConfig(sessionContext.runtimeConfig),
                 reasoningEffortFromRuntimeConfig(sessionContext.runtimeConfig),
               ),
-              ...(sessionContext.onWorkflowGraph
+              ...(sessionContext.onWorkflowCreated
                 ? codexWorkflowMcpArgs(options.workflowHost?.mcpBridgeDiscoveryPath())
                 : []),
             ],
@@ -56,8 +56,8 @@ export function createCodexDriver(options: RuntimeAgentExecutorFactoryOptions): 
             onEvent,
             onRequest: (id, method, params) => {
               respondToCodexRuntimeServerRequest(options, client, id, method, params, {
-                ...(sessionContext.onWorkflowGraph
-                  ? { onWorkflowGraph: sessionContext.onWorkflowGraph }
+                ...(sessionContext.onWorkflowCreated
+                  ? { onWorkflowCreated: sessionContext.onWorkflowCreated }
                   : {}),
               });
             },

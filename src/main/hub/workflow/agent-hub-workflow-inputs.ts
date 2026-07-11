@@ -2,27 +2,7 @@ import path from "node:path";
 import type {
   AppendWorkflowContextRequest,
   WorkflowArtifactReference,
-  WorkflowGraph,
 } from "../../../shared/types";
-
-export function workflowLimitError(input: {
-  graph: WorkflowGraph;
-  title: string;
-  objective: string;
-  maxTitleChars: number;
-  maxObjectiveChars: number;
-  maxNodeCount: number;
-  maxEdgeCount: number;
-  maxNodePromptChars: number;
-}): string | undefined {
-  if (input.title.length > input.maxTitleChars) return `Workflow title exceeds ${input.maxTitleChars} characters.`;
-  if (input.objective.length > input.maxObjectiveChars) return `Workflow objective exceeds ${input.maxObjectiveChars} characters.`;
-  if (input.graph.nodes.length > input.maxNodeCount) return `Workflow graph exceeds ${input.maxNodeCount} nodes.`;
-  if (input.graph.edges.length > input.maxEdgeCount) return `Workflow graph exceeds ${input.maxEdgeCount} edges.`;
-  const oversizedNode = input.graph.nodes.find((node) => node.prompt.length > input.maxNodePromptChars);
-  if (oversizedNode) return `Workflow node ${oversizedNode.id} prompt exceeds ${input.maxNodePromptChars} characters.`;
-  return undefined;
-}
 
 export function contextAppendLimitError(input: {
   request: AppendWorkflowContextRequest;

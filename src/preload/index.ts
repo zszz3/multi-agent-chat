@@ -35,7 +35,7 @@ import type {
   PauseWorkflowNodeRequest,
   ResolveWorkflowV2InterventionRequest,
   ProviderBalanceResult,
-  RunWorkflowGraphRequest,
+  RunWorkflowRequest,
   ListWorkflowOutputsRequest,
   RunAgentTeamRequest,
   RunTaskRequest,
@@ -124,7 +124,7 @@ const api = {
   selectWorkflow: (workflowId: string): Promise<AppSnapshot> => ipcRenderer.invoke("workflow:select", workflowId),
   renameWorkflow: (workflowId: string, title: string): Promise<AppSnapshot> => ipcRenderer.invoke("workflow:rename", workflowId, title),
   deleteWorkflow: (workflowId: string): Promise<AppSnapshot> => ipcRenderer.invoke("workflow:delete", workflowId),
-  runWorkflowGraph: (request: RunWorkflowGraphRequest): Promise<WorkflowOperationResult> => ipcRenderer.invoke("workflow-run:run-graph", request),
+  runWorkflow: (request: RunWorkflowRequest): Promise<WorkflowOperationResult> => ipcRenderer.invoke("workflow-run:start", request),
   pauseWorkflowNode: (request: PauseWorkflowNodeRequest): Promise<WorkflowOperationResult> => ipcRenderer.invoke("workflow-run:pause-node", request),
   stopWorkflowRun: (request: StopWorkflowRunRequest): Promise<WorkflowOperationResult> => ipcRenderer.invoke("workflow-run:stop", request),
   resolveWorkflowV2Intervention: (request: ResolveWorkflowV2InterventionRequest): Promise<WorkflowOperationResult> =>

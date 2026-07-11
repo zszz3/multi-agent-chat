@@ -23,6 +23,7 @@ async function persistedState(): Promise<WorkflowV2PersistedRunState> {
       kind: "worker",
       title: "Worker",
       execModel: "llm" as const,
+      executionMode: "one-shot" as const,
       prompt: "Work",
       outputFields: [{ key: "result", required: true }],
     }],

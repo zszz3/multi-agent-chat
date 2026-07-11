@@ -1,4 +1,4 @@
-import { mkdtemp, rm } from "node:fs/promises";
+﻿import { mkdtemp, rm } from "node:fs/promises";
 import { createRequire } from "node:module";
 import os from "node:os";
 import path from "node:path";
@@ -47,7 +47,7 @@ function sampleState() {
   };
   const workflowV2Plan = buildWorkflowV2PlanSync({ definition, approvedBy: "sqlite-test" });
   return {
-    version: 4,
+    version: 5,
     activeChatId: "chat-1",
     activeTaskId: "task-1",
     activeTeamId: null,
@@ -108,23 +108,6 @@ function sampleState() {
           objective: "ship safely",
           definition,
           workDir: "/tmp/project",
-          graph: {
-            title: "Release graph",
-            objective: "ship safely",
-            nodes: [
-              { id: "start", kind: "start", title: "Start", prompt: "", position: { x: 1, y: 2 } },
-              {
-                id: "build",
-                kind: "agent",
-                title: "Build",
-                prompt: "build it",
-                configuredAgentId: "agent-1",
-                modelId: "model-2",
-              },
-            ],
-            edges: [{ id: "edge-1", fromNodeId: "start", toNodeId: "build" }],
-          },
-          graphReady: true,
           messages: [{ id: "grill-1", role: "user", content: "go" }],
           reply: "ready",
           error: undefined,
@@ -171,7 +154,7 @@ afterEach(async () => {
 });
 
 describe("SqliteAppStore normalized persistence", () => {
-  it("stores chats, runtime sessions, and workflow topology as relational rows", async () => {
+  it("stores chats, runtime sessions, and Workflow V2 state", async () => {
     const dbPath = await createDbPath();
     const store = new SqliteAppStore(dbPath);
     await store.save(sampleState());
@@ -187,9 +170,6 @@ describe("SqliteAppStore normalized persistence", () => {
         "chat_events",
         "runtime_sessions",
         "workflows",
-        "workflow_graphs",
-        "workflow_nodes",
-        "workflow_edges",
         "workflow_runs",
         "workflow_run_nodes",
         "workflow_events",
@@ -199,8 +179,10 @@ describe("SqliteAppStore normalized persistence", () => {
     expect(tables.map(({ name }) => name)).not.toContain("app_state");
     expect(db.prepare("select count(*) as count from chats").get()).toEqual({ count: 1 });
     expect(db.prepare("select count(*) as count from runtime_sessions").get()).toEqual({ count: 1 });
-    expect(db.prepare("select count(*) as count from workflow_nodes").get()).toEqual({ count: 2 });
-    expect(db.prepare("select count(*) as count from workflow_edges").get()).toEqual({ count: 1 });
+    expect(tables.map(({ name }) => name)).not.toEqual(expect.arrayContaining(["workflow_graphs", "workflow_nodes", "workflow_edges"]));
+    const workflowRow = db.prepare("select definition_json, workflow_v2_plan_json from workflows").get() as Record<string, unknown>;
+    expect(JSON.parse(String(workflowRow.definition_json))).toMatchObject({ workflowId: "workflow-1", graphVersion: 3 });
+    expect(JSON.parse(String(workflowRow.workflow_v2_plan_json))).toMatchObject({ workflowId: "workflow-1", graphVersion: 3 });
     expect(db.prepare("select count(*) as count from workflow_runs").get()).toEqual({ count: 1 });
     db.close();
   });
@@ -237,30 +219,5 @@ describe("SqliteAppStore normalized persistence", () => {
     db.close();
   });
 
-  it("imports a legacy V4 app_state once and retains it as a backup", async () => {
-    const dbPath = await createDbPath();
-    const state = sampleState();
-    const { DatabaseSync } = require("node:sqlite") as SqliteModule;
-    const legacyDb = new DatabaseSync(dbPath);
-    legacyDb.exec(`
-      create table app_state (
-        id integer primary key check (id = 1),
-        payload text not null,
-        updated_at integer not null
-      )
-    `);
-    legacyDb.prepare("insert into app_state (id, payload, updated_at) values (1, ?, ?)").run(JSON.stringify(state), 1);
-    legacyDb.close();
 
-    const store = new SqliteAppStore(dbPath);
-    expect(await store.load()).toEqual(JSON.parse(JSON.stringify(state)));
-    store.close();
-
-    const migratedDb = new DatabaseSync(dbPath);
-    const tables = migratedDb.prepare("select name from sqlite_master where type = 'table'").all() as Array<{ name: string }>;
-    expect(tables.map(({ name }) => name)).not.toContain("app_state");
-    expect(tables.map(({ name }) => name)).toContain("legacy_app_state");
-    expect(migratedDb.prepare("select count(*) as count from workflow_nodes").get()).toEqual({ count: 2 });
-    migratedDb.close();
-  });
 });

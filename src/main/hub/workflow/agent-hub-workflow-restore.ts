@@ -28,11 +28,12 @@ import {
 import {
   restoreWorkflowDraftStatus,
   restoreWorkflowEvent,
-  restoreWorkflowGraph,
   restoreWorkflowRunProgressItem,
   restoreWorkflowRunStatus,
 } from "../state/agent-hub-restore";
 import { cloneWorkflowV2Plan } from "../../../shared/workflow-v2/planning";
+import type { WorkflowV2Definition } from "../../../shared/workflow-v2/definition";
+import { validateWorkflowV2Definition } from "../../../shared/workflow-v2/validation";
 import type { WorkflowV2PersistedRunState } from "../../../shared/workflow-v2/storage";
 import type { WorkflowV2RunNodeState } from "../../../shared/workflow-v2/state";
 import { buildWorkflowV2FinalReport } from "../../workflows/v2/workflow-v2-recovery";
@@ -138,26 +139,31 @@ export function restoreWorkflowDraft(
 ): WorkflowDraftState | undefined {
   const record = asRecord(raw);
   if (!record || "agentSessionId" in record) return undefined;
-  const graph = restoreWorkflowGraph(record.graph);
-  if (!graph) return undefined;
+  const definitionRecord = asRecord(record.definition);
+  if (!definitionRecord) return undefined;
+  const definition = structuredClone(definitionRecord) as unknown as WorkflowV2Definition;
+  if (!validateWorkflowV2Definition(definition).valid) return undefined;
   const finalReport = asOptionalString(record.finalReport);
-  const restoredRuntimeConversation =
-    record.runtimeConversation === undefined ? undefined : deps.restoreRuntimeConversation(record.runtimeConversation);
+  const restoredRuntimeConversation = record.runtimeConversation === undefined
+    ? undefined
+    : deps.restoreRuntimeConversation(record.runtimeConversation);
   if (record.runtimeConversation !== undefined && !restoredRuntimeConversation) return undefined;
-  const restoredWorkflowV2Plan =
-    record.workflowV2Plan === undefined ? undefined : restoreWorkflowV2Plan(record.workflowV2Plan);
+  const restoredWorkflowV2Plan = record.workflowV2Plan === undefined
+    ? undefined
+    : restoreWorkflowV2Plan(record.workflowV2Plan);
   if (record.workflowV2Plan !== undefined && !restoredWorkflowV2Plan) return undefined;
+  const workflowId = asOptionalString(record.workflowId) ?? definition.workflowId;
+  if (workflowId !== definition.workflowId) return undefined;
   return deps.cloneWorkflowDraft({
-    workflowId: asOptionalString(record.workflowId) ?? `wf_${randomUUID()}`,
-    title: asOptionalString(record.title) ?? graph.title,
+    workflowId,
+    title: asOptionalString(record.title) ?? definition.objective ?? "Untitled workflow",
     status: restoreWorkflowDraftStatus(record.status),
     revision: Math.max(1, Math.floor(asNumber(record.revision, 1))),
     configuredAgentId: asOptionalString(record.configuredAgentId) ?? "",
     modelId: asOptionalString(record.modelId) ?? "",
-    objective: asOptionalString(record.objective) ?? graph.objective,
+    objective: asOptionalString(record.objective) ?? definition.objective,
+    definition,
     ...(asOptionalString(record.workDir) ? { workDir: asOptionalString(record.workDir) as string } : {}),
-    graph,
-    graphReady: record.graphReady === true,
     messages: asArray(record.messages)
       .map((message) => {
         const messageRecord = asRecord(message);
@@ -178,9 +184,9 @@ export function restoreWorkflowDraft(
     contextDocument: asOptionalString(record.contextDocument) ?? "",
     ...(restoredWorkflowV2Plan ? { workflowV2Plan: restoredWorkflowV2Plan } : {}),
     ...(finalReport !== undefined ? { finalReport } : {}),
-    runIds: asArray(record.runIds).map((item) => asOptionalString(item)).filter((item): item is string => Boolean(item)),
+    runIds: asArray(record.runIds).map((runId) => asOptionalString(runId)).filter((runId): runId is string => Boolean(runId)),
     ...(restoredRuntimeConversation ? { runtimeConversation: restoredRuntimeConversation } : {}),
-    createdAt: asNumber(record.createdAt, asNumber(record.updatedAt, Date.now())),
+    createdAt: asNumber(record.createdAt, Date.now()),
     updatedAt: asNumber(record.updatedAt, Date.now()),
   });
 }
