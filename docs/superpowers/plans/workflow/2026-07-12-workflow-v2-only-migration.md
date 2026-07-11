@@ -20,11 +20,11 @@
 - Test: `src/mcp/server.test.ts`
 - Test: `src/main/hub/agent-hub.test.ts`
 
-- [ ] Define workflow create/update requests around `WorkflowV2Definition` instead of `WorkflowGraph`.
-- [ ] Publish a strict MCP JSON schema for LLM/script nodes, execution modes, output fields, and dependency edges.
-- [ ] Require Manager-created LLM nodes to state `executionMode`; user-input-dependent nodes must be `interactive`.
+- [x] Define workflow create requests around `WorkflowV2Definition`; update/store removal continues in Task 2.
+- [x] Publish a strict MCP JSON schema for LLM/script nodes, execution modes, output fields, and dependency edges.
+- [x] Require Manager-created LLM nodes to state `executionMode`; user-input-dependent nodes must be `interactive`.
 - [ ] Remove `workflowGraph.upsert` fallback and legacy graph parser usage.
-- [ ] Verify MCP and Manager creation preserve interactive execution mode.
+- [x] Verify MCP and Manager creation preserve interactive execution mode and immediately freeze a V2 plan.
 
 ### Task 2: Replace Store And Persistence
 

@@ -1080,16 +1080,19 @@ export class AgentHub {
 
   createWorkflow(input: CreateWorkflowRequest): WorkflowOperationResult {
     if (this.workflowStore.workflows.size >= MAX_WORKFLOW_COUNT) return { ok: false, error: `Workflow count exceeds ${MAX_WORKFLOW_COUNT}.` };
-    const limitError = this.workflowLimitError(input.graph, input.title, input.objective);
-    if (limitError) return { ok: false, error: limitError };
-    const validation = validateWorkflowGraph(input.graph);
-    if (!validation.valid) return { ok: false, error: validation.errors[0] ?? "Workflow graph is invalid.", validation };
+    if (!input.definition) return { ok: false, error: "Workflow V2 definition is required." };
+    if (input.definition.nodes.length > MAX_WORKFLOW_NODE_COUNT) {
+      return { ok: false, error: `Workflow V2 definition exceeds ${MAX_WORKFLOW_NODE_COUNT} nodes.` };
+    }
+    if (input.definition.edges.length > MAX_WORKFLOW_EDGE_COUNT) {
+      return { ok: false, error: `Workflow V2 definition exceeds ${MAX_WORKFLOW_EDGE_COUNT} edges.` };
+    }
     const workflowId = `wf_${randomUUID()}`;
-    const definition = input.definition
-      ? { ...structuredClone(input.definition), workflowId, objective: input.objective.trim() || input.definition.objective }
-      : undefined;
+    const definition = { ...structuredClone(input.definition), workflowId, objective: input.objective.trim() || input.definition.objective };
+    const validation = validateWorkflowV2Definition(definition);
+    if (!validation.valid) return { ok: false, error: validation.errors[0] ?? "Workflow V2 definition is invalid." };
     let workflowV2Plan = input.workflowV2Plan;
-    if (definition && !workflowV2Plan) {
+    if (!workflowV2Plan) {
       try {
         workflowV2Plan = buildWorkflowV2PlanSync({ definition, approvedBy: "workflow-manager" });
       } catch (error) {
@@ -1100,8 +1103,8 @@ export class AgentHub {
       workflowId,
       request: {
         ...input,
-        ...(definition ? { definition } : {}),
-        ...(workflowV2Plan ? { workflowV2Plan } : {}),
+        definition,
+        workflowV2Plan,
       },
       configuredAgentId: this.normalizeWorkflowConfiguredAgentId(input.configuredAgentId),
       modelId: this.normalizeModelIdForConfiguredAgent(input.configuredAgentId, input.modelId),
@@ -1110,7 +1113,7 @@ export class AgentHub {
     this.workflowStore.workflows.set(workflow.workflowId, workflow);
     this.workflowStore.activeId = workflow.workflowId;
     this.emit();
-    return { ok: true, workflowId: workflow.workflowId, revision: workflow.revision, validation };
+    return { ok: true, workflowId: workflow.workflowId, revision: workflow.revision };
   }
 
   /**

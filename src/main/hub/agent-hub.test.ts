@@ -1,4 +1,4 @@
-import { mkdir, mkdtemp, readFile, writeFile } from "node:fs/promises";
+﻿import { mkdir, mkdtemp, readFile, writeFile } from "node:fs/promises";
 import os from "node:os";
 import path from "node:path";
 import { describe, expect, test, vi } from "vitest";
@@ -52,6 +52,31 @@ function configuredAgent(
 
 function addConfiguredAgents(hub: AgentHub, agents: ConfiguredAgent[]): void {
   hub.updateConfiguredAgents([...hub.snapshot().configuredAgents, ...agents]);
+}
+
+function createV2Workflow(hub: AgentHub, input: any): any {
+  const agentNodes = input.graph?.nodes?.filter((node: any) => node.kind === "agent") ?? [];
+  const agentNodeIds = new Set(agentNodes.map((node: any) => node.id));
+  return (hub as any).createWorkflow({
+    ...input,
+    definition: input.definition ?? {
+      workflowId: "test-placeholder",
+      graphVersion: 1,
+      objective: input.objective,
+      nodes: agentNodes.map((node: any) => ({
+        id: node.id,
+        kind: "implementation",
+        title: node.title,
+        execModel: "llm",
+        executionMode: "one-shot",
+        prompt: node.prompt,
+        outputFields: [{ key: "result", required: true }],
+      })),
+      edges: (input.graph?.edges ?? [])
+        .filter((edge: any) => agentNodeIds.has(edge.fromNodeId) && agentNodeIds.has(edge.toNodeId))
+        .map((edge: any) => ({ fromNodeId: edge.fromNodeId, toNodeId: edge.toNodeId })),
+    },
+  });
 }
 
 function interactiveChatCapabilities(runtimeId: AgentId) {
@@ -2681,7 +2706,7 @@ fs.writeFileSync(${JSON.stringify(argsPath)}, process.argv.slice(2).join("\\n") 
     const chat = (hub as any).chats.get(chatId);
 
     (hub as any).handleAgentEvent(chat, { type: "delta", content: "I will inspect files." });
-    (hub as any).handleAgentEvent(chat, { type: "meta", content: "→ shell_command\nls" });
+    (hub as any).handleAgentEvent(chat, { type: "meta", content: "鈫?shell_command\nls" });
     (hub as any).handleAgentEvent(chat, { type: "delta", content: "Found the files." });
 
     const activeChat = hub.snapshot().chats.find((item) => item.id === chatId);
@@ -2689,7 +2714,7 @@ fs.writeFileSync(${JSON.stringify(argsPath)}, process.argv.slice(2).join("\\n") 
     expect(activeChat?.messages[0]).toMatchObject({
       role: "assistant",
       content: "I will inspect files.Found the files.",
-      events: [expect.objectContaining({ type: "meta", content: "→ shell_command\nls" })],
+      events: [expect.objectContaining({ type: "meta", content: "鈫?shell_command\nls" })],
     });
   });
 
@@ -3344,7 +3369,7 @@ fs.writeFileSync(${JSON.stringify(argsPath)}, process.argv.slice(2).join("\\n") 
     addConfiguredAgents(hub, [configuredAgent("claude-agent", { runtimeAgentId: "claude", name: "Claude Agent" })]);
     const chat = hub.createChat("claude-agent");
     const chatState = (hub as any).chats.get(chat.id);
-    (hub as any).handleAgentEvent(chatState, { type: "meta", content: "→ shell_command\npwd" });
+    (hub as any).handleAgentEvent(chatState, { type: "meta", content: "鈫?shell_command\npwd" });
     (hub as any).handleAgentEvent(chatState, { type: "delta", content: "Saved response" });
     (hub as any).handleAgentEvent(chatState, { type: "completed" });
     await hub.flushPersistence();
@@ -3353,7 +3378,7 @@ fs.writeFileSync(${JSON.stringify(argsPath)}, process.argv.slice(2).join("\\n") 
     expect(persisted.version).toBe(5);
     expect(persisted.sessions).toEqual([expect.objectContaining({ id: expect.any(String) }), expect.objectContaining({ id: chat.id })]);
     expect(persisted.messages).toEqual(expect.arrayContaining([expect.objectContaining({ chatId: chat.id, role: "assistant" })]));
-    expect(persisted.events).toEqual(expect.arrayContaining([expect.objectContaining({ chatId: chat.id, type: "meta", content: "→ shell_command\npwd" })]));
+    expect(persisted.events).toEqual(expect.arrayContaining([expect.objectContaining({ chatId: chat.id, type: "meta", content: "鈫?shell_command\npwd" })]));
 
     const restored = new AgentHub();
     await restored.loadPersistedState(storagePath);
@@ -3368,7 +3393,7 @@ fs.writeFileSync(${JSON.stringify(argsPath)}, process.argv.slice(2).join("\\n") 
       expect.objectContaining({
         role: "assistant",
         content: "Saved response",
-        events: [expect.objectContaining({ type: "meta", content: "→ shell_command\npwd" })],
+        events: [expect.objectContaining({ type: "meta", content: "鈫?shell_command\npwd" })],
       }),
     ]);
   });
@@ -4051,7 +4076,7 @@ fs.writeFileSync(${JSON.stringify(argsPath)}, process.argv.slice(2).join("\\n") 
     const hub = new AgentHub();
 
     await hub.loadPersistedState(storagePath);
-    const first = (hub as any).createWorkflow({
+    const first = createV2Workflow(hub, {
       configuredAgentId: "default-agent",
       title: "sample repo review",
       objective: "Review sample repo",
@@ -4114,7 +4139,7 @@ fs.writeFileSync(${JSON.stringify(argsPath)}, process.argv.slice(2).join("\\n") 
       workflowId: first.workflowId,
       workflowV2Plan: planned.plan!,
     });
-    const second = (hub as any).createWorkflow({
+    const second = createV2Workflow(hub, {
       title: "release workflow",
       objective: "Prepare release",
       createdAt: 1710001000000,
@@ -4194,7 +4219,7 @@ fs.writeFileSync(${JSON.stringify(argsPath)}, process.argv.slice(2).join("\\n") 
 
   test("renames a workflow draft without changing its graph", () => {
     const hub = new AgentHub();
-    const created = (hub as any).createWorkflow({
+    const created = createV2Workflow(hub, {
       title: "Original workflow",
       objective: "Review sample repo",
       graph: {
@@ -4226,7 +4251,7 @@ fs.writeFileSync(${JSON.stringify(argsPath)}, process.argv.slice(2).join("\\n") 
 
   test("preserves explicit node positions through create and update", () => {
     const hub = new AgentHub();
-    const created = (hub as any).createWorkflow({
+    const created = createV2Workflow(hub, {
       title: "Positioned workflow",
       objective: "Pin nodes",
       graph: {
@@ -4266,7 +4291,7 @@ fs.writeFileSync(${JSON.stringify(argsPath)}, process.argv.slice(2).join("\\n") 
 
   test("deletes a workflow draft with its runs and selects the next remaining workflow", async () => {
     const hub = new AgentHub();
-    const first = (hub as any).createWorkflow({
+    const first = createV2Workflow(hub, {
       title: "First workflow",
       objective: "Review sample repo",
       graph: {
@@ -4284,7 +4309,7 @@ fs.writeFileSync(${JSON.stringify(argsPath)}, process.argv.slice(2).join("\\n") 
       },
     });
     const run = (hub as any).startWorkflowRun({ workflowId: first.workflowId, contextDocument: "# Run context" });
-    const second = (hub as any).createWorkflow({
+    const second = createV2Workflow(hub, {
       title: "Second workflow",
       objective: "Prepare release",
       graph: {
@@ -4440,7 +4465,7 @@ fs.writeFileSync(${JSON.stringify(argsPath)}, process.argv.slice(2).join("\\n") 
 
   test("keeps a running workflow status and rejects a duplicate graph run after a draft patch", () => {
     const hub = new AgentHub();
-    const created = (hub as any).createWorkflow({
+    const created = createV2Workflow(hub, {
       title: "Duplicate guard workflow",
       objective: "Do not start twice",
       graph: {
@@ -4481,12 +4506,25 @@ fs.writeFileSync(${JSON.stringify(argsPath)}, process.argv.slice(2).join("\\n") 
     expect(started.ok).toBe(true);
   });
 
-  test("rejects invalid workflow creation with validation reasons", () => {
+  test("rejects invalid V2 workflow creation with validation reasons", () => {
     const hub = new AgentHub();
 
     const result = (hub as any).createWorkflow({
       title: "Broken",
       objective: "Broken",
+      definition: {
+        workflowId: "broken",
+        graphVersion: 1,
+        objective: "Broken",
+        nodes: [
+          { id: "a", kind: "implementation", title: "A", execModel: "llm", executionMode: "one-shot", prompt: "A", outputFields: [{ key: "result", required: true }] },
+          { id: "b", kind: "implementation", title: "B", execModel: "llm", executionMode: "one-shot", prompt: "B", outputFields: [{ key: "result", required: true }] },
+        ],
+        edges: [
+          { fromNodeId: "a", toNodeId: "b" },
+          { fromNodeId: "b", toNodeId: "a" },
+        ],
+      },
       graph: {
         title: "Broken",
         objective: "Broken",
@@ -4497,16 +4535,12 @@ fs.writeFileSync(${JSON.stringify(argsPath)}, process.argv.slice(2).join("\\n") 
 
     expect(result).toMatchObject({
       ok: false,
-      error: "Workflow graph must have exactly one start node.",
-      validation: {
-        valid: false,
-        errors: ["Workflow graph must have exactly one start node."],
-      },
+      error: expect.stringContaining("acyclic"),
     });
     expect((hub.snapshot() as any).workflowStore.workflows).toHaveLength(0);
   });
 
-  test("rejects workflow graphs that exceed node limits", () => {
+  test("rejects V2 definitions that exceed node limits", () => {
     const hub = new AgentHub();
     const nodes = [
       { id: "start", kind: "start", title: "Start", prompt: "" },
@@ -4527,19 +4561,34 @@ fs.writeFileSync(${JSON.stringify(argsPath)}, process.argv.slice(2).join("\\n") 
     const result = (hub as any).createWorkflow({
       title: "Too large",
       objective: "Too large",
+      definition: {
+        workflowId: "too-large",
+        graphVersion: 1,
+        objective: "Too large",
+        nodes: Array.from({ length: 51 }, (_value, index) => ({
+          id: `v2_${index}`,
+          kind: "implementation",
+          title: `V2 ${index}`,
+          execModel: "llm",
+          executionMode: "one-shot",
+          prompt: "Work.",
+          outputFields: [{ key: "result", required: true }],
+        })),
+        edges: [],
+      },
       graph: { title: "Too large", objective: "Too large", nodes, edges },
     });
 
     expect(result).toMatchObject({
       ok: false,
-      error: "Workflow graph exceeds 50 nodes.",
+      error: "Workflow V2 definition exceeds 50 nodes.",
     });
     expect((hub.snapshot() as any).workflowStore.workflows).toHaveLength(0);
   });
 
   test("tracks workflow runs separately from editable workflow drafts", async () => {
     const hub = new AgentHub();
-    const created = (hub as any).createWorkflow({
+    const created = createV2Workflow(hub, {
       title: "Run tracked workflow",
       objective: "Run tracked workflow",
       graph: {
@@ -4679,7 +4728,7 @@ fs.writeFileSync(${JSON.stringify(argsPath)}, process.argv.slice(2).join("\\n") 
       version: "test",
       available: true,
     });
-    const created = (hub as any).createWorkflow({
+    const created = createV2Workflow(hub, {
       title: "Runtime workflow",
       objective: "Run from main",
       graph: {
@@ -4768,7 +4817,7 @@ fs.writeFileSync(${JSON.stringify(argsPath)}, process.argv.slice(2).join("\\n") 
 
   test("fails a Workflow V2 script node through the AgentHub product sandbox policy", async () => {
     const hub = new AgentHub({ codex: "codex-for-test", claude: "missing-claude-for-test" });
-    const created = (hub as any).createWorkflow({
+    const created = createV2Workflow(hub, {
       title: "Script policy workflow",
       objective: "Fail closed without an isolation backend",
       graph: {
@@ -4851,7 +4900,7 @@ fs.writeFileSync(${JSON.stringify(argsPath)}, process.argv.slice(2).join("\\n") 
       version: "test",
       available: true,
     });
-    const created = (hub as any).createWorkflow({
+    const created = createV2Workflow(hub, {
       title: "Pausable workflow",
       objective: "Pause one node",
       definition: {
@@ -4946,7 +4995,7 @@ fs.writeFileSync(${JSON.stringify(argsPath)}, process.argv.slice(2).join("\\n") 
       available: true,
     });
     await hub.loadPersistedState(storagePath);
-    const created = (hub as any).createWorkflow({
+    const created = createV2Workflow(hub, {
       title: "Resume node workflow",
       objective: "Resume one node",
       definition: {
@@ -5038,7 +5087,7 @@ fs.writeFileSync(${JSON.stringify(argsPath)}, process.argv.slice(2).join("\\n") 
       version: "test",
       available: true,
     });
-    const created = (hub as any).createWorkflow({
+    const created = createV2Workflow(hub, {
       title: "Gate workflow",
       objective: "Ask a human when needed",
       definition: {
@@ -5088,7 +5137,7 @@ fs.writeFileSync(${JSON.stringify(argsPath)}, process.argv.slice(2).join("\\n") 
     const hub = new AgentHub();
     await hub.loadPersistedState(storagePath);
 
-    const created = (hub as any).createWorkflow({
+    const created = createV2Workflow(hub, {
       title: "Daily repo review",
       objective: "Review repository changes every morning",
       graph: {
@@ -5225,7 +5274,7 @@ fs.writeFileSync(${JSON.stringify(argsPath)}, process.argv.slice(2).join("\\n") 
       version: "test",
       available: true,
     });
-    const created = (hub as any).createWorkflow({
+    const created = createV2Workflow(hub, {
       title: "Scheduled workflow",
       objective: "Run from scheduled event",
       definition: {
@@ -5518,7 +5567,7 @@ describe("AgentHub task runs", () => {
     });
     (hub as any).tasks.set(task.id, task);
     (hub as any).handleAgentEvent(task, { type: "delta", content: "Working" });
-    (hub as any).handleAgentEvent(task, { type: "meta", content: "→ shell_command\npwd" });
+    (hub as any).handleAgentEvent(task, { type: "meta", content: "鈫?shell_command\npwd" });
     (hub as any).handleAgentEvent(task, { type: "completed" });
 
     const snapshot = hub.snapshot();
@@ -5527,7 +5576,7 @@ describe("AgentHub task runs", () => {
       expect.objectContaining({
         role: "assistant",
         content: "Working",
-        events: [expect.objectContaining({ type: "meta", content: "→ shell_command\npwd" })],
+        events: [expect.objectContaining({ type: "meta", content: "鈫?shell_command\npwd" })],
       }),
     ]);
     expect(snapshot.chats[0]?.messages).toEqual([]);
@@ -5977,3 +6026,4 @@ describe("AgentHub agent teams", () => {
     );
   });
 });
+

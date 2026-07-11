@@ -26,6 +26,51 @@ function createStore() {
 }
 
 describe("WorkflowStore", () => {
+  test("requires a valid V2 definition when creating an executable workflow", () => {
+    const { store } = createStore();
+    const legacyOnly = store.createWorkflow({
+      title: "Legacy only",
+      objective: "Must be rejected",
+      graph: {
+        title: "Legacy only",
+        objective: "Must be rejected",
+        nodes: [],
+        edges: [],
+      },
+    });
+
+    expect(legacyOnly).toMatchObject({ ok: false, error: "Workflow V2 definition is required." });
+
+    const created = store.createWorkflow({
+      title: "V2 workflow",
+      objective: "Use V2",
+      definition: {
+        workflowId: "manager-placeholder",
+        graphVersion: 1,
+        objective: "Use V2",
+        nodes: [{
+          id: "work",
+          kind: "implementation",
+          title: "Work",
+          execModel: "llm",
+          executionMode: "one-shot",
+          prompt: "Do work.",
+          outputFields: [{ key: "result", required: true }],
+        }],
+        edges: [],
+      },
+      graph: {
+        title: "Ignored invalid legacy projection",
+        objective: "Ignored",
+        nodes: [],
+        edges: [],
+      },
+    });
+
+    expect(created).toMatchObject({ ok: true, workflowId: "wf_1" });
+    expect(store.getWorkflow("wf_1")?.definition).toMatchObject({ workflowId: "wf_1", graphVersion: 1 });
+  });
+
   test("owns workflow selection and returns isolated snapshots", () => {
     const { store } = createStore();
 

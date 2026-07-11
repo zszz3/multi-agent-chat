@@ -1,5 +1,6 @@
 import path from "node:path";
 import { createWorkflowGraphFromObjective, validateWorkflowGraph } from "../shared/workflow-graph";
+import { validateWorkflowV2Definition } from "../shared/workflow-v2/validation";
 import type {
   AppendWorkflowContextRequest,
   AppendWorkflowRunContextRequest,
@@ -259,14 +260,20 @@ export class WorkflowStore {
     if (this.workflows.size >= MAX_WORKFLOW_COUNT) {
       return { ok: false, error: `Workflow count exceeds ${MAX_WORKFLOW_COUNT}.` };
     }
-    const limitError = workflowLimitError(input.graph, input.title, input.objective);
+    if (!input.definition) return { ok: false, error: "Workflow V2 definition is required." };
+    const limitError = workflowV2LimitError(input.definition, input.title, input.objective);
     if (limitError) return { ok: false, error: limitError };
-    const validation = validateWorkflowGraph(input.graph);
+    const workflowId = this.deps.createWorkflowId();
+    const definition = {
+      ...structuredClone(input.definition),
+      workflowId,
+      objective: input.objective.trim() || input.definition.objective,
+    };
+    const validation = validateWorkflowV2Definition(definition);
     if (!validation.valid) {
-      return { ok: false, error: validation.errors[0] ?? "Workflow graph is invalid.", validation };
+      return { ok: false, error: validation.errors[0] ?? "Workflow V2 definition is invalid." };
     }
     const now = this.deps.now();
-    const workflowId = this.deps.createWorkflowId();
     const workflow = this.deps.normalizeDraft({
       workflowId,
       sourceType: "user",
@@ -276,7 +283,8 @@ export class WorkflowStore {
       revision: 1,
       configuredAgentId: input.configuredAgentId ?? "",
       modelId: input.modelId ?? "",
-      objective: input.objective.trim() || input.graph.objective,
+      objective: definition.objective,
+      definition,
       ...(input.workDir?.trim() ? { workDir: input.workDir.trim() } : {}),
       graph: input.graph,
       graphReady: input.graphReady ?? true,
@@ -295,7 +303,7 @@ export class WorkflowStore {
     this.workflows.set(workflow.workflowId, workflow);
     this.activeWorkflowId = workflow.workflowId;
     this.deps.onChange();
-    return { ok: true, workflowId: workflow.workflowId, revision: workflow.revision, validation };
+    return { ok: true, workflowId: workflow.workflowId, revision: workflow.revision };
   }
 
   ensureBundledWorkflows(defs: Array<{ workflowId: string; title: string; objective: string; graph: WorkflowGraph }>): boolean {
@@ -611,6 +619,16 @@ function workflowLimitError(graph: WorkflowGraph, title: string, objective: stri
   if (oversizedNode) {
     return `Workflow node ${oversizedNode.id} prompt exceeds ${MAX_WORKFLOW_NODE_PROMPT_CHARS} characters.`;
   }
+  return undefined;
+}
+
+function workflowV2LimitError(definition: NonNullable<CreateWorkflowRequest["definition"]>, title: string, objective: string): string | undefined {
+  if (title.length > MAX_WORKFLOW_TITLE_CHARS) return `Workflow title exceeds ${MAX_WORKFLOW_TITLE_CHARS} characters.`;
+  if (objective.length > MAX_WORKFLOW_OBJECTIVE_CHARS) return `Workflow objective exceeds ${MAX_WORKFLOW_OBJECTIVE_CHARS} characters.`;
+  if (definition.nodes.length > MAX_WORKFLOW_NODE_COUNT) return `Workflow V2 definition exceeds ${MAX_WORKFLOW_NODE_COUNT} nodes.`;
+  if (definition.edges.length > MAX_WORKFLOW_EDGE_COUNT) return `Workflow V2 definition exceeds ${MAX_WORKFLOW_EDGE_COUNT} edges.`;
+  const oversizedNode = definition.nodes.find((node) => node.execModel === "llm" && node.prompt.length > MAX_WORKFLOW_NODE_PROMPT_CHARS);
+  if (oversizedNode) return `Workflow V2 node ${oversizedNode.id} prompt exceeds ${MAX_WORKFLOW_NODE_PROMPT_CHARS} characters.`;
   return undefined;
 }
 
