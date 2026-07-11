@@ -405,19 +405,6 @@ function workflowV2InterventionRun(
     runId: "run-v2-intervention",
     workflowId: workflow.workflowId,
     status,
-    graphSnapshot: {
-      title: "Legacy graph must not resume",
-      objective: "Legacy execution is forbidden for V2 intervention",
-      nodes: [
-        { id: "start", kind: "start", title: "Start", prompt: "" },
-        { id: "draft", kind: "agent", title: "Draft", prompt: "Must not execute." },
-        { id: "end", kind: "end", title: "Done", prompt: "" },
-      ],
-      edges: [
-        { id: "start->draft", fromNodeId: "start", toNodeId: "draft" },
-        { id: "draft->end", fromNodeId: "draft", toNodeId: "end" },
-      ],
-    },
     workflowV2Plan: workflow.workflowV2Plan!,
     progress: [{ nodeId: "draft", title: "Draft", status: nodeStatus, taskId: "task-v2-intervention" }],
     events: nodeStatus === "awaiting_input"
@@ -439,7 +426,6 @@ describe("WorkflowRuntime Workflow V2 bridge", () => {
       runId: "run-v2-runtime",
       workflowId: fixture.workflow.workflowId,
       status: "running",
-      graphSnapshot: fixture.workflow.graph,
       workflowV2Plan: fixture.workflow.workflowV2Plan!,
       progress: [
         { nodeId: "draft", title: "Draft", status: "running", taskId: "task-running" },

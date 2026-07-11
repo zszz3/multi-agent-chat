@@ -1257,13 +1257,13 @@ export class AgentHub {
     const workflow = this.workflowStore.workflows.get(input.workflowId);
     if (!workflow) return { ok: false, error: `Workflow ${input.workflowId} was not found.` };
     if (workflow.status === "running") return { ok: false, error: "Workflow is already running." };
+    if (!workflow.workflowV2Plan) return { ok: false, workflowId: workflow.workflowId, error: "Workflow V2 plan is required before starting a run." };
     this.activeWorkflowDraftRequests.delete(workflow.workflowId);
     const runId = `run_${randomUUID()}`;
     const next = startWorkflowRunStateValue({
       workflow,
       request: input,
       runId,
-      cloneGraph: (graph) => this.cloneWorkflowGraph(graph),
       cloneDraft: (draft) => this.cloneWorkflowDraft(draft),
     });
     this.workflowStore.runs.set(runId, next.nextRun);

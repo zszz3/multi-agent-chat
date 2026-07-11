@@ -296,8 +296,8 @@ export class SqliteAppStore {
         `insert into workflows
          (id, source_type, topology_locked, title, status, revision, configured_agent_id, model_id, objective, work_dir, graph_ready,
           reply, error, run_context_document, context_document, final_report, runtime_conversation_json,
-          created_at, updated_at)
-         values (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+          definition_json, workflow_v2_plan_json, created_at, updated_at)
+         values (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
       ).run(
         workflowId,
         workflow.sourceType === "official" ? "official" : "user",
@@ -316,6 +316,8 @@ export class SqliteAppStore {
         asString(workflow.contextDocument),
         asOptionalString(workflow.finalReport) ?? null,
         json(workflow.runtimeConversation),
+        json(workflow.definition),
+        json(workflow.workflowV2Plan),
         asNumber(workflow.createdAt),
         asNumber(workflow.updatedAt),
       );
@@ -391,16 +393,17 @@ export class SqliteAppStore {
 
   private saveRun(db: DatabaseSync, workflowId: string, run: RecordValue, sequence: number): void {
     const runId = asString(run.runId);
-    const graphId = `workflow-run:${runId}`;
-    this.saveGraph(db, graphId, workflowId, null, runId, run.graphSnapshot, asNumber(run.startedAt));
+    const workflowRow = asRecord(db.prepare("select revision from workflows where id = ?").get(workflowId));
+    const graphId = `workflow:${workflowId}:revision:${asNumber(workflowRow.revision)}`;
     db.prepare(
       `insert into workflow_runs
-       (id, workflow_id, graph_id, status, context_document, final_report, started_at, finished_at, last_error)
-       values (?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+       (id, workflow_id, graph_id, workflow_v2_plan_json, status, context_document, final_report, started_at, finished_at, last_error)
+       values (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
     ).run(
       runId,
       workflowId,
       graphId,
+      json(run.workflowV2Plan),
       asString(run.status),
       asString(run.contextDocument),
       asOptionalString(run.finalReport) ?? null,
@@ -585,18 +588,18 @@ export class SqliteAppStore {
     optional(workflow, "workDir", row.work_dir);
     optional(workflow, "error", row.error);
     optional(workflow, "finalReport", row.final_report);
+    optional(workflow, "definition", parseJson(row.definition_json));
+    optional(workflow, "workflowV2Plan", parseJson(row.workflow_v2_plan_json));
     if (row.runtime_conversation_json) workflow.runtimeConversation = parseJson(row.runtime_conversation_json);
     return workflow;
   }
 
   private loadRun(db: DatabaseSync, row: RecordValue): RecordValue {
     const runId = asString(row.id);
-    const graphRow = asRecord(db.prepare("select * from workflow_graphs where id = ?").get(row.graph_id));
     const run: RecordValue = {
       runId,
       workflowId: row.workflow_id,
       status: row.status,
-      graphSnapshot: this.loadGraph(db, graphRow),
       progress: this.loadProgress(db, "workflow_run_nodes", "run_id", runId),
       events: db
         .prepare("select * from workflow_events where run_id = ? order by sequence")
@@ -609,6 +612,7 @@ export class SqliteAppStore {
     optional(run, "finalReport", row.final_report);
     optional(run, "finishedAt", row.finished_at);
     optional(run, "lastError", row.last_error);
+    optional(run, "workflowV2Plan", parseJson(row.workflow_v2_plan_json));
     return run;
   }
 

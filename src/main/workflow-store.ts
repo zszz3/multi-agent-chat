@@ -273,6 +273,9 @@ export class WorkflowStore {
     if (!validation.valid) {
       return { ok: false, error: validation.errors[0] ?? "Workflow V2 definition is invalid." };
     }
+    const workflowV2Plan = input.workflowV2Plan
+      ? { ...structuredClone(input.workflowV2Plan), workflowId, objective: definition.objective, definition }
+      : undefined;
     const now = this.deps.now();
     const workflow = this.deps.normalizeDraft({
       workflowId,
@@ -285,6 +288,7 @@ export class WorkflowStore {
       modelId: input.modelId ?? "",
       objective: definition.objective,
       definition,
+      ...(workflowV2Plan ? { workflowV2Plan } : {}),
       ...(input.workDir?.trim() ? { workDir: input.workDir.trim() } : {}),
       graph: input.graph,
       graphReady: input.graphReady ?? true,
@@ -497,12 +501,13 @@ export class WorkflowStore {
     const workflow = this.workflows.get(input.workflowId);
     if (!workflow) return { ok: false, error: `Workflow ${input.workflowId} was not found.` };
     if (workflow.status === "running") return { ok: false, error: "Workflow is already running." };
+    if (!workflow.workflowV2Plan) return { ok: false, workflowId: workflow.workflowId, error: "Workflow V2 plan is required before starting a run." };
     const runId = this.deps.createRunId();
     const run: WorkflowRunState = {
       runId,
       workflowId: workflow.workflowId,
       status: "running",
-      graphSnapshot: structuredClone(workflow.graph),
+      workflowV2Plan: structuredClone(workflow.workflowV2Plan),
       progress: [],
       events: [],
       contextDocument: input.contextDocument ?? workflow.contextDocument,

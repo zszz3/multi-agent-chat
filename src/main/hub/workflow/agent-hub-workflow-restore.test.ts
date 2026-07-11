@@ -81,7 +81,6 @@ async function fixture(): Promise<{
     runId: "run-recovery",
     workflowId: workflow.workflowId,
     status: "running",
-    graphSnapshot: structuredClone(workflow.graph),
     workflowV2Plan: plan,
     progress: [{ nodeId: "draft", title: "Draft", status: "running" }],
     events: [],
@@ -184,9 +183,11 @@ describe("Workflow V2 AgentHub durable restore", () => {
     const storagePath = path.join(rootDir, "state.json");
     const hub = new AgentHub();
     await hub.loadPersistedState(storagePath);
+    const workflowDefinition = definition("startup-recovery-placeholder");
     const created = hub.createWorkflow({
       title: "Startup recovery",
       objective: "Reconcile durable state",
+      definition: workflowDefinition,
       graph: {
         title: "Startup recovery",
         objective: "Reconcile durable state",
@@ -203,16 +204,14 @@ describe("Workflow V2 AgentHub durable restore", () => {
     });
     expect(created).toMatchObject({ ok: true, workflowId: expect.any(String) });
     const workflowId = created.workflowId!;
-    const workflowDefinition = definition(workflowId);
-    const planned = await hub.buildWorkflowV2Plan({ approvedBy: "restore-test", definition: workflowDefinition });
-    expect(planned.ok).toBe(true);
-    hub.patchWorkflowDraft({ workflowId, workflowV2Plan: planned.plan! });
+    const createdWorkflow = hub.snapshot().workflowStore.workflows.find((item) => item.workflowId === workflowId)!;
+    const frozenDefinition = createdWorkflow.workflowV2Plan!.definition;
     const started = hub.startWorkflowRun({ workflowId });
     expect(started).toMatchObject({ ok: true, runId: expect.any(String) });
     const runId = started.runId!;
     await hub.flushPersistence();
 
-    let durableRunState = createWorkflowV2RunState({ definition: workflowDefinition, maxParallelNodes: 4 });
+    let durableRunState = createWorkflowV2RunState({ definition: frozenDefinition, maxParallelNodes: 4 });
     durableRunState = transitionWorkflowV2NodeState(durableRunState, { nodeId: "draft", status: "running", now: 2_000 });
     durableRunState = transitionWorkflowV2NodeState(durableRunState, { nodeId: "draft", status: "completed", now: 2_100 });
     durableRunState = transitionWorkflowV2NodeState(durableRunState, { nodeId: "verify", status: "running", now: 2_200 });
@@ -229,7 +228,7 @@ describe("Workflow V2 AgentHub durable restore", () => {
       graphVersion: workflowDefinition.graphVersion,
       savedAt: 2_400,
       eventCount: 4,
-      plan: planned.plan!,
+      plan: createdWorkflow.workflowV2Plan!,
       runState: durableRunState,
       workerOutputs: [{
         nodeId: "draft",

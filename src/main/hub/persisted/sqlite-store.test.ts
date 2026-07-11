@@ -4,6 +4,7 @@ import os from "node:os";
 import path from "node:path";
 import { afterEach, describe, expect, it } from "vitest";
 import { SqliteAppStore } from "./sqlite-store";
+import { buildWorkflowV2PlanSync } from "../../workflows/v2/workflow-v2-planner";
 
 const require = createRequire(import.meta.url);
 const tempDirs: string[] = [];
@@ -29,6 +30,22 @@ async function createDbPath(): Promise<string> {
 }
 
 function sampleState() {
+  const definition = {
+    workflowId: "workflow-1",
+    graphVersion: 3,
+    objective: "ship safely",
+    nodes: [{
+      id: "build",
+      kind: "implementation" as const,
+      title: "Build",
+      execModel: "llm" as const,
+      executionMode: "one-shot" as const,
+      prompt: "build it",
+      outputFields: [{ key: "result", required: true }],
+    }],
+    edges: [],
+  };
+  const workflowV2Plan = buildWorkflowV2PlanSync({ definition, approvedBy: "sqlite-test" });
   return {
     version: 4,
     activeChatId: "chat-1",
@@ -89,6 +106,7 @@ function sampleState() {
           configuredAgentId: "agent-1",
           modelId: "model-1",
           objective: "ship safely",
+          definition,
           workDir: "/tmp/project",
           graph: {
             title: "Release graph",
@@ -116,6 +134,7 @@ function sampleState() {
           finalReport: undefined,
           runIds: ["run-1"],
           runtimeConversation: { runtimeId: "codex", sessionId: "workflow-native", payload: {} },
+          workflowV2Plan,
           createdAt: 30,
           updatedAt: 40,
         },
@@ -125,12 +144,7 @@ function sampleState() {
           runId: "run-1",
           workflowId: "workflow-1",
           status: "running",
-          graphSnapshot: {
-            title: "Release graph",
-            objective: "ship safely",
-            nodes: [{ id: "build", kind: "agent", title: "Build", prompt: "build it" }],
-            edges: [],
-          },
+          workflowV2Plan,
           progress: [{ nodeId: "build", title: "Build", status: "completed", detail: "done" }],
           events: [
             {
@@ -185,7 +199,7 @@ describe("SqliteAppStore normalized persistence", () => {
     expect(tables.map(({ name }) => name)).not.toContain("app_state");
     expect(db.prepare("select count(*) as count from chats").get()).toEqual({ count: 1 });
     expect(db.prepare("select count(*) as count from runtime_sessions").get()).toEqual({ count: 1 });
-    expect(db.prepare("select count(*) as count from workflow_nodes").get()).toEqual({ count: 3 });
+    expect(db.prepare("select count(*) as count from workflow_nodes").get()).toEqual({ count: 2 });
     expect(db.prepare("select count(*) as count from workflow_edges").get()).toEqual({ count: 1 });
     expect(db.prepare("select count(*) as count from workflow_runs").get()).toEqual({ count: 1 });
     db.close();
@@ -246,7 +260,7 @@ describe("SqliteAppStore normalized persistence", () => {
     const tables = migratedDb.prepare("select name from sqlite_master where type = 'table'").all() as Array<{ name: string }>;
     expect(tables.map(({ name }) => name)).not.toContain("app_state");
     expect(tables.map(({ name }) => name)).toContain("legacy_app_state");
-    expect(migratedDb.prepare("select count(*) as count from workflow_nodes").get()).toEqual({ count: 3 });
+    expect(migratedDb.prepare("select count(*) as count from workflow_nodes").get()).toEqual({ count: 2 });
     migratedDb.close();
   });
 });

@@ -190,18 +190,16 @@ export function restoreWorkflowRun(raw: unknown): WorkflowRunState | undefined {
   if (!record) return undefined;
   const runId = asOptionalString(record.runId);
   const workflowId = asOptionalString(record.workflowId);
-  const graphSnapshot = restoreWorkflowGraph(record.graphSnapshot);
-  if (!runId || !workflowId || !graphSnapshot) return undefined;
+  if (!runId || !workflowId) return undefined;
   const finalReport = asOptionalString(record.finalReport);
   const restoredWorkflowV2Plan =
     record.workflowV2Plan === undefined ? undefined : restoreWorkflowV2Plan(record.workflowV2Plan);
-  if (record.workflowV2Plan !== undefined && !restoredWorkflowV2Plan) return undefined;
+  if (!restoredWorkflowV2Plan) return undefined;
   return {
     runId,
     workflowId,
     status: restoreWorkflowRunStatus(record.status),
-    graphSnapshot,
-    ...(restoredWorkflowV2Plan ? { workflowV2Plan: restoredWorkflowV2Plan } : {}),
+    workflowV2Plan: restoredWorkflowV2Plan,
     progress: asArray(record.progress)
       .map((item) => restoreWorkflowRunProgressItem(item))
       .filter((item): item is WorkflowRunProgressItem => Boolean(item)),

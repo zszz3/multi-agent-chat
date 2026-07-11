@@ -721,8 +721,7 @@ export interface WorkflowRunState {
   runId: string;
   workflowId: string;
   status: WorkflowStatus;
-  graphSnapshot: WorkflowGraph;
-  workflowV2Plan?: WorkflowV2Plan;
+  workflowV2Plan: WorkflowV2Plan;
   progress: WorkflowRunProgressItem[];
   events: WorkflowEvent[];
   contextDocument: string;

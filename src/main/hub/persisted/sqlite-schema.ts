@@ -87,6 +87,8 @@ export function createNormalizedSchema(db: SqliteSchemaDatabase): void {
       context_document text not null,
       final_report text,
       runtime_conversation_json text,
+      definition_json text,
+      workflow_v2_plan_json text,
       created_at integer not null,
       updated_at integer not null
     );
@@ -141,6 +143,7 @@ export function createNormalizedSchema(db: SqliteSchemaDatabase): void {
       id text primary key,
       workflow_id text not null references workflows(id) on delete cascade,
       graph_id text not null references workflow_graphs(id),
+      workflow_v2_plan_json text,
       status text not null,
       context_document text not null,
       final_report text,
@@ -194,6 +197,9 @@ export function createNormalizedSchema(db: SqliteSchemaDatabase): void {
   db.prepare("insert or ignore into schema_migrations (version, applied_at) values (?, ?)").run(SCHEMA_VERSION, Date.now());
   ensureColumn(db, "workflows", "source_type", "text not null default 'user'");
   ensureColumn(db, "workflows", "topology_locked", "integer not null default 0");
+  ensureColumn(db, "workflows", "definition_json", "text");
+  ensureColumn(db, "workflows", "workflow_v2_plan_json", "text");
+  ensureColumn(db, "workflow_runs", "workflow_v2_plan_json", "text");
 }
 
 function ensureColumn(db: SqliteSchemaDatabase, table: string, column: string, definition: string): void {

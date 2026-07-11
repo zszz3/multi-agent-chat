@@ -2,7 +2,6 @@ import type {
   FinishWorkflowRunRequest,
   StartWorkflowRunRequest,
   WorkflowDraftState,
-  WorkflowGraph,
   WorkflowRunState,
 } from "../../../shared/types";
 import { cloneWorkflowV2Plan } from "../../../shared/workflow-v2/planning";
@@ -12,12 +11,12 @@ export function startWorkflowRunState(input: {
   workflow: WorkflowDraftState;
   request: StartWorkflowRunRequest;
   runId: string;
-  cloneGraph: (graph: WorkflowGraph) => WorkflowGraph;
   cloneDraft: (draft: WorkflowDraftState) => WorkflowDraftState;
   now?: number;
 }): { nextWorkflow: WorkflowDraftState; nextRun: WorkflowRunState } {
   const now = input.now ?? Date.now();
   const contextDocument = input.request.contextDocument ?? input.workflow.contextDocument;
+  if (!input.workflow.workflowV2Plan) throw new Error("Workflow V2 plan is required before starting a run.");
   const { finalReport: _workflowFinalReport, ...workflowWithoutFinalReport } = input.workflow;
 
   return {
@@ -25,8 +24,7 @@ export function startWorkflowRunState(input: {
       runId: input.runId,
       workflowId: input.workflow.workflowId,
       status: "running",
-      graphSnapshot: input.cloneGraph(input.workflow.graph),
-      ...(input.workflow.workflowV2Plan ? { workflowV2Plan: cloneWorkflowV2Plan(input.workflow.workflowV2Plan) } : {}),
+      workflowV2Plan: cloneWorkflowV2Plan(input.workflow.workflowV2Plan),
       progress: [],
       events: [],
       contextDocument,

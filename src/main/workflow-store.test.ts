@@ -1,6 +1,7 @@
 import { describe, expect, test } from "vitest";
 import type { WorkflowDraftState } from "../shared/types";
 import { WorkflowStore } from "./workflow-store";
+import { buildWorkflowV2PlanSync } from "./workflows/v2/workflow-v2-planner";
 
 function cloneDraft(draft: WorkflowDraftState): WorkflowDraftState {
   return structuredClone(draft);
@@ -109,7 +110,21 @@ describe("WorkflowStore", () => {
 
   test("tracks a run separately and mirrors its final state to the workflow", () => {
     const { store } = createStore();
-    const workflow = store.createDraft()!;
+    const definition = {
+      workflowId: "placeholder",
+      graphVersion: 1,
+      objective: "Track run",
+      nodes: [{ id: "a", kind: "implementation" as const, title: "A", execModel: "llm" as const, executionMode: "one-shot" as const, prompt: "A", outputFields: [{ key: "result", required: true }] }],
+      edges: [],
+    };
+    const created = store.createWorkflow({
+      title: "Track run",
+      objective: "Track run",
+      definition,
+      workflowV2Plan: buildWorkflowV2PlanSync({ definition: { ...definition, workflowId: "wf_1" }, approvedBy: "store-test" }),
+      graph: { title: "Track run", objective: "Track run", nodes: [], edges: [] },
+    });
+    const workflow = store.getWorkflow(created.workflowId!)!;
 
     const started = store.startRun({ workflowId: workflow.workflowId, contextDocument: "context" });
     expect(started).toMatchObject({ ok: true, runId: "run_1" });

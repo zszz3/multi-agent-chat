@@ -71,8 +71,7 @@ export function cloneWorkflowRun(run: WorkflowRunState): WorkflowRunState {
     runId: run.runId,
     workflowId: run.workflowId,
     status: run.status,
-    graphSnapshot: cloneWorkflowGraph(run.graphSnapshot),
-    ...(run.workflowV2Plan ? { workflowV2Plan: cloneWorkflowV2Plan(run.workflowV2Plan) } : {}),
+    workflowV2Plan: cloneWorkflowV2Plan(run.workflowV2Plan),
     progress: run.progress.map((item) => ({
       nodeId: item.nodeId,
       title: item.title,
