@@ -55,7 +55,7 @@ import {
   workflowProgressAfterFailure,
   workflowStoragePlanDocument,
   workflowStoragePlanFor,
-} from "../../shared/workflow-run";
+} from "../../shared/workflow-v2/runtime-utils";
 import { executeWorkflowV2Plan } from "./v2/workflow-v2-executor";
 import type {
   WorkflowV2ExecutionLeaseState,

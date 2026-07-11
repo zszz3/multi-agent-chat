@@ -4,7 +4,7 @@ import path from "node:path";
 import { describe, expect, test, vi } from "vitest";
 import { AgentHub, createWorkflowAgentTimeout } from "./agent-hub";
 import { DEFAULT_MODEL_ID } from "../../shared/models";
-import { projectNodeStates } from "../../shared/workflow-run";
+import { projectNodeStates } from "../../shared/workflow-v2/runtime-utils";
 import type { AgentChannel, AgentId, ChatRuntimeSessionState, ConfiguredAgent, RuntimeConversation } from "../../shared/types";
 import { createRuntimeDriverRegistry, RuntimeDriverRegistry } from "./runtime/executor/agent-executor";
 import type {

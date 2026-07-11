@@ -2,7 +2,6 @@ import { useEffect, useRef, useState, type MouseEvent, type ReactElement } from 
 import { Bot, CircleStop, FileInput, GitBranch, Maximize2, Play, Send, Wand2, X } from "lucide-react";
 import { DEFAULT_MODEL_ID } from "../../../../shared/models";
 import { WORKFLOW_TOTAL_QUESTION_COUNT } from "../../../../shared/workflow-agent";
-import { WORKFLOW_FINAL_REVIEW_NODE_ID } from "../../../../shared/workflow-run";
 import { validateWorkflowGraph } from "../../../../shared/workflow-graph";
 import type {
   AgentChannel,
@@ -660,7 +659,7 @@ export function WorkflowPage(props: WorkflowPageProps) {
                 </div>
                 <div className="workflow-run-progress-list">
                   {runProgress.map((item) => {
-                    const controllable = Boolean(activeRunId) && item.nodeId !== WORKFLOW_FINAL_REVIEW_NODE_ID;
+                    const controllable = Boolean(activeRunId);
                     const canPause = controllable && item.status === "running" && typeof onPauseNode === "function";
                     const canStart = controllable
                       && (item.status === "paused" || item.status === "failed")
@@ -745,7 +744,7 @@ export function WorkflowPage(props: WorkflowPageProps) {
                     );
                   })}
                 {runProgress
-                  .filter((item) => item.status === "awaiting_input" && item.nodeId !== WORKFLOW_FINAL_REVIEW_NODE_ID && typeof onAnswerGate === "function")
+                  .filter((item) => item.status === "awaiting_input" && typeof onAnswerGate === "function")
                   .map((item) => {
                     const gateDraft = gateAnswers[item.nodeId] ?? "";
                     const submitGate = (): void => {

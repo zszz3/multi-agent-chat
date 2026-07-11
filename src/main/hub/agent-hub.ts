@@ -87,7 +87,7 @@ import type {
 import { normalizeConfigChannelsForStorage } from "../../shared/config-channels";
 import { DEFAULT_MODEL_ID, defaultChannelForAgent, defaultModelForAgent, isModelForChannel } from "../../shared/models";
 import { createWorkflowGraphFromObjective, validateWorkflowGraph } from "../../shared/workflow-graph";
-import { defaultWorkflowWorkDirSuffix } from "../../shared/workflow-run";
+import { defaultWorkflowWorkDirSuffix } from "../../shared/workflow-v2/runtime-utils";
 import { detectAgentRuntimes, resolveRuntimeExecutables } from "../agents/runtime/detect";
 import { InteractiveSessionManager } from "../agents/runtime/interactive-session-manager";
 import type { CodexRpcClient } from "../agents/codex/codex-rpc";
