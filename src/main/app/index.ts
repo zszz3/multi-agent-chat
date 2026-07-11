@@ -346,6 +346,7 @@ function registerIpcHandlers(): void {
   ipcMain.handle("evaluation:experiments:save", (_event, value: EvaluationExperiment) => evaluationStore.saveExperiment(value));
   ipcMain.handle("evaluation:experiments:delete", (_event, id: string) => evaluationStore.deleteExperiment(id));
   ipcMain.handle("evaluation:runs:list", (_event, experimentId?: string) => evaluationStore.listRuns(experimentId));
+  ipcMain.handle("evaluation:runs:delete", (_event, id: string) => evaluationStore.deleteRun(id));
   ipcMain.handle("evaluation:runs:save", (_event, value: EvaluationRun) => evaluationStore.saveRun(value));
   ipcMain.handle("evaluation:experiments:run", async (_event, experimentId: string) => {
     const experiment = (await evaluationStore.listExperiments()).find((item) => item.id === experimentId);

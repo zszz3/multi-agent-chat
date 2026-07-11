@@ -84,6 +84,7 @@ const api = {
   saveEvaluationExperiment: (value: EvaluationExperiment): Promise<EvaluationExperiment> => ipcRenderer.invoke("evaluation:experiments:save", value),
   deleteEvaluationExperiment: (id: string): Promise<boolean> => ipcRenderer.invoke("evaluation:experiments:delete", id),
   listEvaluationRuns: (experimentId?: string): Promise<EvaluationRun[]> => ipcRenderer.invoke("evaluation:runs:list", experimentId),
+  deleteEvaluationRun: (id: string): Promise<boolean> => ipcRenderer.invoke("evaluation:runs:delete", id),
   runEvaluationExperiment: (experimentId: string): Promise<EvaluationRun> => ipcRenderer.invoke("evaluation:experiments:run", experimentId),
   testConfiguredAgent: (agentId: string): Promise<AgentTestResult> => ipcRenderer.invoke("configured-agents:test", agentId),
   testRuntimeChannel: (channelId: string): Promise<AgentTestResult> => ipcRenderer.invoke("runtime-channels:test", channelId),
