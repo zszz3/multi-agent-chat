@@ -5507,6 +5507,14 @@ textarea:focus-visible {
   padding-right: 2px;
 }
 
+.configured-agent-group-label {
+  padding: 5px 4px 1px;
+  color: var(--muted);
+  font-size: 10px;
+  font-weight: 800;
+  text-transform: uppercase;
+}
+
 .configured-agent-empty {
   display: grid;
   gap: 10px;
@@ -5558,6 +5566,72 @@ textarea:focus-visible {
   flex-direction: column;
   gap: 12px;
   overflow: auto;
+}
+
+.configured-agent-readonly-badge {
+  display: inline-flex !important;
+  align-items: center;
+  gap: 5px;
+  margin: 0 !important;
+  padding: 5px 7px;
+  border: 1px solid var(--line);
+  border-radius: 6px;
+  background: var(--panel-soft);
+}
+
+.configured-agent-runtime-notice {
+  display: flex;
+  align-items: flex-start;
+  gap: 8px;
+  padding: 9px 10px;
+  border-left: 3px solid var(--line-strong);
+  background: var(--panel-soft);
+  color: var(--muted);
+  font-size: 11px;
+  line-height: 1.45;
+}
+
+.configured-agent-runtime-notice svg {
+  flex: 0 0 auto;
+  margin-top: 1px;
+}
+
+.configured-agent-revisions {
+  display: grid;
+  gap: 6px;
+  padding-top: 4px;
+  border-top: 1px solid var(--line);
+}
+
+.configured-agent-revisions h4,
+.configured-agent-revisions p {
+  margin: 0;
+}
+
+.configured-agent-revisions h4 {
+  font-size: 11px;
+}
+
+.configured-agent-revisions p {
+  color: var(--muted);
+  font-size: 11px;
+}
+
+.configured-agent-revisions > div {
+  display: grid;
+  grid-template-columns: 36px minmax(0, 1fr) auto;
+  gap: 8px;
+  align-items: center;
+  min-width: 0;
+  font-size: 11px;
+}
+
+.configured-agent-revisions > div span,
+.configured-agent-revisions > div time {
+  overflow: hidden;
+  color: var(--muted);
+  text-overflow: ellipsis;
+  white-space: nowrap;
 }
 
 .agent-test-result {

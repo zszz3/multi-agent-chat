@@ -143,8 +143,11 @@ const channels: AgentChannel[] = [
 const configuredAgents: ConfiguredAgent[] = [
   {
     id: "repo-reviewer",
+    agentType: "composed",
     name: "Repo Reviewer",
     description: "Reviews repositories and writes learning docs.",
+    instructions: "Review the repository.",
+    baseAgentId: "default-agent",
     runtimeAgentId: "codex",
     channelId: "codex-openai",
     modelId: "gpt-5.5",
@@ -154,8 +157,11 @@ const configuredAgents: ConfiguredAgent[] = [
   },
   {
     id: "claude-reviewer",
+    agentType: "composed",
     name: "Claude Reviewer",
     description: "Reviews with Claude.",
+    instructions: "Review with Claude.",
+    baseAgentId: "runtime-agent:claude-code",
     runtimeAgentId: "claude",
     channelId: "claude-code",
     modelId: DEFAULT_MODEL_ID,
@@ -1041,6 +1047,7 @@ describe("AgentPage", () => {
       <AgentPage
         channels={channels}
         configuredAgents={configuredAgents}
+        agentRevisions={[]}
         selectedConfiguredAgentId="repo-reviewer"
         status=""
         onSave={async () => undefined}
@@ -1078,18 +1085,14 @@ describe("AgentPage", () => {
     expect(html).not.toContain(">导入模板<");
     expect(html).toContain("Repo Reviewer");
     expect(html).toContain("configured-agent-browser");
-    expect(html).toContain("aria-label=\"Agent runtime\"");
-    expect(html).toContain("aria-label=\"Agent execution config\"");
-    expect(html).toContain("Codex OpenAI · Codex");
-    expect(html).toContain("aria-label=\"Agent model\"");
-    expect(html).toContain("GPT-5.5");
+    expect(html).toContain("aria-label=\"Base execution agent\"");
+    expect(html).toContain("aria-label=\"Agent instructions\"");
     expect(html).not.toContain("aria-label=\"Agent prompt\"");
     expect(html).not.toContain(">Test<");
-    expect(html).toContain("configured-agent-editor-actions");
-    expect(html).toContain(">Save<");
+    expect(html).toContain("Save new version");
   });
 
-  test("renders model-specific Codex reasoning efforts", () => {
+  test("renders execution agents as read-only runtime projections", () => {
     const modelChannel: AgentChannel = {
       ...channels[0]!,
       models: [{
@@ -1101,6 +1104,8 @@ describe("AgentPage", () => {
     };
     const agent: ConfiguredAgent = {
       ...configuredAgents[0]!,
+      agentType: "execution",
+      managed: true,
       modelId: "gpt-5.6-sol",
       reasoningEffort: "xhigh",
     };
@@ -1109,6 +1114,7 @@ describe("AgentPage", () => {
       <AgentPage
         channels={[modelChannel]}
         configuredAgents={[agent]}
+        agentRevisions={[]}
         selectedConfiguredAgentId={agent.id}
         status=""
         onSave={async () => undefined}
@@ -1118,9 +1124,11 @@ describe("AgentPage", () => {
       />,
     );
 
-    expect(html).toContain('aria-label="Agent reasoning effort"');
-    expect(html).toContain('<option value="xhigh" selected="">XHigh</option>');
-    expect(html).toContain('<option value="ultra">Ultra</option>');
+    expect(html).toContain("Execution · Read only");
+    expect(html).toContain("This agent is generated from a Runtime config");
+    expect(html).toContain("GPT-5.6-Sol");
+    expect(html).toContain("xhigh");
+    expect(html).not.toContain("Save new version");
   });
 
   test("renders runtime provider settings separately from agent profile settings", () => {

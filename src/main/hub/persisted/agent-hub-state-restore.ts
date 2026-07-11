@@ -85,15 +85,22 @@ export function restoreConfiguredAgentState(
     : defaultModelForAgent(runtimeAgentId);
   const model = deps.channelById(normalizedChannelId)?.models.find((item) => item.id === normalizedModelId);
   const reasoningEffort = asOptionalString(record.reasoningEffort);
+  const baseAgentId = asOptionalString(record.baseAgentId);
+  const currentRevisionId = asOptionalString(record.currentRevisionId);
   return {
     id,
+    agentType: record.agentType === "execution" || record.managed === true ? "execution" : "composed",
     name,
     description: asOptionalString(record.description) ?? "",
+    instructions: asOptionalString(record.instructions) ?? "",
+    ...(baseAgentId ? { baseAgentId } : {}),
     runtimeAgentId,
     channelId: normalizedChannelId,
     modelId: normalizedModelId,
     ...(reasoningEffort && model?.reasoningEfforts?.includes(reasoningEffort) ? { reasoningEffort } : {}),
     tags: asArray(record.tags).map((tag) => asOptionalString(tag)).filter((tag): tag is string => Boolean(tag)),
+    ...(currentRevisionId ? { currentRevisionId } : {}),
+    ...(typeof record.revision === "number" ? { revision: asNumber(record.revision, 1) } : {}),
     ...(record.managed === true ? { managed: true } : {}),
     createdAt: asNumber(record.createdAt, now),
     updatedAt: asNumber(record.updatedAt, now),

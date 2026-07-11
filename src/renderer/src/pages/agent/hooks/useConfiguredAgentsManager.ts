@@ -17,7 +17,7 @@ interface SaveConfiguredAgentsOptions {
 export interface ConfiguredAgentsManager {
   selectedConfiguredAgentId: string;
   configuredAgentStatus: string;
-  setSelectedConfiguredAgentId: React.Dispatch<React.SetStateAction<string>>;
+  selectConfiguredAgent: (agentId: string) => void;
   saveConfiguredAgents: (agents?: ConfiguredAgent[]) => Promise<void>;
   addConfiguredAgent: () => Promise<void>;
   updateConfiguredAgent: (agentId: string, updater: (agent: ConfiguredAgent) => ConfiguredAgent) => void;
@@ -30,6 +30,7 @@ export function useConfiguredAgentsManager({
 }: UseConfiguredAgentsManagerOptions): ConfiguredAgentsManager {
   const [selectedConfiguredAgentId, setSelectedConfiguredAgentId] = useState("");
   const [configuredAgentStatus, setConfiguredAgentStatus] = useState("");
+  const [dirtyAgentId, setDirtyAgentId] = useState<string | undefined>();
 
   useEffect(() => {
     if (snapshot.configuredAgents.length === 0) {
@@ -43,9 +44,12 @@ export function useConfiguredAgentsManager({
   }, [selectedConfiguredAgentId, snapshot.configuredAgents]);
 
   const persistConfiguredAgents = useCallback(async (agents: ConfiguredAgent[]): Promise<void> => {
-    const next = await chatApi.saveConfiguredAgents(agents);
+    const selected = agents.find((agent) => agent.id === selectedConfiguredAgentId);
+    if (!selected || selected.agentType === "execution" || selected.managed) return;
+    const next = await chatApi.saveComposedAgent(selected);
     setSnapshot(next);
-  }, [chatApi, setSnapshot]);
+    setDirtyAgentId(undefined);
+  }, [chatApi, selectedConfiguredAgentId, setSnapshot]);
 
   const saveConfiguredAgents = useCallback(async (
     agents: ConfiguredAgent[] = snapshot.configuredAgents,
@@ -64,24 +68,52 @@ export function useConfiguredAgentsManager({
   const addConfiguredAgent = useCallback(async (): Promise<void> => {
     const nextAgent = createConfiguredAgent(snapshot.channels, snapshot.configuredAgents.map((agent) => agent.id));
     const nextAgents = [...snapshot.configuredAgents, nextAgent];
+    setSnapshot({ ...snapshot, configuredAgents: nextAgents });
     setSelectedConfiguredAgentId(nextAgent.id);
-    await saveConfiguredAgents(nextAgents);
-  }, [saveConfiguredAgents, snapshot.channels, snapshot.configuredAgents]);
+    setDirtyAgentId(nextAgent.id);
+    setConfiguredAgentStatus("Unsaved");
+  }, [setSnapshot, snapshot]);
 
   const updateConfiguredAgent = useCallback((agentId: string, updater: (agent: ConfiguredAgent) => ConfiguredAgent): void => {
     const nextAgents = snapshot.configuredAgents.map((agent) => {
       if (agent.id !== agentId) return agent;
-      const { managed: _managed, ...editableAgent } = updater(agent);
-      return { ...editableAgent, updatedAt: Date.now() };
+      if (agent.agentType === "execution" || agent.managed) return agent;
+      return { ...updater(agent), agentType: "composed" as const, managed: false, updatedAt: Date.now() };
     });
-    setConfiguredAgentStatus("");
-    void saveConfiguredAgents(nextAgents, { successMessage: undefined, clearStatusBefore: false });
-  }, [saveConfiguredAgents, snapshot.configuredAgents]);
+    setSnapshot({ ...snapshot, configuredAgents: nextAgents });
+    setDirtyAgentId(agentId);
+    setConfiguredAgentStatus("Unsaved");
+  }, [setSnapshot, snapshot]);
+
+  const selectConfiguredAgent = useCallback((agentId: string): void => {
+    if (dirtyAgentId && dirtyAgentId !== agentId) {
+      const discard = window.confirm("当前 Agent 有未保存修改，放弃修改吗？");
+      if (!discard) return;
+      void chatApi.getSnapshot().then((next) => {
+        setSnapshot(next);
+        setDirtyAgentId(undefined);
+        setConfiguredAgentStatus("");
+        setSelectedConfiguredAgentId(agentId);
+      });
+      return;
+    }
+    setSelectedConfiguredAgentId(agentId);
+  }, [chatApi, dirtyAgentId, setSnapshot]);
+
+  useEffect(() => {
+    if (!dirtyAgentId) return undefined;
+    const warn = (event: BeforeUnloadEvent): void => {
+      event.preventDefault();
+      event.returnValue = "";
+    };
+    window.addEventListener("beforeunload", warn);
+    return () => window.removeEventListener("beforeunload", warn);
+  }, [dirtyAgentId]);
 
   return {
     selectedConfiguredAgentId,
     configuredAgentStatus,
-    setSelectedConfiguredAgentId,
+    selectConfiguredAgent,
     saveConfiguredAgents,
     addConfiguredAgent,
     updateConfiguredAgent,

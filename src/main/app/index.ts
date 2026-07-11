@@ -310,6 +310,8 @@ function registerIpcHandlers(): void {
   });
   ipcMain.handle("model-channels:save", async (_event, channels: AgentChannel[]) => hub.saveModelChannels(channels));
   ipcMain.handle("configured-agents:save", async (_event, agents: ConfiguredAgent[]) => hub.updateConfiguredAgents(agents));
+  ipcMain.handle("configured-agents:save-composed", async (_event, agent: ConfiguredAgent) => hub.saveComposedAgent(agent));
+  ipcMain.handle("configured-agents:revisions:list", async (_event, agentId?: string) => hub.listAgentRevisions(agentId));
   ipcMain.handle("configured-agents:test", async (event, agentId: string) =>
     hub.testConfiguredAgent(agentId, (agentEvent) => event.sender.send("configured-agents:test-event", agentEvent)),
   );

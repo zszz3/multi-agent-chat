@@ -660,7 +660,7 @@ async function waitFor<T>(read: () => T, predicate: (value: T) => boolean): Prom
 }
 
 describe("AgentHub chat sessions", () => {
-  test("creates default agents once without binding their later edits to runtime configs", () => {
+  test("synchronizes one read-only execution agent per runtime config", () => {
     const hub = new AgentHub();
     (hub as any).channels = [
       {
@@ -680,8 +680,8 @@ describe("AgentHub chat sessions", () => {
 
     expect(hub.snapshot().configuredAgents).toEqual(
       expect.arrayContaining([
-        expect.objectContaining({ id: "default-agent", name: "Codex Official", channelId: "codex-openai", managed: true }),
-        expect.objectContaining({ id: "runtime-agent:codex-glm", name: "Codex GLM", channelId: "codex-glm", managed: true }),
+        expect.objectContaining({ id: "default-agent", agentType: "execution", name: "Codex Official", channelId: "codex-openai", managed: true, revision: expect.any(Number) }),
+        expect.objectContaining({ id: "runtime-agent:codex-glm", agentType: "execution", name: "Codex GLM", channelId: "codex-glm", managed: true, revision: 1 }),
       ]),
     );
 
@@ -700,12 +700,47 @@ describe("AgentHub chat sessions", () => {
     (hub as any).channels[1].label = "Codex GLM Updated";
     (hub as any).installRestoredConfiguredAgents(existing);
     expect(hub.snapshot().configuredAgents.find((agent) => agent.id === "runtime-agent:codex-glm")).toMatchObject({
-      name: "My Reviewer",
-      channelId: "codex-openai",
+      agentType: "execution",
+      name: "Codex GLM Updated",
+      channelId: "codex-glm",
       runtimeAgentId: "codex",
       modelId: DEFAULT_MODEL_ID,
+      managed: true,
     });
-    expect(hub.snapshot().configuredAgents.find((agent) => agent.id === "runtime-agent:codex-glm")?.managed).toBeUndefined();
+    expect(hub.snapshot().agentRevisions?.filter((revision) => revision.agentId === "runtime-agent:codex-glm")).toHaveLength(1);
+  });
+
+  test("versions composed agent behavior but not display-only edits", () => {
+    const hub = new AgentHub();
+    const base = hub.snapshot().configuredAgents.find((agent) => agent.agentType === "execution")!;
+    const created = hub.saveComposedAgent({
+      id: "reviewer",
+      agentType: "composed",
+      name: "Reviewer",
+      description: "Reviews code",
+      instructions: "Review correctness.",
+      baseAgentId: base.id,
+      runtimeAgentId: base.runtimeAgentId,
+      channelId: base.channelId,
+      modelId: base.modelId,
+      tags: ["code"],
+      createdAt: 1,
+      updatedAt: 1,
+    });
+    expect(created.configuredAgents.find((agent) => agent.id === "reviewer")).toMatchObject({
+      agentType: "composed",
+      baseAgentId: base.id,
+      revision: 1,
+    });
+
+    hub.saveComposedAgent({ ...created.configuredAgents.find((agent) => agent.id === "reviewer")!, name: "Renamed" });
+    expect(hub.listAgentRevisions("reviewer")).toHaveLength(1);
+
+    hub.saveComposedAgent({
+      ...hub.snapshot().configuredAgents.find((agent) => agent.id === "reviewer")!,
+      instructions: "Review correctness and security.",
+    });
+    expect(hub.listAgentRevisions("reviewer").map((revision) => revision.revision)).toEqual([2, 1]);
   });
 
   test("restores a configured agent reasoning effort supported by its model", () => {
@@ -826,8 +861,11 @@ describe("AgentHub chat sessions", () => {
     }];
     hub.updateConfiguredAgents([{
       id: "sol-agent",
+      agentType: "composed",
       name: "Sol Agent",
       description: "",
+      instructions: "Review every answer before responding.",
+      baseAgentId: "default-agent",
       runtimeAgentId: "codex",
       channelId: "codex-openai",
       modelId: "gpt-5.6-sol",
@@ -851,6 +889,7 @@ describe("AgentHub chat sessions", () => {
       continuationPolicy: "resume-preferred",
       developerInstructions: expect.stringContaining("desktop chat UI"),
     });
+    expect(events[0].developerInstructions).toContain("## Agent Instructions\nReview every answer before responding.");
     const activeChat = hub.snapshot().chats.find((chat) => chat.id === chatId);
     expect(activeChat?.runtimeConversation).toEqual(runtimeConversation("codex", { native: { threadId: "executor-session" } }));
     expect(activeChat?.messages).toEqual([
@@ -2041,6 +2080,11 @@ describe("AgentHub chat sessions", () => {
         updatedAt: 1710000000000,
       },
     ]);
+    expect(hub.snapshot().configuredAgents.find((agent) => agent.id === "doubao-agent")).toMatchObject({
+      agentType: "composed",
+      baseAgentId: "runtime-agent:codex-volcengine",
+      modelId: "ep-m-user-owned-endpoint",
+    });
 
     try {
       const result = await hub.testConfiguredAgent("doubao-agent");

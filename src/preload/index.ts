@@ -2,6 +2,7 @@ import { contextBridge, ipcRenderer } from "electron";
 import type { OnlineSkillResult } from "../shared/online-skills";
 import type {
   AgentChannel,
+  AgentRevision,
   AgentTestEvent,
   AgentTestResult,
   AckScheduledWorkflowEventRequest,
@@ -62,6 +63,8 @@ const api = {
   setChatModel: (chatId: string, modelId: string): Promise<AppSnapshot> => ipcRenderer.invoke("chat:set-model", chatId, modelId),
   saveModelChannels: (channels: AgentChannel[]): Promise<AppSnapshot> => ipcRenderer.invoke("model-channels:save", channels),
   saveConfiguredAgents: (agents: ConfiguredAgent[]): Promise<AppSnapshot> => ipcRenderer.invoke("configured-agents:save", agents),
+  saveComposedAgent: (agent: ConfiguredAgent): Promise<AppSnapshot> => ipcRenderer.invoke("configured-agents:save-composed", agent),
+  listAgentRevisions: (agentId?: string): Promise<AgentRevision[]> => ipcRenderer.invoke("configured-agents:revisions:list", agentId),
   testConfiguredAgent: (agentId: string): Promise<AgentTestResult> => ipcRenderer.invoke("configured-agents:test", agentId),
   testRuntimeChannel: (channelId: string): Promise<AgentTestResult> => ipcRenderer.invoke("runtime-channels:test", channelId),
   queryRuntimeChannelBalance: (channelId: string): Promise<ProviderBalanceResult> => ipcRenderer.invoke("runtime-channels:balance", channelId),

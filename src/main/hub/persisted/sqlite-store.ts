@@ -87,6 +87,10 @@ export class SqliteAppStore {
     payload.messages = this.loadChatMessages(db);
     payload.events = this.loadChatEvents(db);
     payload.workflowStore = this.loadWorkflowStore(db);
+    const agents = this.loadAgents(db);
+    const revisions = this.loadAgentRevisions(db);
+    if (agents.length > 0) payload.configuredAgents = agents;
+    if (revisions.length > 0) payload.agentRevisions = revisions;
     return payload;
   }
 
@@ -143,6 +147,7 @@ export class SqliteAppStore {
       );
       this.saveChats(db, payload);
       this.saveWorkflows(db, workflowStore);
+      this.saveAgents(db, payload);
 
       const aux = { ...payload };
       delete aux.version;
@@ -152,6 +157,8 @@ export class SqliteAppStore {
       delete aux.messages;
       delete aux.events;
       delete aux.workflowStore;
+      delete aux.configuredAgents;
+      delete aux.agentRevisions;
       db.prepare(
         `insert into app_aux_state (id, payload, updated_at) values (?, ?, ?)
          on conflict(id) do update set payload = excluded.payload, updated_at = excluded.updated_at`,
@@ -169,6 +176,8 @@ export class SqliteAppStore {
       delete from chat_messages;
       delete from runtime_sessions;
       delete from chats;
+      delete from agent_revisions;
+      delete from agents;
       delete from workflow_event_artifacts;
       delete from workflow_events;
       delete from workflow_run_nodes;
@@ -282,6 +291,101 @@ export class SqliteAppStore {
         asNumber(event.timestamp),
       );
     }
+  }
+
+  private saveAgents(db: DatabaseSync, payload: RecordValue): void {
+    for (const agent of asArray(payload.configuredAgents)) {
+      db.prepare(
+        `insert into agents
+         (id, agent_type, name, description, instructions, base_agent_id, runtime_agent_id, channel_id, model_id,
+          reasoning_effort, tags_json, current_revision_id, revision, managed, created_at, updated_at)
+         values (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+      ).run(
+        asString(agent.id),
+        agent.agentType === "execution" || agent.managed === true ? "execution" : "composed",
+        asString(agent.name),
+        asString(agent.description),
+        asString(agent.instructions),
+        asOptionalString(agent.baseAgentId) ?? null,
+        asString(agent.runtimeAgentId),
+        asString(agent.channelId),
+        asString(agent.modelId),
+        asOptionalString(agent.reasoningEffort) ?? null,
+        JSON.stringify(Array.isArray(agent.tags) ? agent.tags : []),
+        asOptionalString(agent.currentRevisionId) ?? null,
+        asOptionalNumber(agent.revision) ?? null,
+        agent.managed === true ? 1 : 0,
+        asNumber(agent.createdAt),
+        asNumber(agent.updatedAt),
+      );
+    }
+    const agentIds = new Set(asArray(payload.configuredAgents).map((agent) => asString(agent.id)));
+    for (const revision of asArray(payload.agentRevisions)) {
+      if (!agentIds.has(asString(revision.agentId))) continue;
+      db.prepare(
+        `insert into agent_revisions
+         (id, agent_id, agent_type, revision, base_agent_id, runtime_agent_id, channel_id, model_id,
+          reasoning_effort, instructions, config_hash, created_at)
+         values (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+      ).run(
+        asString(revision.id),
+        asString(revision.agentId),
+        revision.agentType === "execution" ? "execution" : "composed",
+        asNumber(revision.revision, 1),
+        asOptionalString(revision.baseAgentId) ?? null,
+        asString(revision.runtimeAgentId),
+        asString(revision.channelId),
+        asString(revision.modelId),
+        asOptionalString(revision.reasoningEffort) ?? null,
+        asString(revision.instructions),
+        asString(revision.configHash),
+        asNumber(revision.createdAt),
+      );
+    }
+  }
+
+  private loadAgents(db: DatabaseSync): RecordValue[] {
+    return db.prepare("select * from agents order by name, id").all().map(asRecord).map((agent) => {
+      const restored: RecordValue = {
+        id: asString(agent.id),
+        agentType: agent.agent_type === "execution" ? "execution" : "composed",
+        name: asString(agent.name),
+        description: asString(agent.description),
+        instructions: asString(agent.instructions),
+        runtimeAgentId: asString(agent.runtime_agent_id),
+        channelId: asString(agent.channel_id),
+        modelId: asString(agent.model_id),
+        tags: parseJson(agent.tags_json) ?? [],
+        managed: asNumber(agent.managed) === 1,
+        createdAt: asNumber(agent.created_at),
+        updatedAt: asNumber(agent.updated_at),
+      };
+      optional(restored, "baseAgentId", agent.base_agent_id);
+      optional(restored, "reasoningEffort", agent.reasoning_effort);
+      optional(restored, "currentRevisionId", agent.current_revision_id);
+      optional(restored, "revision", agent.revision);
+      return restored;
+    });
+  }
+
+  private loadAgentRevisions(db: DatabaseSync): RecordValue[] {
+    return db.prepare("select * from agent_revisions order by agent_id, revision desc").all().map(asRecord).map((revision) => {
+      const restored: RecordValue = {
+        id: asString(revision.id),
+        agentId: asString(revision.agent_id),
+        agentType: revision.agent_type === "execution" ? "execution" : "composed",
+        revision: asNumber(revision.revision, 1),
+        runtimeAgentId: asString(revision.runtime_agent_id),
+        channelId: asString(revision.channel_id),
+        modelId: asString(revision.model_id),
+        instructions: asString(revision.instructions),
+        configHash: asString(revision.config_hash),
+        createdAt: asNumber(revision.created_at),
+      };
+      optional(restored, "baseAgentId", revision.base_agent_id);
+      optional(restored, "reasoningEffort", revision.reasoning_effort);
+      return restored;
+    });
   }
 
   private saveWorkflows(db: DatabaseSync, rawStore: unknown): void {

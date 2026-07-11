@@ -120,13 +120,17 @@ export function applyProviderModelIdToAgentConfig(
 }
 
 export function createConfiguredAgent(channels: AgentChannel[], existingIds: string[]): ConfiguredAgent {
-  const runtimeAgentId: AgentId = "codex";
+  const baseAgent = channels[0];
+  const runtimeAgentId: AgentId = baseAgent?.agentId ?? "codex";
   const id = uniqueId("agent", existingIds);
-  const channelId = defaultChannelForAgent(runtimeAgentId, channels);
+  const channelId = baseAgent?.id ?? defaultChannelForAgent(runtimeAgentId, channels);
   return {
     id,
+    agentType: "composed",
     name: "New Agent",
     description: "",
+    instructions: "",
+    ...(baseAgent ? { baseAgentId: baseAgent.id === "codex-openai" ? "default-agent" : `runtime-agent:${baseAgent.id}` } : {}),
     runtimeAgentId,
     channelId,
     modelId: DEFAULT_MODEL_ID,

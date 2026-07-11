@@ -2,6 +2,7 @@ import { randomUUID } from "node:crypto";
 import path from "node:path";
 import type {
   AgentChannel,
+  AgentRevision,
   ConfiguredAgent,
   AgentEvent,
   AgentId,
@@ -72,6 +73,13 @@ import type {
   WorkflowStoreState,
   WorkflowRunProgressItem,
 } from "../../shared/types";
+import {
+  agentBehaviorConfig,
+  configuredAgentType,
+  createAgentRevision,
+  createExecutionAgentRevision,
+  stableConfigHash,
+} from "../../shared/agent-revisions";
 import { normalizeConfigChannelsForStorage } from "../../shared/config-channels";
 import { DEFAULT_MODEL_ID, defaultChannelForAgent, defaultModelForAgent, isModelForChannel } from "../../shared/models";
 import { createWorkflowGraphFromObjective, validateWorkflowGraph } from "../../shared/workflow-graph";
@@ -122,6 +130,7 @@ import {
   asOptionalString,
   asRecord,
   cloneRuntimeState,
+  isAgentId,
   isAgentTeamMode,
   isAgentWorkflowTarget,
   isApprovalDecision,
@@ -367,6 +376,7 @@ export class AgentHub {
   private scheduledWorkflowSchedules = new Map<string, ScheduledWorkflowSchedule>();
   private scheduledWorkflowRuns = new Map<string, ScheduledWorkflowRun>();
   private configuredAgents = new Map<string, ConfiguredAgent>();
+  private agentRevisions = new Map<string, AgentRevision>();
   private activeScheduledWorkflowId: string | undefined;
   private scheduledWorkflowRunnerConfig: ScheduledWorkflowRunnerConfig = { baseUrl: "" };
   private scheduledWorkflowRunnerStatus: ScheduledWorkflowRunnerStatus = { connected: false, connecting: false };
@@ -567,10 +577,36 @@ export class AgentHub {
   }
 
   updateConfiguredAgents(agents: ConfiguredAgent[]): AppSnapshot {
-    this.installRestoredConfiguredAgents(agents);
+    this.synchronizeExecutionAgents();
+    const incomingComposedIds = new Set(
+      agents.filter((agent) => configuredAgentType(agent) === "composed").map((agent) => agent.id),
+    );
+    for (const existing of this.listConfiguredAgents()) {
+      if (configuredAgentType(existing) === "composed" && !incomingComposedIds.has(existing.id)) {
+        this.configuredAgents.delete(existing.id);
+      }
+    }
+    for (const agent of agents) {
+      if (configuredAgentType(agent) !== "composed") continue;
+      this.saveComposedAgentProjection(agent);
+    }
     this.normalizeRunSelections();
     this.emit();
     return this.snapshot();
+  }
+
+  saveComposedAgent(agent: ConfiguredAgent): AppSnapshot {
+    this.saveComposedAgentProjection(agent);
+    this.normalizeRunSelections();
+    this.emit();
+    return this.snapshot();
+  }
+
+  listAgentRevisions(agentId?: string): AgentRevision[] {
+    return [...this.agentRevisions.values()]
+      .filter((revision) => !agentId || revision.agentId === agentId)
+      .sort((left, right) => left.agentId.localeCompare(right.agentId) || right.revision - left.revision)
+      .map((revision) => ({ ...revision }));
   }
 
   listConfiguredAgents(): ConfiguredAgent[] {
@@ -1333,6 +1369,7 @@ export class AgentHub {
       runtimes: [...this.runtimes.values()],
       channels: cloneChannels(this.channels),
       configuredAgents: this.listConfiguredAgents(),
+      agentRevisions: this.listAgentRevisions(),
       chats: [...this.chats.values()]
         .sort((left, right) => right.updatedAt - left.updatedAt)
         .map((chat) => serializeChat({ chat, cloneConversation: (conversation) => this.runtimeRouter.cloneConversation(conversation) })),
@@ -2342,7 +2379,10 @@ export class AgentHub {
       this.channels = normalizeConfigChannelsForStorage(normalizeChannels(record.channels));
     }
 
-    this.installRestoredConfiguredAgents(Array.isArray(record.configuredAgents) ? record.configuredAgents : []);
+    this.installRestoredConfiguredAgents(
+      Array.isArray(record.configuredAgents) ? record.configuredAgents : [],
+      Array.isArray(record.agentRevisions) ? record.agentRevisions : [],
+    );
     const restored = restorePersistedCollections(record, {
       restoreChatState: (payload) => this.restoreChatState(payload),
       restoreTaskState: (payload) => this.restoreTaskState(payload),
@@ -2369,7 +2409,7 @@ export class AgentHub {
   }
 
   private reinitializePersistedState(): void {
-    this.installRestoredConfiguredAgents([]);
+    this.installRestoredConfiguredAgents([], []);
     this.installRestoredChats([], undefined, undefined);
     this.installRestoredTasks([], undefined);
     this.installRestoredTeams([], [], undefined, undefined);
@@ -2377,33 +2417,151 @@ export class AgentHub {
     this.restoreScheduledWorkflowStore(undefined);
   }
 
-  private installRestoredConfiguredAgents(rawAgents: unknown[]): void {
+  private installRestoredConfiguredAgents(rawAgents: unknown[], rawRevisions?: unknown[]): void {
     this.configuredAgents.clear();
+    if (rawRevisions) {
+      this.agentRevisions.clear();
+      for (const rawRevision of rawRevisions) {
+        const revision = this.restoreAgentRevision(rawRevision);
+        if (revision) this.agentRevisions.set(revision.id, revision);
+      }
+    }
     const now = Date.now();
     for (const rawAgent of rawAgents) {
       const agent = this.restoreConfiguredAgent(rawAgent, now);
       if (agent) this.configuredAgents.set(agent.id, agent);
     }
+    this.synchronizeExecutionAgents(now);
+    for (const agent of this.listConfiguredAgents()) {
+      if (configuredAgentType(agent) !== "composed") continue;
+      this.ensureComposedRevision(agent, now);
+    }
+  }
+
+  private synchronizeExecutionAgents(now = Date.now()): void {
+    const expectedIds = new Set(this.channels.map((channel) => managedRuntimeAgentId(channel)));
+    for (const agent of this.configuredAgents.values()) {
+      if (configuredAgentType(agent) === "execution" && !expectedIds.has(agent.id)) {
+        this.configuredAgents.delete(agent.id);
+      }
+    }
     for (const channel of this.channels) {
       const id = managedRuntimeAgentId(channel);
-      if (this.configuredAgents.has(id)) continue;
-      this.configuredAgents.set(id, {
+      const existing = this.configuredAgents.get(id);
+      const firstConcreteModelId = channel.models.find((model) => model.id !== DEFAULT_MODEL_ID)?.id;
+      const existingModelIsUsable = Boolean(
+        existing?.modelId
+        && isModelForChannel(channel.agentId, channel.id, existing.modelId, this.channels)
+      );
+      const execution: ConfiguredAgent = {
         id,
+        agentType: "execution",
         name: channel.label,
         description: "",
+        instructions: "",
         runtimeAgentId: channel.agentId,
         channelId: channel.id,
-        modelId: defaultModelForAgent(channel.agentId),
+        modelId: existingModelIsUsable && existing
+          ? existing.modelId
+          : id === "default-agent" && channel.models.some((model) => model.id === DEFAULT_MODEL_ID)
+            ? DEFAULT_MODEL_ID
+            : firstConcreteModelId
+            ?? channel.models[0]?.id
+            ?? defaultModelForAgent(channel.agentId),
+        ...(existing?.reasoningEffort ? { reasoningEffort: existing.reasoningEffort } : {}),
         tags: [],
         managed: true,
-        createdAt: now,
+        createdAt: existing?.createdAt ?? now,
         updatedAt: now,
-      });
+      };
+      const revisions = this.listAgentRevisions(id);
+      const candidate = createExecutionAgentRevision(execution, channel, (revisions[0]?.revision ?? 0) + 1, now);
+      const current = revisions[0];
+      const revision = current?.configHash === candidate.configHash ? current : candidate;
+      if (!current || current.id !== revision.id) this.agentRevisions.set(revision.id, revision);
+      execution.currentRevisionId = revision.id;
+      execution.revision = revision.revision;
+      this.configuredAgents.set(id, execution);
     }
     if (this.configuredAgents.size === 0) {
       const agent = createDefaultConfiguredAgent(this.channels, now);
-      this.configuredAgents.set(agent.id, { ...agent, managed: true });
+      this.configuredAgents.set(agent.id, { ...agent, agentType: "execution", managed: true });
     }
+  }
+
+  private saveComposedAgentProjection(rawAgent: ConfiguredAgent): ConfiguredAgent {
+    const now = Date.now();
+    const base = (rawAgent.baseAgentId ? this.configuredAgents.get(rawAgent.baseAgentId) : undefined)
+      ?? this.listConfiguredAgents().find((agent) =>
+        configuredAgentType(agent) === "execution"
+        && agent.channelId === rawAgent.channelId
+        && agent.runtimeAgentId === rawAgent.runtimeAgentId,
+      );
+    const existing = this.configuredAgents.get(rawAgent.id);
+    const agent: ConfiguredAgent = {
+      ...rawAgent,
+      agentType: "composed",
+      managed: false,
+      instructions: rawAgent.instructions ?? "",
+      ...(base ? {
+        baseAgentId: base.id,
+        runtimeAgentId: base.runtimeAgentId,
+        channelId: base.channelId,
+        modelId: base.modelId,
+        ...(base.reasoningEffort ? { reasoningEffort: base.reasoningEffort } : {}),
+      } : {}),
+      createdAt: existing?.createdAt ?? rawAgent.createdAt ?? now,
+      updatedAt: now,
+    };
+    const revision = this.ensureComposedRevision(agent, now);
+    agent.currentRevisionId = revision.id;
+    agent.revision = revision.revision;
+    this.configuredAgents.set(agent.id, agent);
+    return agent;
+  }
+
+  private ensureComposedRevision(agent: ConfiguredAgent, now: number): AgentRevision {
+    const revisions = this.listAgentRevisions(agent.id);
+    const current = revisions[0];
+    const configHash = stableConfigHash(agentBehaviorConfig(agent));
+    if (current?.configHash === configHash) {
+      agent.currentRevisionId = current.id;
+      agent.revision = current.revision;
+      return current;
+    }
+    const revision = createAgentRevision(agent, (current?.revision ?? 0) + 1, now);
+    this.agentRevisions.set(revision.id, revision);
+    agent.currentRevisionId = revision.id;
+    agent.revision = revision.revision;
+    return revision;
+  }
+
+  private restoreAgentRevision(raw: unknown): AgentRevision | undefined {
+    const record = asRecord(raw);
+    if (!record) return undefined;
+    const id = asOptionalString(record.id);
+    const agentId = asOptionalString(record.agentId);
+    const runtimeAgentId = isAgentId(record.runtimeAgentId) ? record.runtimeAgentId : undefined;
+    const channelId = asOptionalString(record.channelId);
+    const modelId = asOptionalString(record.modelId);
+    const configHash = asOptionalString(record.configHash);
+    const baseAgentId = asOptionalString(record.baseAgentId);
+    const reasoningEffort = asOptionalString(record.reasoningEffort);
+    if (!id || !agentId || !runtimeAgentId || !channelId || !modelId || !configHash) return undefined;
+    return {
+      id,
+      agentId,
+      agentType: record.agentType === "execution" ? "execution" : "composed",
+      revision: asNumber(record.revision, 1),
+      ...(baseAgentId ? { baseAgentId } : {}),
+      runtimeAgentId,
+      channelId,
+      modelId,
+      ...(reasoningEffort ? { reasoningEffort } : {}),
+      instructions: asOptionalString(record.instructions) ?? "",
+      configHash,
+      createdAt: asNumber(record.createdAt, Date.now()),
+    };
   }
 
   private restoreConfiguredAgent(raw: unknown, now = Date.now()): ConfiguredAgent | undefined {
@@ -2585,6 +2743,7 @@ export class AgentHub {
       teams: this.teams.values(),
       teamRuns: this.teamRuns.values(),
       configuredAgents: this.listConfiguredAgents(),
+      agentRevisions: this.listAgentRevisions(),
       artifacts: this.artifacts,
       cloneConversation: (conversation) => this.runtimeRouter.cloneConversation(conversation),
       workflowStore: this.cloneWorkflowStore(),

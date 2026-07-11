@@ -2,6 +2,7 @@ import {
   DEFAULT_SCHEDULED_WORKFLOW_TIME_OF_DAY,
   type AgentChannel,
   type AgentId,
+  type AgentRevision,
   type AgentTeamMember,
   type AgentTeamMode,
   type AgentWorkflowSnapshot,
@@ -135,6 +136,7 @@ export interface PersistedAppStateV4 {
   scheduledWorkflowStore?: ScheduledWorkflowStoreState;
   channels?: AgentChannel[];
   configuredAgents?: ConfiguredAgent[];
+  agentRevisions?: AgentRevision[];
 }
 
 export function isAgentId(value: unknown): value is AgentId {

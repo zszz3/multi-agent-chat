@@ -3,7 +3,7 @@ export interface SqliteSchemaDatabase {
   prepare(sql: string): { all(...params: unknown[]): unknown[]; run(...params: unknown[]): unknown };
 }
 
-const SCHEMA_VERSION = 2;
+const SCHEMA_VERSION = 3;
 
 export function createNormalizedSchema(db: SqliteSchemaDatabase): void {
   db.exec(`
@@ -21,6 +21,40 @@ export function createNormalizedSchema(db: SqliteSchemaDatabase): void {
       payload text not null,
       updated_at integer not null
     );
+    create table if not exists agents (
+      id text primary key,
+      agent_type text not null,
+      name text not null,
+      description text not null,
+      instructions text not null,
+      base_agent_id text,
+      runtime_agent_id text not null,
+      channel_id text not null,
+      model_id text not null,
+      reasoning_effort text,
+      tags_json text not null,
+      current_revision_id text,
+      revision integer,
+      managed integer not null default 0,
+      created_at integer not null,
+      updated_at integer not null
+    );
+    create table if not exists agent_revisions (
+      id text primary key,
+      agent_id text not null references agents(id) on delete cascade,
+      agent_type text not null,
+      revision integer not null,
+      base_agent_id text,
+      runtime_agent_id text not null,
+      channel_id text not null,
+      model_id text not null,
+      reasoning_effort text,
+      instructions text not null,
+      config_hash text not null,
+      created_at integer not null,
+      unique(agent_id, revision)
+    );
+    create index if not exists agent_revisions_agent_revision on agent_revisions(agent_id, revision desc);
     create table if not exists chats (
       id text primary key,
       title text not null,

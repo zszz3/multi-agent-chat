@@ -1,5 +1,6 @@
 import type {
   AgentChannel,
+  AgentRevision,
   ConfiguredAgent,
   RegisteredArtifact,
   RuntimeConversation,
@@ -36,6 +37,7 @@ export function buildPersistedPayload(input: {
   teams: Iterable<AgentTeamState>;
   teamRuns: Iterable<TeamRunState>;
   configuredAgents: ConfiguredAgent[];
+  agentRevisions: AgentRevision[];
   artifacts: RegisteredArtifact[];
   cloneConversation: (conversation: RuntimeConversation) => RuntimeConversation;
   workflowStore: WorkflowStoreState;
@@ -175,6 +177,7 @@ export function buildPersistedPayload(input: {
     teams,
     teamRuns,
     configuredAgents: input.configuredAgents,
+    agentRevisions: input.agentRevisions,
     workflowStore: input.workflowStore,
     scheduledWorkflowStore: input.scheduledWorkflowStore,
   };

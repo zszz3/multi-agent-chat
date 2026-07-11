@@ -73,7 +73,36 @@ function sampleState() {
     taskEvents: [],
     teams: [],
     teamRuns: [],
-    configuredAgents: [{ id: "agent-1", name: "Agent" }],
+    configuredAgents: [{
+      id: "agent-1",
+      agentType: "composed",
+      name: "Agent",
+      description: "Reviews code",
+      instructions: "Review correctness.",
+      baseAgentId: "default-agent",
+      runtimeAgentId: "codex",
+      channelId: "channel-1",
+      modelId: "model-1",
+      tags: ["code"],
+      currentRevisionId: "agent-1:v1:hash-1",
+      revision: 1,
+      managed: false,
+      createdAt: 1,
+      updatedAt: 2,
+    }],
+    agentRevisions: [{
+      id: "agent-1:v1:hash-1",
+      agentId: "agent-1",
+      agentType: "composed",
+      revision: 1,
+      baseAgentId: "default-agent",
+      runtimeAgentId: "codex",
+      channelId: "channel-1",
+      modelId: "model-1",
+      instructions: "Review correctness.",
+      configHash: "hash-1",
+      createdAt: 1,
+    }],
     channels: [{ id: "channel-1", name: "Local" }],
     scheduledWorkflowStore: { schedules: [] },
     workflowStore: {
@@ -172,6 +201,8 @@ describe("SqliteAppStore normalized persistence", () => {
         "chat_messages",
         "chat_events",
         "runtime_sessions",
+        "agents",
+        "agent_revisions",
         "workflows",
         "workflow_graphs",
         "workflow_nodes",
@@ -185,9 +216,14 @@ describe("SqliteAppStore normalized persistence", () => {
     expect(tables.map(({ name }) => name)).not.toContain("app_state");
     expect(db.prepare("select count(*) as count from chats").get()).toEqual({ count: 1 });
     expect(db.prepare("select count(*) as count from runtime_sessions").get()).toEqual({ count: 1 });
+    expect(db.prepare("select count(*) as count from agents").get()).toEqual({ count: 1 });
+    expect(db.prepare("select count(*) as count from agent_revisions").get()).toEqual({ count: 1 });
     expect(db.prepare("select count(*) as count from workflow_nodes").get()).toEqual({ count: 3 });
     expect(db.prepare("select count(*) as count from workflow_edges").get()).toEqual({ count: 1 });
     expect(db.prepare("select count(*) as count from workflow_runs").get()).toEqual({ count: 1 });
+    const aux = db.prepare("select payload from app_aux_state where id = 1").get() as { payload: string };
+    expect(JSON.parse(aux.payload)).not.toHaveProperty("configuredAgents");
+    expect(JSON.parse(aux.payload)).not.toHaveProperty("agentRevisions");
     db.close();
   });
 

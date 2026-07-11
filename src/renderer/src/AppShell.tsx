@@ -282,7 +282,7 @@ export function AppShell() {
   const {
     selectedConfiguredAgentId,
     configuredAgentStatus,
-    setSelectedConfiguredAgentId,
+    selectConfiguredAgent,
     saveConfiguredAgents,
     addConfiguredAgent,
     updateConfiguredAgent,
@@ -983,11 +983,12 @@ export function AppShell() {
             language={language}
             channels={snapshot.channels}
             configuredAgents={snapshot.configuredAgents}
+            agentRevisions={snapshot.agentRevisions ?? []}
             selectedConfiguredAgentId={selectedConfiguredAgentId}
             status={configuredAgentStatus}
             onSave={() => saveConfiguredAgents(snapshot.configuredAgents)}
             onAddConfiguredAgent={addConfiguredAgent}
-            onSelectConfiguredAgent={setSelectedConfiguredAgentId}
+            onSelectConfiguredAgent={selectConfiguredAgent}
             onUpdateConfiguredAgent={updateConfiguredAgent}
           />
         ) : (

@@ -70,18 +70,40 @@ export interface AgentChannel {
   modelReasoningEffort?: string;
 }
 
+export type AgentType = "execution" | "composed";
+
 export interface ConfiguredAgent {
   id: string;
+  agentType?: AgentType;
   name: string;
   description: string;
+  instructions?: string;
+  baseAgentId?: string;
   runtimeAgentId: AgentId;
   channelId: string;
   modelId: string;
   reasoningEffort?: string;
   tags: string[];
+  currentRevisionId?: string;
+  revision?: number;
   managed?: boolean;
   createdAt: number;
   updatedAt: number;
+}
+
+export interface AgentRevision {
+  id: string;
+  agentId: string;
+  agentType: AgentType;
+  revision: number;
+  baseAgentId?: string;
+  runtimeAgentId: AgentId;
+  channelId: string;
+  modelId: string;
+  reasoningEffort?: string;
+  instructions: string;
+  configHash: string;
+  createdAt: number;
 }
 
 export type ResourceSourceType = "official" | "user";
@@ -945,6 +967,7 @@ export interface AppSnapshot {
   runtimes: AgentRuntime[];
   channels: AgentChannel[];
   configuredAgents: ConfiguredAgent[];
+  agentRevisions?: AgentRevision[];
   chats: ChatSession[];
   tasks: TaskRun[];
   teams: AgentTeam[];
