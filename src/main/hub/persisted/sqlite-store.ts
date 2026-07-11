@@ -318,6 +318,7 @@ export class SqliteAppStore {
         asNumber(agent.createdAt),
         asNumber(agent.updatedAt),
       );
+      this.saveMcpBindings(db, "agent", asString(agent.id), agent.mcpBindings);
     }
     const agentIds = new Set(asArray(payload.configuredAgents).map((agent) => asString(agent.id)));
     for (const revision of asArray(payload.agentRevisions)) {
@@ -341,7 +342,31 @@ export class SqliteAppStore {
         asString(revision.configHash),
         asNumber(revision.createdAt),
       );
+      this.saveMcpBindings(db, "revision", asString(revision.id), revision.mcpBindings);
     }
+  }
+
+  private saveMcpBindings(db: DatabaseSync, owner: "agent" | "revision", ownerId: string, raw: unknown): void {
+    const bindingTable = owner === "agent" ? "agent_mcp_bindings" : "agent_revision_mcp_bindings";
+    const toolTable = owner === "agent" ? "agent_mcp_tools" : "agent_revision_mcp_tools";
+    const ownerColumn = owner === "agent" ? "agent_id" : "revision_id";
+    asArray(raw).forEach((binding, sequence) => {
+      const serverId = asString(binding.serverId);
+      if (!serverId) return;
+      db.prepare(`insert into ${bindingTable} (${ownerColumn}, server_id, sequence) values (?, ?, ?)`).run(ownerId, serverId, sequence);
+      const tools = Array.isArray(binding.toolAllowlist) ? binding.toolAllowlist : [];
+      tools.forEach((tool) => db.prepare(`insert into ${toolTable} (${ownerColumn}, server_id, tool_name) values (?, ?, ?)`).run(ownerId, serverId, asString(tool)));
+    });
+  }
+
+  private loadMcpBindings(db: DatabaseSync, owner: "agent" | "revision", ownerId: string): RecordValue[] {
+    const bindingTable = owner === "agent" ? "agent_mcp_bindings" : "agent_revision_mcp_bindings";
+    const toolTable = owner === "agent" ? "agent_mcp_tools" : "agent_revision_mcp_tools";
+    const ownerColumn = owner === "agent" ? "agent_id" : "revision_id";
+    return db.prepare(`select server_id from ${bindingTable} where ${ownerColumn} = ? order by sequence`).all(ownerId).map(asRecord).map((row) => ({
+      serverId: asString(row.server_id),
+      toolAllowlist: db.prepare(`select tool_name from ${toolTable} where ${ownerColumn} = ? and server_id = ? order by tool_name`).all(ownerId, row.server_id).map(asRecord).map((tool) => asString(tool.tool_name)),
+    }));
   }
 
   private loadAgents(db: DatabaseSync): RecordValue[] {
@@ -364,6 +389,8 @@ export class SqliteAppStore {
       optional(restored, "reasoningEffort", agent.reasoning_effort);
       optional(restored, "currentRevisionId", agent.current_revision_id);
       optional(restored, "revision", agent.revision);
+      const bindings = this.loadMcpBindings(db, "agent", asString(agent.id));
+      if (bindings.length > 0) restored.mcpBindings = bindings;
       return restored;
     });
   }
@@ -384,6 +411,8 @@ export class SqliteAppStore {
       };
       optional(restored, "baseAgentId", revision.base_agent_id);
       optional(restored, "reasoningEffort", revision.reasoning_effort);
+      const bindings = this.loadMcpBindings(db, "revision", asString(revision.id));
+      if (bindings.length > 0) restored.mcpBindings = bindings;
       return restored;
     });
   }

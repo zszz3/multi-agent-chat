@@ -2559,6 +2559,13 @@ export class AgentHub {
       modelId,
       ...(reasoningEffort ? { reasoningEffort } : {}),
       instructions: asOptionalString(record.instructions) ?? "",
+      mcpBindings: asArray(record.mcpBindings).map((value) => {
+        const binding = asRecord(value) ?? {};
+        return {
+        serverId: asOptionalString(binding.serverId) ?? "",
+        toolAllowlist: asArray(binding.toolAllowlist).map((tool) => asOptionalString(tool) ?? "").filter(Boolean),
+        };
+      }).filter((binding) => Boolean(binding.serverId)),
       configHash,
       createdAt: asNumber(record.createdAt, Date.now()),
     };

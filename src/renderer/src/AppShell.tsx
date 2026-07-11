@@ -48,6 +48,7 @@ import {
   skillDisplayName,
 } from "./pages/skills/find-skill";
 import { AgentPage } from "./pages/agent/AgentPage";
+import { McpPage } from "./pages/mcp/McpPage";
 import { useConfiguredAgentsManager } from "./pages/agent/hooks/useConfiguredAgentsManager";
 import { ChatPage } from "./pages/chat/ChatPage";
 import { chatConfigLocked, SlashCommandSuggestions, slashCommandSuggestionsFor } from "./pages/chat/chat-utils";
@@ -945,6 +946,8 @@ export function AppShell() {
             onCreateCategory={createSkillCategory}
             onAssignCategory={assignSkillCategory}
           />
+        ) : activeFeature === "mcp" ? (
+          <McpPage language={language} />
         ) : activeFeature === "runtimes" ? (
           <RuntimePage
             language={language}

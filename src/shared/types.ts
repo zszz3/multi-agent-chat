@@ -72,6 +72,36 @@ export interface AgentChannel {
 
 export type AgentType = "execution" | "composed";
 
+export type McpTransport = "stdio" | "http";
+
+export interface McpToolDefinition {
+  name: string;
+  description?: string;
+  inputSchema: Record<string, unknown>;
+}
+
+export interface McpServerDefinition {
+  id: string;
+  name: string;
+  transport: McpTransport;
+  command?: string;
+  args: string[];
+  url?: string;
+  env: Record<string, string>;
+  enabled: boolean;
+  tools: McpToolDefinition[];
+  status: "untested" | "connected" | "error";
+  lastError?: string;
+  lastTestedAt?: number;
+  createdAt: number;
+  updatedAt: number;
+}
+
+export interface AgentMcpBinding {
+  serverId: string;
+  toolAllowlist: string[];
+}
+
 export interface ConfiguredAgent {
   id: string;
   agentType?: AgentType;
@@ -79,6 +109,7 @@ export interface ConfiguredAgent {
   description: string;
   instructions?: string;
   baseAgentId?: string;
+  mcpBindings?: AgentMcpBinding[];
   runtimeAgentId: AgentId;
   channelId: string;
   modelId: string;
@@ -102,6 +133,7 @@ export interface AgentRevision {
   modelId: string;
   reasoningEffort?: string;
   instructions: string;
+  mcpBindings: AgentMcpBinding[];
   configHash: string;
   createdAt: number;
 }

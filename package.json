@@ -23,6 +23,7 @@
     "@anthropic-ai/claude-code": "^2.1.201",
     "@fontsource-variable/geist": "^5.2.9",
     "@fontsource-variable/geist-mono": "^5.2.8",
+    "@modelcontextprotocol/sdk": "^1.29.0",
     "@xyflow/react": "^12.11.0",
     "electron": "^42.3.0",
     "lucide-react": "^0.468.0",

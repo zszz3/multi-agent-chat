@@ -1,6 +1,7 @@
-import { LockKeyhole, Plus, Save } from "lucide-react";
+import { useEffect, useState } from "react";
+import { LockKeyhole, Plus, Save, Server } from "lucide-react";
 import { configuredAgentType } from "../../../../shared/agent-revisions";
-import type { AgentChannel, AgentRevision, ConfiguredAgent } from "../../../../shared/types";
+import type { AgentChannel, AgentRevision, ConfiguredAgent, McpServerDefinition } from "../../../../shared/types";
 import { agentAccent, agentLabel, resolveConfiguredAgentChannel } from "../../app/agents";
 import type { Language } from "../../app/language";
 
@@ -38,6 +39,8 @@ function textFor(language: Language) {
         reasoning: "推理强度",
         tags: "标签",
         revisions: "版本历史",
+        capabilities: "MCP 能力",
+        noMcp: "请先在 MCP 页面添加 Server。",
         runtimeHint: "该 Agent 由 Runtime 配置自动生成。请在 Runtime 页面修改执行配置。",
         empty: "新建复杂 Agent 后，可以组装 Instructions、Skills 和 MCP。",
       }
@@ -58,6 +61,8 @@ function textFor(language: Language) {
         reasoning: "Reasoning",
         tags: "Tags",
         revisions: "Revision history",
+        capabilities: "MCP capabilities",
+        noMcp: "Add a server on the MCP page first.",
         runtimeHint: "This agent is generated from a Runtime config. Edit execution settings on the Runtime page.",
         empty: "Create a composed agent to assemble Instructions, Skills, and MCP.",
       };
@@ -76,6 +81,8 @@ export function AgentPage({
   onUpdateConfiguredAgent,
 }: AgentPageProps) {
   const copy = textFor(language);
+  const [mcpServers, setMcpServers] = useState<McpServerDefinition[]>([]);
+  useEffect(() => { void window.multiAgentChat.listMcpServers().then(setMcpServers); }, []);
   const selected = configuredAgents.find((agent) => agent.id === selectedConfiguredAgentId) ?? configuredAgents[0];
   const executionAgents = configuredAgents.filter((agent) => configuredAgentType(agent) === "execution");
   const composedAgents = configuredAgents.filter((agent) => configuredAgentType(agent) === "composed");
@@ -206,6 +213,27 @@ export function AgentPage({
                           }))}
                         />
                       </label>
+                      <section className="config-field config-field-wide agent-mcp-bindings">
+                        <span>{copy.capabilities}</span>
+                        {mcpServers.length ? mcpServers.map((server) => {
+                          const binding = selected.mcpBindings?.find((item) => item.serverId === server.id);
+                          return <div key={server.id} className="agent-mcp-server">
+                            <label><input type="checkbox" checked={Boolean(binding)} onChange={(event) => onUpdateConfiguredAgent(selected.id, (agent) => ({
+                              ...agent,
+                              mcpBindings: event.currentTarget.checked
+                                ? [...(agent.mcpBindings ?? []), { serverId: server.id, toolAllowlist: [] }]
+                                : (agent.mcpBindings ?? []).filter((item) => item.serverId !== server.id),
+                            }))} /><Server size={13} /><strong>{server.name}</strong></label>
+                            {binding ? <div className="agent-mcp-tools">{server.tools.map((tool) => <label key={tool.name}><input type="checkbox" checked={binding.toolAllowlist.includes(tool.name)} onChange={(event) => onUpdateConfiguredAgent(selected.id, (agent) => ({
+                              ...agent,
+                              mcpBindings: (agent.mcpBindings ?? []).map((item) => item.serverId !== server.id ? item : {
+                                ...item,
+                                toolAllowlist: event.currentTarget.checked ? [...item.toolAllowlist, tool.name] : item.toolAllowlist.filter((name) => name !== tool.name),
+                              }),
+                            }))} />{tool.name}</label>)}</div> : null}
+                          </div>;
+                        }) : <p>{copy.noMcp}</p>}
+                      </section>
                     </div>
                   )}
 

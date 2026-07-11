@@ -9,6 +9,7 @@ export const UI_TEXT = {
       skills: "技能",
       runtimes: "配置",
       agent: "Agent",
+      mcp: "MCP",
     },
     chrome: {
       featureNav: "功能导航",
@@ -96,6 +97,7 @@ export const UI_TEXT = {
       skills: "Skills",
       runtimes: "Config",
       agent: "Agent",
+      mcp: "MCP",
     },
     chrome: {
       featureNav: "Feature navigation",

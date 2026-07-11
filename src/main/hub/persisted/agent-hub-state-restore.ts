@@ -93,6 +93,13 @@ export function restoreConfiguredAgentState(
     name,
     description: asOptionalString(record.description) ?? "",
     instructions: asOptionalString(record.instructions) ?? "",
+    mcpBindings: asArray(record.mcpBindings).map((binding) => {
+      const item = asRecord(binding);
+      return {
+        serverId: asOptionalString(item?.serverId) ?? "",
+        toolAllowlist: asArray(item?.toolAllowlist).map((tool) => asOptionalString(tool) ?? "").filter(Boolean),
+      };
+    }).filter((binding) => Boolean(binding.serverId)),
     ...(baseAgentId ? { baseAgentId } : {}),
     runtimeAgentId,
     channelId: normalizedChannelId,

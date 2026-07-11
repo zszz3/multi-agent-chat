@@ -13,6 +13,8 @@ import { loadBundledWorkflows } from "../workflows/bundled-workflows";
 import { OfficialCatalogStore } from "../official-catalog-store";
 import { UserSkillStore } from "../user-skill-store";
 import { SkillCategoryStore } from "../skill-category-store";
+import { McpRegistryStore } from "../mcp-registry-store";
+import { discoverMcpTools } from "../mcp-client";
 import { centeredWindowBounds } from "../platform/window-bounds";
 import { resolveBundledWorkflowsPath, resolvePreloadBundlePath } from "./app-paths";
 import { fetchOnlineSkills, ONLINE_SKILL_SOURCES } from "../../shared/online-skills";
@@ -31,6 +33,7 @@ import type {
   FinishWorkflowRunRequest,
   ImportOnlineSkillRequest,
   InstallSkillRequest,
+  McpServerDefinition,
   PatchWorkflowDraftRequest,
   AnswerWorkflowGateRequest,
   PauseWorkflowNodeRequest,
@@ -66,6 +69,7 @@ const hub = new AgentHub();
 const officialCatalog = new OfficialCatalogStore(path.join(app.getPath("userData"), OFFICIAL_CATALOG_DATABASE_FILE));
 const userSkillStore = new UserSkillStore(path.join(app.getPath("userData"), APP_DATABASE_FILE));
 const skillCategoryStore = new SkillCategoryStore(path.join(app.getPath("userData"), APP_DATABASE_FILE));
+const mcpRegistryStore = new McpRegistryStore(path.join(app.getPath("userData"), APP_DATABASE_FILE));
 
 let mainWindow: BrowserWindow | null = null;
 let ipcRegistered = false;
@@ -315,6 +319,16 @@ function registerIpcHandlers(): void {
   ipcMain.handle("configured-agents:test", async (event, agentId: string) =>
     hub.testConfiguredAgent(agentId, (agentEvent) => event.sender.send("configured-agents:test-event", agentEvent)),
   );
+  ipcMain.handle("mcp:list", () => mcpRegistryStore.list());
+  ipcMain.handle("mcp:upsert", (_event, server: McpServerDefinition) => mcpRegistryStore.upsert(server));
+  ipcMain.handle("mcp:delete", (_event, serverId: string) => mcpRegistryStore.delete(serverId));
+  ipcMain.handle("mcp:test", async (_event, server: McpServerDefinition) => {
+    try {
+      return await mcpRegistryStore.recordTest(server, await discoverMcpTools(server));
+    } catch (error) {
+      return mcpRegistryStore.recordTest(server, [], error instanceof Error ? error.message : String(error));
+    }
+  });
   ipcMain.handle("runtime-channels:test", async (event, channelId: string) =>
     hub.testRuntimeChannel(channelId, (agentEvent) => event.sender.send("configured-agents:test-event", agentEvent)),
   );
@@ -544,6 +558,7 @@ app.on("before-quit", () => {
   void mcpBridge?.stop();
   officialCatalog.close();
   userSkillStore.close();
+  mcpRegistryStore.close();
   skillCategoryStore.close();
 });
 

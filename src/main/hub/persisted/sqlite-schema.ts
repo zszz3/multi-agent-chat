@@ -3,7 +3,7 @@ export interface SqliteSchemaDatabase {
   prepare(sql: string): { all(...params: unknown[]): unknown[]; run(...params: unknown[]): unknown };
 }
 
-const SCHEMA_VERSION = 3;
+const SCHEMA_VERSION = 4;
 
 export function createNormalizedSchema(db: SqliteSchemaDatabase): void {
   db.exec(`
@@ -55,6 +55,55 @@ export function createNormalizedSchema(db: SqliteSchemaDatabase): void {
       unique(agent_id, revision)
     );
     create index if not exists agent_revisions_agent_revision on agent_revisions(agent_id, revision desc);
+    create table if not exists mcp_servers (
+      id text primary key,
+      name text not null,
+      transport text not null,
+      command text,
+      args_json text not null,
+      url text,
+      env_json text not null,
+      enabled integer not null default 1,
+      status text not null default 'untested',
+      last_error text,
+      last_tested_at integer,
+      created_at integer not null,
+      updated_at integer not null
+    );
+    create table if not exists mcp_tools (
+      server_id text not null references mcp_servers(id) on delete cascade,
+      name text not null,
+      description text,
+      input_schema_json text not null,
+      sequence integer not null,
+      primary key (server_id, name)
+    );
+    create table if not exists agent_mcp_bindings (
+      agent_id text not null references agents(id) on delete cascade,
+      server_id text not null,
+      sequence integer not null,
+      primary key (agent_id, server_id)
+    );
+    create table if not exists agent_mcp_tools (
+      agent_id text not null,
+      server_id text not null,
+      tool_name text not null,
+      primary key (agent_id, server_id, tool_name),
+      foreign key (agent_id, server_id) references agent_mcp_bindings(agent_id, server_id) on delete cascade
+    );
+    create table if not exists agent_revision_mcp_bindings (
+      revision_id text not null references agent_revisions(id) on delete cascade,
+      server_id text not null,
+      sequence integer not null,
+      primary key (revision_id, server_id)
+    );
+    create table if not exists agent_revision_mcp_tools (
+      revision_id text not null,
+      server_id text not null,
+      tool_name text not null,
+      primary key (revision_id, server_id, tool_name),
+      foreign key (revision_id, server_id) references agent_revision_mcp_bindings(revision_id, server_id) on delete cascade
+    );
     create table if not exists chats (
       id text primary key,
       title text not null,

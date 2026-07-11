@@ -13,6 +13,10 @@ export function agentBehaviorConfig(agent: ConfiguredAgent): Record<string, unkn
     modelId: agent.modelId,
     reasoningEffort: agent.reasoningEffort ?? null,
     instructions: agent.instructions ?? "",
+    mcpBindings: (agent.mcpBindings ?? []).map((binding) => ({
+      serverId: binding.serverId,
+      toolAllowlist: [...binding.toolAllowlist].sort(),
+    })).sort((left, right) => left.serverId.localeCompare(right.serverId)),
   };
 }
 
@@ -58,6 +62,10 @@ export function createAgentRevision(agent: ConfiguredAgent, revision: number, cr
     modelId: agent.modelId,
     ...(agent.reasoningEffort ? { reasoningEffort: agent.reasoningEffort } : {}),
     instructions: agent.instructions ?? "",
+    mcpBindings: (agent.mcpBindings ?? []).map((binding) => ({
+      serverId: binding.serverId,
+      toolAllowlist: [...binding.toolAllowlist],
+    })),
     configHash,
     createdAt,
   };
