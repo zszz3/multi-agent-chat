@@ -1123,6 +1123,86 @@ describe("WorkflowRuntime Workflow V2 bridge", () => {
     });
   });
 
+  test("answers a V2 user-input node by rerunning with the human answer injected into the prompt", async () => {
+    const definition = workflowV2Definition();
+    definition.nodes = [definition.nodes[0]!];
+    definition.edges = [];
+    let persistedPlan!: NonNullable<WorkflowDraftState["workflowV2Plan"]>;
+    let persistedRunState = createWorkflowV2RunState({ definition, maxParallelNodes: 4 });
+    persistedRunState = transitionWorkflowV2NodeState(persistedRunState, { nodeId: "draft", status: "running", now: 1_100 });
+    persistedRunState = transitionWorkflowV2NodeState(persistedRunState, {
+      nodeId: "draft",
+      status: "paused",
+      now: 1_200,
+      intervention: {
+        nodeId: "draft",
+        source: "validation",
+        reason: "Need a concrete environment choice before continuing.",
+        allowedActions: ["continue", "skip", "escalate", "replan", "increase_review_strength"],
+        requestedAt: 1_200,
+      },
+    });
+    const humanAnswer = "Use the staging environment and continue from the existing draft.";
+    const fixture = await workflowV2RuntimeFixture({
+      definition,
+      taskFactory: (request, index) => ({
+        id: `task-${index}`,
+        title: "Worker",
+        status: "completed",
+        prompt: request.prompt,
+        configuredAgentId: request.configuredAgentId,
+        messages: [{
+          role: "assistant",
+          content: JSON.stringify({
+            nodeId: "draft",
+            summary: "Recovered with the provided environment choice",
+            outputs: { draft: "const target = 'staging';" },
+            evidence: ["human input consumed"],
+            proposals: [],
+          }),
+        }],
+        createdAt: index,
+        updatedAt: index,
+      } as TaskRun),
+      store: {
+        persistRunState: async () => undefined,
+        appendEvents: async () => undefined,
+        readRunState: async (_workflowId, runId) => ({
+          schemaVersion: WORKFLOW_V2_STORAGE_SCHEMA_VERSION,
+          workflowId: definition.workflowId,
+          runId,
+          graphVersion: definition.graphVersion,
+          savedAt: 1_300,
+          eventCount: 2,
+          plan: persistedPlan,
+          runState: persistedRunState,
+          workerOutputs: [],
+          nodeControl: { draft: { extensionCount: 0 } },
+        }),
+        readCacheEntry: async () => undefined,
+      },
+      executeScript: async () => {
+        throw new Error("script runner should not be called");
+      },
+    });
+    persistedPlan = fixture.workflow.workflowV2Plan!;
+    fixture.setRuns([workflowV2InterventionRun(fixture.workflow, "stopped", "paused")]);
+
+    const resolved = await fixture.runtime.answerWorkflowGate({
+      workflowId: fixture.workflow.workflowId,
+      runId: "run-v2-intervention",
+      nodeId: "draft",
+      answer: humanAnswer,
+    });
+    const finished = await fixture.finished;
+
+    expect(resolved.ok).toBe(true);
+    expect(finished.status).toBe("completed");
+    expect(fixture.taskRequests).toHaveLength(1);
+    expect(fixture.taskRequests[0]?.prompt).toContain("# Human intervention resolution");
+    expect(fixture.taskRequests[0]?.prompt).toContain(humanAnswer);
+  });
+
   test.each([
     ["escalate", true],
     ["increase_review_strength", false],

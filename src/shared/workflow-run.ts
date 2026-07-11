@@ -128,15 +128,16 @@ export function truncateWorkflowContext(content: string, limit = 2400): string {
  * dedicated dir) makes these relative paths; a legacy nested layout is used only
  * as a fallback for workflows without their own dir.
  */
-export function workflowStoragePlanFor(workflowId: string, hasDedicatedDir = true): WorkflowStoragePlan {
+export function workflowStoragePlanFor(workflowId: string, runId: string, hasDedicatedDir = true): WorkflowStoragePlan {
+  const safeRunId = runId.replace(/[^a-zA-Z0-9_-]/g, "_") || "run";
   if (hasDedicatedDir) {
-    return { memoryPath: "memory.md", outputDir: "outputs" };
+    return { memoryPath: "memory.md", outputDir: `outputs/${safeRunId}` };
   }
   const safeWorkflowId = workflowId.replace(/[^a-zA-Z0-9_-]/g, "_") || "workflow";
   const baseDir = `${WORKFLOW_STORAGE_ROOT}/${safeWorkflowId}`;
   return {
     memoryPath: `${baseDir}/memory.md`,
-    outputDir: `${baseDir}/outputs`,
+    outputDir: `${baseDir}/outputs/${safeRunId}`,
   };
 }
 

@@ -1,6 +1,23 @@
 import { describe, expect, test } from "vitest";
-import { extractWorkflowArtifactRefs, parseWorkflowGateRequest, projectNodeStates, workflowNodeRunPrompt } from "./workflow-run";
+import { extractWorkflowArtifactRefs, parseWorkflowGateRequest, projectNodeStates, workflowNodeRunPrompt, workflowStoragePlanFor } from "./workflow-run";
 import type { WorkflowEvent, WorkflowGraph, WorkflowGraphNode } from "./types";
+
+
+describe("workflowStoragePlanFor", () => {
+  test("isolates new workflow outputs by sanitized run id", () => {
+    expect(workflowStoragePlanFor("workflow-1", "run:2026/07/11")).toEqual({
+      memoryPath: "memory.md",
+      outputDir: "outputs/run_2026_07_11",
+    });
+  });
+
+  test("keeps legacy fallback storage isolated by workflow and run ids", () => {
+    expect(workflowStoragePlanFor("workflow/1", "run:2", false)).toEqual({
+      memoryPath: ".multi-agent-chat/workflows/workflow_1/memory.md",
+      outputDir: ".multi-agent-chat/workflows/workflow_1/outputs/run_2",
+    });
+  });
+});
 
 const NODES = [
   { nodeId: "a", title: "Alpha" },

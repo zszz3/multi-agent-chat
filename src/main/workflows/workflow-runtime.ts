@@ -568,16 +568,23 @@ export class WorkflowRuntime {
       const planError = workflowV2PlanValidationError(workflow, workflow.workflowV2Plan);
       if (planError) return { ok: false, workflowId: workflow.workflowId, error: planError };
 
-      const storagePlan = workflowStoragePlanFor(workflow.workflowId);
-      const baseWorkflowContextDocument = [input.contextDocument ?? workflow.contextDocument, workflowStoragePlanDocument(storagePlan)]
+      const initialContextDocument = input.contextDocument ?? workflow.contextDocument;
+      const started = this.deps.startWorkflowRun({
+        workflowId: workflow.workflowId,
+        contextDocument: initialContextDocument,
+      });
+      if (!started.ok || !started.runId) return started;
+      const storagePlan = workflowStoragePlanFor(workflow.workflowId, started.runId);
+      const baseWorkflowContextDocument = [initialContextDocument, workflowStoragePlanDocument(storagePlan)]
         .map((item) => item.trim())
         .filter(Boolean)
         .join("\n\n");
-      const started = this.deps.startWorkflowRun({
+      this.deps.updateWorkflowRunState({
         workflowId: workflow.workflowId,
+        runId: started.runId,
+        status: "running",
         contextDocument: baseWorkflowContextDocument,
       });
-      if (!started.ok || !started.runId) return started;
 
       this.activeRuns.set(started.runId, {
         workflowId: workflow.workflowId,
@@ -620,16 +627,23 @@ export class WorkflowRuntime {
       };
     }
 
-    const storagePlan = workflowStoragePlanFor(workflow.workflowId);
-    const baseWorkflowContextDocument = [input.contextDocument ?? workflow.contextDocument, workflowStoragePlanDocument(storagePlan)]
+    const initialContextDocument = input.contextDocument ?? workflow.contextDocument;
+    const started = this.deps.startWorkflowRun({
+      workflowId: workflow.workflowId,
+      contextDocument: initialContextDocument,
+    });
+    if (!started.ok || !started.runId) return started;
+    const storagePlan = workflowStoragePlanFor(workflow.workflowId, started.runId);
+    const baseWorkflowContextDocument = [initialContextDocument, workflowStoragePlanDocument(storagePlan)]
       .map((item) => item.trim())
       .filter(Boolean)
       .join("\n\n");
-    const started = this.deps.startWorkflowRun({
+    this.deps.updateWorkflowRunState({
       workflowId: workflow.workflowId,
+      runId: started.runId,
+      status: "running",
       contextDocument: baseWorkflowContextDocument,
     });
-    if (!started.ok || !started.runId) return started;
 
     this.activeRuns.set(started.runId, {
       workflowId: workflow.workflowId,
@@ -1099,7 +1113,12 @@ export class WorkflowRuntime {
       materialized.resumeConversations.delete(input.nodeId);
     }
     const recoveryOverrides = new Map<string, WorkflowV2RecoveryOverride>();
-    if (input.action === "escalate") {
+    if (input.action === "continue") {
+      recoveryOverrides.set(input.nodeId, {
+        forceIndependentReview: false,
+        instruction: resolutionReason,
+      });
+    } else if (input.action === "escalate") {
       recoveryOverrides.set(input.nodeId, {
         modelProfile: "expert",
         forceIndependentReview: true,
@@ -1128,7 +1147,7 @@ export class WorkflowRuntime {
       status: "running",
       contextDocument: input.run.contextDocument,
     });
-    const storagePlan = workflowStoragePlanFor(input.workflow.workflowId);
+    const storagePlan = workflowStoragePlanFor(input.workflow.workflowId, input.run.runId);
     void this.executeWorkflowV2Run({
       workflow: input.workflow,
       plan,
@@ -1178,7 +1197,7 @@ export class WorkflowRuntime {
     if (!answer) return { ok: false, workflowId: input.workflowId, runId: input.runId, error: "A gate answer is required." };
 
     const question = [...run.events].reverse().find((event) => event.type === "gate_opened" && event.nodeId === input.nodeId)?.question ?? "";
-    const humanDecision = [`## Human decision — ${node.title}`, question ? `Question: ${question}` : "", `Answer: ${answer}`]
+    const humanDecision = [`## Human decision - ${node.title}`, question ? `Question: ${question}` : "", `Answer: ${answer}`]
       .filter(Boolean)
       .join("\n");
     const nextContextDocument = [run.contextDocument.trim(), humanDecision].filter(Boolean).join("\n\n");
@@ -2206,7 +2225,7 @@ export class WorkflowRuntime {
     const runGraph = workflow.graph;
     const nodeById = new Map(runGraph.nodes.map((node) => [node.id, node]));
     const validation = validateWorkflowGraph(runGraph);
-    const storagePlan = workflowStoragePlanFor(workflow.workflowId);
+    const storagePlan = workflowStoragePlanFor(workflow.workflowId, runId);
     const artifactsByNodeId = new Map<string, string>();
     const contextArtifacts: Array<{ nodeId: string; title: string; summary: string }> = [];
     const upstreamAgentNodeIdsByNodeId = new Map<string, string[]>();
