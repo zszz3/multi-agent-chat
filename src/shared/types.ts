@@ -694,6 +694,7 @@ export interface WorkflowDraftState {
   configuredAgentId: string;
   modelId: string;
   objective: string;
+  definition?: WorkflowV2Definition;
   /**
    * Dedicated working directory for this workflow. All node agents run with this
    * as their cwd, and outputs/memory are written under it. Defaults to a
@@ -866,6 +867,7 @@ export interface WorkflowOperationResult {
 export interface CreateWorkflowRequest {
   title: string;
   objective: string;
+  definition?: WorkflowV2Definition;
   graph: WorkflowGraph;
   configuredAgentId?: string;
   modelId?: string;

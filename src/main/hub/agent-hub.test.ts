@@ -557,7 +557,21 @@ rl.on("line", (line) => {
           arguments: {
             title: graph.title,
             objective: graph.objective,
-            graph
+            definition: {
+              workflowId: "mood-workflow",
+              graphVersion: 1,
+              objective: graph.objective,
+              nodes: [{
+                id: "plan",
+                kind: "mood-input",
+                title: "Read mood",
+                execModel: "llm",
+                executionMode: "interactive",
+                prompt: "Ask the user for input and determine their mood.",
+                outputFields: [{ key: "mood", required: true }]
+              }],
+              edges: []
+            }
           }
         }
       });
@@ -2952,7 +2966,9 @@ fs.writeFileSync(${JSON.stringify(argsPath)}, process.argv.slice(2).join("\\n") 
       runtimeConversation: runtimeConversation("codex", { native: { threadId: "thread-1" } }),
     });
     expect(next.workflowDraft?.workflowId).not.toBe(sourceWorkflowId);
-    expect(next.workflowDraft?.graph.nodes.map((node) => node.id)).toEqual(["start", "plan", "end"]);
+    expect(next.workflowDraft?.definition?.nodes).toEqual([
+      expect.objectContaining({ id: "plan", executionMode: "interactive" }),
+    ]);
     expect(next.workflowStore.workflows.some((workflow) => workflow.workflowId === sourceWorkflowId)).toBe(false);
 
     const calls = (await readFile(fake.callsPath, "utf8")).trim().split("\n").map((line) => JSON.parse(line) as any);

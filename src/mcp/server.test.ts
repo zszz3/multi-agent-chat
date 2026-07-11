@@ -44,6 +44,15 @@ describe("MCP server tools", () => {
     }
   });
 
+  test("requires workflow_create to submit an explicit Workflow V2 definition with execution modes", () => {
+    const tool = mcpToolDefinitions().find((item) => item.name === "workflow_create")!;
+    expect(tool.inputSchema.required).toContain("definition");
+    const definition = (tool.inputSchema.properties as any).definition;
+    expect(definition.required).toEqual(["workflowId", "graphVersion", "objective", "nodes", "edges"]);
+    expect(definition.properties.nodes.items.required).toContain("executionMode");
+    expect(definition.properties.nodes.items.properties.executionMode.enum).toEqual(["one-shot", "interactive", "script"]);
+  });
+
   test("uses env override for bridge discovery", () => {
     process.env.MULTI_AGENT_CHAT_MCP_BRIDGE = "/tmp/custom-bridge.json";
 

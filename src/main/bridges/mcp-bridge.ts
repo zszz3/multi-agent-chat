@@ -10,6 +10,9 @@ import { SKILL_TEMPLATES } from "../../shared/skill-templates";
 import { importOnlineSkillToLibrary, listImportedSkillTemplates } from "../skills/skill-installer";
 import { fetchOnlineSkills, ONLINE_SKILL_SOURCES } from "../../shared/online-skills";
 import { validateWorkflowGraph } from "../../shared/workflow-graph";
+import type { WorkflowV2Definition } from "../../shared/workflow-v2/definition";
+import { validateWorkflowV2Definition } from "../../shared/workflow-v2/validation";
+import { projectWorkflowV2DefinitionToLegacyCanvas } from "../../shared/workflow-v2/projection";
 import { DEFAULT_MODEL_ID, defaultChannelForAgent, defaultModelForAgent, isModelForChannel } from "../../shared/models";
 
 export interface McpBridgeServer {
@@ -286,12 +289,17 @@ async function routeWorkflowRequest(hub: AgentHub, route: string, body: unknown,
     const workflow = hub.snapshot().workflowStore.workflows.find((item) => item.workflowId === workflowId);
     return workflow ? { ok: true, workflow } : { ok: false, error: `Workflow ${workflowId} was not found.` };
   }
-  if (route === "/mcp/workflow/create") {
-    const request: CreateWorkflowRequest = {
-      title: typeof record.title === "string" ? record.title : "",
-      objective: typeof record.objective === "string" ? record.objective : "",
-      graph: record.graph as WorkflowGraph,
-    };
+    if (route === "/mcp/workflow/create") {
+      const definition = record.definition as WorkflowV2Definition;
+      const validation = validateWorkflowV2Definition(definition);
+      if (!validation.valid) return { ok: false, error: validation.errors[0] ?? "Invalid Workflow V2 definition." };
+      const title = typeof record.title === "string" ? record.title : definition.objective;
+      const request: CreateWorkflowRequest = {
+        title,
+        objective: typeof record.objective === "string" ? record.objective : definition.objective,
+        definition,
+        graph: projectWorkflowV2DefinitionToLegacyCanvas(definition, title),
+      };
     const configuredAgentId = asString(record.configuredAgentId);
     if (configuredAgentId) request.configuredAgentId = configuredAgentId;
     const workDir = asString(record.workDir);

@@ -115,6 +115,7 @@ export function createWorkflowDraftState(input: {
     configuredAgentId: input.configuredAgentId,
     modelId: input.modelId,
     objective: input.request.objective.trim() || input.request.graph.objective,
+    ...(input.request.definition ? { definition: structuredClone(input.request.definition) } : {}),
     ...(input.request.workDir?.trim() ? { workDir: input.request.workDir.trim() } : {}),
     graph: input.request.graph,
     graphReady: input.request.graphReady ?? true,

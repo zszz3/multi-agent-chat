@@ -6,6 +6,9 @@ import type {
   WorkflowOperationResult,
 } from "../../../shared/types";
 import { validateWorkflowGraph } from "../../../shared/workflow-graph";
+import { validateWorkflowV2Definition } from "../../../shared/workflow-v2/validation";
+import { projectWorkflowV2DefinitionToLegacyCanvas } from "../../../shared/workflow-v2/projection";
+import type { WorkflowV2Definition } from "../../../shared/workflow-v2/definition";
 import { asOptionalString, asRecord } from "../persisted/agent-hub-persistence";
 
 type WorkflowToolName = "workflow_create" | "workflow_validate" | "workflow_context_append";
@@ -79,7 +82,7 @@ function findToolInput(value: unknown, depth = 0): Record<string, unknown> | und
     const parsed = inputRecord(record[key]);
     if (parsed) return parsed;
   }
-  if ("graph" in record || "workflowId" in record || "report" in record || "handoff" in record) return record;
+  if ("definition" in record || "graph" in record || "workflowId" in record || "report" in record || "handoff" in record) return record;
   for (const key of ["toolCall", "tool_call", "call", "request", "payload"]) {
     const parsed = findToolInput(record[key], depth + 1);
     if (parsed) return parsed;
@@ -102,11 +105,18 @@ export function handleCodexWorkflowToolCall(
   if (!name) return { handled: false };
   const input = findToolInput(params) ?? {};
   if (name === "workflow_create") {
-    const graph = workflowGraph(input.graph);
+    const definition = asRecord(input.definition) as unknown as WorkflowV2Definition | undefined;
+    const validation = definition ? validateWorkflowV2Definition(definition) : undefined;
+    if (!definition || !validation?.valid) {
+      return { handled: true, success: false, payload: { ok: false, error: validation?.errors[0] ?? "workflow_create requires a valid Workflow V2 definition." } };
+    }
+    const title = asOptionalString(input.title) ?? definition.objective;
+    const graph = projectWorkflowV2DefinitionToLegacyCanvas(definition, title);
     const request: CreateWorkflowRequest = {
-      title: asOptionalString(input.title) ?? graph?.title ?? "",
-      objective: asOptionalString(input.objective) ?? graph?.objective ?? "",
-      graph: graph ?? { title: "", objective: "", nodes: [], edges: [] },
+      title,
+      objective: asOptionalString(input.objective) ?? definition.objective,
+      definition,
+      graph,
       graphReady: true,
     };
     const configuredAgentId = asOptionalString(input.configuredAgentId);
@@ -128,9 +138,9 @@ export function handleCodexWorkflowToolCall(
   }
   if (name === "workflow_validate") {
     const workflowId = asOptionalString(input.workflowId) ?? "";
-    const graph = workflowGraph(input.graph) ?? deps.getWorkflow(workflowId)?.graph;
-    if (!graph) return { handled: true, success: false, payload: { ok: false, error: "workflow_validate requires graph or workflowId." } };
-    const validation = validateWorkflowGraph(graph);
+    const definition = (asRecord(input.definition) as unknown as WorkflowV2Definition | undefined) ?? deps.getWorkflow(workflowId)?.definition;
+    if (!definition) return { handled: true, success: false, payload: { ok: false, error: "workflow_validate requires definition or workflowId." } };
+    const validation = validateWorkflowV2Definition(definition);
     return {
       handled: true,
       success: validation.valid,

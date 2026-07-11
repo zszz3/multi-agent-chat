@@ -45,11 +45,34 @@ function objectSchema(properties: Record<string, unknown>, required: string[] = 
   };
 }
 
-const workflowGraphSchema = {
+const workflowV2DefinitionSchema = {
   type: "object",
-  description:
-    "WorkflowGraph with title, objective, nodes, and edges. Each node may include an optional position {x,y} (canvas coordinates, x increases left-to-right, y top-to-bottom) to pin where it appears on the board; omit position to let the app auto-layout the node. Positions round-trip with user drags, so workflow_get returns current positions.",
-  additionalProperties: true,
+  properties: {
+    workflowId: { type: "string" },
+    graphVersion: { type: "integer", minimum: 1 },
+    objective: { type: "string" },
+    nodes: {
+      type: "array",
+      items: {
+        type: "object",
+        properties: {
+          id: { type: "string" }, kind: { type: "string" }, title: { type: "string" },
+          execModel: { type: "string", enum: ["llm", "script"] },
+          executionMode: { type: "string", enum: ["one-shot", "interactive", "script"] },
+          executionModeRationale: { type: "string" }, executionModeConfidence: { type: "number", minimum: 0, maximum: 1 },
+          role: { type: "string", enum: ["orchestrator", "executor", "reviewer"] },
+          modelProfile: { type: "string", enum: ["fast", "balanced", "expert"] }, prompt: { type: "string" },
+          outputFields: { type: "array", items: objectSchema({ key: { type: "string" }, required: { type: "boolean" }, description: { type: "string" } }, ["key"]) },
+          script: { type: "object", additionalProperties: true }, sandboxMode: { type: "string", enum: ["sandbox", "workspace", "full"] },
+        },
+        required: ["id", "kind", "title", "execModel", "executionMode", "outputFields"],
+        additionalProperties: true,
+      },
+    },
+    edges: { type: "array", items: objectSchema({ fromNodeId: { type: "string" }, toNodeId: { type: "string" } }, ["fromNodeId", "toNodeId"]) },
+  },
+  required: ["workflowId", "graphVersion", "objective", "nodes", "edges"],
+  additionalProperties: false,
 };
 
 const artifactsSchema = {
@@ -151,12 +174,12 @@ export function mcpToolDefinitions(): McpToolDefinition[] {
         {
           title: { type: "string" },
           objective: { type: "string" },
-          graph: workflowGraphSchema,
+          definition: workflowV2DefinitionSchema,
           agentId: { type: "string", enum: RUNTIME_IDS },
           channelId: { type: "string" },
           modelId: { type: "string" },
         },
-        ["title", "objective", "graph"],
+        ["title", "objective", "definition"],
       ),
     },
     {
@@ -177,7 +200,7 @@ export function mcpToolDefinitions(): McpToolDefinition[] {
         expectedRevision: { type: "number" },
         title: { type: "string" },
         objective: { type: "string" },
-        graph: workflowGraphSchema,
+        definition: workflowV2DefinitionSchema,
       }, ["workflowId"]),
     },
     {
@@ -185,7 +208,7 @@ export function mcpToolDefinitions(): McpToolDefinition[] {
       description: "Validate a workflow graph or an existing workflowId without modifying state.",
       inputSchema: objectSchema({
         workflowId: { type: "string" },
-        graph: workflowGraphSchema,
+        definition: workflowV2DefinitionSchema,
       }),
     },
     {

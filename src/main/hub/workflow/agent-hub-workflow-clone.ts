@@ -162,6 +162,7 @@ export function cloneWorkflowDraft(input: {
     configuredAgentId: normalizeConfiguredAgentId(draft.configuredAgentId),
     modelId: normalizeModelId(draft.configuredAgentId, draft.modelId),
     objective: draft.objective,
+    ...(draft.definition ? { definition: structuredClone(draft.definition) } : {}),
     ...(draft.workDir ? { workDir: draft.workDir } : {}),
     graph: cloneWorkflowGraph(draft.graph),
     graphReady: draft.graphReady,
