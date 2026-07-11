@@ -112,14 +112,22 @@ describe("runtime local config import", () => {
     expect(result.channel.environment?.OPENCLAW_GATEWAY_TOKEN).toBe("plain-gateway-token");
   });
 
-  test("explains when OpenCode has no configured default model or provider", async () => {
-    await expect(loadRuntimeLocalConfig({
+  test("keeps OpenCode on its runtime default when no model or provider is configured", async () => {
+    const result = await loadRuntimeLocalConfig({
       runtimeId: "opencode",
       executable: "opencode",
       dependencies: {
         exec: vi.fn(async () => ({ stdout: JSON.stringify({ plugin: [] }), stderr: "" })) as never,
       },
-    })).rejects.toThrow("OpenCode local config has no default model or provider");
+    });
+
+    expect(result.channel).toMatchObject({
+      id: "opencode-default",
+      presetId: "opencode-default",
+      models: [{ id: "default", label: "Default" }],
+    });
+    expect(result.channel.modelProvider).toBeUndefined();
+    expect(result.channel.baseUrl).toBeUndefined();
   });
 
   test("rejects local import for the virtual API runtime", async () => {
