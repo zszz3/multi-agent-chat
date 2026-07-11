@@ -1,4 +1,5 @@
 import { useEffect, useState } from "react";
+import { Eye, EyeOff } from "lucide-react";
 import type { AgentChannel, RuntimeProviderApiFormat } from "../../../../shared/types";
 import { agentAccent, agentLabel } from "../../app/agents";
 import type { Language } from "../../app/language";
@@ -57,6 +58,7 @@ export function RuntimeProviderFields({ channel, language, onChange }: RuntimePr
   const [environmentText, setEnvironmentText] = useState(environmentToText(channel.environment));
   const [providerHeadersText, setProviderHeadersText] = useState(headersToText(channel.httpHeaders));
   const [overrideError, setOverrideError] = useState("");
+  const [showSensitiveValues, setShowSensitiveValues] = useState(false);
 
   useEffect(() => {
     setOverrideHeaders(objectToJson(channel.requestOverrides?.headers));
@@ -99,6 +101,17 @@ export function RuntimeProviderFields({ channel, language, onChange }: RuntimePr
 
   return (
     <div className="config-field-grid">
+      <div className="config-field config-field-wide runtime-secret-visibility">
+        <button
+          type="button"
+          className="control-btn compact secondary"
+          aria-label={showSensitiveValues ? "Hide advanced secrets" : "Show advanced secrets"}
+          onClick={() => setShowSensitiveValues((visible) => !visible)}
+        >
+          {showSensitiveValues ? <EyeOff size={13} /> : <Eye size={13} />}
+          <span>{showSensitiveValues ? (zh ? "隐藏敏感值" : "Hide sensitive values") : (zh ? "显示敏感值" : "Show sensitive values")}</span>
+        </button>
+      </div>
       <label className="config-field">
         <span>{zh ? "渠道 ID" : "Channel ID"}</span>
         <div className="configured-agent-runtime-readonly">
@@ -216,6 +229,18 @@ export function RuntimeProviderFields({ channel, language, onChange }: RuntimePr
         </>
       ) : null}
 
+      {channel.agentId === "openclaw" ? (
+        <label className="config-field config-field-wide">
+          <span>Gateway Token</span>
+          <input
+            aria-label="OpenClaw Gateway Token"
+            type={showSensitiveValues ? "text" : "password"}
+            value={channel.environment?.OPENCLAW_GATEWAY_TOKEN ?? ""}
+            onChange={(event) => onChange((current) => updateEnvironment(current, "OPENCLAW_GATEWAY_TOKEN", event.currentTarget.value))}
+          />
+        </label>
+      ) : null}
+
       <label className="config-field config-field-wide">
         <span>User-Agent</span>
         <input value={channel.customUserAgent ?? ""} onChange={(event) => onChange((current) => withOptionalString(current, "customUserAgent", event.currentTarget.value))} />
@@ -223,6 +248,7 @@ export function RuntimeProviderFields({ channel, language, onChange }: RuntimePr
       <label className="config-field config-field-wide">
         <span>{zh ? "运行时环境变量（每行 KEY=VALUE）" : "Runtime environment (KEY=VALUE per line)"}</span>
         <textarea
+          className={showSensitiveValues ? "" : "is-secret-masked"}
           value={environmentText}
           onChange={(event) => setEnvironmentText(event.currentTarget.value)}
           onBlur={() => {
@@ -239,6 +265,7 @@ export function RuntimeProviderFields({ channel, language, onChange }: RuntimePr
       <label className="config-field config-field-wide">
         <span>{zh ? "供应商请求头（每行 KEY=VALUE）" : "Provider headers (KEY=VALUE per line)"}</span>
         <textarea
+          className={showSensitiveValues ? "" : "is-secret-masked"}
           value={providerHeadersText}
           onChange={(event) => setProviderHeadersText(event.currentTarget.value)}
           onBlur={() => onChange((current) => withOptionalHeaders(current, providerHeadersText))}
@@ -247,6 +274,7 @@ export function RuntimeProviderFields({ channel, language, onChange }: RuntimePr
       <label className="config-field config-field-wide">
         <span>{zh ? "请求头覆盖（JSON）" : "Request header overrides (JSON)"}</span>
         <textarea
+          className={showSensitiveValues ? "" : "is-secret-masked"}
           value={overrideHeaders}
           onChange={(event) => setOverrideHeaders(event.currentTarget.value)}
           onBlur={() => commitRequestOverrides(overrideHeaders, overrideBody)}

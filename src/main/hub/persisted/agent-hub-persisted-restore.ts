@@ -3,7 +3,7 @@ import type { AgentTeamState, ChatState, TaskState, TeamRunState } from "../stat
 import {
   asOptionalString,
   asRecord,
-  type PersistedAppStateV4,
+  type PersistedAppStateV5,
 } from "./agent-hub-persistence";
 import { restoreEvent, restoreMessage } from "../state/agent-hub-restore";
 
@@ -115,7 +115,7 @@ export function restorePersistedMessageMap(input: {
 }
 
 export function restorePersistedCollections(
-  record: PersistedAppStateV4 & Record<string, unknown>,
+  record: PersistedAppStateV5 & Record<string, unknown>,
   deps: {
     restoreChatState: (raw: unknown) => ChatState | null;
     restoreTaskState: (raw: unknown) => TaskState | null;

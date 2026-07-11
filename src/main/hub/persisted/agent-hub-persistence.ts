@@ -11,6 +11,7 @@ import {
   type ChatRuntimeSessionState,
   type ConfiguredAgent,
   type RuntimeConversation,
+  type RuntimeBindingSnapshot,
   type RuntimeInteractionCapabilities,
   type RuntimeResumeCapabilities,
   type ScheduledWorkflowFrequency,
@@ -36,6 +37,7 @@ export interface PersistedChatSessionRecord {
   channelId?: string;
   runtimeState?: ChatRuntimeSessionState;
   runtimeConversation?: RuntimeConversation;
+  runtimeBinding?: RuntimeBindingSnapshot;
   lastError: string | undefined;
   createdAt: number;
   updatedAt: number;
@@ -136,6 +138,12 @@ export interface PersistedAppStateV4 {
   channels?: AgentChannel[];
   configuredAgents?: ConfiguredAgent[];
 }
+
+export interface PersistedAppStateV5 extends Omit<PersistedAppStateV4, "version"> {
+  version: 5;
+}
+
+export type PersistedAppState = PersistedAppStateV4 | PersistedAppStateV5;
 
 export function isAgentId(value: unknown): value is AgentId {
   return isRuntimeId(value);

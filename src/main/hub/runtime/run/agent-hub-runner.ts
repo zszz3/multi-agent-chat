@@ -2,6 +2,7 @@ import type {
   AgentEvent,
   AgentId,
   AgentRuntime,
+  AgentChannel,
   ConfiguredAgent,
   RuntimeContinuationPolicy,
   RuntimeConversation,
@@ -15,7 +16,7 @@ export type HubRunState = ChatState | TaskState;
 export interface ResolvedHubRunAgent {
   agent: ConfiguredAgent;
   runtimeAgentId: AgentId;
-  channel: { id: string };
+  channel: AgentChannel;
   modelId: string;
   reasoningEffort?: string;
   runtime: AgentRuntime | undefined;
@@ -79,6 +80,7 @@ export async function runAgentExecution(input: {
     ...(runtimeConversation ? { runtimeConversation } : {}),
     runtime,
     channelId: input.resolved.channel.id,
+    channel: input.resolved.channel,
     prompt: input.prompt,
     workDir: input.workDir,
     developerInstructions,

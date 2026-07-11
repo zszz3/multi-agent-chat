@@ -1,9 +1,10 @@
 import { useCallback, useEffect, useRef, useState, type MouseEvent } from "react";
 import type { MultiAgentChatApi } from "../../../../../preload";
-import { configChannelForSelection, selectConfigChannelsForDisplay } from "../../../../../shared/config-channels";
+import { selectConfigChannelsForDisplay } from "../../../../../shared/config-channels";
 import { DEFAULT_MODEL_ID } from "../../../../../shared/models";
 import type {
   AgentChannel,
+  AgentId,
   AgentTestEvent,
   AgentModelOption,
   AppSnapshot,
@@ -48,6 +49,13 @@ export function codexRuntimeAvailability(runtimes: AppSnapshot["runtimes"]): {
   };
 }
 
+export function configuredAgentBlockingChannelDelete(
+  agents: AppSnapshot["configuredAgents"],
+  channelId: string,
+): AppSnapshot["configuredAgents"][number] | undefined {
+  return agents.find((agent) => agent.channelId === channelId && !agent.managed);
+}
+
 interface UseRuntimeConfigManagerOptions {
   chatApi: MultiAgentChatApi;
   snapshot: AppSnapshot;
@@ -58,6 +66,7 @@ interface UseRuntimeConfigManagerOptions {
 export interface RuntimeConfigManager {
   configChannels: AgentChannel[];
   selectedConfigChannelId: string;
+  selectedRuntimeId: AgentId;
   configStatus: string;
   codexPluginCatalog: CodexPluginCatalogItem[];
   pluginCatalogStatus: string;
@@ -68,6 +77,8 @@ export interface RuntimeConfigManager {
   balanceLoadingChannelId: string | undefined;
   configContextMenu: { channelId: string; x: number; y: number } | undefined;
   setSelectedConfigChannelId: React.Dispatch<React.SetStateAction<string>>;
+  selectConfigChannel: (channelId: string) => void;
+  selectRuntime: (runtimeId: AgentId) => void;
   setConfigContextMenu: React.Dispatch<React.SetStateAction<{ channelId: string; x: number; y: number } | undefined>>;
   addConfigChannel: () => void;
   openConfigContextMenu: (event: MouseEvent, channelId: string, closeOtherMenus?: () => void) => void;
@@ -84,6 +95,7 @@ export interface RuntimeConfigManager {
   testRuntimeChannel: (channelId: string) => Promise<void>;
   queryRuntimeChannelBalance: (channelId: string, options?: { persistBeforeQuery?: boolean; quiet?: boolean }) => Promise<void>;
   refreshModelCatalog: (channelId: string) => Promise<void>;
+  importLocalConfig: (runtimeId: AgentId, channelId?: string) => Promise<void>;
   confirmSaveBeforeSwitch: (message: string) => Promise<boolean>;
 }
 
@@ -95,6 +107,7 @@ export function useRuntimeConfigManager({
 }: UseRuntimeConfigManagerOptions): RuntimeConfigManager {
   const [configChannels, setConfigChannels] = useState<AgentChannel[]>([]);
   const [selectedConfigChannelId, setSelectedConfigChannelId] = useState("");
+  const [selectedRuntimeId, setSelectedRuntimeId] = useState<AgentId>("codex");
   const [configDirty, setConfigDirty] = useState(false);
   const [configStatus, setConfigStatus] = useState("");
   const [codexPluginCatalog, setCodexPluginCatalog] = useState<CodexPluginCatalogItem[]>([]);
@@ -149,41 +162,60 @@ export function useRuntimeConfigManager({
     });
   }, [chatApi]);
 
+  const channelForRuntimeSelection = useCallback((channels: AgentChannel[], runtimeId: AgentId, selectedId: string) => {
+    const selected = channels.find((channel) => channel.id === selectedId && channel.agentId === runtimeId);
+    return selected ?? channels.find((channel) => channel.agentId === runtimeId);
+  }, []);
+
   const syncChannelsFromSnapshot = useCallback((channels: AgentChannel[]) => {
     setConfigChannels(channels);
-    setSelectedConfigChannelId((current) => configChannelForSelection(channels, current)?.id ?? "");
-  }, []);
+    setSelectedConfigChannelId((current) => channelForRuntimeSelection(channels, selectedRuntimeId, current)?.id ?? "");
+  }, [channelForRuntimeSelection, selectedRuntimeId]);
 
   const updateConfigChannels = useCallback((next: AgentChannel[]) => {
     setConfigChannels(next);
     setConfigDirty(true);
     setConfigStatus("");
-    setSelectedConfigChannelId((current) => configChannelForSelection(next, current)?.id ?? "");
+    setSelectedConfigChannelId((current) => channelForRuntimeSelection(next, selectedRuntimeId, current)?.id ?? "");
+  }, [channelForRuntimeSelection, selectedRuntimeId]);
+
+  const selectRuntime = useCallback((runtimeId: AgentId) => {
+    setSelectedRuntimeId(runtimeId);
+    setSelectedConfigChannelId(channelForRuntimeSelection(configChannelsRef.current, runtimeId, "")?.id ?? "");
+    setConfigContextMenu(undefined);
+    setConfigStatus("");
+  }, [channelForRuntimeSelection]);
+
+  const selectConfigChannel = useCallback((channelId: string) => {
+    const channel = configChannelsRef.current.find((item) => item.id === channelId);
+    if (!channel) return;
+    setSelectedRuntimeId(channel.agentId);
+    setSelectedConfigChannelId(channel.id);
+    setConfigContextMenu(undefined);
+    setConfigStatus("");
   }, []);
 
   const addConfigChannel = useCallback(() => {
-    const next = [...configChannels, createChannel("codex", configChannels.map((channel) => channel.id))];
+    const next = [...configChannels, createChannel(selectedRuntimeId, configChannels.map((channel) => channel.id))];
     updateConfigChannels(next);
     setSelectedConfigChannelId(next[next.length - 1]?.id ?? "");
-  }, [configChannels, updateConfigChannels]);
+  }, [configChannels, selectedRuntimeId, updateConfigChannels]);
 
   const openConfigContextMenu = useCallback((event: MouseEvent, channelId: string, closeOtherMenus?: () => void) => {
     event.preventDefault();
     event.stopPropagation();
     closeOtherMenus?.();
     setSelectedConfigChannelId(channelId);
+    const channel = configChannelsRef.current.find((item) => item.id === channelId);
+    if (channel) setSelectedRuntimeId(channel.agentId);
     setConfigContextMenu({ channelId, x: event.clientX, y: event.clientY });
   }, []);
 
   const deleteConfigChannel = useCallback((channelId: string) => {
     setConfigContextMenu(undefined);
-    const referencedAgent = snapshot.configuredAgents.find((agent) => agent.channelId === channelId);
+    const referencedAgent = configuredAgentBlockingChannelDelete(snapshot.configuredAgents, channelId);
     if (referencedAgent) {
       setConfigStatus(`Config is used by ${referencedAgent.name || referencedAgent.id}`);
-      return;
-    }
-    if (configChannelsRef.current.length <= 1) {
-      setConfigStatus("Keep at least one config");
       return;
     }
     const next = configChannelsRef.current.filter((channel) => channel.id !== channelId);
@@ -196,26 +228,30 @@ export function useRuntimeConfigManager({
       delete nextResults[channelId];
       return nextResults;
     });
-    setSelectedConfigChannelId((current) => (current === channelId ? (next[0]?.id ?? "") : (configChannelForSelection(next, current)?.id ?? next[0]?.id ?? "")));
-  }, [snapshot.configuredAgents]);
+    setSelectedConfigChannelId((current) => (
+      current === channelId
+        ? (channelForRuntimeSelection(next, selectedRuntimeId, "")?.id ?? "")
+        : (channelForRuntimeSelection(next, selectedRuntimeId, current)?.id ?? "")
+    ));
+  }, [channelForRuntimeSelection, selectedRuntimeId, snapshot.configuredAgents]);
 
   const persistChannelConfig = useCallback(async (): Promise<AppSnapshot> => {
     const next = await chatApi.saveModelChannels(configChannelsRef.current);
     setConfigChannels(next.channels);
     setConfigDirty(false);
-    setSelectedConfigChannelId((current) => configChannelForSelection(next.channels, current)?.id ?? "");
+    setSelectedConfigChannelId((current) => channelForRuntimeSelection(next.channels, selectedRuntimeId, current)?.id ?? "");
     setSnapshot(next);
     return next;
-  }, [chatApi, setSnapshot]);
+  }, [channelForRuntimeSelection, chatApi, selectedRuntimeId, setSnapshot]);
 
   const persistSpecificChannelConfig = useCallback(async (channels: AgentChannel[]): Promise<AppSnapshot> => {
     const next = await chatApi.saveModelChannels(channels);
     setConfigChannels(next.channels);
     setConfigDirty(false);
-    setSelectedConfigChannelId((current) => configChannelForSelection(next.channels, current)?.id ?? "");
+    setSelectedConfigChannelId((current) => channelForRuntimeSelection(next.channels, selectedRuntimeId, current)?.id ?? "");
     setSnapshot(next);
     return next;
-  }, [chatApi, setSnapshot]);
+  }, [channelForRuntimeSelection, chatApi, selectedRuntimeId, setSnapshot]);
 
   const saveChannelConfig = useCallback(async (): Promise<void> => {
     try {
@@ -325,6 +361,22 @@ export function useRuntimeConfigManager({
       setConfigStatus(error instanceof Error ? error.message : String(error));
     }
   }, [chatApi, persistChannelConfig, setSnapshot, syncChannelsFromSnapshot]);
+
+  const importLocalConfig = useCallback(async (runtimeId: AgentId, channelId?: string): Promise<void> => {
+    if (configDirtyRef.current && !window.confirm("Discard unsaved config changes and import local defaults?")) return;
+    setConfigStatus(`Importing ${agentLabel(runtimeId)} local defaults...`);
+    try {
+      const result = await chatApi.importRuntimeLocalConfig(runtimeId, channelId);
+      setSelectedRuntimeId(runtimeId);
+      setConfigChannels(result.snapshot.channels);
+      setSelectedConfigChannelId(result.channelId);
+      setConfigDirty(false);
+      setSnapshot(result.snapshot);
+      setConfigStatus(`Imported local defaults from ${result.source}`);
+    } catch (error) {
+      setConfigStatus(error instanceof Error ? error.message : String(error));
+    }
+  }, [chatApi, setSnapshot]);
 
   const testRuntimeChannel = useCallback(async (channelId: string): Promise<void> => {
     const channel = configChannelsRef.current.find((item) => item.id === channelId);
@@ -498,6 +550,7 @@ export function useRuntimeConfigManager({
   return {
     configChannels,
     selectedConfigChannelId,
+    selectedRuntimeId,
     configStatus,
     codexPluginCatalog,
     pluginCatalogStatus,
@@ -508,6 +561,8 @@ export function useRuntimeConfigManager({
     balanceLoadingChannelId,
     configContextMenu,
     setSelectedConfigChannelId,
+    selectConfigChannel,
+    selectRuntime,
     setConfigContextMenu,
     addConfigChannel,
     openConfigContextMenu,
@@ -524,6 +579,7 @@ export function useRuntimeConfigManager({
     testRuntimeChannel,
     queryRuntimeChannelBalance,
     refreshModelCatalog,
+    importLocalConfig,
     confirmSaveBeforeSwitch,
   };
 }

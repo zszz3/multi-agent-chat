@@ -85,6 +85,7 @@ describe("ClaudeAgentSdkInteractive", () => {
       cwd: "C:/repo",
       modelId: "claude-sonnet",
       developerInstructions: "Be precise.",
+      env: { PATH: "/bin", ANTHROPIC_AUTH_TOKEN: "test-token" },
       onEvent: () => undefined,
     });
 
@@ -95,6 +96,7 @@ describe("ClaudeAgentSdkInteractive", () => {
     expect(call?.options).toMatchObject({
       cwd: "C:/repo",
       model: "claude-sonnet",
+      env: { PATH: "/bin", ANTHROPIC_AUTH_TOKEN: "test-token" },
       systemPrompt: {
         type: "preset",
         preset: "claude_code",

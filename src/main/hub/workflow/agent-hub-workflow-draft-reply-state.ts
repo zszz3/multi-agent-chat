@@ -1,4 +1,5 @@
 import type {
+  RuntimeBindingSnapshot,
   RuntimeConversation,
   WorkflowDraftState,
 } from "../../../shared/types";
@@ -78,6 +79,7 @@ export interface WorkflowDraftInteractiveRequest {
   modelId: string;
   workDir: string;
   starting: boolean;
+  runtimeBinding?: RuntimeBindingSnapshot;
   runtimeConversation?: RuntimeConversation;
 }
 
@@ -98,6 +100,7 @@ export function createWorkflowDraftInteractiveRequest(input: {
     modelId: input.started.next.modelId,
     workDir: input.started.next.workDir || input.defaultWorkDir,
     starting: input.started.starting,
+    ...(input.started.next.runtimeBinding ? { runtimeBinding: input.started.next.runtimeBinding } : {}),
     ...(input.started.next.runtimeConversation
       ? { runtimeConversation: input.started.next.runtimeConversation }
       : {}),

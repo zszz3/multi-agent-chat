@@ -31,6 +31,7 @@ export { ChatHistoryPanel } from "./pages/chat/ChatHistoryPanel";
 export { RuntimePage } from "./pages/runtime/RuntimePage";
 export {
   applyCodexDefaultConfigToChannel,
+  applyClaudeDefaultConfigToChannel,
   applyProviderPresetToChannel,
   rememberProviderKeyFromChannel,
   resolveProviderPresetId,

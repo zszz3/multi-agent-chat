@@ -24,6 +24,7 @@ import {
 import { normalizeRestoredMessages, restoreMessage } from "../state/agent-hub-restore";
 import { titleFromPrompt } from "../chat/agent-hub-ui";
 import { ChatState, TaskState } from "../state/agent-hub-state";
+import { restoreRuntimeBindingSnapshot } from "../runtime/runtime-binding";
 export {
   restoreTeamRunState,
   restoreTeamRunStep,
@@ -176,6 +177,7 @@ export function restoreChatState(raw: unknown, deps: RestoreChatStateDeps): Chat
     delete chat.runtimeState.activeTurnId;
   }
   chat.runtimeConversation = restoredRuntimeConversation ? deps.cloneRuntimeConversation(restoredRuntimeConversation) : undefined;
+  chat.runtimeBinding = restoreRuntimeBindingSnapshot(record.runtimeBinding);
   return chat;
 }
 

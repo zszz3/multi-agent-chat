@@ -1,4 +1,5 @@
 import type {
+  AgentChannel,
   AgentEvent,
   AgentId,
   AgentRuntime,
@@ -34,6 +35,7 @@ export interface InteractiveSessionContext extends RuntimeRequest {
   configuredAgentId: string;
   runtime: AgentRuntime;
   channelId: string;
+  channel?: AgentChannel;
   workDir: string;
   developerInstructions: string;
   emit: (event: AgentEvent) => void;
@@ -50,6 +52,7 @@ export interface RuntimeWorkflowRequestContext extends RuntimeRequest {
   prompt: string;
   runtime: AgentRuntime;
   channelId: string;
+  channel?: AgentChannel;
   workDir: string;
   onEvent?: ((event: WorkflowAgentEvent) => void) | undefined;
 }
