@@ -48,4 +48,32 @@ describe("loadBundledWorkflows", () => {
   test("returns empty for a missing root", async () => {
     expect(await loadBundledWorkflows(path.join(os.tmpdir(), "does-not-exist-xyz"))).toEqual([]);
   });
+
+  test("loads the official job-tailored resume workflow with its safety constraints", async () => {
+    const root = path.resolve(process.cwd(), "src/shared/bundled-workflows");
+    const defs = await loadBundledWorkflows(root);
+    const workflow = defs.find((definition) => definition.workflowId === "bundled-job-tailored-resume");
+
+    expect(workflow).toBeDefined();
+    expect(workflow?.title).toBe("岗位定制简历");
+
+    const agentNodes = workflow?.graph.nodes.filter((node) => node.kind === "agent") ?? [];
+    expect(agentNodes.map((node) => node.id)).toEqual([
+      "analyze-job",
+      "extract-resume",
+      "match-evidence",
+      "clarify-gaps",
+      "tailor-resume",
+      "review",
+    ]);
+    expect(workflow?.graph.edges).toHaveLength(8);
+
+    const prompts = agentNodes.map((node) => node.prompt).join("\n");
+    expect(prompts).toContain("workflowGate.ask");
+    expect(prompts).toContain("不得编造");
+    expect(prompts).toContain("tailored-resume.html");
+    expect(prompts).toContain("tailored-resume.md");
+    expect(prompts).toContain("match-report.md");
+    expect(prompts).not.toMatch(/__[A-Z0-9_]+__/);
+  });
 });

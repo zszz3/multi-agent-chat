@@ -1005,39 +1005,11 @@ export class AgentHub {
   }
 
   /**
-   * Seed git-bundled workflow definitions into the store. Idempotent by fixed
-   * workflowId: existing workflows (including user-edited copies) are left alone.
+   * Synchronize git-bundled workflow definitions while preserving the allowed
+   * prompt and runtime overrides on existing official workflows.
    */
   ensureBundledWorkflows(defs: Array<{ workflowId: string; title: string; objective: string; graph: WorkflowGraph }>): void {
-    let changed = false;
-    for (const def of defs) {
-      if (!def.workflowId || this.workflowStore.workflows.has(def.workflowId)) continue;
-      const now = Date.now();
-      const workflow = this.cloneWorkflowDraft({
-        workflowId: def.workflowId,
-        title: def.title,
-        status: "draft",
-        revision: 1,
-        configuredAgentId: "",
-        modelId: "",
-        objective: def.objective,
-        graph: def.graph,
-        graphReady: true,
-        messages: [],
-        reply: "",
-        error: undefined,
-        runProgress: [],
-        runContextDocument: "",
-        contextDocument: "",
-        runIds: [],
-        createdAt: now,
-        updatedAt: now,
-      });
-      this.workflowStore.workflows.set(workflow.workflowId, workflow);
-      if (!this.workflowStore.activeId) this.workflowStore.activeId = workflow.workflowId;
-      changed = true;
-    }
-    if (changed) this.emit();
+    this.workflowStore.ensureBundledWorkflows(defs);
   }
 
   selectWorkflow(workflowId: string): AppSnapshot {

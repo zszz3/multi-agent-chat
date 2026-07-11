@@ -4019,6 +4019,35 @@ fs.writeFileSync(${JSON.stringify(argsPath)}, process.argv.slice(2).join("\\n") 
     expect("activeWorkflowId" in (hub as any)).toBe(false);
   });
 
+  test("seeds bundled workflows through WorkflowStore as locked official templates", () => {
+    const hub = new AgentHub({ codex: "codex-for-test", claude: "missing-claude-for-test" });
+    hub.ensureBundledWorkflows([
+      {
+        workflowId: "official-resume",
+        title: "Official Resume",
+        objective: "Tailor resume",
+        graph: {
+          title: "Official Resume",
+          objective: "Tailor resume",
+          nodes: [
+            { id: "start", kind: "start", title: "Start", prompt: "" },
+            { id: "tailor", kind: "agent", title: "Tailor", prompt: "Use evidence" },
+            { id: "end", kind: "end", title: "End", prompt: "" },
+          ],
+          edges: [
+            { id: "start-tailor", fromNodeId: "start", toNodeId: "tailor" },
+            { id: "tailor-end", fromNodeId: "tailor", toNodeId: "end" },
+          ],
+        },
+      },
+    ]);
+
+    expect(hub.snapshot().workflowStore.workflows.find((workflow) => workflow.workflowId === "official-resume")).toMatchObject({
+      sourceType: "official",
+      topologyLocked: true,
+    });
+  });
+
   test("persists and restores multiple workflow drafts", async () => {
     const dir = await mkdtemp(path.join(os.tmpdir(), "multi-agent-chat-"));
     const storagePath = path.join(dir, "app-chats.json");
