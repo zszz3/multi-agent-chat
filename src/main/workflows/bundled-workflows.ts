@@ -1,12 +1,12 @@
 import { readFile, readdir } from "node:fs/promises";
 import path from "node:path";
-import type { WorkflowGraph } from "../../shared/types";
+import type { WorkflowV2Definition, WorkflowV2LLMNode } from "../../shared/workflow-v2/definition";
 
 export interface BundledWorkflowDefinition {
   workflowId: string;
   title: string;
   objective: string;
-  graph: WorkflowGraph;
+  definition: WorkflowV2Definition;
 }
 
 /**
@@ -35,11 +35,11 @@ export async function loadBundledWorkflows(rootDir: string): Promise<BundledWork
         objective?: unknown;
         templateAsset?: unknown;
         assets?: Record<string, unknown>;
-        graph?: WorkflowGraph;
+        definition?: WorkflowV2Definition;
       };
       const workflowId = typeof manifest.id === "string" ? manifest.id : "";
-      const graph = manifest.graph;
-      if (!workflowId || !graph || !Array.isArray(graph.nodes)) continue;
+      const definition = manifest.definition;
+      if (!workflowId || !definition || !Array.isArray(definition.nodes)) continue;
 
       const assetTokens: Record<string, string> = {};
       if (typeof manifest.templateAsset === "string" && manifest.templateAsset) assetTokens.__RESUME_TEMPLATE__ = manifest.templateAsset;
@@ -56,8 +56,8 @@ export async function loadBundledWorkflows(rootDir: string): Promise<BundledWork
           content = "";
         }
         if (!content) continue;
-        for (const node of graph.nodes) {
-          if (typeof node.prompt === "string" && node.prompt.includes(token)) {
+        for (const node of definition.nodes) {
+          if (node.execModel === "llm" && node.prompt.includes(token)) {
             node.prompt = node.prompt.split(token).join(content);
           }
         }
@@ -65,9 +65,9 @@ export async function loadBundledWorkflows(rootDir: string): Promise<BundledWork
 
       definitions.push({
         workflowId,
-        title: typeof manifest.title === "string" && manifest.title ? manifest.title : graph.title,
-        objective: typeof manifest.objective === "string" && manifest.objective ? manifest.objective : graph.objective,
-        graph,
+        title: typeof manifest.title === "string" && manifest.title ? manifest.title : definition.objective,
+        objective: typeof manifest.objective === "string" && manifest.objective ? manifest.objective : definition.objective,
+        definition: { ...definition, workflowId, objective: typeof manifest.objective === "string" && manifest.objective ? manifest.objective : definition.objective },
       });
     } catch {
       // Skip malformed bundled workflow directories.

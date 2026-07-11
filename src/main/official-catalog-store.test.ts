@@ -21,14 +21,12 @@ describe("OfficialCatalogStore", () => {
           workflowId: "official-release",
           title: "Release",
           objective: "Ship",
-          graph: {
-            title: "Release graph",
+          definition: {
+            workflowId: "official-release",
+            graphVersion: 1,
             objective: "Ship",
-            nodes: [
-              { id: "start", kind: "start", title: "Start", prompt: "" },
-              { id: "build", kind: "agent", title: "Build", prompt: "Build it", position: { x: 20, y: 30 } },
-            ],
-            edges: [{ id: "start-build", fromNodeId: "start", toNodeId: "build" }],
+            nodes: [{ id: "build", kind: "build", title: "Build", execModel: "llm", executionMode: "one-shot", prompt: "Build it", outputFields: [] }],
+            edges: [],
           },
         },
       ],
@@ -36,7 +34,7 @@ describe("OfficialCatalogStore", () => {
     );
 
     expect(await store.listWorkflows()).toEqual([
-      expect.objectContaining({ workflowId: "official-release", graph: expect.objectContaining({ nodes: expect.any(Array), edges: expect.any(Array) }) }),
+      expect.objectContaining({ workflowId: "official-release", definition: expect.objectContaining({ nodes: expect.any(Array), edges: expect.any(Array) }) }),
     ]);
     expect(await store.listSkills()).toEqual([
       expect.objectContaining({ id: "review", sourceType: "official", prompt: "review", categoryId: "coding" }),

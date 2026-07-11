@@ -1,7 +1,8 @@
 import { mkdir } from "node:fs/promises";
 import { createRequire } from "node:module";
 import path from "node:path";
-import type { SkillTemplate, WorkflowGraph } from "../shared/types";
+import type { SkillTemplate } from "../shared/types";
+import type { WorkflowV2Definition } from "../shared/workflow-v2/definition";
 import type { BundledWorkflowDefinition } from "./workflows/bundled-workflows";
 
 const require = createRequire(import.meta.url);
@@ -37,8 +38,6 @@ export class OfficialCatalogStore {
     db.exec("begin immediate");
     try {
       db.exec(`
-        delete from workflow_template_edges;
-        delete from workflow_template_nodes;
         delete from workflow_templates;
         delete from skill_templates;
         delete from catalog_metadata;
@@ -64,7 +63,7 @@ export class OfficialCatalogStore {
         workflowId: String(template.id),
         title: String(template.title),
         objective: String(template.objective),
-        graph: this.loadGraph(db, String(template.id), String(template.graph_title), String(template.graph_objective)),
+        definition: JSON.parse(String(template.definition_json)) as WorkflowV2Definition,
       }));
   }
 
@@ -110,30 +109,8 @@ export class OfficialCatalogStore {
         id text primary key,
         title text not null,
         objective text not null,
-        graph_title text not null,
-        graph_objective text not null,
+        definition_json text not null,
         sequence integer not null
-      );
-      create table if not exists workflow_template_nodes (
-        template_id text not null references workflow_templates(id) on delete cascade,
-        node_id text not null,
-        kind text not null,
-        title text not null,
-        prompt text not null,
-        configured_agent_id text,
-        model_id text,
-        position_x real,
-        position_y real,
-        sequence integer not null,
-        primary key (template_id, node_id)
-      );
-      create table if not exists workflow_template_edges (
-        template_id text not null references workflow_templates(id) on delete cascade,
-        edge_id text not null,
-        from_node_id text not null,
-        to_node_id text not null,
-        sequence integer not null,
-        primary key (template_id, edge_id)
       );
       create table if not exists skill_templates (
         id text primary key,
@@ -160,33 +137,9 @@ export class OfficialCatalogStore {
   private insertWorkflow(db: DatabaseSync, workflow: BundledWorkflowDefinition): void {
     const sequence = Number(db.prepare("select count(*) as count from workflow_templates").all().map(row)[0]?.count ?? 0);
     db.prepare(
-      `insert into workflow_templates (id, title, objective, graph_title, graph_objective, sequence)
-       values (?, ?, ?, ?, ?, ?)`,
-    ).run(workflow.workflowId, workflow.title, workflow.objective, workflow.graph.title, workflow.graph.objective, sequence);
-    workflow.graph.nodes.forEach((node, index) => {
-      db.prepare(
-        `insert into workflow_template_nodes
-         (template_id, node_id, kind, title, prompt, configured_agent_id, model_id, position_x, position_y, sequence)
-         values (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
-      ).run(
-        workflow.workflowId,
-        node.id,
-        node.kind,
-        node.title,
-        node.prompt,
-        node.configuredAgentId ?? null,
-        node.modelId ?? null,
-        node.position?.x ?? null,
-        node.position?.y ?? null,
-        index,
-      );
-    });
-    workflow.graph.edges.forEach((edge, index) => {
-      db.prepare(
-        `insert into workflow_template_edges (template_id, edge_id, from_node_id, to_node_id, sequence)
-         values (?, ?, ?, ?, ?)`,
-      ).run(workflow.workflowId, edge.id, edge.fromNodeId, edge.toNodeId, index);
-    });
+      `insert into workflow_templates (id, title, objective, definition_json, sequence)
+       values (?, ?, ?, ?, ?)`,
+    ).run(workflow.workflowId, workflow.title, workflow.objective, JSON.stringify(workflow.definition), sequence);
   }
 
   private insertSkill(db: DatabaseSync, skill: SkillTemplate): void {
@@ -210,31 +163,5 @@ export class OfficialCatalogStore {
     );
   }
 
-  private loadGraph(db: DatabaseSync, templateId: string, title: string, objective: string): WorkflowGraph {
-    const nodes = db
-      .prepare("select * from workflow_template_nodes where template_id = ? order by sequence")
-      .all(templateId)
-      .map(row)
-      .map((item) => ({
-        id: String(item.node_id),
-        kind: String(item.kind) as "start" | "agent" | "end",
-        title: String(item.title),
-        prompt: String(item.prompt),
-        ...(item.configured_agent_id ? { configuredAgentId: String(item.configured_agent_id) } : {}),
-        ...(item.model_id ? { modelId: String(item.model_id) } : {}),
-        ...(typeof item.position_x === "number" && typeof item.position_y === "number"
-          ? { position: { x: item.position_x, y: item.position_y } }
-          : {}),
-      }));
-    const edges = db
-      .prepare("select * from workflow_template_edges where template_id = ? order by sequence")
-      .all(templateId)
-      .map(row)
-      .map((item) => ({
-        id: String(item.edge_id),
-        fromNodeId: String(item.from_node_id),
-        toNodeId: String(item.to_node_id),
-      }));
-    return { title, objective, nodes, edges };
-  }
+
 }

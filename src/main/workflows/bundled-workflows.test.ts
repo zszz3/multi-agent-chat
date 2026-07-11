@@ -18,18 +18,14 @@ describe("loadBundledWorkflows", () => {
         title: "简历生成 (HTML)",
         objective: "obj",
         assets: { __RESUME_TEMPLATE__: "resume-template.html", __RESUME_GUIDE__: "resume-guidelines.md" },
-        graph: {
-          title: "简历生成 (HTML)",
+        definition: {
+          workflowId: "bundled-resume-html",
+          graphVersion: 1,
           objective: "obj",
           nodes: [
-            { id: "start", kind: "start", title: "开始", prompt: "" },
-            { id: "render", kind: "agent", title: "渲染", prompt: "写法:\n__RESUME_GUIDE__\n模版:\n__RESUME_TEMPLATE__\n结束" },
-            { id: "end", kind: "end", title: "完成", prompt: "" },
+            { id: "render", kind: "render", title: "??", execModel: "llm", executionMode: "one-shot", prompt: "??:\n__RESUME_GUIDE__\n??:\n__RESUME_TEMPLATE__\n??", outputFields: [] },
           ],
-          edges: [
-            { id: "start->render", fromNodeId: "start", toNodeId: "render" },
-            { id: "render->end", fromNodeId: "render", toNodeId: "end" },
-          ],
+          edges: [],
         },
       }),
       "utf8",
@@ -38,7 +34,7 @@ describe("loadBundledWorkflows", () => {
     const defs = await loadBundledWorkflows(root);
     expect(defs).toHaveLength(1);
     expect(defs[0]).toMatchObject({ workflowId: "bundled-resume-html", title: "简历生成 (HTML)" });
-    const render = defs[0]?.graph.nodes.find((node) => node.id === "render");
+    const render = defs[0]?.definition.nodes.find((node): node is import("../../shared/workflow-v2/definition").WorkflowV2LLMNode => node.id === "render" && node.execModel === "llm");
     expect(render?.prompt).toContain("<html>{{姓名}}</html>");
     expect(render?.prompt).toContain("问题→方案→量化");
     expect(render?.prompt).not.toContain("__RESUME_TEMPLATE__");

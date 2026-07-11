@@ -87,6 +87,8 @@ import type {
 import { normalizeConfigChannelsForStorage } from "../../shared/config-channels";
 import { DEFAULT_MODEL_ID, defaultChannelForAgent, defaultModelForAgent, isModelForChannel } from "../../shared/models";
 import { createWorkflowGraphFromObjective, validateWorkflowGraph } from "../../shared/workflow-graph";
+import type { WorkflowV2Definition } from "../../shared/workflow-v2/definition";
+import { projectWorkflowV2DefinitionToLegacyCanvas } from "../../shared/workflow-v2/projection";
 import { defaultWorkflowWorkDirSuffix } from "../../shared/workflow-v2/runtime-utils";
 import { detectAgentRuntimes, resolveRuntimeExecutables } from "../agents/runtime/detect";
 import { InteractiveSessionManager } from "../agents/runtime/interactive-session-manager";
@@ -1120,7 +1122,7 @@ export class AgentHub {
    * Seed git-bundled workflow definitions into the store. Idempotent by fixed
    * workflowId: existing workflows (including user-edited copies) are left alone.
    */
-  ensureBundledWorkflows(defs: Array<{ workflowId: string; title: string; objective: string; graph: WorkflowGraph }>): void {
+  ensureBundledWorkflows(defs: Array<{ workflowId: string; title: string; objective: string; definition: WorkflowV2Definition }>): void {
     let changed = false;
     for (const def of defs) {
       if (!def.workflowId || this.workflowStore.workflows.has(def.workflowId)) continue;
@@ -1133,7 +1135,8 @@ export class AgentHub {
         configuredAgentId: "",
         modelId: "",
         objective: def.objective,
-        graph: def.graph,
+        definition: structuredClone(def.definition),
+        graph: projectWorkflowV2DefinitionToLegacyCanvas(def.definition, def.title),
         graphReady: true,
         messages: [],
         reply: "",
