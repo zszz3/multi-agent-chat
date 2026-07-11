@@ -631,61 +631,12 @@ export class WorkflowRuntime {
       return started;
     }
 
-    const validation = validateWorkflowGraph(workflow.graph);
-    if (!validation.valid) {
-      return {
-        ok: false,
-        workflowId: workflow.workflowId,
-        error: validation.errors.join(" "),
-        validation,
-      };
-    }
-    const executionLevels = workflowGraphExecutionLevels(workflow.graph);
-    if (executionLevels.length === 0) {
-      return {
-        ok: false,
-        workflowId: workflow.workflowId,
-        error: "Workflow graph has no executable agent nodes.",
-        validation,
-      };
-    }
+    return {
+      ok: false,
+      workflowId: workflow.workflowId,
+      error: "Workflow V2 plan is required. Legacy workflow execution is no longer supported.",
+    };
 
-    const initialContextDocument = input.contextDocument ?? workflow.contextDocument;
-    const started = this.deps.startWorkflowRun({
-      workflowId: workflow.workflowId,
-      contextDocument: initialContextDocument,
-    });
-    if (!started.ok || !started.runId) return started;
-    const storagePlan = workflowStoragePlanFor(workflow.workflowId, started.runId);
-    const baseWorkflowContextDocument = [initialContextDocument, workflowStoragePlanDocument(storagePlan)]
-      .map((item) => item.trim())
-      .filter(Boolean)
-      .join("\n\n");
-    this.deps.updateWorkflowRunState({
-      workflowId: workflow.workflowId,
-      runId: started.runId,
-      status: "running",
-      contextDocument: baseWorkflowContextDocument,
-    });
-
-    this.activeRuns.set(started.runId, {
-      workflowId: workflow.workflowId,
-      runId: started.runId,
-      pausedNodeIds: new Set(),
-      pausedTaskIds: new Set(),
-      gatedNodeIds: new Set(),
-      taskIdByNodeId: new Map(),
-    });
-    void this.executeRun({
-      workflow,
-      runId: started.runId,
-      executionLevels,
-      baseWorkflowContextDocument,
-    }).finally(() => {
-      const activeRun = this.activeRuns.get(started.runId!);
-      if (!activeRun || (activeRun.pausedNodeIds.size === 0 && activeRun.gatedNodeIds.size === 0)) this.activeRuns.delete(started.runId!);
-    });
-    return started;
   }
 
   async stopWorkflowRun(input: StopWorkflowRunRequest): Promise<WorkflowOperationResult> {
@@ -835,8 +786,26 @@ export class WorkflowRuntime {
     activeRun.manualPauseReasonByNodeId ??= new Map();
     activeRun.manualPauseReasonByNodeId.set(input.nodeId, reason);
     const taskId = activeRun.taskIdByNodeId.get(input.nodeId) ?? progressItem.taskId;
+    const nextProgress = input.run.progress.map((item) => item.nodeId === input.nodeId
+      ? { ...item, status: "paused" as const, detail: "Paused by user", ...(taskId ? { taskId } : {}) }
+      : item);
+    const stillRunning = nextProgress.some((item) => item.status === "running");
+    const update = {
+      workflowId: input.run.workflowId,
+      runId: input.run.runId,
+      progress: nextProgress,
+      contextDocument: input.run.contextDocument,
+      appendEvents: [{ type: "node_paused" as const, nodeId: input.nodeId, at: Date.now(), detail: reason, ...(taskId ? { taskId } : {}) }],
+      ...(input.run.finalReport ? { finalReport: input.run.finalReport } : {}),
+    };
+    if (stillRunning) {
+      this.deps.updateWorkflowRunState({ ...update, status: "running" });
+    } else {
+      this.deps.finishWorkflowRun({ ...update, status: "stopped" });
+    }
     if (taskId) await this.deps.stopTask(taskId);
     activeRun.abortControllerByNodeId?.get(input.nodeId)?.abort(new Error(reason));
+    if (!stillRunning) this.activeRuns.delete(input.run.runId);
     return { ok: true, workflowId: input.run.workflowId, runId: input.run.runId };
   }
 
@@ -849,75 +818,12 @@ export class WorkflowRuntime {
     if (run.workflowV2Plan) {
       return this.resumeWorkflowV2Node({ workflow, run, nodeId: input.nodeId, action: "continue" });
     }
-    if (run.status !== "running" && run.status !== "stopped") {
-      return { ok: false, workflowId: input.workflowId, runId: input.runId, error: "Workflow run is not resumable." };
-    }
-    const node = run.graphSnapshot.nodes.find((item) => item.id === input.nodeId && item.kind === "agent");
-    if (!node) return { ok: false, workflowId: input.workflowId, runId: input.runId, error: `Workflow node ${input.nodeId} was not found.` };
-    const progressItem = run.progress.find((item) => item.nodeId === input.nodeId);
-    if (!progressItem) return { ok: false, workflowId: input.workflowId, runId: input.runId, error: `Workflow node ${input.nodeId} was not found in this run.` };
-    if (progressItem.status === "running") return { ok: false, workflowId: input.workflowId, runId: input.runId, error: `Workflow node ${progressItem.title} is already running.` };
-    if (progressItem.status === "completed") return { ok: false, workflowId: input.workflowId, runId: input.runId, error: `Workflow node ${progressItem.title} is already completed.` };
-
-    const progressByNodeId = new Map(run.progress.map((item) => [item.nodeId, item]));
-    const blockedBy = run.graphSnapshot.edges
-      .filter((edge) => edge.toNodeId === input.nodeId)
-      .map((edge) => run.graphSnapshot.nodes.find((item) => item.id === edge.fromNodeId))
-      .filter((upstreamNode): upstreamNode is WorkflowGraphNode => Boolean(upstreamNode && upstreamNode.kind === "agent"))
-      .filter((upstreamNode) => progressByNodeId.get(upstreamNode.id)?.status !== "completed");
-    if (blockedBy.length > 0) {
-      return {
-        ok: false,
-        workflowId: input.workflowId,
-        runId: input.runId,
-        error: `Workflow node ${progressItem.title} is blocked by ${blockedBy.map((item) => item.title).join(", ")}.`,
-      };
-    }
-
-    const activeRun = this.activeRuns.get(input.runId) ?? {
+    return {
+      ok: false,
       workflowId: input.workflowId,
       runId: input.runId,
-      pausedNodeIds: new Set<string>(),
-      pausedTaskIds: new Set<string>(),
-      gatedNodeIds: new Set<string>(),
-      taskIdByNodeId: new Map<string, string>(),
+      error: "Workflow V2 plan is required. Legacy workflow execution is no longer supported.",
     };
-    this.activeRuns.set(input.runId, activeRun);
-    activeRun.pausedNodeIds.delete(input.nodeId);
-    activeRun.taskIdByNodeId.delete(input.nodeId);
-
-    const nextProgress = run.progress.map((item) => {
-      if (item.nodeId !== input.nodeId) return item;
-      const next: WorkflowRunProgressItem = {
-        ...item,
-        status: "queued",
-        detail: "Queued",
-      };
-      delete next.taskId;
-      return next;
-    });
-    this.deps.updateWorkflowRunState({
-      workflowId: input.workflowId,
-      runId: input.runId,
-      status: "running",
-      progress: nextProgress,
-      appendEvents: [{ type: "node_ready", nodeId: input.nodeId, at: Date.now() }],
-      contextDocument: run.contextDocument,
-      ...(run.finalReport ? { finalReport: run.finalReport } : {}),
-    });
-
-    const executionLevels = workflowGraphExecutionLevels(run.graphSnapshot);
-    void this.executeRun({
-      workflow: { ...workflow, graph: run.graphSnapshot },
-      runId: input.runId,
-      executionLevels,
-      baseWorkflowContextDocument: run.contextDocument,
-      initialProgress: nextProgress,
-    }).finally(() => {
-      const currentActiveRun = this.activeRuns.get(input.runId);
-      if (!currentActiveRun || (currentActiveRun.pausedNodeIds.size === 0 && currentActiveRun.gatedNodeIds.size === 0)) this.activeRuns.delete(input.runId);
-    });
-    return { ok: true, workflowId: input.workflowId, runId: input.runId };
   }
 
   async resolveWorkflowV2Intervention(
@@ -1290,68 +1196,12 @@ export class WorkflowRuntime {
         reason: answer,
       });
     }
-    if (run.status !== "running" && run.status !== "stopped") {
-      return { ok: false, workflowId: input.workflowId, runId: input.runId, error: "Workflow run is not resumable." };
-    }
-    const node = run.graphSnapshot.nodes.find((item) => item.id === input.nodeId && item.kind === "agent");
-    if (!node) return { ok: false, workflowId: input.workflowId, runId: input.runId, error: `Workflow node ${input.nodeId} was not found.` };
-    const progressItem = run.progress.find((item) => item.nodeId === input.nodeId);
-    if (!progressItem) return { ok: false, workflowId: input.workflowId, runId: input.runId, error: `Workflow node ${input.nodeId} was not found in this run.` };
-    if (progressItem.status !== "awaiting_input") {
-      return { ok: false, workflowId: input.workflowId, runId: input.runId, error: `Workflow node ${progressItem.title} is not waiting for input.` };
-    }
-    const answer = input.answer.trim();
-    if (!answer) return { ok: false, workflowId: input.workflowId, runId: input.runId, error: "A gate answer is required." };
-
-    const question = [...run.events].reverse().find((event) => event.type === "gate_opened" && event.nodeId === input.nodeId)?.question ?? "";
-    const humanDecision = [`## Human decision - ${node.title}`, question ? `Question: ${question}` : "", `Answer: ${answer}`]
-      .filter(Boolean)
-      .join("\n");
-    const nextContextDocument = [run.contextDocument.trim(), humanDecision].filter(Boolean).join("\n\n");
-
-    const activeRun = this.activeRuns.get(input.runId) ?? {
+    return {
+      ok: false,
       workflowId: input.workflowId,
       runId: input.runId,
-      pausedNodeIds: new Set<string>(),
-      pausedTaskIds: new Set<string>(),
-      gatedNodeIds: new Set<string>(),
-      taskIdByNodeId: new Map<string, string>(),
+      error: "Workflow V2 plan is required. Legacy workflow execution is no longer supported.",
     };
-    this.activeRuns.set(input.runId, activeRun);
-    activeRun.gatedNodeIds.delete(input.nodeId);
-    activeRun.taskIdByNodeId.delete(input.nodeId);
-
-    const nextProgress = run.progress.map((item) => {
-      if (item.nodeId !== input.nodeId) return item;
-      const next: WorkflowRunProgressItem = { ...item, status: "queued", detail: "Resuming after human decision" };
-      delete next.taskId;
-      return next;
-    });
-    this.deps.updateWorkflowRunState({
-      workflowId: input.workflowId,
-      runId: input.runId,
-      status: "running",
-      progress: nextProgress,
-      appendEvents: [
-        { type: "gate_answered", nodeId: input.nodeId, at: Date.now(), answer },
-        { type: "node_ready", nodeId: input.nodeId, at: Date.now() },
-      ],
-      contextDocument: nextContextDocument,
-      ...(run.finalReport ? { finalReport: run.finalReport } : {}),
-    });
-
-    const executionLevels = workflowGraphExecutionLevels(run.graphSnapshot);
-    void this.executeRun({
-      workflow: { ...workflow, graph: run.graphSnapshot },
-      runId: input.runId,
-      executionLevels,
-      baseWorkflowContextDocument: nextContextDocument,
-      initialProgress: nextProgress,
-    }).finally(() => {
-      const currentActiveRun = this.activeRuns.get(input.runId);
-      if (!currentActiveRun || (currentActiveRun.pausedNodeIds.size === 0 && currentActiveRun.gatedNodeIds.size === 0)) this.activeRuns.delete(input.runId);
-    });
-    return { ok: true, workflowId: input.workflowId, runId: input.runId };
   }
 
   private async executeWorkflowV2Run(input: {

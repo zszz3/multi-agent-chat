@@ -59,7 +59,7 @@ export interface BuildWorkflowV2GraphRevisionRequest {
   now?: number;
 }
 
-export async function buildWorkflowV2Plan(input: BuildWorkflowV2PlanRequest): Promise<WorkflowV2Plan> {
+export function buildWorkflowV2PlanSync(input: BuildWorkflowV2PlanRequest): WorkflowV2Plan {
   const validation = validateWorkflowV2Definition(input.definition);
   if (!validation.valid) {
     throw new WorkflowV2PlanBuildError("Workflow V2 definition is not plannable.", {
@@ -192,6 +192,10 @@ export async function buildWorkflowV2Plan(input: BuildWorkflowV2PlanRequest): Pr
     nodes,
     budget,
   };
+}
+
+export async function buildWorkflowV2Plan(input: BuildWorkflowV2PlanRequest): Promise<WorkflowV2Plan> {
+  return buildWorkflowV2PlanSync(input);
 }
 
 export function buildWorkflowV2GraphRevision(input: BuildWorkflowV2GraphRevisionRequest): WorkflowV2GraphRevision {

@@ -919,7 +919,7 @@ describe("WorkflowRuntime Workflow V2 bridge", () => {
     expect(finished.status).toBe("stopped");
     expect(finished.progress).toContainEqual(expect.objectContaining({ nodeId: "draft", status: "paused" }));
     expect(fixture.stopTaskIds).toEqual(["task-1"]);
-    expect(fixture.updates.flatMap((update) => update.appendEvents ?? [])).toContainEqual(
+    expect(finished.appendEvents).toContainEqual(
       expect.objectContaining({ type: "node_paused", nodeId: "draft" }),
     );
   });

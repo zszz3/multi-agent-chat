@@ -119,6 +119,7 @@ import { WorkflowV2ConversationManager } from "../workflows/v2/workflow-v2-conve
 import {
   buildWorkflowV2GraphRevision as buildWorkflowV2GraphRevisionValue,
   buildWorkflowV2Plan as buildWorkflowV2PlanValue,
+  buildWorkflowV2PlanSync,
   WorkflowV2PlanBuildError,
 } from "../workflows/v2/workflow-v2-planner";
 import { executeWorkflowV2ScriptWithPolicy } from "../workflows/v2/workflow-v2-script-policy";
@@ -1084,9 +1085,24 @@ export class AgentHub {
     const validation = validateWorkflowGraph(input.graph);
     if (!validation.valid) return { ok: false, error: validation.errors[0] ?? "Workflow graph is invalid.", validation };
     const workflowId = `wf_${randomUUID()}`;
+    const definition = input.definition
+      ? { ...structuredClone(input.definition), workflowId, objective: input.objective.trim() || input.definition.objective }
+      : undefined;
+    let workflowV2Plan = input.workflowV2Plan;
+    if (definition && !workflowV2Plan) {
+      try {
+        workflowV2Plan = buildWorkflowV2PlanSync({ definition, approvedBy: "workflow-manager" });
+      } catch (error) {
+        return { ok: false, error: error instanceof Error ? error.message : "Workflow V2 plan build failed." };
+      }
+    }
     const workflow = createWorkflowDraftStateValue({
       workflowId,
-      request: input,
+      request: {
+        ...input,
+        ...(definition ? { definition } : {}),
+        ...(workflowV2Plan ? { workflowV2Plan } : {}),
+      },
       configuredAgentId: this.normalizeWorkflowConfiguredAgentId(input.configuredAgentId),
       modelId: this.normalizeModelIdForConfiguredAgent(input.configuredAgentId, input.modelId),
       cloneDraft: (draft) => this.cloneWorkflowDraft(draft),

@@ -2969,6 +2969,9 @@ fs.writeFileSync(${JSON.stringify(argsPath)}, process.argv.slice(2).join("\\n") 
     expect(next.workflowDraft?.definition?.nodes).toEqual([
       expect.objectContaining({ id: "plan", executionMode: "interactive" }),
     ]);
+    expect(next.workflowDraft?.workflowV2Plan?.nodes).toEqual([
+      expect.objectContaining({ nodeId: "plan", executionMode: "interactive" }),
+    ]);
     expect(next.workflowStore.workflows.some((workflow) => workflow.workflowId === sourceWorkflowId)).toBe(false);
 
     const calls = (await readFile(fake.callsPath, "utf8")).trim().split("\n").map((line) => JSON.parse(line) as any);
@@ -4851,6 +4854,16 @@ fs.writeFileSync(${JSON.stringify(argsPath)}, process.argv.slice(2).join("\\n") 
     const created = (hub as any).createWorkflow({
       title: "Pausable workflow",
       objective: "Pause one node",
+      definition: {
+        workflowId: "wf_pausable",
+        graphVersion: 1,
+        objective: "Pause one node",
+        nodes: [
+          { id: "work", kind: "implementation", title: "Work", execModel: "llm", executionMode: "one-shot", prompt: "Do the work.", outputFields: [{ key: "result", required: true }] },
+          { id: "followup", kind: "implementation", title: "Follow up", execModel: "llm", executionMode: "one-shot", prompt: "Use the work output.", outputFields: [{ key: "result", required: true }] },
+        ],
+        edges: [{ fromNodeId: "work", toNodeId: "followup" }],
+      },
       graph: {
         title: "Pausable workflow",
         objective: "Pause one node",
@@ -4896,6 +4909,8 @@ fs.writeFileSync(${JSON.stringify(argsPath)}, process.argv.slice(2).join("\\n") 
   });
 
   test("starts a paused workflow node and continues downstream execution", async () => {
+    const dir = await mkdtemp(path.join(os.tmpdir(), "multi-agent-chat-workflow-v2-resume-"));
+    const storagePath = path.join(dir, "app-state.json");
     const contexts: AgentExecutionContext[] = [];
     let stopCount = 0;
     let hangingStarted = false;
@@ -4904,20 +4919,16 @@ fs.writeFileSync(${JSON.stringify(argsPath)}, process.argv.slice(2).join("\\n") 
       {
         create: (context) => {
           contexts.push(context);
-          const countsAsPauseStop = !hangingStarted && context.prompt.includes("Current node: Work");
+          const countsAsPauseStop = !hangingStarted && context.prompt === "Do the work.";
           return {
             start: async () => {
-              if (!hangingStarted && context.prompt.includes("Current node: Work")) {
+              if (!hangingStarted && context.prompt === "Do the work.") {
                 hangingStarted = true;
                 return new Promise<void>(() => undefined);
               }
-              const content = context.prompt.includes("workflow judge")
-                ? 'workflowEvaluation.submit({ complete: true, reason: "approved", retryPrompt: "" })'
-                : context.prompt.includes("main workflow agent")
-                  ? "## Final User Report\nResumed workflow completed."
-                  : context.prompt.includes("Current node: Follow up")
-                    ? "### Work Completion Report\nFollow-up finished.\n\n### Handoff\nDone."
-                    : "### Work Completion Report\nWork finished after resume.\n\n### Handoff\nReady.";
+              const content = context.prompt === "Use the work output."
+                ? JSON.stringify({ nodeId: "followup", summary: "Follow-up finished.", outputs: { result: "done" }, proposals: [] })
+                : JSON.stringify({ nodeId: "work", summary: "Work finished after resume.", outputs: { result: "ready" }, proposals: [] });
               context.emit({ type: "completed", content });
             },
             stop: async () => {
@@ -4934,9 +4945,20 @@ fs.writeFileSync(${JSON.stringify(argsPath)}, process.argv.slice(2).join("\\n") 
       version: "test",
       available: true,
     });
+    await hub.loadPersistedState(storagePath);
     const created = (hub as any).createWorkflow({
       title: "Resume node workflow",
       objective: "Resume one node",
+      definition: {
+        workflowId: "wf_resume_node",
+        graphVersion: 1,
+        objective: "Resume one node",
+        nodes: [
+          { id: "work", kind: "implementation", title: "Work", execModel: "llm", executionMode: "one-shot", prompt: "Do the work.", outputFields: [{ key: "result", required: true }] },
+          { id: "followup", kind: "implementation", title: "Follow up", execModel: "llm", executionMode: "one-shot", prompt: "Use the work output.", outputFields: [{ key: "result", required: true }] },
+        ],
+        edges: [{ fromNodeId: "work", toNodeId: "followup" }],
+      },
       graph: {
         title: "Resume node workflow",
         objective: "Resume one node",
@@ -4979,25 +5001,21 @@ fs.writeFileSync(${JSON.stringify(argsPath)}, process.argv.slice(2).join("\\n") 
     const run = snapshot.workflowStore.runs.find((item: any) => item.runId === started.runId);
     expect(run).toMatchObject({
       status: "completed",
-      finalReport: "## Final User Report\nResumed workflow completed.",
+      finalReport: expect.stringContaining("Status: completed"),
     });
     expect(run.progress).toEqual([
       expect.objectContaining({ nodeId: "work", status: "completed" }),
       expect.objectContaining({ nodeId: "followup", status: "completed" }),
-      expect.objectContaining({ nodeId: "__final_review__", status: "completed" }),
     ]);
     expect(stopCount).toBe(1);
-    expect(contexts.map((context) => (context.prompt.includes("workflow judge") ? "judge" : context.prompt.includes("main workflow agent") ? "final" : context.prompt.includes("Current node: Follow up") ? "followup" : "work"))).toEqual([
+    expect(contexts.map((context) => context.prompt === "Use the work output." ? "followup" : "work")).toEqual([
       "work",
       "work",
-      "judge",
       "followup",
-      "judge",
-      "final",
     ]);
   });
 
-  test("opens a human gate when a node asks, then resumes with the answer in context", async () => {
+  test("keeps an interactive node paused when its runtime cannot provide a persistent conversation", async () => {
     const contexts: AgentExecutionContext[] = [];
     const hub = new AgentHub(
       { codex: "codex-for-test", claude: "missing-claude-for-test" },
@@ -5006,14 +5024,7 @@ fs.writeFileSync(${JSON.stringify(argsPath)}, process.argv.slice(2).join("\\n") 
           contexts.push(context);
           return {
             start: async () => {
-              const content = context.prompt.includes("workflow judge")
-                ? 'workflowEvaluation.submit({ complete: true, reason: "approved", retryPrompt: "" })'
-                : context.prompt.includes("main workflow agent")
-                  ? "## Final User Report\nGated workflow completed."
-                  : context.prompt.includes("Current node: Work") && !context.prompt.includes("Human decision")
-                    ? 'I need a human decision.\nworkflowGate.ask("Deploy to prod or staging?")'
-                    : "### Work Completion Report\nWork finished after human decision.\n\n### Handoff\nReady.";
-              context.emit({ type: "completed", content });
+              context.emit({ type: "completed", content: "Persistent interactive session unavailable." });
             },
             stop: async () => undefined,
           };
@@ -5030,6 +5041,15 @@ fs.writeFileSync(${JSON.stringify(argsPath)}, process.argv.slice(2).join("\\n") 
     const created = (hub as any).createWorkflow({
       title: "Gate workflow",
       objective: "Ask a human when needed",
+      definition: {
+        workflowId: "wf_gate",
+        graphVersion: 1,
+        objective: "Ask a human when needed",
+        nodes: [
+          { id: "work", kind: "implementation", title: "Work", execModel: "llm", executionMode: "interactive", prompt: "Ask the user which environment to deploy to, then finish the work.", outputFields: [{ key: "result", required: true }] },
+        ],
+        edges: [],
+      },
       graph: {
         title: "Gate workflow",
         objective: "Ask a human when needed",
@@ -5046,46 +5066,20 @@ fs.writeFileSync(${JSON.stringify(argsPath)}, process.argv.slice(2).join("\\n") 
     });
     const started = (hub as any).runWorkflowGraph({ workflowId: created.workflowId });
 
-    const gatedSnapshot = await waitFor(
+    const pausedSnapshot = await waitFor(
       () => hub.snapshot() as any,
       (value) =>
         value.workflowStore.runs.some(
-          (run: any) => run.runId === started.runId && run.progress.some((item: any) => item.nodeId === "work" && item.status === "awaiting_input"),
+          (run: any) => run.runId === started.runId && run.progress.some((item: any) => item.nodeId === "work" && item.status === "paused"),
         ),
     );
-    const gatedRun = gatedSnapshot.workflowStore.runs.find((item: any) => item.runId === started.runId);
-    expect(gatedRun.status).toBe("running");
-    expect(gatedRun.progress.find((item: any) => item.nodeId === "work")).toMatchObject({
-      status: "awaiting_input",
-      detail: "Deploy to prod or staging?",
+    const pausedRun = pausedSnapshot.workflowStore.runs.find((item: any) => item.runId === started.runId);
+    expect(pausedRun.status).toBe("stopped");
+    expect(pausedRun.progress.find((item: any) => item.nodeId === "work")).toMatchObject({
+      status: "paused",
     });
-    // Gate must not run the final review while waiting for the human.
-    expect(gatedRun.progress.some((item: any) => item.nodeId === "__final_review__")).toBe(false);
-    expect(gatedRun.events.some((event: any) => event.type === "gate_opened" && event.nodeId === "work" && event.question === "Deploy to prod or staging?")).toBe(true);
-
-    expect(typeof (hub as any).answerWorkflowGate).toBe("function");
-    const answered = await (hub as any).answerWorkflowGate({
-      workflowId: created.workflowId,
-      runId: started.runId,
-      nodeId: "work",
-      answer: "staging",
-    });
-    expect(answered).toMatchObject({ ok: true });
-
-    const doneSnapshot = await waitFor(
-      () => hub.snapshot() as any,
-      (value) => value.workflowStore.runs.some((run: any) => run.runId === started.runId && run.status === "completed"),
-    );
-    const doneRun = doneSnapshot.workflowStore.runs.find((item: any) => item.runId === started.runId);
-    expect(doneRun).toMatchObject({ status: "completed", finalReport: "## Final User Report\nGated workflow completed." });
-    expect(doneRun.progress.find((item: any) => item.nodeId === "work")).toMatchObject({ status: "completed" });
-    expect(doneRun.events.some((event: any) => event.type === "gate_answered" && event.nodeId === "work" && event.answer === "staging")).toBe(true);
-    // The resumed work run must see the human decision in its prompt context.
-    const resumedWorkPrompt = contexts
-      .map((context) => context.prompt)
-      .filter((prompt) => prompt.includes("Current node: Work") && prompt.includes("Human decision"))
-      .at(-1);
-    expect(resumedWorkPrompt).toContain("staging");
+    expect(pausedRun.events.some((event: any) => event.type === "node_paused" && event.nodeId === "work")).toBe(true);
+    expect(contexts).toHaveLength(0);
   });
 
   test("persists scheduled workflow config, schedules, and run history", async () => {
@@ -5234,6 +5228,15 @@ fs.writeFileSync(${JSON.stringify(argsPath)}, process.argv.slice(2).join("\\n") 
     const created = (hub as any).createWorkflow({
       title: "Scheduled workflow",
       objective: "Run from scheduled event",
+      definition: {
+        workflowId: "wf_scheduled",
+        graphVersion: 1,
+        objective: "Run from scheduled event",
+        nodes: [
+          { id: "work", kind: "implementation", title: "Work", execModel: "llm", executionMode: "one-shot", prompt: "Do the scheduled work.", outputFields: [{ key: "result", required: true }] },
+        ],
+        edges: [],
+      },
       graph: {
         title: "Scheduled workflow",
         objective: "Run from scheduled event",
@@ -5285,7 +5288,7 @@ fs.writeFileSync(${JSON.stringify(argsPath)}, process.argv.slice(2).join("\\n") 
     expect(snapshot.workflowStore.runs.find((run: any) => run.runId === snapshot.scheduledWorkflowStore.runs[0].workflowRunId)).toMatchObject({
       workflowId: created.workflowId,
       status: "completed",
-      finalReport: "## Final User Report\nScheduled workflow completed.",
+      finalReport: expect.stringContaining("Status: completed"),
     });
     expect(ackEvent).toHaveBeenCalledTimes(1);
     expect(ackEvent).toHaveBeenCalledWith("event_1", expect.objectContaining({
@@ -5293,11 +5296,7 @@ fs.writeFileSync(${JSON.stringify(argsPath)}, process.argv.slice(2).join("\\n") 
       workflowRunId: snapshot.scheduledWorkflowStore.runs[0].workflowRunId,
       message: "Workflow completed.",
     }));
-    expect(contexts.map((context) => (context.prompt.includes("workflow judge") ? "judge" : context.prompt.includes("main workflow agent") ? "final" : "work"))).toEqual([
-      "work",
-      "judge",
-      "final",
-    ]);
+    expect(contexts).toHaveLength(1);
   });
 
   test("rejects schedules for missing workflows", () => {
