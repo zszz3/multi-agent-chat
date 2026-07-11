@@ -5,8 +5,8 @@ import type {
   ScheduledWorkflowSchedule,
   ScheduledWorkflowStoreState,
   WorkflowDraftState,
-  WorkflowGraphNode,
 } from "../../../../shared/types";
+import type { WorkflowV2Node } from "../../../../shared/workflow-v2/definition";
 import { formatTime } from "../../app/format";
 import type { Language } from "../../app/language";
 import { WorkflowCanvasBoard } from "../workflow/WorkflowCanvasBoard";
@@ -376,19 +376,24 @@ export function ScheduledWorkflowPage({
 
 function ScheduledWorkflowGraphPreview({ workflow, language }: { workflow: WorkflowDraftState; language: Language }) {
   const zh = language === "zh";
-  const renderScheduleNodeCard = (node: WorkflowGraphNode): ReactElement => (
-    <article className={`scheduled-workflow-node workflow-graph-card workflow-canvas-node-card is-${node.kind}`}>
+  const definition = workflow.workflowV2Plan?.definition ?? workflow.definition;
+  const renderScheduleNodeCard = (node: WorkflowV2Node): ReactElement => (
+    <article className={`scheduled-workflow-node workflow-graph-card workflow-canvas-node-card is-${node.execModel}`}>
       <div className="workflow-graph-card-head">
-        <span>{node.kind}</span>
+        <span>{node.execModel}</span>
         <strong>{node.title}</strong>
       </div>
     </article>
   );
 
+  if (!definition) {
+    return <div className="empty-state config-empty">{zh ? "?????????? V2 ???" : "This workflow has no executable V2 plan."}</div>;
+  }
+
   return (
     <div className="scheduled-workflow-detail">
-      <div aria-label={zh ? "Workflow 图详情" : "Workflow graph detail"}>
-        <WorkflowCanvasBoard graph={workflow.graph} className="scheduled-workflow-graph" renderNodeCard={renderScheduleNodeCard} />
+      <div aria-label={zh ? "Workflow ???" : "Workflow graph detail"}>
+        <WorkflowCanvasBoard definition={definition} className="scheduled-workflow-graph" renderNodeCard={renderScheduleNodeCard} />
       </div>
     </div>
   );

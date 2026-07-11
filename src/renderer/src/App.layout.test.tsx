@@ -3291,61 +3291,33 @@ describe("WorkflowPage", () => {
     expect(html).toContain("Run Graph");
   });
 
-  test("lays out workflow graphs on a two-dimensional canvas with parallel node groups", () => {
-    const parallelGraph: WorkflowGraph = {
-      title: "Parallel review",
+  test("lays out workflow V2 definitions on a two-dimensional canvas with parallel node groups", () => {
+    const definition = {
+      workflowId: "parallel-review",
+      graphVersion: 1,
       objective: "Review release in parallel",
       nodes: [
-        { id: "start", kind: "start", title: "Start", prompt: "" },
-        { id: "inventory", kind: "agent", title: "Inventory", prompt: "Map repo."},
-        { id: "security", kind: "agent", title: "Security", prompt: "Review security."},
-        { id: "testing", kind: "agent", title: "Testing", prompt: "Review tests."},
-        { id: "writer", kind: "agent", title: "Writer", prompt: "Synthesize results."},
-        { id: "end", kind: "end", title: "Done", prompt: "" },
+        { id: "inventory", kind: "inventory", title: "Inventory", execModel: "llm" as const, executionMode: "one-shot" as const, prompt: "Map repo.", outputFields: [] },
+        { id: "security", kind: "security", title: "Security", execModel: "llm" as const, executionMode: "one-shot" as const, prompt: "Review security.", outputFields: [] },
+        { id: "testing", kind: "testing", title: "Testing", execModel: "llm" as const, executionMode: "one-shot" as const, prompt: "Review tests.", outputFields: [] },
+        { id: "writer", kind: "writer", title: "Writer", execModel: "llm" as const, executionMode: "one-shot" as const, prompt: "Synthesize results.", outputFields: [] },
       ],
       edges: [
-        { id: "start->inventory", fromNodeId: "start", toNodeId: "inventory" },
-        { id: "inventory->security", fromNodeId: "inventory", toNodeId: "security" },
-        { id: "inventory->testing", fromNodeId: "inventory", toNodeId: "testing" },
-        { id: "security->writer", fromNodeId: "security", toNodeId: "writer" },
-        { id: "testing->writer", fromNodeId: "testing", toNodeId: "writer" },
-        { id: "writer->end", fromNodeId: "writer", toNodeId: "end" },
+        { fromNodeId: "inventory", toNodeId: "security" },
+        { fromNodeId: "inventory", toNodeId: "testing" },
+        { fromNodeId: "security", toNodeId: "writer" },
+        { fromNodeId: "testing", toNodeId: "writer" },
       ],
     };
-    const layout = workflowCanvasLayout(parallelGraph);
+    const layout = workflowCanvasLayout(definition);
     const byId = new Map(layout.nodes.map((node) => [node.node.id, node]));
 
-    expect(byId.get("start")!.x).toBeLessThan(byId.get("inventory")!.x);
     expect(byId.get("inventory")!.x).toBeLessThan(byId.get("security")!.x);
     expect(byId.get("testing")!.x).toBe(byId.get("security")!.x);
     expect(byId.get("testing")!.y).toBeGreaterThan(byId.get("security")!.y);
-    // long flows wrap onto additional rows instead of one wide line
-    expect(byId.get("writer")!.y).toBeGreaterThan(byId.get("security")!.y);
-    expect(byId.get("writer")!.x).toBeLessThan(byId.get("security")!.x);
-    expect(byId.get("end")!.y).toBeGreaterThan(byId.get("start")!.y);
-    expect(layout.edges).toHaveLength(6);
+    expect(byId.get("writer")!.x).toBeGreaterThan(byId.get("security")!.x);
+    expect(layout.edges).toHaveLength(4);
     expect(layout.width).toBeLessThan(900);
-  });
-
-  test("pins workflow nodes to their explicit position when set", () => {
-    const graph: WorkflowGraph = {
-      title: "Pinned",
-      objective: "Pin one node",
-      nodes: [
-        { id: "start", kind: "start", title: "Start", prompt: "" },
-        { id: "plan", kind: "agent", title: "Plan", prompt: "Plan.", position: { x: 999, y: 777 } },
-        { id: "end", kind: "end", title: "Done", prompt: "" },
-      ],
-      edges: [
-        { id: "start->plan", fromNodeId: "start", toNodeId: "plan" },
-        { id: "plan->end", fromNodeId: "plan", toNodeId: "end" },
-      ],
-    };
-    const byId = new Map(workflowCanvasLayout(graph).nodes.map((node) => [node.node.id, node]));
-    expect(byId.get("plan")!.x).toBe(999);
-    expect(byId.get("plan")!.y).toBe(777);
-    // nodes without an explicit position still auto-layout
-    expect(byId.get("start")!.x).not.toBe(999);
   });
 
   test("renders workflow graphs as a pannable canvas with parallel node groups", () => {

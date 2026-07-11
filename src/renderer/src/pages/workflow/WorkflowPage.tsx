@@ -2,7 +2,8 @@ import { useEffect, useRef, useState, type MouseEvent, type ReactElement } from 
 import { Bot, CircleStop, FileInput, GitBranch, Maximize2, Play, Send, Wand2, X } from "lucide-react";
 import { DEFAULT_MODEL_ID } from "../../../../shared/models";
 import { WORKFLOW_TOTAL_QUESTION_COUNT } from "../../../../shared/workflow-agent";
-import { validateWorkflowGraph } from "../../../../shared/workflow-graph";
+import { validateWorkflowV2Definition } from "../../../../shared/workflow-v2/validation";
+import type { WorkflowV2Node } from "../../../../shared/workflow-v2/definition";
 import type {
   AgentChannel,
   AgentRuntime,
@@ -258,7 +259,8 @@ export function WorkflowPage(props: WorkflowPageProps) {
   const language = source.language ?? "en";
   const defaultGraphExpanded = source.defaultGraphExpanded ?? false;
   const workflowText = WORKFLOW_TEXT[language];
-  const validation = validateWorkflowGraph(graph);
+  const definition = workflowV2Plan?.definition;
+  const validation = definition ? validateWorkflowV2Definition(definition) : { valid: false, errors: ["Workflow V2 plan is required."], warnings: [], topologicalNodeIds: [] };
   const workflowStarted = messages.length > 0;
   const grillComplete = Math.max(0, messages.filter((message) => message.role === "user").length - 1) >= WORKFLOW_TOTAL_QUESTION_COUNT;
   const runtimeMap = new Map(runtimes.map((runtime) => [runtime.id, runtime]));
@@ -390,26 +392,26 @@ export function WorkflowPage(props: WorkflowPageProps) {
     }
   }
 
-  function renderWorkflowNodeCard(node: WorkflowGraphNode, compact: boolean): ReactElement {
+  function renderWorkflowNodeCard(node: WorkflowV2Node, compact: boolean): ReactElement {
     const nodeRunProgress = runProgressByNodeId.get(node.id);
-    const nodeAgentId = node.configuredAgentId || configuredAgentId;
+    const nodeAgentId = configuredAgentId;
     const nodeAgentConfig = configuredAgentById(nodeAgentId, configuredAgents);
     const nodeAgentName = nodeAgentConfig?.name || nodeAgentId || "default";
-    const nodeModelId = node.modelId || (node.configuredAgentId ? nodeAgentConfig?.modelId : modelId) || modelId;
+    const nodeModelId = node.execModel === "llm" ? node.modelProfile ?? modelId : "script";
     const nodeAgentRow =
-      node.kind === "agent" ? (
+      node.execModel === "llm" ? (
         <div className="workflow-node-agent-row" title={`Agent: ${nodeAgentName} · Model: ${nodeModelId}`}>
           <span className="workflow-node-agent-name">{nodeAgentName}</span>
           <span className="workflow-node-agent-model">{nodeModelId}</span>
         </div>
       ) : null;
 
-    const NodeKindIcon = node.kind === "start" ? Play : node.kind === "end" ? CircleStop : Bot;
+    const NodeKindIcon = node.execModel === "script" ? FileInput : Bot;
     const openNodeEditor = (event: MouseEvent) => {
       event.preventDefault();
       event.stopPropagation();
-      const executionMode = workflowV2Plan?.nodes.find((candidate) => candidate.nodeId === node.id)?.executionMode;
-      if (node.kind === "agent" && (Boolean(activeRunId) || executionMode === "interactive" || nodeConversations.some((candidate) => candidate.nodeId === node.id))) {
+      const executionMode = node.executionMode ?? workflowV2Plan?.nodes.find((candidate) => candidate.nodeId === node.id)?.executionMode;
+      if (node.execModel === "llm" && (Boolean(activeRunId) || executionMode === "interactive" || nodeConversations.some((candidate) => candidate.nodeId === node.id))) {
         setOpenNodeAgentNodeId(node.id);
         return;
       }
@@ -417,11 +419,11 @@ export function WorkflowPage(props: WorkflowPageProps) {
     };
     const cardHead = (
       <div className="workflow-graph-card-head">
-        <span className="workflow-node-type-icon" data-kind={node.kind} aria-hidden="true">
+        <span className="workflow-node-type-icon" data-kind={node.execModel} aria-hidden="true">
           <NodeKindIcon size={15} strokeWidth={2.2} />
         </span>
         <div className="workflow-graph-card-headings">
-          <span className="workflow-node-type-label">{node.kind}</span>
+          <span className="workflow-node-type-label">{node.execModel}</span>
           <strong>{node.title}</strong>
         </div>
         {nodeRunProgress ? <em className={`workflow-node-run-pill is-${nodeRunProgress.status}`}>{workflowRunStatusLabel(nodeRunProgress.status)}</em> : null}
@@ -431,7 +433,7 @@ export function WorkflowPage(props: WorkflowPageProps) {
     if (compact) {
       return (
         <article
-          className={`workflow-graph-card workflow-canvas-node-card is-${node.kind} ${nodeRunProgress ? `run-${nodeRunProgress.status}` : ""}`}
+          className={`workflow-graph-card workflow-canvas-node-card is-${node.execModel} ${nodeRunProgress ? `run-${nodeRunProgress.status}` : ""}`}
           onClick={openNodeEditor}
           onContextMenu={openNodeEditor}
           title="Click to view details"
@@ -445,7 +447,7 @@ export function WorkflowPage(props: WorkflowPageProps) {
 
     return (
       <article
-        className={`workflow-graph-card workflow-canvas-node-card workflow-expanded-node-card is-${node.kind} ${nodeRunProgress ? `run-${nodeRunProgress.status}` : ""}`}
+        className={`workflow-graph-card workflow-canvas-node-card workflow-expanded-node-card is-${node.execModel} ${nodeRunProgress ? `run-${nodeRunProgress.status}` : ""}`}
         onClick={openNodeEditor}
         onContextMenu={openNodeEditor}
         title="Click to view details"
@@ -549,7 +551,7 @@ export function WorkflowPage(props: WorkflowPageProps) {
             <span className={`agent-badge mini ${agentAccent(workflowRuntimeId)}`} title={workflowConfigTitle}>
               {workflowConfiguredAgent?.name || agentLabel(workflowRuntimeId)}
             </span>
-            <span>{graphVisible ? `${validation.executableNodeIds.length} ${workflowText.executableNodes}` : status}</span>
+            <span>{graphVisible ? `${definition?.nodes.length ?? 0} ${workflowText.executableNodes}` : status}</span>
             <button
               type="button"
               className="workflow-workdir-button"
@@ -645,11 +647,11 @@ export function WorkflowPage(props: WorkflowPageProps) {
                 <button className="workflow-graph-close icon-btn" onClick={() => setGraphExpanded(false)} title="Close graph board" aria-label="Close workflow graph board">
                   <X size={15} />
                 </button>
-                <WorkflowCanvasBoard graph={graph} expanded {...nodePositionProps} renderNodeCard={(node) => renderWorkflowNodeCard(node, false)} />
+                {definition ? <WorkflowCanvasBoard definition={definition} expanded renderNodeCard={(node) => renderWorkflowNodeCard(node, false)} /> : null}
                 {editingWorkflowNode ? renderWorkflowNodeEditor(editingWorkflowNode) : null}
               </>
             ) : (
-              <WorkflowCanvasBoard graph={graph} runProgressByNodeId={runProgressByNodeId} onExpand={() => setGraphExpanded(true)} {...nodePositionProps} renderNodeCard={(node) => renderWorkflowNodeCard(node, true)} />
+              definition ? <WorkflowCanvasBoard definition={definition} runProgressByNodeId={runProgressByNodeId} onExpand={() => setGraphExpanded(true)} renderNodeCard={(node) => renderWorkflowNodeCard(node, true)} /> : null
             )}
             {runProgressVisible ? (
               <section className="workflow-run-progress" aria-label={workflowText.runProgress}>
