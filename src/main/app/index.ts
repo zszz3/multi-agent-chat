@@ -32,6 +32,10 @@ import type {
   CreateScheduledWorkflowScheduleRequest,
   CreateAgentTeamRequest,
   FinishWorkflowRunRequest,
+  CompleteWorkflowNodeConversationRequest,
+  InterruptWorkflowNodeConversationRequest,
+  RejectWorkflowNodeCompletionRequest,
+  SendWorkflowNodeMessageRequest,
   ImportOnlineSkillRequest,
   InstallSkillRequest,
   PatchWorkflowDraftRequest,
@@ -427,6 +431,10 @@ function registerIpcHandlers(): void {
   ipcMain.handle("workflow-v2:intervention:resolve", (_event, request: ResolveWorkflowV2InterventionRequest) =>
     hub.resolveWorkflowV2Intervention(request),
   );
+  ipcMain.handle("workflow-node-conversation:send", (_event, request: SendWorkflowNodeMessageRequest) => hub.sendWorkflowNodeMessage(request));
+  ipcMain.handle("workflow-node-conversation:complete", (_event, request: CompleteWorkflowNodeConversationRequest) => hub.completeWorkflowNodeConversation(request));
+  ipcMain.handle("workflow-node-conversation:reject", (_event, request: RejectWorkflowNodeCompletionRequest) => hub.rejectWorkflowNodeCompletion(request));
+  ipcMain.handle("workflow-node-conversation:interrupt", (_event, request: InterruptWorkflowNodeConversationRequest) => hub.interruptWorkflowNodeConversation(request));
   ipcMain.handle("workflow-run:start-node", (_event, request: StartWorkflowNodeRequest) => hub.startWorkflowNode(request));
   ipcMain.handle("workflow-run:answer-gate", (_event, request: AnswerWorkflowGateRequest) => hub.answerWorkflowGate(request));
   ipcMain.handle("workflow-run:start", (_event, request: StartWorkflowRunRequest) => {

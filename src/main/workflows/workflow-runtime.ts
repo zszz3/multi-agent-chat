@@ -17,6 +17,7 @@ import type {
   WorkflowRunState,
   WorkflowRunProgressItem,
 } from "../../shared/types";
+import type { WorkflowNodeConversation } from "../../shared/workflow-v2/conversation";
 import type {
   WorkflowV2ContextBudget,
   WorkflowV2LLMNode,
@@ -145,6 +146,15 @@ interface WorkflowRuntimeDependencies {
   stopTask: (taskId: string) => Promise<void>;
   deleteTask: (taskId: string, options?: { preserveRuntimeConversation?: boolean }) => Promise<AppSnapshot>;
   executeWorkflowV2Script: (input: ExecuteWorkflowV2ScriptRequest) => Promise<WorkflowV2WorkerOutput>;
+  startWorkflowNodeConversation: (input: {
+    workflowId: string;
+    runId: string;
+    nodeId: string;
+    configuredAgentId: string;
+    modelId: string;
+    workDir: string;
+    initialPrompt: string;
+  }) => Promise<WorkflowNodeConversation>;
   createWorkflowV2Store?: () => WorkflowV2StorePort | undefined;
 }
 
@@ -891,6 +901,54 @@ export class WorkflowRuntime {
       action: input.action,
       ...(input.reason?.trim() ? { reason: input.reason.trim() } : {}),
     });
+  }
+
+  async completeInteractiveNode(input: {
+    workflowId: string;
+    runId: string;
+    nodeId: string;
+    output: WorkflowV2WorkerOutput;
+  }): Promise<WorkflowOperationResult> {
+    const snapshot = this.deps.snapshot();
+    const workflow = snapshot.workflowStore.workflows.find((item) => item.workflowId === input.workflowId);
+    const run = snapshot.workflowStore.runs.find((item) => item.workflowId === input.workflowId && item.runId === input.runId);
+    const store = this.deps.createWorkflowV2Store?.();
+    if (!workflow?.workflowV2Plan || !run || !store?.readRunState) {
+      return { ok: false, workflowId: input.workflowId, runId: input.runId, error: "Workflow V2 interactive run state is unavailable." };
+    }
+    const persisted = await store.readRunState(input.workflowId, input.runId);
+    if (!persisted) return { ok: false, workflowId: input.workflowId, runId: input.runId, error: "Workflow V2 durable run state was not found." };
+    const nodeState = persisted.runState.nodes[input.nodeId];
+    if (nodeState?.status !== "paused") {
+      return { ok: false, workflowId: input.workflowId, runId: input.runId, error: `Workflow V2 node ${input.nodeId} is not awaiting interactive confirmation.` };
+    }
+    const runState = transitionWorkflowV2NodeState(persisted.runState, { nodeId: input.nodeId, status: "completed", now: Date.now() });
+    const workerOutputs = [...persisted.workerOutputs.filter((output) => output.nodeId !== input.nodeId), structuredClone(input.output)];
+    const checkpoint = { runState, workerOutputs };
+    await store.persistRunState({ ...persisted, runState, workerOutputs });
+    this.activeRuns.set(input.runId, {
+      workflowId: input.workflowId,
+      runId: input.runId,
+      pausedNodeIds: new Set(),
+      pausedTaskIds: new Set(),
+      gatedNodeIds: new Set(),
+      taskIdByNodeId: new Map(),
+      manualPauseReasonByNodeId: new Map(),
+      abortControllerByNodeId: new Map(),
+    });
+    this.deps.updateWorkflowRunState({ workflowId: input.workflowId, runId: input.runId, status: "running", contextDocument: run.contextDocument });
+    const storagePlan = workflowStoragePlanFor(input.workflowId, input.runId);
+    void this.executeWorkflowV2Run({
+      workflow,
+      plan: workflow.workflowV2Plan,
+      runId: input.runId,
+      baseWorkflowContextDocument: run.contextDocument,
+      storagePlanDocument: workflowStoragePlanDocument(storagePlan),
+      initialCheckpoint: checkpoint,
+      initialNodeControl: persisted.nodeControl,
+      initialDurableEventCount: persisted.eventCount,
+    }).finally(() => this.activeRuns.delete(input.runId));
+    return { ok: true, workflowId: input.workflowId, runId: input.runId };
   }
 
   private async resumeWorkflowV2Node(input: {
@@ -1828,6 +1886,7 @@ export class WorkflowRuntime {
 
     const runLlmNode = async (request: {
       node: WorkflowV2LLMNode;
+      planNode: WorkflowV2Plan["nodes"][number];
       taskPacket: WorkflowV2TaskPacket;
       upstreamOutputs: readonly WorkflowV2ResultPacket[];
     }): Promise<WorkflowV2WorkerOutput> => {
@@ -1874,6 +1933,36 @@ export class WorkflowRuntime {
             ]
           : []),
       ].join("\n");
+      if (request.planNode.executionMode === "interactive") {
+        const conversation = await this.deps.startWorkflowNodeConversation({
+          workflowId: workflow.workflowId,
+          runId,
+          nodeId: request.node.id,
+          configuredAgentId,
+          modelId,
+          workDir: workflowWorkDir,
+          initialPrompt: effectivePrompt,
+        });
+        throw new WorkflowV2SupervisionSignal({
+          resolution: {
+            action: "pause",
+            question: `Open node conversation ${conversation.conversationId} to continue.`,
+            reason: "Interactive node is waiting for user confirmation.",
+          },
+          report: {
+            nodeId: request.node.id,
+            attempt: 1,
+            phase: "interactive",
+            completedItems: [],
+            remainingItems: ["User confirmation"],
+            blockers: ["Interactive node conversation is still open."],
+            evidence: [],
+            safeToInterrupt: true,
+            requestedAction: "need_input",
+            reportedAt: Date.now(),
+          },
+        });
+      }
       const attempt = (runtimeAttemptByNodeId.get(request.node.id) ?? 0) + 1;
       runtimeAttemptByNodeId.set(request.node.id, attempt);
       const task = await startModelTask(request.node.id, {

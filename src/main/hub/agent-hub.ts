@@ -27,6 +27,10 @@ import type {
   CreateWorkflowDraftRequest,
   CreateWorkflowRequest,
   FinishWorkflowRunRequest,
+  CompleteWorkflowNodeConversationRequest,
+  InterruptWorkflowNodeConversationRequest,
+  RejectWorkflowNodeCompletionRequest,
+  SendWorkflowNodeMessageRequest,
   CreateAgentTeamRequest,
   AnswerWorkflowGateRequest,
   RegisteredArtifact,
@@ -107,8 +111,9 @@ import {
 } from "../channels/model-config";
 import { loadRuntimeLocalConfig } from "../channels/runtime-local-config";
 import { SqliteAppStore } from "./persisted/sqlite-store";
-import { WorkflowRuntime, type WorkflowRunStateUpdate } from "../workflows/workflow-runtime";
+import { WorkflowRuntime, parseWorkflowV2WorkerArtifact, type WorkflowRunStateUpdate } from "../workflows/workflow-runtime";
 import { WorkflowV2FileStore } from "../workflows/v2/workflow-v2-store";
+import { WorkflowV2ConversationManager } from "../workflows/v2/workflow-v2-conversation-manager";
 import {
   buildWorkflowV2GraphRevision as buildWorkflowV2GraphRevisionValue,
   buildWorkflowV2Plan as buildWorkflowV2PlanValue,
@@ -402,6 +407,7 @@ export class AgentHub {
   private readonly runtimeDrivers: RuntimeDriverRegistry;
   private readonly runtimeRouter: RuntimeRouter;
   private readonly interactiveSessions: InteractiveSessionManager;
+  private readonly workflowNodeConversations: WorkflowV2ConversationManager;
   private readonly executables: Record<AgentId, string>;
   private readonly workflowRuntime: WorkflowRuntime;
   private readonly workflowStore: WorkflowStore;
@@ -444,6 +450,34 @@ export class AgentHub {
       createSession: (context) => this.runtimeRouter.createInteractiveSession(context),
       now: () => Date.now(),
     });
+    this.workflowNodeConversations = new WorkflowV2ConversationManager({
+      now: () => Date.now(),
+      createSession: (input) => this.createWorkflowNodeInteractiveSession(input),
+      onChanged: () => this.emit(),
+      onCompleted: (conversation, content) => {
+        const workflow = this.workflowStore.workflows.get(conversation.workflowId);
+        const node = workflow?.workflowV2Plan?.definition.nodes.find((candidate) => candidate.id === conversation.nodeId);
+        const planNode = workflow?.workflowV2Plan?.nodes.find((candidate) => candidate.nodeId === conversation.nodeId);
+        if (!node || node.execModel !== "llm" || !planNode || !content.trim()) return;
+        try {
+          const output = parseWorkflowV2WorkerArtifact(node, content);
+          this.workflowNodeConversations.proposeCompletion(conversation.conversationId, {
+            output,
+            acceptanceCriteria: planNode.acceptanceCriteria.map((criterion) => ({
+              key: criterion.key,
+              satisfied: true,
+              ...(output.evidence?.length ? { evidence: output.evidence.join("; ") } : {}),
+            })),
+            unresolvedRisks: output.risks ?? [],
+          });
+        } catch {
+          this.workflowNodeConversations.markWaitingForUser(
+            conversation.conversationId,
+            "????????????????????????????",
+          );
+        }
+      },
+    });
     this.workflowRuntime = new WorkflowRuntime({
       snapshot: () => this.snapshot(),
       startWorkflowRun: (input) => this.startWorkflowRun(input),
@@ -453,6 +487,7 @@ export class AgentHub {
       stopTask: (taskId) => this.stopTask(taskId),
       deleteTask: (taskId, options) => this.deleteTask(taskId, options),
       executeWorkflowV2Script: (input) => executeWorkflowV2ScriptWithPolicy(input),
+      startWorkflowNodeConversation: (input) => this.workflowNodeConversations.start(input),
       createWorkflowV2Store: () => this.storagePath
         ? new WorkflowV2FileStore(path.dirname(this.storagePath))
         : undefined,
@@ -1321,6 +1356,33 @@ export class AgentHub {
     return this.workflowRuntime.resolveWorkflowV2Intervention(input);
   }
 
+  async sendWorkflowNodeMessage(input: SendWorkflowNodeMessageRequest): Promise<AppSnapshot> {
+    await this.workflowNodeConversations.sendUserMessage(input.conversationId, input.message);
+    return this.snapshot();
+  }
+
+  async completeWorkflowNodeConversation(input: CompleteWorkflowNodeConversationRequest): Promise<WorkflowOperationResult> {
+    const conversation = this.workflowNodeConversations.get(input.conversationId);
+    if (!conversation) return { ok: false, error: "Workflow node conversation was not found." };
+    const proposal = this.workflowNodeConversations.confirmCompletion(input.conversationId);
+    return this.workflowRuntime.completeInteractiveNode({
+      workflowId: conversation.workflowId,
+      runId: conversation.runId,
+      nodeId: conversation.nodeId,
+      output: proposal.output,
+    });
+  }
+
+  async rejectWorkflowNodeCompletion(input: RejectWorkflowNodeCompletionRequest): Promise<AppSnapshot> {
+    await this.workflowNodeConversations.rejectCompletion(input.conversationId, input.instruction);
+    return this.snapshot();
+  }
+
+  async interruptWorkflowNodeConversation(input: InterruptWorkflowNodeConversationRequest): Promise<AppSnapshot> {
+    await this.workflowNodeConversations.interrupt(input.conversationId);
+    return this.snapshot();
+  }
+
   startWorkflowNode(input: StartWorkflowNodeRequest): Promise<WorkflowOperationResult> {
     return this.workflowRuntime.startWorkflowNode(input);
   }
@@ -1499,6 +1561,7 @@ export class AgentHub {
         .map((run) => serializeTeamRun(run)),
       workflowStore: this.cloneWorkflowStore(),
       scheduledWorkflowStore: this.cloneScheduledWorkflowStore(),
+      workflowNodeConversations: this.workflowNodeConversations.list(),
       workflowDraft: this.activeWorkflowDraft(),
       artifacts: this.artifacts.map((artifact) => ({ ...artifact })),
     };
@@ -1711,6 +1774,47 @@ export class AgentHub {
 
   private workflowDraftSessionKey(workflowId: string): string {
     return `workflow-draft:${workflowId}`;
+  }
+
+  private createWorkflowNodeInteractiveSession(input: Parameters<WorkflowV2ConversationManager["start"]>[0] & { emit: (event: AgentEvent) => void }) {
+    const resolved = this.resolveConfiguredAgent(input.configuredAgentId, input.modelId);
+    if (!resolved || !resolved.runtime?.available) throw new Error("The configured workflow node agent is unavailable.");
+    const executionMode = this.selectExecutionMode(resolved.runtimeAgentId, "chat", "interactive");
+    if (executionMode !== "interactive") throw new Error("The configured workflow node agent does not support interactive sessions.");
+    const sessionKey = `workflow-node:${input.workflowId}:${input.runId}:${input.nodeId}`;
+    let latestRuntimeConversation: RuntimeConversation | undefined;
+    const context: InteractiveSessionContext = {
+      chatId: sessionKey,
+      configuredAgentId: resolved.agent.id,
+      runtimeId: resolved.runtimeAgentId,
+      executionMode,
+      continuationPolicy: this.defaultContinuationPolicy(resolved.runtimeAgentId, "chat", executionMode),
+      runtimeConfig: {
+        model: resolved.modelId,
+        ...(resolved.reasoningEffort ? { reasoningEffort: resolved.reasoningEffort } : {}),
+      },
+      runtime: resolved.runtime,
+      channelId: resolved.channel.id,
+      workDir: input.workDir,
+      developerInstructions: WORKFLOW_DEVELOPER_INSTRUCTIONS,
+      emit: (event) => {
+        if (event.type === "runtime_conversation") latestRuntimeConversation = this.runtimeRouter.cloneConversation(event.runtimeConversation);
+        input.emit(event);
+      },
+      syncState: (state) => {
+        if (state.runtimeConversation) latestRuntimeConversation = this.runtimeRouter.cloneConversation(state.runtimeConversation);
+      },
+    };
+    return {
+      sendPrompt: async (prompt: string) => this.interactiveSessions.dispatch(sessionKey, context, async (session, lease) => {
+        await session.ensureAttached();
+        lease.syncAttachmentGeneration(session.snapshot().runtimeState.attachmentGeneration);
+        await session.sendPrompt(prompt);
+      }),
+      interrupt: () => this.interactiveSessions.interrupt(sessionKey),
+      close: () => this.interactiveSessions.dispose(sessionKey, "app_shutdown"),
+      runtimeConversation: () => latestRuntimeConversation,
+    };
   }
 
   private async askWorkflowDraftAgent(

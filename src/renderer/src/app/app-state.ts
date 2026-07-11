@@ -44,6 +44,7 @@ export const DEFAULT_SNAPSHOT: AppSnapshot = {
     schedules: [],
     runs: [],
   },
+  workflowNodeConversations: [],
   workflowDraft: undefined,
   artifacts: [],
 };

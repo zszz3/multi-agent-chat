@@ -362,6 +362,7 @@ async function workflowV2RuntimeFixture(input: {
       return snapshot();
     },
     executeWorkflowV2Script: input.executeScript,
+    startWorkflowNodeConversation: async () => { throw new Error("Unexpected interactive workflow node in test."); },
     ...(input.store ? { createWorkflowV2Store: () => input.store! } : {}),
   });
 

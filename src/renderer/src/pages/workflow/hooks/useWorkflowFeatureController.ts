@@ -60,6 +60,7 @@ export function useWorkflowFeatureController({
       artifacts,
       contextDocument: draft.workflowRunContextDocument,
       finalReport: draft.workflowFinalReport,
+      nodeConversations: snapshot.workflowNodeConversations.filter((conversation) => conversation.workflowId === draft.workflowId && conversation.runId === activeRunId),
       onObjectiveChange: draft.setWorkflowObjective,
       onPauseNode: async (nodeId: string) => {
         if (!draft.workflowId || !activeRunId) return;
@@ -99,6 +100,13 @@ export function useWorkflowFeatureController({
           setSnapshot(next);
         }
       },
+      onSendNodeMessage: async (conversationId, message) => setSnapshot(await workflows.sendNodeMessage({ conversationId, message })),
+      onCompleteNodeConversation: async (conversationId) => {
+        const result = await workflows.completeNodeConversation({ conversationId });
+        if (!result.ok && result.error && draft.workflowId) setSnapshot(await workflows.patchDraft({ workflowId: draft.workflowId, error: result.error }));
+      },
+      onRejectNodeCompletion: async (conversationId, instruction) => setSnapshot(await workflows.rejectNodeCompletion({ conversationId, instruction })),
+      onInterruptNodeConversation: async (conversationId) => setSnapshot(await workflows.interruptNodeConversation({ conversationId })),
       onSelectConfiguredAgent: (configuredAgentId: string) => {
         void draft.selectConfiguredAgent(configuredAgentId);
       },

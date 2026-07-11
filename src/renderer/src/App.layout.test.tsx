@@ -256,6 +256,7 @@ const appSnapshot: AppSnapshot = {
     schedules: [],
     runs: [],
   },
+  workflowNodeConversations: [],
   workflowDraft: undefined,
   artifacts: [],
 };

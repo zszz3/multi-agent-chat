@@ -13,6 +13,7 @@ import type {
 } from "./workflow-v2/definition";
 import type { WorkflowV2HumanIntervention, WorkflowV2InterventionAction } from "./workflow-v2/review";
 import type { RuntimeId } from "./runtime-catalog";
+import type { WorkflowNodeConversation } from "./workflow-v2/conversation";
 
 export type AgentId = RuntimeId;
 
@@ -834,6 +835,23 @@ export interface ScheduledWorkflowOperationResult {
   error?: string;
 }
 
+export interface SendWorkflowNodeMessageRequest {
+  conversationId: string;
+  message: string;
+}
+
+export interface CompleteWorkflowNodeConversationRequest {
+  conversationId: string;
+}
+
+export interface RejectWorkflowNodeCompletionRequest {
+  conversationId: string;
+  instruction: string;
+}
+
+export interface InterruptWorkflowNodeConversationRequest {
+  conversationId: string;
+}
 export interface WorkflowOperationResult {
   ok: boolean;
   workflowId?: string;
@@ -1019,6 +1037,7 @@ export interface AppSnapshot {
   teamRuns: TeamRun[];
   workflowStore: WorkflowStoreState;
   scheduledWorkflowStore: ScheduledWorkflowStoreState;
+  workflowNodeConversations: WorkflowNodeConversation[];
   workflowDraft: WorkflowDraftState | undefined;
   artifacts: RegisteredArtifact[];
 }

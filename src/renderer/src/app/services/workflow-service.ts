@@ -9,6 +9,10 @@ import type {
   SendWorkflowDraftReplyRequest,
   StartWorkflowNodeRequest,
   WorkflowOperationResult,
+  CompleteWorkflowNodeConversationRequest,
+  InterruptWorkflowNodeConversationRequest,
+  RejectWorkflowNodeCompletionRequest,
+  SendWorkflowNodeMessageRequest,
 } from "../../../../shared/types";
 import { multiAgentChatService } from "./multi-agent-chat-service";
 
@@ -26,6 +30,10 @@ export interface WorkflowService {
   resolveIntervention: (request: ResolveWorkflowV2InterventionRequest) => Promise<WorkflowOperationResult>;
   startNode: (request: StartWorkflowNodeRequest) => Promise<WorkflowOperationResult>;
   answerGate: (request: AnswerWorkflowGateRequest) => Promise<WorkflowOperationResult>;
+  sendNodeMessage: (request: SendWorkflowNodeMessageRequest) => Promise<AppSnapshot>;
+  completeNodeConversation: (request: CompleteWorkflowNodeConversationRequest) => Promise<WorkflowOperationResult>;
+  rejectNodeCompletion: (request: RejectWorkflowNodeCompletionRequest) => Promise<AppSnapshot>;
+  interruptNodeConversation: (request: InterruptWorkflowNodeConversationRequest) => Promise<AppSnapshot>;
   listOutputs: (workflowId: string) => Promise<Array<{ name: string; path: string }>>;
 }
 
@@ -45,6 +53,10 @@ export function workflowService(): WorkflowService {
     resolveIntervention: (request) => api.resolveWorkflowV2Intervention(request),
     startNode: (request) => api.startWorkflowNode(request),
     answerGate: (request) => api.answerWorkflowGate(request),
+    sendNodeMessage: (request) => api.sendWorkflowNodeMessage(request),
+    completeNodeConversation: (request) => api.completeWorkflowNodeConversation(request),
+    rejectNodeCompletion: (request) => api.rejectWorkflowNodeCompletion(request),
+    interruptNodeConversation: (request) => api.interruptWorkflowNodeConversation(request),
     listOutputs: (workflowId) => api.listWorkflowOutputs(workflowId),
   };
 }

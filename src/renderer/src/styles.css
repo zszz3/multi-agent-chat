@@ -9757,3 +9757,48 @@ textarea:focus-visible {
   min-width: 72px;
   background: color-mix(in srgb, var(--neutral-tint) 72%, var(--panel));
 }
+.workflow-node-agent-overlay {
+  position: fixed;
+  inset: 0;
+  z-index: 120;
+  display: grid;
+  place-items: center;
+  padding: 28px;
+  background: color-mix(in srgb, var(--bg) 42%, transparent);
+  backdrop-filter: blur(8px);
+}
+
+.workflow-node-agent-window {
+  width: min(820px, 94vw);
+  height: min(760px, 90vh);
+  display: grid;
+  grid-template-rows: auto minmax(0, 1fr) auto auto;
+  overflow: hidden;
+  border: 1px solid var(--border);
+  border-radius: 18px;
+  background: var(--panel);
+  box-shadow: 0 24px 80px rgba(0, 0, 0, .28);
+}
+
+.workflow-node-agent-window > header,
+.workflow-node-agent-window > footer {
+  display: flex;
+  gap: 12px;
+  align-items: center;
+  justify-content: space-between;
+  padding: 16px 18px;
+  border-bottom: 1px solid var(--border);
+}
+
+.workflow-node-agent-window > header div { display: grid; gap: 4px; min-width: 0; }
+.workflow-node-agent-window > header span { color: var(--muted); font-size: 12px; overflow: hidden; text-overflow: ellipsis; }
+.workflow-node-agent-messages { overflow: auto; padding: 18px; display: grid; align-content: start; gap: 12px; }
+.workflow-node-agent-message { max-width: 84%; padding: 10px 12px; border-radius: 14px; background: var(--soft); }
+.workflow-node-agent-message.is-user { justify-self: end; background: color-mix(in srgb, var(--accent) 16%, var(--panel)); }
+.workflow-node-agent-message span { color: var(--muted); font-size: 11px; }
+.workflow-node-agent-message p { margin: 5px 0 0; white-space: pre-wrap; }
+.workflow-node-completion-proposal { margin: 0 18px 12px; padding: 14px; border: 1px solid color-mix(in srgb, var(--ok) 46%, var(--border)); border-radius: 14px; background: color-mix(in srgb, var(--ok) 8%, var(--panel)); }
+.workflow-node-agent-actions { display: flex; gap: 8px; flex-wrap: wrap; }
+.workflow-node-agent-window > footer { border-top: 1px solid var(--border); border-bottom: 0; align-items: end; }
+.workflow-node-agent-window > footer textarea { flex: 1; resize: vertical; min-height: 72px; }
+.workflow-node-agent-window > footer > div { display: flex; gap: 8px; align-items: center; }

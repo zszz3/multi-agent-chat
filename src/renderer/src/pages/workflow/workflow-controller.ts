@@ -12,6 +12,7 @@ import type {
   WorkflowStatus,
   WorkflowV2InterventionAction,
 } from "../../../../shared/types";
+import type { WorkflowNodeConversation } from "../../../../shared/workflow-v2/conversation";
 import type { Language } from "../../app/language";
 
 type MaybePromise = void | Promise<void>;
@@ -67,11 +68,16 @@ export interface WorkflowController {
   artifacts?: RegisteredArtifact[];
   contextDocument?: string;
   finalReport?: string;
+  nodeConversations?: WorkflowNodeConversation[];
   onObjectiveChange: (value: string) => void;
   onPauseNode?: (nodeId: string) => MaybePromise;
   onResolveIntervention?: (nodeId: string, action: WorkflowV2InterventionAction, reason?: string) => MaybePromise;
   onStartNode?: (nodeId: string) => MaybePromise;
   onAnswerGate?: (nodeId: string, answer: string) => MaybePromise;
+  onSendNodeMessage?: (conversationId: string, message: string) => MaybePromise;
+  onCompleteNodeConversation?: (conversationId: string) => MaybePromise;
+  onRejectNodeCompletion?: (conversationId: string, instruction: string) => MaybePromise;
+  onInterruptNodeConversation?: (conversationId: string) => MaybePromise;
   onSelectConfiguredAgent: (configuredAgentId: string) => void;
   onSelectModel?: (modelId: string) => void;
   onDraftGraph: () => void;
