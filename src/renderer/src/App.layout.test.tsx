@@ -70,7 +70,6 @@ import { DEFAULT_MODEL_ID } from "../../shared/models";
 import { generatedConfigChannels, normalizeConfigChannelsForStorage, selectConfigChannelsForDisplay } from "../../shared/config-channels";
 import { AGENT_PROVIDER_PRESETS, CODEX_DEFAULT_PRESET_ID } from "../../shared/provider-presets";
 import { SKILL_TEMPLATES } from "../../shared/skill-templates";
-import { BUILT_IN_EVALUATION_RUBRICS } from "../../shared/built-in-evaluation-rubrics";
 import { firstWorkflowQuestionForObjective } from "../../shared/workflow-agent";
 import { formatTime } from "./app/format";
 import { loadCodexDefaultConfigFromRuntimeApi } from "./pages/runtime/runtime-utils";
@@ -246,19 +245,11 @@ describe("Evaluation workbench redesign", () => {
   });
 
   test("configures LLM Judge with a concrete Runtime config", () => {
-    const evaluator = { id: "judge", name: "Quality Judge", kind: "llm_judge" as const, runtimeId: "codex-openai", rubric: BUILT_IN_EVALUATION_RUBRICS.conciseness, threshold: 0.8, enabled: true, createdAt: 1, updatedAt: 2 };
+    const evaluator = { id: "judge", name: "Quality Judge", kind: "llm_judge" as const, runtimeId: "codex-openai", threshold: 0.8, enabled: true, createdAt: 1, updatedAt: 2 };
     const html = renderToStaticMarkup(<EvaluatorWorkspace zh evaluators={[evaluator]} selected={evaluator} channels={[{ id: "codex-openai", agentId: "codex", label: "Codex OpenAI", models: [] }]} busy={undefined} onSelect={() => undefined} onCreate={() => undefined} onChange={() => undefined} onSave={() => undefined} onDelete={() => undefined} />);
     expect(html).toContain("评分 Runtime");
     expect(html).toContain("Codex OpenAI · codex");
     expect(html).not.toContain("评分 Agent");
-    expect(html).toContain("评估目标");
-    expect(html).toContain("所需输入");
-    expect(html).toContain("检查项");
-    expect(html).toContain("评估步骤");
-    expect(html).toContain("五档评分锚点");
-    expect(html).toContain("特殊规则");
-    expect(html).toContain("OpenEvals");
-    expect(html).toContain("Prompt 预览");
   });
 
   test("groups built-in Evaluator templates beside the new action", () => {

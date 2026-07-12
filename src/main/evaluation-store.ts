@@ -79,9 +79,6 @@ export class EvaluationStore {
           name: String(r.name),
           kind: r.kind as EvaluationEvaluator["kind"],
           ...(r.prompt ? { prompt: String(r.prompt) } : {}),
-          ...(r.rubric_json
-            ? { rubric: JSON.parse(String(r.rubric_json)) }
-            : {}),
           ...(r.runtime_id ? { runtimeId: String(r.runtime_id) } : {}),
           threshold: Number(r.threshold),
           enabled: Number(r.enabled) === 1,
@@ -94,12 +91,11 @@ export class EvaluationStore {
     (await this.open())
       .prepare(
         `insert into evaluation_evaluators
-         (id, name, kind, prompt, rubric_json, runtime_id, threshold, enabled, created_at, updated_at)
-         values (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+         (id, name, kind, prompt, runtime_id, threshold, enabled, created_at, updated_at)
+         values (?, ?, ?, ?, ?, ?, ?, ?, ?)
          on conflict(id) do update set
            name=excluded.name, kind=excluded.kind, prompt=excluded.prompt,
-           rubric_json=excluded.rubric_json, agent_id=null,
-           runtime_id=excluded.runtime_id, threshold=excluded.threshold,
+           agent_id=null, runtime_id=excluded.runtime_id, threshold=excluded.threshold,
            enabled=excluded.enabled, updated_at=excluded.updated_at`,
       )
       .run(
@@ -107,7 +103,6 @@ export class EvaluationStore {
         v.name,
         v.kind,
         v.prompt ?? null,
-        v.rubric ? JSON.stringify(v.rubric) : null,
         v.runtimeId ?? null,
         v.threshold,
         v.enabled ? 1 : 0,
@@ -248,18 +243,13 @@ export class EvaluationStore {
         );
         for (const s of c.scores)
           db.prepare(
-            `insert into evaluation_scores
-             (case_result_id, evaluator_id, score, passed, reason, evidence_json,
-              failed_criteria_json, duration_ms, token_count, estimated_cost)
-             values (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+            "insert into evaluation_scores values(?,?,?,?,?,?,?,?)",
           ).run(
             c.id,
             s.evaluatorId,
             s.score,
             s.passed ? 1 : 0,
             s.reason ?? null,
-            s.evidence ? JSON.stringify(s.evidence) : null,
-            s.failedCriteria ? JSON.stringify(s.failedCriteria) : null,
             s.durationMs,
             s.tokenCount ?? null,
             s.estimatedCost ?? null,
@@ -332,16 +322,6 @@ export class EvaluationStore {
                 score: Number(s.score),
                 passed: Number(s.passed) === 1,
                 ...(s.reason ? { reason: String(s.reason) } : {}),
-                ...(s.evidence_json
-                  ? { evidence: JSON.parse(String(s.evidence_json)) }
-                  : {}),
-                ...(s.failed_criteria_json
-                  ? {
-                      failedCriteria: JSON.parse(
-                        String(s.failed_criteria_json),
-                      ),
-                    }
-                  : {}),
                 durationMs: Number(s.duration_ms),
                 ...(s.token_count ? { tokenCount: Number(s.token_count) } : {}),
                 ...(s.estimated_cost

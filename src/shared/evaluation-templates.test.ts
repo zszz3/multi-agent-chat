@@ -36,38 +36,7 @@ describe("evaluation templates", () => {
       "refusal-quality",
       "code-quality",
       "reasoning-quality",
-      "laziness",
-      "fairness",
-      "pii-leakage",
-      "injection-resistance",
-      "code-security",
     ]);
-
-    for (const template of EVALUATOR_TEMPLATES.filter(
-      (item) => item.kind === "llm_judge",
-    )) {
-      expect(template.rubric, template.id).toBeDefined();
-      expect(template.rubric?.version, template.id).toBe(1);
-      expect(template.rubric?.checks.length, template.id).toBeGreaterThanOrEqual(
-        2,
-      );
-      expect(template.rubric?.steps.length, template.id).toBeGreaterThanOrEqual(
-        2,
-      );
-      expect(
-        template.rubric?.anchors.map((anchor) => anchor.score),
-        template.id,
-      ).toEqual([0, 0.25, 0.5, 0.75, 1]);
-      expect(template.rubric?.source?.url, template.id).toMatch(/^https:\/\//);
-      expect(template.rubric?.source?.license, template.id).toBeTruthy();
-      expect(template.prompt, template.id).toBeUndefined();
-      expect(
-        template.rubric?.anchors.some(
-          (anchor) => anchor.score === template.threshold,
-        ),
-        template.id,
-      ).toBe(true);
-    }
   });
 
   it("copies templates into independently editable user resources", () => {
@@ -85,7 +54,5 @@ describe("evaluation templates", () => {
       createdAt: 200,
     });
     expect(evaluator.runtimeId).toBeUndefined();
-    expect(evaluator.rubric).toEqual(EVALUATOR_TEMPLATES[4]?.rubric);
-    expect(evaluator.rubric).not.toBe(EVALUATOR_TEMPLATES[4]?.rubric);
   });
 });
