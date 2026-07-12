@@ -37,6 +37,7 @@ import { WorkflowOutputPreviewModal } from "./WorkflowOutputPreviewModal";
 import { WorkflowOutputsPanel } from "./WorkflowOutputsPanel";
 import { WORKFLOW_INTERVENTION_ACTION_TEXT, WORKFLOW_TEXT } from "./workflow-text";
 import type { WorkflowController } from "./workflow-controller";
+import { workflowNodeOpenTarget } from "./workflow-node-open-policy";
 import {
   WORKFLOW_THINKING_MESSAGE,
   truncateWorkflowContext,
@@ -248,8 +249,7 @@ export function WorkflowPage({ controller: source }: { controller: WorkflowContr
     const openNodeEditor = (event: MouseEvent) => {
       event.preventDefault();
       event.stopPropagation();
-      const executionMode = node.executionMode ?? workflowV2Plan?.nodes.find((candidate) => candidate.nodeId === node.id)?.executionMode;
-      if (node.execModel === "llm" && (Boolean(activeRunId) || executionMode === "interactive" || nodeConversations.some((candidate) => candidate.nodeId === node.id))) {
+      if (workflowNodeOpenTarget(node.execModel) === "conversation") {
         setOpenNodeAgentNodeId(node.id);
         return;
       }
