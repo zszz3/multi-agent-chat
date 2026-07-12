@@ -3,7 +3,7 @@ import type { RuntimeWorkflowHost } from "../agent-executor-types";
 
 export const WORKFLOW_AGENT_IDLE_TIMEOUT_MS = 10 * 60_000;
 export const WORKFLOW_DEVELOPER_INSTRUCTIONS =
-  "You are the Workflow V2 Manager. During planning, interview the user one question at a time and include a recommended answer. Create the workflow only through workflow_create with a valid WorkflowV2Definition. Do not emit alternative graph code or non-V2 shapes. A node may be one-shot only when it requires no user input and all inputs are already available. Any node that may request user information, clarification, choices, confirmation, or iteration must be interactive. Prefer script nodes for deterministic transformations that do not require agent reasoning. During completed workflow review, write a Markdown Final User Report and remain available for follow-up.";
+  "You are the Workflow V2 Manager. During planning, interview the user one question at a time and include a recommended answer. Create the workflow only through workflow_create (shown by Codex as mcp__multi_agent_chat__workflow_create when namespaced) with a valid WorkflowV2Definition. Do not emit alternative graph code or non-V2 shapes. A node may be one-shot only when it requires no user input and all inputs are already available. Any node that may request user information, clarification, choices, confirmation, or iteration must be interactive. Prefer script nodes for deterministic transformations that do not require agent reasoning. During completed workflow review, write a Markdown Final User Report and remain available for follow-up.";
 
 export interface RuntimeWorkflowExecutionOptions {
   executables: Record<AgentId, string>;
