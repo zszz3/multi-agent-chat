@@ -298,6 +298,7 @@ export function WorkflowPage(props: WorkflowPageProps) {
   const [outputFiles, setOutputFiles] = useState<Array<{ name: string; path: string }>>([]);
   const [editingWorkflowNodeId, setEditingWorkflowNodeId] = useState<string | undefined>(undefined);
   const [openNodeAgentNodeId, setOpenNodeAgentNodeId] = useState<string | undefined>(undefined);
+  const dismissedNodeAgentRunIdRef = useRef<string | undefined>(undefined);
   const [filePreview, setFilePreview] = useState<LocalFilePreview | undefined>(undefined);
   const [filePreviewError, setFilePreviewError] = useState<string | undefined>(undefined);
   const [filePreviewLoadingPath, setFilePreviewLoadingPath] = useState<string | undefined>(undefined);
@@ -309,12 +310,19 @@ export function WorkflowPage(props: WorkflowPageProps) {
   const openNodeConversationGraphNode = graph.nodes.find((node) => node.id === openNodeAgentNodeId);
   const openNodeTaskId = openNodeAgentNodeId ? runProgressByNodeId.get(openNodeAgentNodeId)?.taskId : undefined;
   const openNodeTask = nodeTasks.find((task) => task.id === openNodeTaskId);
+  const nodeAgentSessions = graph.nodes.flatMap((node) => {
+    const conversation = nodeConversations.find((candidate) => candidate.nodeId === node.id);
+    const taskId = runProgressByNodeId.get(node.id)?.taskId;
+    const task = taskId ? nodeTasks.find((candidate) => candidate.id === taskId) : undefined;
+    return conversation || task ? [{ nodeId: node.id, nodeTitle: node.title, ...(conversation ? { conversation } : {}), ...(task ? { task } : {}) }] : [];
+  });
   const nodePositionProps = {};
 
   useEffect(() => {
+    if (dismissedNodeAgentRunIdRef.current && dismissedNodeAgentRunIdRef.current !== activeRunId) dismissedNodeAgentRunIdRef.current = undefined;
     const waitingConversation = nodeConversations.find((conversation) => conversation.status === "waiting_for_user");
-    if (waitingConversation && !openNodeAgentNodeId) setOpenNodeAgentNodeId(waitingConversation.nodeId);
-  }, [nodeConversations, openNodeAgentNodeId]);
+    if (waitingConversation && !openNodeAgentNodeId && dismissedNodeAgentRunIdRef.current !== activeRunId) setOpenNodeAgentNodeId(waitingConversation.nodeId);
+  }, [activeRunId, nodeConversations, openNodeAgentNodeId]);
 
   useEffect(() => {
     const transcript = grillTranscriptRef.current;
@@ -814,8 +822,11 @@ export function WorkflowPage(props: WorkflowPageProps) {
       {openNodeConversationGraphNode ? <WorkflowNodeAgentWindow
         {...(openNodeConversation ? { conversation: openNodeConversation } : {})}
         {...(openNodeTask ? { task: openNodeTask } : {})}
+        sessions={nodeAgentSessions}
+        {...(openNodeAgentNodeId ? { selectedNodeId: openNodeAgentNodeId } : {})}
         nodeTitle={openNodeConversationGraphNode.title}
-        onClose={() => setOpenNodeAgentNodeId(undefined)}
+        onSelectNode={setOpenNodeAgentNodeId}
+        onClose={() => { dismissedNodeAgentRunIdRef.current = activeRunId; setOpenNodeAgentNodeId(undefined); }}
         {...(onSendNodeMessage && openNodeConversation ? { onSend: (message: string) => onSendNodeMessage(openNodeConversation.conversationId, message) } : {})}
         {...(onCompleteNodeConversation && openNodeConversation ? { onConfirm: () => onCompleteNodeConversation(openNodeConversation.conversationId) } : {})}
         {...(onRejectNodeCompletion && openNodeConversation ? { onReject: (instruction: string) => onRejectNodeCompletion(openNodeConversation.conversationId, instruction) } : {})}

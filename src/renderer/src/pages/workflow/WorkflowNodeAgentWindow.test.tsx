@@ -50,4 +50,25 @@ describe("WorkflowNodeAgentWindow", () => {
     expect(html).toContain("web_search");
     expect(html).toContain("is-tool-call");
     expect(html).toContain("is-tool-result");
+  });
+  test("renders a switchable queue for parallel node conversations", () => {
+    const html = renderToStaticMarkup(<WorkflowNodeAgentWindow
+      nodeTitle="Research"
+      onClose={() => undefined}
+      onSelectNode={() => undefined}
+      selectedNodeId="research"
+      sessions={[
+        { nodeId: "collect", nodeTitle: "Collect requirements", conversation: { conversationId: "w::r::collect", workflowId: "w", runId: "r", nodeId: "collect", configuredAgentId: "a", modelId: "m", workDir: "C:/workspace", status: "waiting_for_user", messages: [], createdAt: 1, updatedAt: 1, lastActivityAt: 1 } },
+        { nodeId: "research", nodeTitle: "Research", conversation: { conversationId: "w::r::research", workflowId: "w", runId: "r", nodeId: "research", configuredAgentId: "a", modelId: "m", workDir: "C:/workspace", status: "active", messages: [], createdAt: 1, updatedAt: 1, lastActivityAt: 1 } },
+        { nodeId: "review", nodeTitle: "Review", conversation: { conversationId: "w::r::review", workflowId: "w", runId: "r", nodeId: "review", configuredAgentId: "a", modelId: "m", workDir: "C:/workspace", status: "completion_proposed", messages: [], completionProposal: { output: { nodeId: "review", summary: "Done", outputs: {}, evidence: [], proposals: [] }, acceptanceCriteria: [], unresolvedRisks: [], proposedAt: 1 }, createdAt: 1, updatedAt: 1, lastActivityAt: 1 } },
+      ]}
+    />);
+    expect(html).toContain("2 nodes need attention");
+    expect(html).toContain("Collect requirements");
+    expect(html).toContain("Research");
+    expect(html).toContain("Review");
+    expect(html).toContain("is-selected");
+    expect(html).toContain("Waiting for input");
+    expect(html).toContain("Running");
+    expect(html).toContain("Confirm completion");
   });});

@@ -5953,7 +5953,7 @@ textarea:focus-visible {
 }
 
 .agent-provider-disclosure[open] > summary::after {
-  content: "âˆ?;
+  content: "ï¿½?;
 }
 
 .agent-provider-preset-list {
@@ -7378,7 +7378,7 @@ body,
 }
 
 /* ============================================================================
-   LINEAR DESIGN LAYER â€?consolidated
+   LINEAR DESIGN LAYER ï¿½?consolidated
    Replaces the former stacked reskin layers (v2â€“v6). The structural base lives
    above; this single, deduplicated layer carries the Linear identity: tokens,
    density, the frameless icon rail, the centered chat reading column, the
@@ -8180,7 +8180,7 @@ textarea:focus-visible {
 }
 
 /* feature panes that own their padding must win over .content (equal
-   specificity â†?must come after it in the cascade) */
+   specificity ï¿½?must come after it in the cascade) */
 .chat-content {
   gap: 0;
   padding: 0;
@@ -9772,7 +9772,7 @@ textarea:focus-visible {
   width: min(820px, 94vw);
   height: min(760px, 90vh);
   display: grid;
-  grid-template-rows: auto minmax(0, 1fr) auto auto;
+  grid-template-columns: 230px minmax(0, 1fr);
   overflow: hidden;
   border: 1px solid var(--border);
   border-radius: 18px;
@@ -9780,8 +9780,18 @@ textarea:focus-visible {
   box-shadow: 0 24px 80px rgba(0, 0, 0, .28);
 }
 
-.workflow-node-agent-window > header,
-.workflow-node-agent-window > footer {
+.workflow-node-agent-sidebar { min-width: 0; display: grid; grid-template-rows: auto minmax(0, 1fr); border-right: 1px solid var(--border); background: color-mix(in srgb, var(--soft) 72%, var(--panel)); }
+.workflow-node-agent-queue-summary { display: grid; gap: 4px; padding: 16px; border-bottom: 1px solid var(--border); }
+.workflow-node-agent-queue-summary span { color: var(--muted); font-size: 12px; }
+.workflow-node-agent-session-list { overflow: auto; display: grid; align-content: start; gap: 6px; padding: 10px; }
+.workflow-node-agent-session { display: grid; gap: 4px; width: 100%; padding: 10px; border: 1px solid transparent; border-radius: 10px; background: transparent; color: var(--text); text-align: left; cursor: pointer; }
+.workflow-node-agent-session:hover { background: color-mix(in srgb, var(--accent) 7%, var(--panel)); }
+.workflow-node-agent-session.is-selected { border-color: color-mix(in srgb, var(--accent) 45%, var(--border)); background: color-mix(in srgb, var(--accent) 12%, var(--panel)); }
+.workflow-node-agent-session.needs-attention span { color: var(--accent); font-weight: 650; }
+.workflow-node-agent-session span { color: var(--muted); font-size: 11px; }
+.workflow-node-agent-main { min-width: 0; min-height: 0; display: grid; grid-template-rows: auto minmax(0, 1fr) auto auto; }
+.workflow-node-agent-main > header,
+.workflow-node-agent-main > footer {
   display: flex;
   gap: 12px;
   align-items: center;
@@ -9790,8 +9800,8 @@ textarea:focus-visible {
   border-bottom: 1px solid var(--border);
 }
 
-.workflow-node-agent-window > header div { display: grid; gap: 4px; min-width: 0; }
-.workflow-node-agent-window > header span { color: var(--muted); font-size: 12px; overflow: hidden; text-overflow: ellipsis; }
+.workflow-node-agent-main > header div { display: grid; gap: 4px; min-width: 0; }
+.workflow-node-agent-main > header span { color: var(--muted); font-size: 12px; overflow: hidden; text-overflow: ellipsis; }
 .workflow-node-agent-messages { overflow: auto; padding: 18px; display: grid; align-content: start; gap: 12px; }
 .workflow-node-agent-message { max-width: 84%; padding: 10px 12px; border-radius: 14px; background: var(--soft); }
 .workflow-node-agent-message.is-user { justify-self: end; background: color-mix(in srgb, var(--accent) 16%, var(--panel)); }
@@ -9803,10 +9813,14 @@ textarea:focus-visible {
 .workflow-node-agent-message p { margin: 5px 0 0; white-space: pre-wrap; }
 .workflow-node-completion-proposal { margin: 0 18px 12px; padding: 14px; border: 1px solid color-mix(in srgb, var(--ok) 46%, var(--border)); border-radius: 14px; background: color-mix(in srgb, var(--ok) 8%, var(--panel)); }
 .workflow-node-agent-actions { display: flex; gap: 8px; flex-wrap: wrap; }
-.workflow-node-agent-window > footer { border-top: 1px solid var(--border); border-bottom: 0; align-items: end; }
-.workflow-node-agent-window > footer textarea { flex: 1; resize: vertical; min-height: 72px; }
-.workflow-node-agent-window > footer > div { display: flex; gap: 8px; align-items: center; }
-.workflow-leader-activity {
+.workflow-node-agent-main > footer { border-top: 1px solid var(--border); border-bottom: 0; align-items: end; }
+.workflow-node-agent-main > footer textarea { flex: 1; resize: vertical; min-height: 72px; }
+.workflow-node-agent-main > footer > div { display: flex; gap: 8px; align-items: center; }
+@media (max-width: 760px) {
+  .workflow-node-agent-window { grid-template-columns: 1fr; }
+  .workflow-node-agent-sidebar { max-height: 180px; border-right: 0; border-bottom: 1px solid var(--border); }
+  .workflow-node-agent-session-list { grid-auto-flow: column; grid-auto-columns: minmax(170px, 1fr); overflow-x: auto; }
+}.workflow-leader-activity {
   margin-top: 12px;
   padding: 14px 16px;
   border: 1px solid color-mix(in srgb, var(--accent) 34%, var(--border));
