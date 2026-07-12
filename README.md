@@ -15,7 +15,8 @@ Multi Agent Chat 是一个本地 Electron 桌面应用，用来把多种 Agent �
 - Test session 清理：Claude 测试会删除测试 session 文件；Codex 测试如果从 `codex exec --json` 输出中拿到测试 session id，会执行 `codex archive <sessionId>` 清理测试会话。
 - Codex 插件配置：可以加载 Codex plugin catalog，也可以手动给 Channel 添加插件。
 - Task 看板：把一次 Agent 执行作为任务管理，支持状态流转、日志查看、停止和删除。
-- Workflow：先对话澄清目标，再生成 DAG；支持多个 Agent 节点并行、顺序和汇总执行，最终预览产出文档。
+- Workflow：既提供随应用维护的官方 Workflow，也支持用户通过对话生成自己的 DAG；支持多个 Agent 节点并行、顺序和汇总执行，最终预览产出文档。
+- GitHub 每日 AI 新星榜：内置官方 Workflow，检索过去 24 小时新建的 AI 项目，核验 README 后按当前累计 Star 生成中文日报，可在定时任务中选择并每日执行。
 - 本地 MCP：通过 `npm run mcp` 把配置好的 Agent / Workflow 能力暴露给其他 MCP 客户端。
 - 设置页：支持界面语言切换和本地偏好。
 
@@ -192,6 +193,8 @@ Workflow 页面是“先澄清，再生成图，再执行”的工作流能力�
 
 Workflow 支持：
 
+- 官方 Workflow 与用户 Workflow 分区展示；官方拓扑随应用维护，用户仍可配置运行 Agent、模型和节点 Prompt。
+- 内置“GitHub 每日 AI 新星榜”，输出简榜、逐项目中文介绍、今日看点、统计口径和数据限制。
 - 新建和切换多个 Workflow 会话。
 - DAG 校验。
 - 同一依赖层的多个 Agent 节点并行运行。

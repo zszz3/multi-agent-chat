@@ -76,4 +76,30 @@ describe("loadBundledWorkflows", () => {
     expect(prompts).toContain("match-report.md");
     expect(prompts).not.toMatch(/__[A-Z0-9_]+__/);
   });
+
+  test("loads the official GitHub daily AI workflow with readable project briefs", async () => {
+    const root = path.resolve(process.cwd(), "src/shared/bundled-workflows");
+    const defs = await loadBundledWorkflows(root);
+    const workflow = defs.find((definition) => definition.workflowId === "bundled-github-daily-ai");
+
+    expect(workflow).toBeDefined();
+    expect(workflow?.title).toBe("GitHub 每日 AI 新星榜");
+
+    const agentNodes = workflow?.graph.nodes.filter((node) => node.kind === "agent") ?? [];
+    expect(agentNodes.map((node) => node.id)).toEqual(["collect", "report"]);
+    expect(workflow?.graph.edges).toHaveLength(3);
+
+    const collectPrompt = agentNodes.find((node) => node.id === "collect")?.prompt ?? "";
+    expect(collectPrompt).toContain("过去 24 小时");
+    expect(collectPrompt).toContain("GitHub");
+    expect(collectPrompt).toContain("按当前累计 Star 降序");
+
+    const reportPrompt = agentNodes.find((node) => node.id === "report")?.prompt ?? "";
+    expect(reportPrompt).toContain("一句话定位");
+    expect(reportPrompt).toContain("解决的问题");
+    expect(reportPrompt).toContain("核心能力");
+    expect(reportPrompt).toContain("今日看点");
+    expect(reportPrompt).toContain("github-ai-daily-YYYY-MM-DD.md");
+    expect(reportPrompt).toContain("不得出现“适合谁使用”");
+  });
 });
