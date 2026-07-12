@@ -1,9 +1,9 @@
-import { Bot, CalendarClock, ClipboardList, Cpu, GitBranch, MessageSquareText, Moon, SlidersHorizontal, Sun, Wand2 } from "lucide-react";
+import { Bot, CalendarClock, ClipboardList, Cpu, GitBranch, PlugZap, MessageSquareText, Moon, SlidersHorizontal, Sun, Wand2 } from "lucide-react";
 import type { Theme } from "../CommandPalette";
 import type { ActiveFeature } from "./shell";
 
 interface FeatureRailText {
-  nav: Record<"chat" | "tasks" | "workflow" | "schedules" | "skills" | "agent" | "runtimes", string>;
+  nav: Record<"chat" | "tasks" | "workflow" | "schedules" | "skills" | "agent" | "mcp" | "runtimes", string>;
   chrome: {
     featureNav: string;
     lightTheme: string;
@@ -51,6 +51,7 @@ export function FeatureRail({ activeFeature, theme, text, onSelectFeature, onTog
           <SlidersHorizontal size={15} />
           <span>{text.nav.agent}</span>
         </button>
+        <button className={`feature-nav-item ${activeFeature === "mcp" ? "is-active" : ""}`} onClick={() => onSelectFeature("mcp")}><PlugZap size={15} /><span>{text.nav.mcp}</span></button>
         <button className={`feature-nav-item ${activeFeature === "runtimes" ? "is-active" : ""}`} onClick={() => onSelectFeature("runtimes")}>
           <Cpu size={15} />
           <span>{text.nav.runtimes}</span>

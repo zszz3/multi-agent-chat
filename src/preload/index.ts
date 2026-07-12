@@ -61,9 +61,16 @@ import type {
   WorkflowDraftState,
   WorkflowOperationResult,
 } from "../shared/types";
+import type { McpAgentDiagnostic, McpInstalledEntry, McpInstallRequest, McpInstallResult, McpSetupStatus } from "../shared/mcp-config";
 
 const api = {
   getSnapshot: (): Promise<AppSnapshot> => ipcRenderer.invoke("snapshot:get"),
+  getWorkflowMcpStatus: (): Promise<McpSetupStatus> => ipcRenderer.invoke("workflow-mcp:status"),
+  listInstalledMcps: (): Promise<McpInstalledEntry[]> => ipcRenderer.invoke("workflow-mcp:list-installed"),
+  listAgentMcps: (agentId: string): Promise<McpAgentDiagnostic[]> => ipcRenderer.invoke("workflow-mcp:list-agent", agentId),
+  installMcp: (request: McpInstallRequest): Promise<McpInstallResult> => ipcRenderer.invoke("workflow-mcp:install", request),
+  uninstallMcp: (request: McpInstallRequest): Promise<McpInstallResult> => ipcRenderer.invoke("workflow-mcp:uninstall", request),
+  revealPath: (filePath: string): Promise<string> => ipcRenderer.invoke("file:reveal", filePath),
   refreshAgents: (): Promise<AppSnapshot> => ipcRenderer.invoke("agents:refresh"),
   createChat: (configuredAgentId?: string): Promise<AppSnapshot> => ipcRenderer.invoke("chat:create", configuredAgentId),
   selectChat: (chatId: string): Promise<AppSnapshot> => ipcRenderer.invoke("chat:select", chatId),

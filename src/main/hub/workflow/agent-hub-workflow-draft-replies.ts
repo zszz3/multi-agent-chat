@@ -27,6 +27,7 @@ export async function dispatchWorkflowDraftReply(input: {
   storeWorkflow: (workflow: WorkflowDraftState) => void;
   storeActiveRequest: (workflowId: string, request: ActiveWorkflowDraftRequest) => void;
   emit: () => void;
+  persist: () => Promise<void>;
   defaultWorkDir: string;
   askWorkflowDraftAgent: (
     request: WorkflowDraftInteractiveRequest,
@@ -54,6 +55,7 @@ export async function dispatchWorkflowDraftReply(input: {
   input.activateWorkflow(started.next.workflowId);
   input.storeActiveRequest(started.next.workflowId, started.request);
   input.emit();
+  await input.persist();
 
   await runWorkflowDraftReply({
     started,

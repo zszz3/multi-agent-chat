@@ -25,7 +25,7 @@ import {
 } from "./app/agents";
 import { formatDuration, formatTime } from "./app/format";
 import type { Language } from "./app/language";
-import { appShellClass, appContentClass, missingAppCapabilityMessage, syncKeepAwakeIfAvailable, taskDetailIdFor, type ActiveFeature } from "./app/shell";
+import { appShellClass, appContentClass, missingAppCapabilityMessage, refreshSnapshotForFeature, syncKeepAwakeIfAvailable, taskDetailIdFor, type ActiveFeature } from "./app/shell";
 import {
   KEEP_AWAKE_STORAGE_KEY,
   LANGUAGE_STORAGE_KEY,
@@ -48,6 +48,7 @@ import {
   skillDisplayName,
 } from "./pages/skills/find-skill";
 import { AgentPage } from "./pages/agent/AgentPage";
+import { McpPage } from "./pages/agent/McpPage";
 import { useConfiguredAgentsManager } from "./pages/agent/hooks/useConfiguredAgentsManager";
 import { ChatPage } from "./pages/chat/ChatPage";
 import { chatConfigLocked, SlashCommandSuggestions, slashCommandSuggestionsFor } from "./pages/chat/chat-utils";
@@ -222,6 +223,7 @@ export function AppShell() {
   const [taskStatusFilter, setTaskStatusFilter] = useState<TaskStatusFilterValue>("all");
   const [selectedTaskDetailId, setSelectedTaskDetailId] = useState<string | undefined>();
   const [activeFeature, setActiveFeature] = useState<ActiveFeature>("chat");
+  const [workflowMcpStatus, setWorkflowMcpStatus] = useState<import("../../shared/mcp-config").McpSetupStatus>();
   const [theme, setTheme] = useState<Theme>(() => loadStoredTheme(window.localStorage));
   const [providerKeys, setProviderKeys] = useState<Record<string, string>>(() => loadStoredProviderKeys(window.localStorage));
   const [language, setLanguage] = useState<Language>(() => loadStoredLanguage(window.localStorage));
@@ -280,9 +282,13 @@ export function AppShell() {
           ? "当前 Runtime 配置尚未保存，离开前保存吗？"
           : "This Runtime config has unsaved changes. Save before leaving?",
       ),
-      setActiveFeature,
+      (nextFeature) => {
+        void refreshSnapshotForFeature(nextFeature, snapshots.getSnapshot, setSnapshot)
+          .catch((error) => console.warn("Failed to refresh workflow history", error))
+          .finally(() => setActiveFeature(nextFeature));
+      },
     );
-  }, [activeFeature, confirmSaveBeforeSwitch, language]);
+  }, [activeFeature, confirmSaveBeforeSwitch, language, snapshots]);
   const {
     selectedConfiguredAgentId,
     configuredAgentStatus,
@@ -985,6 +991,8 @@ export function AppShell() {
             onReplaceChannelAndPersist={replaceConfigChannelAndPersist}
             onStatusChange={setConfigStatus}
           />
+        ) : activeFeature === "mcp" ? (
+          <McpPage language={language} agents={snapshot.configuredAgents} status={workflowMcpStatus} />
         ) : activeFeature === "agent" ? (
           <AgentPage
             language={language}

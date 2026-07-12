@@ -54,7 +54,7 @@ function baseCodexContextWithResume(workDir: string) {
 function codexSessionOptions(
   clientOverrides: Partial<{
     start: () => Promise<void>;
-    request: (method: string) => Promise<unknown>;
+    request: (method: string, params?: Record<string, unknown>) => Promise<unknown>;
     shutdown: () => Promise<void>;
     interruptTurn: (threadId: string, turnId: string | undefined) => Promise<void>;
   }> = {},
@@ -79,6 +79,41 @@ function codexSessionOptions(
 }
 
 describe("CodexInteractiveSession", () => {
+  test.each([
+    ["workflow planning", true, "on-request"],
+    ["regular chat", false, "never"],
+  ] as const)("uses the expected approval policy for %s", async (_label, workflowPlanning, expectedPolicy) => {
+    const dir = await mkdtemp(path.join(os.tmpdir(), "multi-agent-chat-codex-approval-policy-"));
+    const request = vi.fn(async (method: string) =>
+      method === "thread/start" ? { thread: { id: "thread-1" } } : {},
+    );
+    const session = new CodexInteractiveSession(
+      {
+        chatId: "chat-1",
+        configuredAgentId: "default-agent",
+        runtimeId: "codex",
+        executionMode: "interactive",
+        continuationPolicy: "resume-preferred",
+        runtime: codexRuntime("codex"),
+        channelId: "codex-openai",
+        workDir: dir,
+        runtimeConfig: { model: "default" },
+        developerInstructions: "test",
+        emit: () => undefined,
+        syncState: () => undefined,
+        ...(workflowPlanning ? { onWorkflowCreated: () => undefined } : {}),
+      },
+      codexSessionOptions({ request }),
+    );
+
+    await session.ensureAttached();
+
+    expect(request).toHaveBeenCalledWith(
+      "thread/start",
+      expect.objectContaining({ approvalPolicy: expectedPolicy }),
+    );
+  });
+
   test("shuts down the Codex client if attach fails after process start", async () => {
     const dir = await mkdtemp(path.join(os.tmpdir(), "multi-agent-chat-codex-attach-fail-"));
     const client = {

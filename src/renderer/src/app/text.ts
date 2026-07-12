@@ -6,9 +6,10 @@ export const UI_TEXT = {
       teams: "团队",
       workflow: "工作流",
       schedules: "定时任务",
-      skills: "技能",
+      skills: "Skill",
       runtimes: "配置",
       agent: "Agent",
+      mcp: "MCP",
     },
     chrome: {
       featureNav: "功能导航",
@@ -93,9 +94,10 @@ export const UI_TEXT = {
       teams: "Teams",
       workflow: "Workflow",
       schedules: "Schedules",
-      skills: "Skills",
+      skills: "Skill",
       runtimes: "Config",
       agent: "Agent",
+      mcp: "MCP",
     },
     chrome: {
       featureNav: "Feature navigation",

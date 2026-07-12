@@ -1036,6 +1036,7 @@ export class AgentHub {
         this.activeWorkflowDraftRequests.set(workflowId, request);
       },
       emit: () => this.emit(),
+      persist: () => this.flushPersistence(),
       defaultWorkDir: this.workDir,
       askWorkflowDraftAgent: (request, onEvent) => this.askWorkflowDraftAgent(request, onEvent),
       handleEvent: (workflowId, event) => this.handleWorkflowDraftAgentEvent(workflowId, event),
@@ -1044,6 +1045,7 @@ export class AgentHub {
       failRequest: (workflowId, requestId, error) => this.failWorkflowDraftRequest(workflowId, requestId, error),
     });
 
+    await this.flushPersistence();
     return this.snapshot();
   }
 

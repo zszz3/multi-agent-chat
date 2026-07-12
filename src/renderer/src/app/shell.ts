@@ -1,6 +1,6 @@
 import type { ScheduledWorkflowDueEvent } from "../../../shared/types";
 
-export type ActiveFeature = "chat" | "tasks" | "workflow" | "schedules" | "skills" | "agent" | "runtimes";
+export type ActiveFeature = "chat" | "tasks" | "workflow" | "schedules" | "skills" | "agent" | "mcp" | "runtimes";
 
 export function appShellClass(activeFeature: ActiveFeature): string {
   return activeFeature === "tasks" ||
@@ -8,6 +8,7 @@ export function appShellClass(activeFeature: ActiveFeature): string {
     activeFeature === "schedules" ||
     activeFeature === "skills" ||
     activeFeature === "agent" ||
+    activeFeature === "mcp" ||
     activeFeature === "runtimes"
     ? `shell ${activeFeature}-shell`
     : "shell";
@@ -20,6 +21,7 @@ export function appContentClass(activeFeature: ActiveFeature): string {
   if (activeFeature === "schedules") return "content scheduled-content";
   if (activeFeature === "skills") return "content skills-content";
   if (activeFeature === "agent") return "content agent-content";
+  if (activeFeature === "mcp") return "content runtime-content";
   if (activeFeature === "runtimes") return "content runtime-content";
   return "content chat-content";
 }
@@ -50,4 +52,9 @@ export function scheduledWorkflowEventTarget(event: ScheduledWorkflowDueEvent): 
   const workflowId = typeof event.payload.workflowId === "string" ? event.payload.workflowId : undefined;
   if (!scheduleId || !workflowId) return undefined;
   return { scheduleId, workflowId };
+}
+
+export async function refreshSnapshotForFeature<T>(feature: ActiveFeature, load: () => Promise<T>, apply: (snapshot: T) => void): Promise<void> {
+  if (feature !== "workflow") return;
+  apply(await load());
 }

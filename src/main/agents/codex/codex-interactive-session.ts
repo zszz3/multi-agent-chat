@@ -88,13 +88,14 @@ export class CodexInteractiveSession implements InteractiveSession {
       await client.start();
       const existingThreadId = codexRuntimeStateCodec.decodeConversation(this.runtimeConversation)?.native.threadId;
       const modelId = modelFromContext(this.context);
+      const approvalPolicy = this.context.onWorkflowCreated ? "on-request" : "never";
       const threadResult = existingThreadId
         ? await client.request("thread/resume", {
             threadId: existingThreadId,
             model: runtimeModelId(modelId),
             modelProvider: null,
             cwd: this.context.workDir,
-            approvalPolicy: "never",
+            approvalPolicy,
             config: null,
             baseInstructions: null,
             developerInstructions: this.context.developerInstructions,
@@ -104,7 +105,7 @@ export class CodexInteractiveSession implements InteractiveSession {
             modelProvider: null,
             profile: null,
             cwd: this.context.workDir,
-            approvalPolicy: "never",
+            approvalPolicy,
             config: null,
             baseInstructions: null,
             developerInstructions: this.context.developerInstructions,
@@ -121,7 +122,7 @@ export class CodexInteractiveSession implements InteractiveSession {
           appContext: {
             cwd: this.context.workDir,
             modelId,
-            approvalPolicy: "never",
+            approvalPolicy,
           },
         });
         this.context.emit({
