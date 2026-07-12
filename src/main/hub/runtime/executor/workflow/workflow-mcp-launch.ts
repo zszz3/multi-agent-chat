@@ -16,8 +16,9 @@ interface WorkflowMcpLaunchOptions {
 export function workflowMcpLaunchConfig(
   discoveryPath: string | undefined,
   options: WorkflowMcpLaunchOptions = {},
+  workflowId?: string,
 ): WorkflowMcpLaunchConfig | undefined {
-  if (!discoveryPath) return undefined;
+  if (!discoveryPath || !workflowId) return undefined;
   const mainBundlePath = options.mainBundlePath ?? fileURLToPath(import.meta.url);
   const compiledServer = path.join(path.dirname(mainBundlePath), "mcp-server.js");
   if (existsSync(compiledServer)) {
@@ -26,6 +27,7 @@ export function workflowMcpLaunchConfig(
       args: [compiledServer],
       env: {
         MULTI_AGENT_CHAT_MCP_BRIDGE: discoveryPath,
+        MULTI_AGENT_CHAT_WORKFLOW_ID: workflowId,
         ELECTRON_RUN_AS_NODE: "1",
       },
     };
@@ -41,6 +43,6 @@ export function workflowMcpLaunchConfig(
   return {
     command: process.execPath,
     args: [tsxCli, serverScript],
-    env: { MULTI_AGENT_CHAT_MCP_BRIDGE: discoveryPath, ELECTRON_RUN_AS_NODE: "1" },
+    env: { MULTI_AGENT_CHAT_MCP_BRIDGE: discoveryPath, MULTI_AGENT_CHAT_WORKFLOW_ID: workflowId, ELECTRON_RUN_AS_NODE: "1" },
   };
 }

@@ -169,7 +169,7 @@ export function mcpToolDefinitions(): McpToolDefinition[] {
     },
     {
       name: "workflow_create",
-      description: "Create a new editable workflow DAG in Multi Agent Chat. Invalid graphs are rejected with validation errors. Use interactive LLM nodes only to collect or clarify user input, and use script nodes for deterministic work such as echoing, copying, formatting, mapping, or passing values through unchanged.",
+      description: "Write an editable workflow DAG into the current Workflow planning session. This never creates another top-level Workflow and does not confirm or publish the draft. Invalid graphs are rejected. Use interactive LLM nodes only to collect or clarify user input, and use script nodes for deterministic work such as echoing, copying, formatting, mapping, or passing values through unchanged.",
       inputSchema: objectSchema(
         {
           title: { type: "string" },
@@ -194,14 +194,13 @@ export function mcpToolDefinitions(): McpToolDefinition[] {
     },
     {
       name: "workflow_update",
-      description: "Update workflow metadata or replace the full graph. Requires expectedRevision for overwrite protection.",
+      description: "Update the editable draft in the current Workflow planning session. This does not confirm or publish the draft.",
       inputSchema: objectSchema({
-        workflowId: { type: "string" },
         expectedRevision: { type: "number" },
         title: { type: "string" },
         objective: { type: "string" },
         definition: workflowV2DefinitionSchema,
-      }, ["workflowId"]),
+      }),
     },
     {
       name: "workflow_validate",
@@ -274,7 +273,10 @@ export async function callMcpTool(name: string, args: unknown): Promise<unknown>
       authorization: `Bearer ${discovery.token}`,
       "content-type": "application/json",
     },
-    body: JSON.stringify(args ?? {}),
+    body: JSON.stringify({
+      ...(args && typeof args === "object" && !Array.isArray(args) ? args as Record<string, unknown> : {}),
+      ...(process.env.MULTI_AGENT_CHAT_WORKFLOW_ID ? { __workflowContextId: process.env.MULTI_AGENT_CHAT_WORKFLOW_ID } : {}),
+    }),
   });
   const payload = (await response.json()) as unknown;
   if (!response.ok) throw new Error(`MCP bridge request failed with ${response.status}: ${JSON.stringify(payload)}`);

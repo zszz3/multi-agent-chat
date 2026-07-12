@@ -45,6 +45,8 @@ export function useWorkflowFeatureController({
       topologyLocked: activeWorkflow?.topologyLocked === true,
       title: draft.workflowTitle,
       status: draft.workflowStatus,
+      ...(activeWorkflow ? { revision: activeWorkflow.revision } : {}),
+      ...(activeWorkflow?.confirmedRevision !== undefined ? { confirmedRevision: activeWorkflow.confirmedRevision } : {}),
       definition: draft.workflowDefinition,
       definitionReady: draft.workflowDefinitionReady,
       objective: draft.workflowObjective,
@@ -121,6 +123,15 @@ export function useWorkflowFeatureController({
           const next = await workflows.patchDraft({ workflowId: draft.workflowId, error: result.error });
           setSnapshot(next);
         }
+      },
+      onConfirmWorkflow: async () => {
+        if (!draft.workflowId || !activeWorkflow) return;
+        const result = await workflows.confirmWorkflow({ workflowId: draft.workflowId, expectedRevision: activeWorkflow.revision });
+        if (!result.ok && result.error) {
+          setSnapshot(await workflows.patchDraft({ workflowId: draft.workflowId, error: result.error }));
+          return;
+        }
+        await onRefresh();
       },
       onResetSession: () => draft.resetWorkflowSession(),
       onStopGrill: () => draft.stopWorkflowGrill(),

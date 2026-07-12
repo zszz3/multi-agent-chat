@@ -47,7 +47,7 @@ export type {
   RejectWorkflowNodeCompletionRequest,
   InterruptWorkflowNodeConversationRequest,
   WorkflowOperationResult,
-  CreateWorkflowRequest,
+  MaterializeWorkflowDraftRequest,
   CreateWorkflowDraftRequest,
   PatchWorkflowDraftRequest,
   SendWorkflowDraftReplyRequest,
@@ -57,6 +57,7 @@ export type {
   StartWorkflowRunRequest,
   ListWorkflowOutputsRequest,
   RunWorkflowRequest,
+  ConfirmWorkflowRequest,
   BuildWorkflowV2PlanRequest,
   BuildWorkflowV2PlanResult,
   BuildWorkflowV2GraphRevisionRequest,
@@ -442,6 +443,7 @@ export interface RunTaskRequest {
 }
 
 export interface WorkflowAgentRequest extends RuntimeRequest {
+  planningWorkflowId?: string;
   requestId?: string;
   prompt: string;
   configuredAgentId: string;
@@ -454,7 +456,6 @@ export interface WorkflowAgentResponse {
 }
 
 export type WorkflowAgentEvent =
-  | { requestId: string; type: "workflow_created"; workflowId: string; revision?: number; content: string }
   | { requestId: string; type: "delta"; content: string }
   | { requestId: string; type: "completed"; content: string; runtimeConversation?: RuntimeConversation }
   | { requestId: string; type: "error"; error: string };

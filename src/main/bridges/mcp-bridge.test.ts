@@ -240,7 +240,9 @@ describe("MCP bridge", () => {
     expect(deletedAgent).toMatchObject({ ok: true, agentId: "doc-writer" });
     expect(deletedAgent.agents.some((agent: any) => agent.id === "doc-writer")).toBe(false);
 
+    const planningWorkflow = hub.createWorkflowDraft().workflowDraft!;
     const create = await bridgeRequest("/mcp/workflow/create", bridge.token, {
+      __workflowContextId: planningWorkflow.workflowId,
       title: "Review workflow",
       objective: "Review example service",
       definition: {
@@ -254,8 +256,7 @@ describe("MCP bridge", () => {
     });
     expect(create.status).toBe(200);
     const created = (await create.json()) as any;
-    expect(created).toMatchObject({ ok: true, revision: 1 });
-    expect(created.workflowId).toMatch(/^wf_/);
+    expect(created).toMatchObject({ ok: true, workflowId: planningWorkflow.workflowId });
 
     const list = (await (await bridgeRequest("/mcp/workflow/list", bridge.token, {})).json()) as any;
     expect(list.workflows).toEqual([
@@ -263,7 +264,7 @@ describe("MCP bridge", () => {
         workflowId: created.workflowId,
         title: "Review workflow",
         status: "draft",
-        revision: 1,
+        revision: created.revision,
         nodeCount: 1,
       }),
     ]);
@@ -274,7 +275,7 @@ describe("MCP bridge", () => {
       handoff: "Writer can produce the summary.",
       artifacts: [{ kind: "text", title: "Finding", content: "No blockers." }],
     });
-    expect(await context.json()).toMatchObject({ ok: true, workflowId: created.workflowId, revision: 2 });
+    expect(await context.json()).toMatchObject({ ok: true, workflowId: created.workflowId, revision: created.revision + 1 });
 
     const get = (await (await bridgeRequest("/mcp/workflow/get", bridge.token, { workflowId: created.workflowId })).json()) as any;
     expect(get.workflow.contextDocument).toContain("Reviewed the service.");

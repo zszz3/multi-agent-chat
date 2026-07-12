@@ -50,6 +50,8 @@ export function WorkflowPage({ controller: source }: { controller: WorkflowContr
   const topologyLocked = source.topologyLocked === true;
   const title = source.title;
   const status = source.status ?? "draft";
+  const revision = source.revision;
+  const confirmedRevision = source.confirmedRevision;
   const definition = source.definition;
   const graph = definition;
   const definitionReady = source.definitionReady;
@@ -87,6 +89,7 @@ export function WorkflowPage({ controller: source }: { controller: WorkflowContr
   const onSendReply = source.onSendReply;
   const onUpdateNode = source.onUpdateNode;
   const onRunWorkflow = source.onRunWorkflow;
+  const onConfirmWorkflow = source.onConfirmWorkflow;
   const onStopGrill = source.onStopGrill ?? (() => undefined);
   const onChooseWorkDir = source.onChooseWorkDir ?? (() => undefined);
   const onReadOutputFile = source.onReadOutputFile;
@@ -95,6 +98,7 @@ export function WorkflowPage({ controller: source }: { controller: WorkflowContr
   const defaultGraphExpanded = source.defaultGraphExpanded ?? false;
   const workflowText = WORKFLOW_TEXT[language];
   const validation = validateWorkflowV2Definition(definition);
+  const workflowConfirmed = revision !== undefined && confirmedRevision === revision;
   const workflowStarted = messages.length > 0;
   const grillComplete = Math.max(0, messages.filter((message) => message.role === "user").length - 1) >= WORKFLOW_TOTAL_QUESTION_COUNT;
   const runtimeMap = new Map(runtimes.map((runtime) => [runtime.id, runtime]));
@@ -326,12 +330,17 @@ export function WorkflowPage({ controller: source }: { controller: WorkflowContr
                 <CircleStop size={14} />
                 <span>Stop workflow</span>
               </button>
-            ) : (
-              <button className="send-btn" onClick={() => void onRunWorkflow()} disabled={!validation.valid || running}>
+            ) : <>
+              {!workflowConfirmed && onConfirmWorkflow ? (
+                <button className="control-btn" onClick={() => void onConfirmWorkflow()} disabled={!validation.valid || running}>
+                  <span>{workflowText.confirmWorkflow}</span>
+                </button>
+              ) : null}
+              <button className="send-btn" onClick={() => void onRunWorkflow()} disabled={!validation.valid || !workflowConfirmed || running}>
                 <Play size={14} />
                 <span>{workflowText.runWorkflow}</span>
               </button>
-            )
+            </>
           ) : null}
         </div>
       </header>
@@ -379,7 +388,10 @@ export function WorkflowPage({ controller: source }: { controller: WorkflowContr
                 <span>{validation.valid ? workflowText.dagValid : workflowText.dagInvalid}</span>
               </div>
               <div className="workflow-validation-row-actions">
-                <TaskStatusChip label={validation.valid ? workflowText.ready : workflowText.invalid} tone={validation.valid ? "done" : "failed"} />
+                <TaskStatusChip
+                  label={!validation.valid ? workflowText.invalid : workflowConfirmed ? `${workflowText.confirmed} r${confirmedRevision}` : workflowText.awaitingConfirmation}
+                  tone={!validation.valid ? "failed" : workflowConfirmed ? "done" : "running"}
+                />
                 <button className="icon-btn flat" onClick={() => setGraphExpanded(true)} title="Expand graph board" aria-label="Expand workflow graph board">
                   <Maximize2 size={14} />
                 </button>

@@ -34,6 +34,7 @@ import type {
   CodexDefaultConfig,
   ClaudeDefaultConfig,
   ConfiguredAgent,
+  ConfirmWorkflowRequest,
   CreateWorkflowDraftRequest,
   CreateScheduledWorkflowScheduleRequest,
   CreateAgentTeamRequest,
@@ -441,8 +442,9 @@ function registerIpcHandlers(): void {
   ipcMain.handle("workflow:draft:update", (_event, draft?: WorkflowDraftState) => hub.updateWorkflowDraft(draft));
   ipcMain.handle("workflow:select", (_event, workflowId: string) => hub.selectWorkflow(workflowId));
   ipcMain.handle("workflow:rename", (_event, workflowId: string, title: string) => hub.renameWorkflow(workflowId, title));
-  ipcMain.handle("workflow:delete", (_event, workflowId: string) => hub.deleteWorkflow(workflowId));
-  ipcMain.handle("workflow-run:start", (_event, request: RunWorkflowRequest) => hub.runWorkflow(request));
+ipcMain.handle("workflow:delete", (_event, workflowId: string) => hub.deleteWorkflow(workflowId));
+ipcMain.handle("workflow:confirm", (_event, request: ConfirmWorkflowRequest) => hub.confirmWorkflow(request));
+ipcMain.handle("workflow-run:start", (_event, request: RunWorkflowRequest) => hub.runWorkflow(request));
   ipcMain.handle("workflow-run:pause-node", (_event, request: PauseWorkflowNodeRequest) => hub.pauseWorkflowNode(request));
   ipcMain.handle("workflow-run:stop", (_event, request: StopWorkflowRunRequest) => hub.stopWorkflowRun(request));
   ipcMain.handle("workflow-v2:intervention:resolve", (_event, request: ResolveWorkflowV2InterventionRequest) =>

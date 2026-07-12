@@ -5,7 +5,7 @@ import path from "node:path";
 import type { AddressInfo } from "node:net";
 import type { AgentHub } from "../hub/agent-hub";
 import { isRuntimeId } from "../../shared/runtime-catalog";
-import type { AgentChannel, ConfiguredAgent, CreateWorkflowRequest, RegisterArtifactRequest, UpdateWorkflowRequest, WorkflowArtifactReference, AppendWorkflowRunContextRequest, ImportOnlineSkillRequest } from "../../shared/types";
+import type { AgentChannel, ConfiguredAgent, MaterializeWorkflowDraftRequest, RegisterArtifactRequest, UpdateWorkflowRequest, WorkflowArtifactReference, AppendWorkflowRunContextRequest, ImportOnlineSkillRequest } from "../../shared/types";
 import { SKILL_TEMPLATES } from "../../shared/skill-templates";
 import { importOnlineSkillToLibrary, listImportedSkillTemplates } from "../skills/skill-installer";
 import { fetchOnlineSkills, ONLINE_SKILL_SOURCES } from "../../shared/online-skills";
@@ -287,11 +287,13 @@ async function routeWorkflowRequest(hub: AgentHub, route: string, body: unknown,
     const workflow = hub.snapshot().workflowStore.workflows.find((item) => item.workflowId === workflowId);
     return workflow ? { ok: true, workflow } : { ok: false, error: `Workflow ${workflowId} was not found.` };
   }
-    if (route === "/mcp/workflow/create") {
+  if (route === "/mcp/workflow/create") {
+    const workflowId = typeof record.__workflowContextId === "string" ? record.__workflowContextId : "";
+    if (!workflowId) return { ok: false, error: "workflow_create is only available inside a Workflow planning session." };
     const definition = record.definition as WorkflowV2Definition;
     const validation = validateWorkflowV2Definition(definition);
     if (!validation.valid) return { ok: false, error: validation.errors[0] ?? "Invalid Workflow V2 definition." };
-    const request: CreateWorkflowRequest = {
+    const request: MaterializeWorkflowDraftRequest = {
       title: typeof record.title === "string" ? record.title : definition.objective,
       objective: typeof record.objective === "string" ? record.objective : definition.objective,
       definition,
@@ -300,13 +302,15 @@ async function routeWorkflowRequest(hub: AgentHub, route: string, body: unknown,
     if (configuredAgentId) request.configuredAgentId = configuredAgentId;
     const workDir = asString(record.workDir);
     if (workDir) request.workDir = workDir;
-    const result = hub.createWorkflow(request);
+    const result = hub.materializeWorkflowDraft(workflowId, request);
     const workflow = result.workflowId ? hub.snapshot().workflowStore.workflows.find((item) => item.workflowId === result.workflowId) : undefined;
     return workflow ? { ...result, workflow } : result;
   }
   if (route === "/mcp/workflow/update") {
+    const workflowId = typeof record.__workflowContextId === "string" ? record.__workflowContextId : "";
+    if (!workflowId) return { ok: false, error: "workflow_update is only available inside a Workflow planning session." };
     const request: UpdateWorkflowRequest = {
-      workflowId: typeof record.workflowId === "string" ? record.workflowId : "",
+      workflowId,
     };
     if (typeof record.expectedRevision === "number") request.expectedRevision = record.expectedRevision;
     if (typeof record.title === "string") request.title = record.title;

@@ -1,5 +1,5 @@
 import type {
-  CreateWorkflowRequest,
+  MaterializeWorkflowDraftRequest,
   WorkflowArtifactReference,
   WorkflowDraftState,
   WorkflowOperationResult,
@@ -19,7 +19,7 @@ export interface CodexWorkflowToolCallResult {
 }
 
 export interface CodexWorkflowToolDependencies {
-  createWorkflow: (request: CreateWorkflowRequest) => WorkflowOperationResult;
+  materializeWorkflowDraft: (workflowId: string, request: MaterializeWorkflowDraftRequest) => WorkflowOperationResult;
   getWorkflow: (workflowId: string) => WorkflowDraftState | undefined;
   appendWorkflowContext: (input: {
     workflowId: string;
@@ -89,6 +89,7 @@ function findToolInput(value: unknown, depth = 0): Record<string, unknown> | und
 export function handleCodexWorkflowToolCall(
   params: Record<string, unknown>,
   deps: CodexWorkflowToolDependencies,
+  planningWorkflowId: string,
 ): CodexWorkflowToolCallResult {
   const name = findToolName(params);
   if (!name) return { handled: false };
@@ -100,7 +101,7 @@ export function handleCodexWorkflowToolCall(
       return { handled: true, success: false, payload: { ok: false, error: validation?.errors[0] ?? "workflow_create requires a valid Workflow V2 definition." } };
     }
     const title = asOptionalString(input.title) ?? definition.objective;
-    const request: CreateWorkflowRequest = {
+    const request: MaterializeWorkflowDraftRequest = {
       title,
       objective: asOptionalString(input.objective) ?? definition.objective,
       definition,
@@ -111,7 +112,7 @@ export function handleCodexWorkflowToolCall(
     if (modelId) request.modelId = modelId;
     const workDir = asOptionalString(input.workDir);
     if (workDir) request.workDir = workDir;
-    const result = deps.createWorkflow(request);
+    const result = deps.materializeWorkflowDraft(planningWorkflowId, request);
     const workflow = result.workflowId ? deps.getWorkflow(result.workflowId) : undefined;
     return {
       handled: true,

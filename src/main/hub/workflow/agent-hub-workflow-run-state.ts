@@ -17,6 +17,7 @@ export function startWorkflowRunState(input: {
   const now = input.now ?? Date.now();
   const contextDocument = input.request.contextDocument ?? input.workflow.contextDocument;
   if (!input.workflow.workflowV2Plan) throw new Error("Workflow V2 plan is required before starting a run.");
+  if (input.workflow.confirmedRevision !== input.workflow.revision) throw new Error("Workflow must be confirmed before starting a run.");
   const { finalReport: _workflowFinalReport, ...workflowWithoutFinalReport } = input.workflow;
 
   return {

@@ -51,6 +51,8 @@ export interface WorkflowController {
   topologyLocked?: boolean;
   title?: string;
   status?: WorkflowStatus;
+  revision?: number;
+  confirmedRevision?: number;
   definition: WorkflowV2Definition;
   definitionReady: boolean;
   objective: string;
@@ -87,6 +89,7 @@ export interface WorkflowController {
   onSendReply: () => void;
   onUpdateNode: (nodeId: string, update: Partial<WorkflowV2Node>) => void;
   onRunWorkflow: () => MaybePromise;
+  onConfirmWorkflow?: () => MaybePromise;
   onResetSession: () => MaybePromise;
   onStopGrill?: () => void;
   onChooseWorkDir?: () => MaybePromise;

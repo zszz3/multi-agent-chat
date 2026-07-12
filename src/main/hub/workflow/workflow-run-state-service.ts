@@ -29,6 +29,9 @@ export class WorkflowRunStateService {
       return { ok: false, error: "Workflow already has an active run." };
     }
     if (!workflow.workflowV2Plan) return { ok: false, workflowId: workflow.workflowId, error: "Workflow V2 plan is required before starting a run." };
+    if (workflow.confirmedRevision !== workflow.revision) {
+      return { ok: false, workflowId: workflow.workflowId, revision: workflow.revision, error: "Workflow must be confirmed before starting a run." };
+    }
     this.deps.clearDraftRequest(workflow.workflowId);
     const runId = this.deps.createRunId();
     const next = startWorkflowRunState({ workflow, request: input, runId, cloneDraft: this.deps.cloneDraft });

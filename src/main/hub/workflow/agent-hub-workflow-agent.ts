@@ -72,6 +72,7 @@ export function buildWorkflowAgentExecution<TResolved extends {
   createRequestId: () => string;
 }): {
   requestId: string;
+  planningWorkflowId?: string;
   runtimeId: AgentId;
   executionMode: WorkflowAgentRequest["executionMode"];
   continuationPolicy: WorkflowAgentRequest["continuationPolicy"];
@@ -101,6 +102,7 @@ export function buildWorkflowAgentExecution<TResolved extends {
 
   return {
     requestId: input.request.requestId ?? input.createRequestId(),
+    ...(input.request.planningWorkflowId ? { planningWorkflowId: input.request.planningWorkflowId } : {}),
     runtimeId: input.request.runtimeId,
     executionMode: input.request.executionMode,
     continuationPolicy: input.request.continuationPolicy,

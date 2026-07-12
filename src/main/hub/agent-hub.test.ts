@@ -57,7 +57,9 @@ function addConfiguredAgents(hub: AgentHub, agents: ConfiguredAgent[]): void {
 function createV2Workflow(hub: AgentHub, input: any): any {
   const agentNodes = input.graph?.nodes?.filter((node: any) => node.kind === "agent") ?? [];
   const agentNodeIds = new Set(agentNodes.map((node: any) => node.id));
-  return (hub as any).createWorkflow({
+  const draft = hub.createWorkflowDraft({ configuredAgentId: input.configuredAgentId });
+  const workflowId = draft.workflowDraft!.workflowId;
+  const result = hub.materializeWorkflowDraft(workflowId, {
     ...input,
     definition: input.definition ?? {
       workflowId: "test-placeholder",
@@ -77,6 +79,8 @@ function createV2Workflow(hub: AgentHub, input: any): any {
         .map((edge: any) => ({ fromNodeId: edge.fromNodeId, toNodeId: edge.toNodeId })),
     },
   });
+  if (result.ok) hub.confirmWorkflow({ workflowId, ...(result.revision !== undefined ? { expectedRevision: result.revision } : {}) });
+  return result;
 }
 
 function interactiveChatCapabilities(runtimeId: AgentId) {
@@ -171,7 +175,7 @@ function createHubWithClaudeOneShot(
     workflowHost: {
       mcpBridgeDiscoveryPath: () => (hub as any).mcpBridgeDiscoveryPath,
       tools: {
-        createWorkflow: (request) => hub.createWorkflow(request),
+        materializeWorkflowDraft: (workflowId, request) => hub.materializeWorkflowDraft(workflowId, request),
         getWorkflow: (workflowId) => (hub as any).workflowStore.getWorkflow(workflowId),
         appendWorkflowContext: (request) => hub.appendWorkflowContext(request),
       },
@@ -2942,6 +2946,7 @@ fs.writeFileSync(${JSON.stringify(argsPath)}, process.argv.slice(2).join("\\n") 
 
     await (hub as any).askWorkflowAgent({
       requestId: "workflow-mcp-config-test",
+      planningWorkflowId: "wf-codex-planning",
       prompt: "Use workflow tools when ready.",
       configuredAgentId: "default-agent",
       workDir: dir,
@@ -3081,6 +3086,7 @@ fs.writeFileSync(${JSON.stringify(argsPath)}, process.argv.slice(2).join("\\n") 
 
     await (hub as any).askWorkflowAgent({
       requestId: "claude-workflow-mcp-test",
+      planningWorkflowId: "wf-claude-planning",
       prompt: "Plan the repo",
       configuredAgentId: "claude-agent",
       workDir: dir,
@@ -3095,7 +3101,7 @@ fs.writeFileSync(${JSON.stringify(argsPath)}, process.argv.slice(2).join("\\n") 
       multi_agent_chat: {
         type: "stdio",
         command: process.execPath,
-        env: { MULTI_AGENT_CHAT_MCP_BRIDGE: path.join(dir, "mcp-bridge.json"), ELECTRON_RUN_AS_NODE: "1" },
+        env: { MULTI_AGENT_CHAT_MCP_BRIDGE: path.join(dir, "mcp-bridge.json"), MULTI_AGENT_CHAT_WORKFLOW_ID: "wf-claude-planning", ELECTRON_RUN_AS_NODE: "1" },
       },
     });
     expect(oneShotInput?.mcpServers?.multi_agent_chat.args).toHaveLength(2);
@@ -4120,7 +4126,7 @@ fs.writeFileSync(${JSON.stringify(argsPath)}, process.argv.slice(2).join("\\n") 
     expect(persisted.workflowStore.workflows[1]).toMatchObject({
       title: "sample repo review",
       objective: "Review sample repo",
-      revision: 3,
+      revision: 4,
       contextDocument: expect.stringContaining("Added architecture note."),
       runProgress: [{ nodeId: "inventory", status: "completed" }],
       workflowV2Plan: {
@@ -4144,7 +4150,7 @@ fs.writeFileSync(${JSON.stringify(argsPath)}, process.argv.slice(2).join("\\n") 
       workflowId: first.workflowId,
       title: "sample repo review",
       objective: "Review sample repo",
-      revision: 3,
+      revision: 4,
       status: "draft",
       definition: { objective: "Review sample repo" },
       messages: [{ id: "m-1", role: "user" }, { id: "m-2", role: "assistant" }],
@@ -4187,7 +4193,7 @@ fs.writeFileSync(${JSON.stringify(argsPath)}, process.argv.slice(2).join("\\n") 
     expect(workflow).toMatchObject({
       title: "Renamed workflow",
       objective: "Review sample repo",
-      revision: 2,
+      revision: 3,
       definition: { objective: "Review sample repo" },
     });
     expect(snapshot.workflowDraft.title).toBe("Renamed workflow");
@@ -4414,7 +4420,8 @@ fs.writeFileSync(${JSON.stringify(argsPath)}, process.argv.slice(2).join("\\n") 
   test("rejects invalid V2 workflow creation with validation reasons", () => {
     const hub = new AgentHub();
 
-    const result = (hub as any).createWorkflow({
+    const workflowId = hub.createWorkflowDraft().workflowDraft!.workflowId;
+    const result = hub.materializeWorkflowDraft(workflowId, {
       title: "Broken",
       objective: "Broken",
       definition: {
@@ -4432,19 +4439,13 @@ fs.writeFileSync(${JSON.stringify(argsPath)}, process.argv.slice(2).join("\\n") 
           { fromNodeId: "b", toNodeId: "a" },
         ],
       },
-      graph: {
-        title: "Broken",
-        objective: "Broken",
-        nodes: [{ id: "agent-a", kind: "agent", title: "Agent A", prompt: "Work" }],
-        edges: [],
-      },
     });
 
     expect(result).toMatchObject({
       ok: false,
       error: expect.stringContaining("acyclic"),
     });
-    expect((hub.snapshot() as any).workflowStore.workflows).toHaveLength(0);
+    expect((hub.snapshot() as any).workflowStore.workflows).toHaveLength(1);
   });
 
   test("rejects V2 definitions that exceed node limits", () => {
@@ -4465,7 +4466,8 @@ fs.writeFileSync(${JSON.stringify(argsPath)}, process.argv.slice(2).join("\\n") 
       toNodeId: nodes[index + 1]!.id,
     }));
 
-    const result = (hub as any).createWorkflow({
+    const workflowId = hub.createWorkflowDraft().workflowDraft!.workflowId;
+    const result = hub.materializeWorkflowDraft(workflowId, {
       title: "Too large",
       objective: "Too large",
       definition: {
@@ -4483,14 +4485,13 @@ fs.writeFileSync(${JSON.stringify(argsPath)}, process.argv.slice(2).join("\\n") 
         })),
         edges: [],
       },
-      graph: { title: "Too large", objective: "Too large", nodes, edges },
     });
 
     expect(result).toMatchObject({
       ok: false,
       error: "Workflow V2 definition exceeds 50 nodes.",
     });
-    expect((hub.snapshot() as any).workflowStore.workflows).toHaveLength(0);
+    expect((hub.snapshot() as any).workflowStore.workflows).toHaveLength(1);
   });
 
   test("tracks workflow runs separately from editable workflow drafts", async () => {
@@ -4575,7 +4576,7 @@ fs.writeFileSync(${JSON.stringify(argsPath)}, process.argv.slice(2).join("\\n") 
       workflowId: created.workflowId,
       status: "completed",
       runIds: [started.runId],
-      revision: 2,
+      revision: 3,
       finalReport: "## Final User Report\nThe workflow completed successfully.",
     });
     expect(snapshot.workflowStore.runs[0]).toMatchObject({

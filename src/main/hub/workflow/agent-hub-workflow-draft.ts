@@ -1,5 +1,5 @@
 import type {
-  CreateWorkflowRequest,
+  MaterializeWorkflowDraftRequest,
   PatchWorkflowDraftRequest,
   RuntimeConversation,
   UpdateWorkflowRequest,
@@ -56,6 +56,7 @@ export function applyWorkflowDraftPatch(input: {
     workflowV2Plan: _workflowV2Plan,
     finalReport: _finalReport,
     runtimeConversation: _runtimeConversation,
+    confirmedRevision: _confirmedRevision,
     ...base
   } = current;
   const workDir = patch.workDir === null ? undefined : patch.workDir ?? current.workDir;
@@ -72,6 +73,9 @@ export function applyWorkflowDraftPatch(input: {
     title: patch.title ?? current.title,
     status: current.status === "running" ? "running" : patch.status ?? current.status,
     revision: current.revision + 1,
+    ...(!definitionChanged && !routeChanged && current.confirmedRevision === current.revision
+      ? { confirmedRevision: current.revision + 1 }
+      : {}),
     configuredAgentId: nextConfiguredAgentId,
     modelId: nextModelId,
     objective: patch.objective ?? definition.objective,
@@ -95,7 +99,7 @@ export function applyWorkflowDraftPatch(input: {
 
 export function createWorkflowDraftState(input: {
   workflowId: string;
-  request: CreateWorkflowRequest;
+  request: MaterializeWorkflowDraftRequest;
   configuredAgentId: string;
   modelId: string;
   cloneDraft: (draft: WorkflowDraftState) => WorkflowDraftState;
@@ -150,7 +154,7 @@ export function updateWorkflowDraftState(input: {
         : input.current.workflowV2Plan
           ? cloneWorkflowV2Plan(input.current.workflowV2Plan)
           : undefined;
-  const { workflowV2Plan: _plan, ...base } = input.current;
+  const { workflowV2Plan: _plan, confirmedRevision: _confirmedRevision, ...base } = input.current;
   return input.cloneDraft({
     ...base,
     title: input.request.title ?? input.current.title,
@@ -172,6 +176,9 @@ export function updateWorkflowDraftState(input: {
       ? { runtimeConversation: input.request.runtimeConversation }
       : {}),
     revision: input.current.revision + 1,
+    ...(!definitionChanged && !routeChanged && input.current.confirmedRevision === input.current.revision
+      ? { confirmedRevision: input.current.revision + 1 }
+      : {}),
     updatedAt: input.now ?? Date.now(),
   });
 }

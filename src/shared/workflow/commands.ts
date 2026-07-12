@@ -30,7 +30,7 @@ export interface WorkflowOperationResult {
   error?: string;
 }
 
-export interface CreateWorkflowRequest {
+export interface MaterializeWorkflowDraftRequest {
   title: string;
   objective: string;
   definition: WorkflowV2Definition;
@@ -126,6 +126,11 @@ export interface ListWorkflowOutputsRequest {
 export interface RunWorkflowRequest {
   workflowId: string;
   contextDocument?: string;
+}
+
+export interface ConfirmWorkflowRequest {
+  workflowId: string;
+  expectedRevision?: number;
 }
 
 export interface BuildWorkflowV2PlanRequest {

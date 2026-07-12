@@ -17,6 +17,7 @@ export interface WorkflowDraftState {
   title: string;
   status: WorkflowStatus;
   revision: number;
+  confirmedRevision?: number;
   configuredAgentId: string;
   modelId: string;
   objective: string;

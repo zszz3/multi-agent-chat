@@ -101,7 +101,7 @@ describe("CodexInteractiveSession", () => {
         developerInstructions: "test",
         emit: () => undefined,
         syncState: () => undefined,
-        ...(workflowPlanning ? { onWorkflowCreated: () => undefined } : {}),
+        ...(workflowPlanning ? { planningWorkflowId: "wf-planning" } : {}),
       },
       codexSessionOptions({ request }),
     );

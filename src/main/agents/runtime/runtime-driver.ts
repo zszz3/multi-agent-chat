@@ -34,16 +34,14 @@ export interface InteractiveSessionContext extends RuntimeRequest {
   runtime: AgentRuntime;
   channelId: string;
   workDir: string;
+  planningWorkflowId?: string;
   developerInstructions: string;
   emit: (event: AgentEvent) => void;
   syncState?: (state: InteractiveSessionSnapshot) => void;
-  onWorkflowCreated?: (payload: {
-    workflowId: string;
-    revision?: number;
-  }) => void;
 }
 
 export interface RuntimeWorkflowRequestContext extends RuntimeRequest {
+  planningWorkflowId?: string;
   requestId: string;
   prompt: string;
   runtime: AgentRuntime;

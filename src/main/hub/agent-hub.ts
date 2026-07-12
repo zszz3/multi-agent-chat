@@ -26,7 +26,8 @@ import {
   BuildWorkflowV2PlanRequest,
   BuildWorkflowV2PlanResult,
   CreateWorkflowDraftRequest,
-  CreateWorkflowRequest,
+  MaterializeWorkflowDraftRequest,
+  ConfirmWorkflowRequest,
   FinishWorkflowRunRequest,
   CompleteWorkflowNodeConversationRequest,
   InterruptWorkflowNodeConversationRequest,
@@ -421,7 +422,7 @@ export class AgentHub {
         workflowHost: {
           mcpBridgeDiscoveryPath: () => this.mcpBridgeDiscoveryPath,
           tools: {
-            createWorkflow: (request) => this.createWorkflow(request),
+            materializeWorkflowDraft: (workflowId, request) => this.materializeWorkflowDraft(workflowId, request),
             getWorkflow: (workflowId) => this.workflowStore.getWorkflow(workflowId),
             appendWorkflowContext: (request) => this.appendWorkflowContext(request),
           },
@@ -1064,9 +1065,9 @@ export class AgentHub {
     return this.snapshot();
   }
 
-  createWorkflow(input: CreateWorkflowRequest): WorkflowOperationResult {
-    const activePlanningWorkflowId = this.workflowStore.activeId && this.activeWorkflowDraftRequests.has(this.workflowStore.activeId) ? this.workflowStore.activeId : undefined;
-    if (this.workflowStore.workflows.size >= MAX_WORKFLOW_COUNT) return { ok: false, error: `Workflow count exceeds ${MAX_WORKFLOW_COUNT}.` };
+  materializeWorkflowDraft(workflowId: string, input: MaterializeWorkflowDraftRequest): WorkflowOperationResult {
+    const current = this.workflowStore.workflows.get(workflowId);
+    if (!current) return { ok: false, workflowId, error: `Workflow ${workflowId} was not found.` };
     if (!input.definition) return { ok: false, error: "Workflow V2 definition is required." };
     if (input.definition.nodes.length > MAX_WORKFLOW_NODE_COUNT) {
       return { ok: false, error: `Workflow V2 definition exceeds ${MAX_WORKFLOW_NODE_COUNT} nodes.` };
@@ -1074,7 +1075,6 @@ export class AgentHub {
     if (input.definition.edges.length > MAX_WORKFLOW_EDGE_COUNT) {
       return { ok: false, error: `Workflow V2 definition exceeds ${MAX_WORKFLOW_EDGE_COUNT} edges.` };
     }
-    const workflowId = `wf_${randomUUID()}`;
     const definition = { ...structuredClone(input.definition), workflowId, objective: input.objective.trim() || input.definition.objective };
     const validation = validateWorkflowV2Definition(definition);
     if (!validation.valid) return { ok: false, error: validation.errors[0] ?? "Workflow V2 definition is invalid." };
@@ -1086,19 +1086,33 @@ export class AgentHub {
         return { ok: false, error: error instanceof Error ? error.message : "Workflow V2 plan build failed." };
       }
     }
-    const workflow = createWorkflowDraftStateValue({
-      workflowId,
-      request: {
-        ...input,
-        definition,
-        workflowV2Plan,
-      },
-      configuredAgentId: this.normalizeWorkflowConfiguredAgentId(input.configuredAgentId),
-      modelId: this.normalizeModelIdForConfiguredAgent(input.configuredAgentId, input.modelId),
+    const workflow = updateWorkflowDraftStateValue({
+      current,
+      request: { ...input, workflowId, definition, workflowV2Plan },
+      definition,
+      configuredAgentId: input.configuredAgentId !== undefined
+        ? this.normalizeWorkflowConfiguredAgentId(input.configuredAgentId)
+        : current.configuredAgentId,
+      modelId: input.configuredAgentId !== undefined || input.modelId !== undefined
+        ? this.normalizeModelIdForConfiguredAgent(input.configuredAgentId ?? current.configuredAgentId, input.modelId ?? current.modelId)
+        : current.modelId,
       cloneDraft: (draft) => this.cloneWorkflowDraft(draft),
     });
     this.workflowStore.workflows.set(workflow.workflowId, workflow);
-    if (!activePlanningWorkflowId) this.workflowStore.activeId = workflow.workflowId;
+    this.emit();
+    return { ok: true, workflowId: workflow.workflowId, revision: workflow.revision };
+  }
+
+  confirmWorkflow(input: ConfirmWorkflowRequest): WorkflowOperationResult {
+    const workflow = this.workflowStore.workflows.get(input.workflowId);
+    if (!workflow) return { ok: false, workflowId: input.workflowId, error: `Workflow ${input.workflowId} was not found.` };
+    if (input.expectedRevision !== undefined && input.expectedRevision !== workflow.revision) {
+      return { ok: false, workflowId: workflow.workflowId, revision: workflow.revision, error: "Workflow draft changed before confirmation." };
+    }
+    if (!workflow.workflowV2Plan) return { ok: false, workflowId: workflow.workflowId, revision: workflow.revision, error: "Workflow V2 plan is required before confirmation." };
+    const validation = validateWorkflowV2Definition(workflow.definition);
+    if (!validation.valid) return { ok: false, workflowId: workflow.workflowId, revision: workflow.revision, error: validation.errors[0] ?? "Workflow V2 definition is invalid." };
+    this.workflowStore.workflows.set(workflow.workflowId, this.cloneWorkflowDraft({ ...workflow, confirmedRevision: workflow.revision, error: undefined, updatedAt: Date.now() }));
     this.emit();
     return { ok: true, workflowId: workflow.workflowId, revision: workflow.revision };
   }
@@ -1763,18 +1777,8 @@ export class AgentHub {
         runtime,
         channelId: resolved.channel.id,
         workDir: input.workDir,
+        planningWorkflowId: input.workflowId,
         developerInstructions: WORKFLOW_DEVELOPER_INSTRUCTIONS,
-        onWorkflowCreated: ({ workflowId, revision }) => {
-          if (settled) return;
-          timeout?.refresh();
-          onEvent?.({
-            requestId: input.requestId,
-            type: "workflow_created",
-            workflowId,
-            content: "Workflow V2 definition created through MCP.",
-            ...(revision !== undefined ? { revision } : {}),
-          });
-        },
         emit: (event) => {
           if (settled) return;
           timeout?.refresh();
@@ -2076,33 +2080,6 @@ export class AgentHub {
   }
 
   private handleWorkflowDraftAgentEvent(workflowId: string, event: WorkflowAgentEvent): void {
-    if (event.type === "workflow_created") {
-      const activeRequest = this.activeWorkflowDraftRequests.get(workflowId);
-      const targetWorkflow = this.workflowStore.workflows.get(event.workflowId);
-      if (!activeRequest || activeRequest.requestId !== event.requestId || !targetWorkflow) return;
-      activeRequest.content = event.content;
-      const sourceWorkflow = this.workflowStore.workflows.get(workflowId);
-      const sourceMessages = sourceWorkflow?.messages ?? [];
-      const messages = sourceMessages.some((message) => message.id === activeRequest.assistantMessageId)
-        ? this.replaceWorkflowDraftMessage(sourceMessages, activeRequest.assistantMessageId, event.content)
-        : [...sourceMessages, { id: activeRequest.assistantMessageId, role: "assistant" as const, content: event.content }];
-      const runtimeConversation = sourceWorkflow?.runtimeConversation ?? targetWorkflow.runtimeConversation;
-      this.workflowStore.workflows.set(workflowId, this.cloneWorkflowDraft({
-        ...targetWorkflow,
-        workflowId,
-        ...(targetWorkflow.definition ? { definition: { ...targetWorkflow.definition, workflowId } } : {}),
-        ...(targetWorkflow.workflowV2Plan ? { workflowV2Plan: { ...targetWorkflow.workflowV2Plan, workflowId } } : {}),
-        messages,
-        ...(runtimeConversation ? { runtimeConversation } : {}),
-        updatedAt: Date.now(),
-      }));
-      this.activeWorkflowDraftRequests.delete(workflowId);
-      this.activeWorkflowDraftRequests.set(workflowId, activeRequest);
-      if (workflowId !== event.workflowId) this.workflowStore.workflows.delete(event.workflowId);
-      this.workflowStore.activeId = workflowId;
-      this.emit();
-      return;
-    }
     const reduced = reduceWorkflowDraftReplyEventValue({
       workflow: this.workflowStore.workflows.get(workflowId),
       activeRequest: this.activeWorkflowDraftRequests.get(workflowId),

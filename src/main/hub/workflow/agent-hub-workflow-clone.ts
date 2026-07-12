@@ -115,6 +115,9 @@ export function cloneWorkflowDraft(input: {
     title: draft.title || draft.definition.objective || draft.objective || "Untitled workflow",
     status: normalizeWorkflowStatus(draft.status),
     revision: Number.isFinite(draft.revision) && draft.revision > 0 ? Math.floor(draft.revision) : 1,
+    ...(Number.isFinite(draft.confirmedRevision) && draft.confirmedRevision === draft.revision
+      ? { confirmedRevision: Math.floor(draft.confirmedRevision!) }
+      : {}),
     configuredAgentId: normalizeConfiguredAgentId(draft.configuredAgentId),
     modelId: normalizeModelId(draft.configuredAgentId, draft.modelId),
     objective: draft.objective,

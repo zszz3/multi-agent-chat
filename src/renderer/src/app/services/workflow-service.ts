@@ -10,6 +10,7 @@ import type {
   StopWorkflowRunRequest,
   WorkflowOperationResult,
   CompleteWorkflowNodeConversationRequest,
+  ConfirmWorkflowRequest,
   InterruptWorkflowNodeConversationRequest,
   RejectWorkflowNodeCompletionRequest,
   SendWorkflowNodeMessageRequest,
@@ -25,6 +26,7 @@ export interface WorkflowService {
   selectWorkflow: (workflowId: string) => Promise<AppSnapshot>;
   renameWorkflow: (workflowId: string, title: string) => Promise<AppSnapshot>;
   deleteWorkflow: (workflowId: string) => Promise<AppSnapshot>;
+  confirmWorkflow: (request: ConfirmWorkflowRequest) => Promise<WorkflowOperationResult>;
   runWorkflow: (request: RunWorkflowRequest) => Promise<WorkflowOperationResult>;
   pauseNode: (request: PauseWorkflowNodeRequest) => Promise<WorkflowOperationResult>;
   stopRun: (request: StopWorkflowRunRequest) => Promise<WorkflowOperationResult>;
@@ -47,6 +49,7 @@ export function workflowService(): WorkflowService {
     selectWorkflow: (workflowId) => api.selectWorkflow(workflowId),
     renameWorkflow: (workflowId, title) => api.renameWorkflow(workflowId, title),
     deleteWorkflow: (workflowId) => api.deleteWorkflow(workflowId),
+    confirmWorkflow: (request) => api.confirmWorkflow(request),
     runWorkflow: (request) => api.runWorkflow(request),
     pauseNode: (request) => api.pauseWorkflowNode(request),
     stopRun: (request) => api.stopWorkflowRun(request),

@@ -26,7 +26,9 @@ export async function runClaudeWorkflow(
   let completedContent: string | undefined;
   let runtimeConversation = input.runtimeConversation ? cloneClaudeRuntimeConversation(input.runtimeConversation) : undefined;
   let errorMessage: string | undefined;
-  const mcpServers = claudeWorkflowMcpServers(options.workflowHost?.mcpBridgeDiscoveryPath());
+  const mcpServers = input.planningWorkflowId
+    ? claudeWorkflowMcpServers(options.workflowHost?.mcpBridgeDiscoveryPath(), input.planningWorkflowId)
+    : undefined;
 
   try {
     await runClaudeOneShot({

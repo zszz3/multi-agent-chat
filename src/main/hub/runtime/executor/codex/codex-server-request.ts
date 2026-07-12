@@ -18,7 +18,7 @@ export function respondToCodexRuntimeServerRequest(
   respondToCodexServerRequest(client, id, method, params, {
     ...responseOptions,
     ...(workflowTools
-      ? { handleWorkflowToolCall: (toolParams: Record<string, unknown>) => handleCodexWorkflowToolCall(toolParams, workflowTools) }
+      ? { handleWorkflowToolCall: (toolParams: Record<string, unknown>) => handleCodexWorkflowToolCall(toolParams, workflowTools, responseOptions.workflowId ?? "") }
       : {}),
   });
 }

@@ -4,7 +4,7 @@ import type {
   AgentId,
   AgentRuntime,
   AppendWorkflowContextRequest,
-  CreateWorkflowRequest,
+  MaterializeWorkflowDraftRequest,
   RuntimeRequest,
   WorkflowDraftState,
   WorkflowAgentResponse,
@@ -40,7 +40,7 @@ export interface AgentExecutorFactory {
 export interface RuntimeWorkflowHost {
   mcpBridgeDiscoveryPath: () => string | undefined;
   tools: {
-    createWorkflow: (request: CreateWorkflowRequest) => WorkflowOperationResult;
+    materializeWorkflowDraft: (workflowId: string, request: MaterializeWorkflowDraftRequest) => WorkflowOperationResult;
     getWorkflow: (workflowId: string) => WorkflowDraftState | undefined;
     appendWorkflowContext: (request: AppendWorkflowContextRequest) => WorkflowOperationResult;
   };

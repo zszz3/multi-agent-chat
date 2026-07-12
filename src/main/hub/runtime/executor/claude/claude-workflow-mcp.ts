@@ -3,8 +3,9 @@ import { workflowMcpLaunchConfig } from "../workflow/workflow-mcp-launch";
 
 export function claudeWorkflowMcpServers(
   discoveryPath: string | undefined,
+  workflowId: string,
 ): ClaudeAgentSdkRunInput["mcpServers"] | undefined {
-  const config = workflowMcpLaunchConfig(discoveryPath);
+  const config = workflowMcpLaunchConfig(discoveryPath, {}, workflowId);
   if (!config) return undefined;
   return { multi_agent_chat: { type: "stdio", ...config } };
 }

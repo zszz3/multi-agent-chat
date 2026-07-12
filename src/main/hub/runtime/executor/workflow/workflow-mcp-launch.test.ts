@@ -17,10 +17,10 @@ describe("workflow MCP launch config", () => {
     await writeFile(mainBundlePath, "", "utf8");
     await writeFile(serverPath, "", "utf8");
 
-    expect(workflowMcpLaunchConfig("C:/bridge.json", { mainBundlePath, cwd: path.join(root, "elsewhere") })).toEqual({
+    expect(workflowMcpLaunchConfig("C:/bridge.json", { mainBundlePath, cwd: path.join(root, "elsewhere") }, "wf-planning")).toEqual({
       command: process.execPath,
       args: [serverPath],
-      env: { MULTI_AGENT_CHAT_MCP_BRIDGE: "C:/bridge.json", ELECTRON_RUN_AS_NODE: "1" },
+      env: { MULTI_AGENT_CHAT_MCP_BRIDGE: "C:/bridge.json", MULTI_AGENT_CHAT_WORKFLOW_ID: "wf-planning", ELECTRON_RUN_AS_NODE: "1" },
     });
   });
 });

@@ -2,6 +2,9 @@
 export const WORKFLOW_TEXT = {
   zh: {
     runWorkflow: "运行工作流",
+    confirmWorkflow: "确认工作流",
+    confirmed: "已确认",
+    awaitingConfirmation: "等待确认",
     running: "运行中...",
     executableNodes: "个可执行节点",
     noWorkDir: "未选择工作目录",
@@ -40,6 +43,9 @@ export const WORKFLOW_TEXT = {
   },
   en: {
     runWorkflow: "Run workflow",
+    confirmWorkflow: "Confirm workflow",
+    confirmed: "Confirmed",
+    awaitingConfirmation: "Awaiting confirmation",
     running: "Running...",
     executableNodes: "executable nodes",
     noWorkDir: "No work directory selected",

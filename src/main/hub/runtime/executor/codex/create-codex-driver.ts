@@ -48,17 +48,15 @@ export function createCodexDriver(options: RuntimeAgentExecutorFactoryOptions): 
                 modelFromRuntimeConfig(sessionContext.runtimeConfig),
                 reasoningEffortFromRuntimeConfig(sessionContext.runtimeConfig),
               ),
-              ...(sessionContext.onWorkflowCreated
-                ? codexWorkflowMcpArgs(options.workflowHost?.mcpBridgeDiscoveryPath())
+              ...(sessionContext.planningWorkflowId
+                ? codexWorkflowMcpArgs(options.workflowHost?.mcpBridgeDiscoveryPath(), sessionContext.planningWorkflowId)
                 : []),
             ],
             env: codexEnvironmentForChannel(channel),
             onEvent,
             onRequest: (id, method, params) => {
               respondToCodexRuntimeServerRequest(options, client, id, method, params, {
-                ...(sessionContext.onWorkflowCreated
-                  ? { onWorkflowCreated: sessionContext.onWorkflowCreated }
-                  : {}),
+                ...(sessionContext.planningWorkflowId ? { workflowId: sessionContext.planningWorkflowId } : {}),
               });
             },
             onExit,

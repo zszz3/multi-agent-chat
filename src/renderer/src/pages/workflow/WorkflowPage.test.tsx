@@ -22,6 +22,26 @@ describe("WorkflowPage input ownership", () => {
     expect(html).not.toContain("workflow-composer");
   });
 
+  test("requires explicit confirmation before a valid draft can run", () => {
+    const value = controller(true);
+    value.status = "draft";
+    value.running = false;
+    value.activeRunId = undefined;
+    value.runProgress = [];
+    value.revision = 3;
+    delete value.confirmedRevision;
+    value.onConfirmWorkflow = () => undefined;
+    const unconfirmedHtml = renderToStaticMarkup(<WorkflowPage controller={value} />);
+    expect(unconfirmedHtml).toContain("Confirm workflow");
+    expect(unconfirmedHtml).toContain("Awaiting confirmation");
+    expect(unconfirmedHtml).toContain('<button class="send-btn" disabled="">');
+
+    value.confirmedRevision = 3;
+    const confirmedHtml = renderToStaticMarkup(<WorkflowPage controller={value} />);
+    expect(confirmedHtml).not.toContain("Confirm workflow");
+    expect(confirmedHtml).toContain("Confirmed r3");
+    expect(confirmedHtml).toContain('<button class="send-btn">');
+  });
   test("does not render the legacy inline gate input for an awaiting node", () => {
     const value = controller(true);
     value.runProgress = [{ nodeId: "answer", title: "Answer", status: "awaiting_input", detail: "Provide more context" }];

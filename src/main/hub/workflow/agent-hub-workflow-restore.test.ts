@@ -234,13 +234,14 @@ describe("Workflow V2 AgentHub durable restore", () => {
     const hub = new AgentHub();
     await hub.loadPersistedState(storagePath);
     const workflowDefinition = definition("startup-recovery-placeholder");
-    const created = hub.createWorkflow({
+    const workflowId = hub.createWorkflowDraft().workflowDraft!.workflowId;
+    const created = hub.materializeWorkflowDraft(workflowId, {
       title: "Startup recovery",
       objective: "Reconcile durable state",
       definition: workflowDefinition,
     });
     expect(created).toMatchObject({ ok: true, workflowId: expect.any(String) });
-    const workflowId = created.workflowId!;
+    hub.confirmWorkflow({ workflowId, ...(created.revision !== undefined ? { expectedRevision: created.revision } : {}) });
     const createdWorkflow = hub.snapshot().workflowStore.workflows.find((item) => item.workflowId === workflowId)!;
     const frozenDefinition = createdWorkflow.workflowV2Plan!.definition;
     const started = hub.startWorkflowRun({ workflowId });

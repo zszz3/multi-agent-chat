@@ -56,7 +56,9 @@ export async function runCodexWorkflow(
           modelFromRuntimeConfig(input.runtimeConfig),
           reasoningEffortFromRuntimeConfig(input.runtimeConfig),
         ),
-        ...codexWorkflowMcpArgs(options.workflowHost?.mcpBridgeDiscoveryPath()),
+        ...(input.planningWorkflowId
+          ? codexWorkflowMcpArgs(options.workflowHost?.mcpBridgeDiscoveryPath(), input.planningWorkflowId)
+          : []),
       ],
       env: codexEnvironmentForChannel(channel),
       onEvent: (event) => {
@@ -85,15 +87,7 @@ export async function runCodexWorkflow(
       onRequest: (id, method, params) => {
         if (client) {
           respondToCodexRuntimeServerRequest(options, client, id, method, params, {
-            onWorkflowCreated: ({ workflowId, revision }) => {
-              input.onEvent?.({
-                requestId: input.requestId,
-                type: "workflow_created",
-                workflowId,
-                content: "Workflow V2 definition created through MCP.",
-                ...(revision !== undefined ? { revision } : {}),
-              });
-            },
+            ...(input.planningWorkflowId ? { workflowId: input.planningWorkflowId } : {}),
           });
         }
       },
