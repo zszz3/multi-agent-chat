@@ -989,6 +989,7 @@ export function AppShell() {
             onRefreshModels={refreshModelCatalog}
             onUpdateProviderKey={updateProviderKey}
             onLoadCodexDefaultConfig={() => window.multiAgentChat.loadCodexDefaultConfig()}
+            onLoadClaudeDefaultConfig={() => window.multiAgentChat.loadClaudeDefaultConfig()}
             onReplaceChannelAndPersist={replaceConfigChannelAndPersist}
             onStatusChange={setConfigStatus}
           />

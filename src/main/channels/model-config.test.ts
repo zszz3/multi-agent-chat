@@ -12,10 +12,12 @@ import {
   importCodexConfigs,
   loadModelChannels,
   loadCodexDefaultConfig,
+  loadClaudeDefaultConfig,
   normalizeChannels,
   parseCodexDefaultConfig,
   parseCodexModelCatalog,
   parseCodexProfileConfig,
+  parseClaudeDefaultConfig,
   saveModelChannels,
 } from "./model-config";
 
@@ -625,5 +627,26 @@ enabled = true
       modelReasoningEffort: null,
       plugins: null,
     });
+  });
+
+  test("loads Claude Code default provider values from settings and environment", async () => {
+    const dir = await mkdtemp(path.join(os.tmpdir(), "multi-agent-chat-claude-default-"));
+    await writeFile(path.join(dir, "settings.json"), JSON.stringify({
+      model: "claude-sonnet-4-6",
+      env: {
+        ANTHROPIC_BASE_URL: "https://settings.example/anthropic",
+        ANTHROPIC_AUTH_TOKEN: "settings-token",
+      },
+    }), "utf8");
+
+    await expect(loadClaudeDefaultConfig(dir, { ANTHROPIC_AUTH_TOKEN: "env-token" })).resolves.toEqual({
+      baseUrl: "https://settings.example/anthropic",
+      apiKey: "env-token",
+      modelId: "claude-sonnet-4-6",
+    });
+  });
+
+  test("returns empty Claude Code defaults for invalid settings", () => {
+    expect(parseClaudeDefaultConfig("{", {})).toEqual({ baseUrl: null, apiKey: null, modelId: null });
   });
 });

@@ -1,6 +1,6 @@
 import { useMemo, useState, type MouseEvent } from "react";
 import { CheckCircle2, Cpu, Eye, EyeOff, Plus, RefreshCw, Save, Trash2 } from "lucide-react";
-import { configChannelForSelection, selectConfigChannelsForDisplay } from "../../../../shared/config-channels";
+import { selectConfigChannelsForDisplay } from "../../../../shared/config-channels";
 import { DEFAULT_MODEL_ID } from "../../../../shared/models";
 import {
   AGENT_PROVIDER_PRESETS,
@@ -13,6 +13,7 @@ import {
 import { RUNTIME_IDS, runtimeDefinition } from "../../../../shared/runtime-catalog";
 import type {
   AgentChannel,
+  ClaudeDefaultConfig,
   AgentId,
   AgentModelOption,
   CodexDefaultConfig,
@@ -27,6 +28,7 @@ import {
   addPluginToChannel,
   agentTestEventLabel,
   applyCodexDefaultConfigToChannel,
+  applyClaudeDefaultConfigToChannel,
   applyProviderApiKeyToChannel,
   apiKeyFromChannelHeaders,
   applyProviderPresetToChannel,
@@ -130,6 +132,7 @@ interface RuntimePageProps {
   onQueryBalance?: (channelId: string) => Promise<void>;
   onUpdateProviderKey: (presetId: string, value: string) => void;
   onLoadCodexDefaultConfig?: () => Promise<CodexDefaultConfig>;
+  onLoadClaudeDefaultConfig?: () => Promise<ClaudeDefaultConfig>;
   onReplaceChannelAndPersist?: (channelId: string, nextChannel: AgentChannel) => Promise<void>;
   status?: string;
   onStatusChange?: (message: string) => void;
@@ -166,6 +169,7 @@ export function RuntimePage({
   onQueryBalance,
   onUpdateProviderKey,
   onLoadCodexDefaultConfig,
+  onLoadClaudeDefaultConfig,
   onReplaceChannelAndPersist,
   status = "",
   onStatusChange,
@@ -241,12 +245,37 @@ export function RuntimePage({
 
   const applyRuntimePreset = async (preset: AgentProviderPreset): Promise<void> => {
     if (!selectedRuntimeChannelRecord) return;
-    if (
-      preset.id === CODEX_LOCAL_DEFAULT_PRESET_ID ||
-      preset.id === CLAUDE_LOCAL_DEFAULT_PRESET_ID ||
-      preset.id === OPENCODE_DEFAULT_PRESET_ID ||
-      preset.id === OPENCLAW_DEFAULT_PRESET_ID
-    ) {
+    if (preset.id === CODEX_LOCAL_DEFAULT_PRESET_ID) {
+      try {
+        onStatusChange?.("");
+        const config = onLoadCodexDefaultConfig
+          ? await onLoadCodexDefaultConfig()
+          : await loadCodexDefaultConfigFromRuntimeApi(window.multiAgentChat);
+        onUpdateProviderKey(CODEX_LOCAL_DEFAULT_PRESET_ID, config.apiKey ?? "");
+        const nextChannel = applyCodexDefaultConfigToChannel(selectedRuntimeChannelRecord, config);
+        if (onReplaceChannelAndPersist) await onReplaceChannelAndPersist(selectedRuntimeChannelRecord.id, nextChannel);
+        else updateSelectedRuntimeChannel(() => nextChannel);
+      } catch (error) {
+        onStatusChange?.(error instanceof Error ? error.message : String(error));
+      }
+      return;
+    }
+    if (preset.id === CLAUDE_LOCAL_DEFAULT_PRESET_ID) {
+      try {
+        onStatusChange?.("");
+        const config = onLoadClaudeDefaultConfig
+          ? await onLoadClaudeDefaultConfig()
+          : await window.multiAgentChat.loadClaudeDefaultConfig();
+        onUpdateProviderKey(CLAUDE_LOCAL_DEFAULT_PRESET_ID, config.apiKey ?? "");
+        const nextChannel = applyClaudeDefaultConfigToChannel(selectedRuntimeChannelRecord, config);
+        if (onReplaceChannelAndPersist) await onReplaceChannelAndPersist(selectedRuntimeChannelRecord.id, nextChannel);
+        else updateSelectedRuntimeChannel(() => nextChannel);
+      } catch (error) {
+        onStatusChange?.(error instanceof Error ? error.message : String(error));
+      }
+      return;
+    }
+    if (preset.id === OPENCODE_DEFAULT_PRESET_ID || preset.id === OPENCLAW_DEFAULT_PRESET_ID) {
       if (!onImportLocalConfig) {
         onStatusChange?.("Local default import requires a full app restart.");
         return;

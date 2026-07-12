@@ -103,7 +103,6 @@ import {
   createDefaultChannels,
   generateCodexConfigs as writeCodexConfigs,
   importCodexConfigs as readCodexConfigs,
-  loadCodexDefaultConfig as readCodexDefaultConfig,
   loadModelChannels as readModelChannels,
   normalizeChannels,
   saveModelChannels as writeModelChannels,
@@ -616,10 +615,6 @@ export class AgentHub {
 
   async importCodexConfigs(): Promise<ImportedCodexConfig[]> {
     return readCodexConfigs();
-  }
-
-  async loadCodexDefaultConfig(): Promise<CodexDefaultConfig> {
-    return readCodexDefaultConfig();
   }
 
   async importRuntimeLocalConfig(runtimeId: AgentId, channelId?: string): Promise<RuntimeLocalConfigImportResult> {

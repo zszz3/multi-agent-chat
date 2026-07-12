@@ -10,6 +10,7 @@ import { startMcpBridge, type McpBridgeServer } from "../bridges/mcp-bridge";
 import { ScheduledWorkflowCloudClient, type ScheduledWorkflowCloudEventConnection } from "../workflows/scheduled-workflow-cloud";
 import { deleteImportedSkillFromLibrary, importOnlineSkillToLibrary, installBundledSkill, uninstallBundledSkill } from "../skills/skill-installer";
 import { loadBundledWorkflows } from "../workflows/bundled-workflows";
+import { loadClaudeDefaultConfig, loadCodexDefaultConfig } from "../channels/model-config";
 import { OfficialCatalogStore } from "../official-catalog-store";
 import { UserSkillStore } from "../user-skill-store";
 import { SkillCategoryStore } from "../skill-category-store";
@@ -31,6 +32,7 @@ import type {
   BuildWorkflowV2GraphRevisionRequest,
   BuildWorkflowV2PlanRequest,
   CodexDefaultConfig,
+  ClaudeDefaultConfig,
   ConfiguredAgent,
   CreateWorkflowDraftRequest,
   CreateScheduledWorkflowScheduleRequest,
@@ -338,7 +340,8 @@ function registerIpcHandlers(): void {
     hub.testRuntimeChannel(channelId, (agentEvent) => event.sender.send("configured-agents:test-event", agentEvent)),
   );
   ipcMain.handle("runtime-channels:balance", async (_event, channelId: string) => hub.queryRuntimeChannelBalance(channelId));
-  ipcMain.handle("runtime-channels:load-codex-default", async (): Promise<CodexDefaultConfig> => hub.loadCodexDefaultConfig());
+  ipcMain.handle("runtime-channels:load-codex-default", async (): Promise<CodexDefaultConfig> => loadCodexDefaultConfig());
+  ipcMain.handle("runtime-channels:load-claude-default", async (): Promise<ClaudeDefaultConfig> => loadClaudeDefaultConfig());
   ipcMain.handle("runtime-channels:import-local", async (_event, runtimeId: AgentId, channelId?: string) =>
     hub.importRuntimeLocalConfig(runtimeId, channelId));
   ipcMain.handle("runtime-channels:refresh-models", async (_event, channelId: string) => hub.refreshModelCatalog(channelId));

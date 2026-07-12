@@ -288,6 +288,12 @@ export interface CodexDefaultConfig {
   plugins: AgentPluginConfig[] | null;
 }
 
+export interface ClaudeDefaultConfig {
+  baseUrl: string | null;
+  apiKey: string | null;
+  modelId: string | null;
+}
+
 export type ExecutionStyle = "oneshot" | "interactive";
 export type RuntimeExecutionMode = ExecutionStyle;
 export type RuntimeContinuationPolicy = "fresh" | "resume-preferred" | "resume-required";
