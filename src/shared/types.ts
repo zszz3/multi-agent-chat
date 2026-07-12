@@ -13,7 +13,57 @@ import type {
 } from "./workflow-v2/definition";
 import type { WorkflowV2HumanIntervention, WorkflowV2InterventionAction } from "./workflow-v2/review";
 import type { RuntimeId } from "./runtime-catalog";
+import type { ResourceSourceType } from "./resource";
+import type { RuntimeConversation } from "./runtime/conversation";
 import type { WorkflowNodeConversation } from "./workflow-v2/conversation";
+import type { WorkflowDraftState, WorkflowGrillMessage, WorkflowStoreState } from "./workflow/draft";
+import type {
+  WorkflowArtifactReference,
+  WorkflowEvent,
+  WorkflowRunProgressItem,
+  WorkflowRunState,
+  WorkflowStatus,
+} from "./workflow/run";
+export {
+  isWorkflowRunTerminalStatus,
+  type WorkflowArtifactReference,
+  type WorkflowEvent,
+  type WorkflowEventType,
+  type WorkflowRunNodeStatus,
+  type WorkflowRunProgressItem,
+  type WorkflowRunState,
+  type WorkflowStatus,
+} from "./workflow/run";
+export type { ResourceSourceType } from "./resource";
+export type { RuntimeConversation } from "./runtime/conversation";
+export type { WorkflowDraftState, WorkflowGrillMessage, WorkflowStoreState } from "./workflow/draft";
+export type {
+  SendWorkflowNodeMessageRequest,
+  CompleteWorkflowNodeConversationRequest,
+  RejectWorkflowNodeCompletionRequest,
+  InterruptWorkflowNodeConversationRequest,
+  WorkflowOperationResult,
+  CreateWorkflowRequest,
+  CreateWorkflowDraftRequest,
+  PatchWorkflowDraftRequest,
+  SendWorkflowDraftReplyRequest,
+  UpdateWorkflowRequest,
+  AppendWorkflowContextRequest,
+  AppendWorkflowRunContextRequest,
+  StartWorkflowRunRequest,
+  ListWorkflowOutputsRequest,
+  RunWorkflowRequest,
+  BuildWorkflowV2PlanRequest,
+  BuildWorkflowV2PlanResult,
+  BuildWorkflowV2GraphRevisionRequest,
+  BuildWorkflowV2GraphRevisionResult,
+  PauseWorkflowNodeRequest,
+  StopWorkflowRunRequest,
+  StartWorkflowNodeRequest,
+  ResolveWorkflowV2InterventionRequest,
+  AnswerWorkflowGateRequest,
+  FinishWorkflowRunRequest,
+} from "./workflow/commands";
 
 export type AgentId = RuntimeId;
 
@@ -105,8 +155,6 @@ export interface ConfiguredAgent {
   createdAt: number;
   updatedAt: number;
 }
-
-export type ResourceSourceType = "official" | "user";
 
 export interface SkillTemplate {
   id: string;
@@ -258,12 +306,6 @@ export interface RuntimeConfig {
   model: string;
   reasoningEffort?: string;
   [key: string]: unknown;
-}
-
-export interface RuntimeConversation {
-  runtimeId: AgentId;
-  codecVersion: string;
-  payload: unknown;
 }
 
 export interface RuntimeRequest {
@@ -545,68 +587,6 @@ export interface RunAgentTeamRequest {
   workDir?: string;
 }
 
-export interface WorkflowGrillMessage {
-  id: string;
-  role: "assistant" | "user";
-  content: string;
-}
-
-export type WorkflowRunNodeStatus = "queued" | "running" | "paused" | "awaiting_input" | "completed" | "failed";
-
-export interface WorkflowRunProgressItem {
-  nodeId: string;
-  title: string;
-  status: WorkflowRunNodeStatus;
-  detail?: string;
-  taskId?: string;
-  intervention?: WorkflowV2HumanIntervention;
-}
-
-export type WorkflowEventType =
-  | "node_ready"
-  | "node_started"
-  | "node_paused"
-  | "node_output"
-  | "node_judged"
-  | "node_failed"
-  | "node_completed"
-  | "gate_opened"
-  | "gate_answered";
-
-/**
- * Append-only record of a workflow run's node transitions. The event log is the
- * source of truth; the UI-facing progress list is projected from it via
- * projectNodeStates(). See src/main/WORKFLOW-RUNTIME.md.
- */
-export interface WorkflowEvent {
-  type: WorkflowEventType;
-  nodeId: string;
-  at: number;
-  attempt?: number;
-  taskId?: string;
-  detail?: string;
-  pass?: boolean;
-  summary?: string;
-  artifactRefs?: WorkflowArtifactReference[];
-  error?: string;
-  /** gate_opened: the concrete question the agent needs a human to answer. */
-  question?: string;
-  /** gate_answered: the human's answer that unblocks the node. */
-  answer?: string;
-  /** node_paused: unified Workflow V2 intervention payload. */
-  intervention?: WorkflowV2HumanIntervention;
-}
-
-export type WorkflowStatus = "draft" | "running" | "completed" | "failed" | "stopped";
-
-export interface WorkflowArtifactReference {
-  kind: "text" | "file" | "url";
-  title: string;
-  content?: string;
-  path?: string;
-  url?: string;
-}
-
 export interface LocalFilePreview {
   path: string;
   title: string;
@@ -640,57 +620,6 @@ export interface RegisterArtifactRequest {
   url?: string;
   content?: string;
   description?: string;
-}
-
-export interface WorkflowDraftState {
-  workflowId: string;
-  sourceType?: ResourceSourceType;
-  topologyLocked?: boolean;
-  title: string;
-  status: WorkflowStatus;
-  revision: number;
-  configuredAgentId: string;
-  modelId: string;
-  objective: string;
-  definition: WorkflowV2Definition;
-  /**
-   * Dedicated working directory for this workflow. All node agents run with this
-   * as their cwd, and outputs/memory are written under it. Defaults to a
-   * per-workflow directory; can be pointed at a real project dir when needed.
-   */
-  workDir?: string;
-  messages: WorkflowGrillMessage[];
-  reply: string;
-  error: string | undefined;
-  runProgress: WorkflowRunProgressItem[];
-  runContextDocument: string;
-  contextDocument: string;
-  workflowV2Plan?: WorkflowV2Plan;
-  finalReport?: string;
-  runIds: string[];
-  runtimeConversation?: RuntimeConversation;
-  createdAt: number;
-  updatedAt: number;
-}
-
-export interface WorkflowRunState {
-  runId: string;
-  workflowId: string;
-  status: WorkflowStatus;
-  workflowV2Plan: WorkflowV2Plan;
-  progress: WorkflowRunProgressItem[];
-  events: WorkflowEvent[];
-  contextDocument: string;
-  finalReport?: string;
-  startedAt: number;
-  finishedAt: number | undefined;
-  lastError: string | undefined;
-}
-
-export interface WorkflowStoreState {
-  activeWorkflowId: string | undefined;
-  workflows: WorkflowDraftState[];
-  runs: WorkflowRunState[];
 }
 
 export const DEFAULT_SCHEDULED_WORKFLOW_CLOUD_BASE_URL = "";
@@ -793,196 +722,6 @@ export interface ScheduledWorkflowOperationResult {
   error?: string;
 }
 
-export interface SendWorkflowNodeMessageRequest {
-  conversationId: string;
-  message: string;
-}
-
-export interface CompleteWorkflowNodeConversationRequest {
-  conversationId: string;
-}
-
-export interface RejectWorkflowNodeCompletionRequest {
-  conversationId: string;
-  instruction: string;
-}
-
-export interface InterruptWorkflowNodeConversationRequest {
-  conversationId: string;
-}
-export interface WorkflowOperationResult {
-  ok: boolean;
-  workflowId?: string;
-  runId?: string;
-  revision?: number;
-  error?: string;
-}
-
-export interface CreateWorkflowRequest {
-  title: string;
-  objective: string;
-  definition: WorkflowV2Definition;
-  configuredAgentId?: string;
-  modelId?: string;
-  workDir?: string;
-  messages?: WorkflowGrillMessage[];
-  reply?: string;
-  error?: string;
-  runProgress?: WorkflowRunProgressItem[];
-  runContextDocument?: string;
-  contextDocument?: string;
-  workflowV2Plan?: WorkflowV2Plan;
-  finalReport?: string;
-  runIds?: string[];
-  runtimeConversation?: RuntimeConversation;
-  createdAt?: number;
-  updatedAt?: number;
-}
-
-export interface CreateWorkflowDraftRequest {
-  title?: string;
-  configuredAgentId?: string;
-  modelId?: string;
-}
-
-export interface PatchWorkflowDraftRequest {
-  workflowId: string;
-  title?: string;
-  status?: WorkflowStatus;
-  configuredAgentId?: string;
-  modelId?: string;
-  objective?: string;
-  workDir?: string | null;
-  definition?: WorkflowV2Definition;
-  messages?: WorkflowGrillMessage[];
-  reply?: string;
-  error?: string | null;
-  runProgress?: WorkflowRunProgressItem[];
-  runContextDocument?: string;
-  contextDocument?: string;
-  workflowV2Plan?: WorkflowV2Plan | null;
-  finalReport?: string | null;
-  runtimeConversation?: RuntimeConversation | null;
-  resetRunState?: boolean;
-}
-
-export interface SendWorkflowDraftReplyRequest {
-  workflowId: string;
-  reply: string;
-}
-
-export interface UpdateWorkflowRequest {
-  workflowId: string;
-  expectedRevision?: number;
-  title?: string;
-  objective?: string;
-  definition?: WorkflowV2Definition;
-  configuredAgentId?: string;
-  modelId?: string;
-  messages?: WorkflowGrillMessage[];
-  reply?: string;
-  error?: string;
-  runProgress?: WorkflowRunProgressItem[];
-  runContextDocument?: string;
-  contextDocument?: string;
-  workflowV2Plan?: WorkflowV2Plan | null;
-  finalReport?: string;
-  runtimeConversation?: RuntimeConversation;
-}
-
-export interface AppendWorkflowContextRequest {
-  workflowId: string;
-  report: string;
-  handoff: string;
-  artifacts?: WorkflowArtifactReference[];
-}
-
-export interface AppendWorkflowRunContextRequest extends AppendWorkflowContextRequest {
-  runId: string;
-  nodeId?: string;
-}
-
-export interface StartWorkflowRunRequest {
-  workflowId: string;
-  contextDocument?: string;
-}
-
-export interface ListWorkflowOutputsRequest {
-  workflowId: string;
-  runId: string;
-}
-export interface RunWorkflowRequest {
-  workflowId: string;
-  contextDocument?: string;
-}
-
-export interface BuildWorkflowV2PlanRequest {
-  definition: WorkflowV2Definition;
-  objective?: string;
-  approvedBy: string;
-  acceptanceCriteria?: WorkflowV2AcceptanceCriterion[];
-  contextBudget?: WorkflowV2ContextBudget;
-  costBudget?: WorkflowV2CostBudget;
-  roleModelProfiles?: Partial<Record<WorkflowV2NodeRole, WorkflowV2ModelProfile>>;
-}
-
-export interface BuildWorkflowV2PlanResult {
-  ok: boolean;
-  plan?: WorkflowV2Plan;
-  error?: string;
-  validation?: WorkflowV2ValidationResult;
-}
-
-export interface BuildWorkflowV2GraphRevisionRequest {
-  basedOnGraphVersion: number;
-  nextGraphVersion?: number;
-  reason: string;
-  changesSummary: string;
-  approvedBy: string;
-  now?: number;
-}
-
-export interface BuildWorkflowV2GraphRevisionResult {
-  ok: boolean;
-  revision?: WorkflowV2GraphRevision;
-  error?: string;
-}
-
-export interface PauseWorkflowNodeRequest {
-  workflowId: string;
-  runId: string;
-  nodeId: string;
-}
-
-export interface StopWorkflowRunRequest {
-  workflowId: string;
-  runId: string;
-}
-
-export interface StartWorkflowNodeRequest extends PauseWorkflowNodeRequest {}
-
-export interface ResolveWorkflowV2InterventionRequest extends PauseWorkflowNodeRequest {
-  action: WorkflowV2InterventionAction;
-  reason?: string;
-}
-
-export interface AnswerWorkflowGateRequest {
-  workflowId: string;
-  runId: string;
-  nodeId: string;
-  answer: string;
-}
-
-export interface FinishWorkflowRunRequest {
-  workflowId: string;
-  runId: string;
-  status: Exclude<WorkflowStatus, "draft" | "running">;
-  progress?: WorkflowRunProgressItem[];
-  appendEvents?: WorkflowEvent[];
-  contextDocument?: string;
-  finalReport?: string;
-  lastError?: string;
-}
 
 export interface AppSnapshot {
   detectedAt: number;

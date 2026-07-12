@@ -29,186 +29,23 @@ import {
 import { shouldSendComposerKey } from "../../app/composer";
 import type { Language } from "../../app/language";
 import { Markdown } from "../../Markdown";
-import { MarkdownDocument } from "../../ui/MarkdownDocument";
 import { ChatControls } from "../chat/ChatControls";
 import { TaskStatusChip } from "../tasks/task-status";
 import { WorkflowCanvasBoard } from "./WorkflowCanvasBoard";
 import { WorkflowNodeAgentWindow } from "./WorkflowNodeAgentWindow";
+import { WorkflowOutputPreviewModal } from "./WorkflowOutputPreviewModal";
+import { WorkflowOutputsPanel } from "./WorkflowOutputsPanel";
+import { WORKFLOW_INTERVENTION_ACTION_TEXT, WORKFLOW_TEXT } from "./workflow-text";
 import type { WorkflowController } from "./workflow-controller";
 import {
   WORKFLOW_THINKING_MESSAGE,
-  isMarkdownFilePath,
   truncateWorkflowContext,
   workflowAssistantDisplayContent,
   workflowRunProgressSummary,
   workflowRunStatusLabel,
 } from "./workflow-utils";
 
-type MaybePromise = void | Promise<void>;
-
-const WORKFLOW_TEXT = {
-  zh: {
-    runWorkflow: "运行图",
-    running: "运行中...",
-    executableNodes: "可执行节点",
-    noWorkDir: "未选择工作目录",
-    empty: "输入任务描述开始生成工作流。",
-    agentWorking: "工作流 Agent 正在处理...",
-    result: "工作流图结果",
-    ready: "就绪",
-    invalid: "无效",
-    dagValid: "DAG 有效",
-    dagInvalid: "DAG 无效",
-    runProgress: "运行进度",
-    pauseNode: "暂停节点",
-    startNode: "开始节点",
-    gateAnswerPlaceholder: "输入你的决定...",
-    gateSubmit: "提交决定",
-    interventionReasonPlaceholder: "可选：说明本次处理原因...",
-    finalReport: "主 Agent 总结",
-    completed: "工作流已完成",
-    registeredArtifacts: "Agent 登记的产出",
-    outputDocuments: "产出文档",
-    files: "个文件",
-    nodeAgentField: "Agent（本节点）",
-    nodeAgentDefault: "跟随工作流默认",
-    nodeInfoAgent: "执行 Agent",
-    nodeInfoObjective: "总目标",
-    nodeInfoInputs: "输入来源",
-    nodeInfoNoUpstream: "无上游节点，仅依据总目标和本节点指令",
-    nodeInfoOutput: "产出",
-    nodeInfoOutputValue: "Work Completion Report + Handoff（写入共享上下文）",
-    loading: "读取中",
-    closePreview: "关闭文档预览",
-    largeFile: "文件较大，仅显示前 512KB。",
-    replyToAgent: "回复工作流 Agent",
-    replyToQuestion: "回复追问",
-    task: "工作流任务",
-    modifyPlaceholder: "让工作流 Agent 修改图或解释运行结果...",
-    answerPlaceholder: "回答当前问题...",
-    taskPlaceholder: "描述工作流任务...",
-  },
-  en: {
-    runWorkflow: "Run Graph",
-    running: "Running...",
-    executableNodes: "executable nodes",
-    noWorkDir: "No work directory selected",
-    empty: "Describe a task to start generating a workflow.",
-    agentWorking: "workflow agent is working...",
-    result: "Workflow graph result",
-    ready: "Ready",
-    invalid: "Invalid",
-    dagValid: "DAG valid",
-    dagInvalid: "DAG invalid",
-    runProgress: "Run progress",
-    pauseNode: "Pause node",
-    startNode: "Start node",
-    gateAnswerPlaceholder: "Enter your decision...",
-    gateSubmit: "Submit decision",
-    interventionReasonPlaceholder: "Optional: explain this intervention decision...",
-    finalReport: "Main agent summary",
-    completed: "Workflow completed",
-    registeredArtifacts: "Agent-published artifacts",
-    outputDocuments: "Output documents",
-    files: "files",
-    nodeAgentField: "Agent (this node)",
-    nodeAgentDefault: "Follow workflow default",
-    nodeInfoAgent: "Runs with",
-    nodeInfoObjective: "Objective",
-    nodeInfoInputs: "Inputs from",
-    nodeInfoNoUpstream: "No upstream nodes — uses the objective and this node's prompt only",
-    nodeInfoOutput: "Produces",
-    nodeInfoOutputValue: "Work Completion Report + Handoff (appended to shared context)",
-    loading: "Loading",
-    closePreview: "Close document preview",
-    largeFile: "File is large; showing the first 512KB.",
-    replyToAgent: "Reply to workflow agent",
-    replyToQuestion: "Reply to grill question",
-    task: "Workflow task",
-    modifyPlaceholder: "Ask the workflow agent to modify the graph or explain the run...",
-    answerPlaceholder: "Answer the current question...",
-    taskPlaceholder: "Describe the workflow task...",
-  },
-} as const;
-
-const WORKFLOW_INTERVENTION_ACTION_TEXT: Record<Language, Record<WorkflowV2InterventionAction, string>> = {
-  zh: {
-    continue: "继续",
-    skip: "跳过",
-    escalate: "升级处理",
-    replan: "重新规划",
-    increase_review_strength: "加强审查",
-  },
-  en: {
-    continue: "Continue",
-    skip: "Skip",
-    escalate: "Escalate",
-    replan: "Replan",
-    increase_review_strength: "Strengthen review",
-  },
-};
-
-interface WorkflowPageLegacyProps {
-  workflowId?: string;
-  sourceType?: "official" | "user";
-  topologyLocked?: boolean;
-  title?: string;
-  status?: WorkflowStatus;
-  definition: WorkflowV2Definition;
-  definitionReady: boolean;
-  objective: string;
-  messages: WorkflowGrillMessage[];
-  reply: string;
-  error: string | undefined;
-  configuredAgentId: string;
-  modelId?: string;
-  runtimes: AgentRuntime[];
-  channels: AgentChannel[];
-  configuredAgents?: ConfiguredAgent[];
-  workDir: string;
-  running: boolean;
-  runProgress?: WorkflowRunProgressItem[];
-  activeRunId?: string | undefined;
-  artifacts?: RegisteredArtifact[];
-  contextDocument?: string;
-  finalReport?: string;
-  nodeConversations?: WorkflowController["nodeConversations"];
-  nodeTasks?: WorkflowController["nodeTasks"];
-  workflowV2Plan?: WorkflowController["workflowV2Plan"];
-  onObjectiveChange: (value: string) => void;
-  onPauseNode?: (nodeId: string) => MaybePromise;
-  onStopRun?: () => MaybePromise;
-  onResolveIntervention?: (nodeId: string, action: WorkflowV2InterventionAction, reason?: string) => MaybePromise;
-  onStartNode?: (nodeId: string) => MaybePromise;
-  onAnswerGate?: (nodeId: string, answer: string) => MaybePromise;
-  onSendNodeMessage?: WorkflowController["onSendNodeMessage"];
-  onCompleteNodeConversation?: WorkflowController["onCompleteNodeConversation"];
-  onRejectNodeCompletion?: WorkflowController["onRejectNodeCompletion"];
-  onInterruptNodeConversation?: WorkflowController["onInterruptNodeConversation"];
-  onSelectConfiguredAgent: (configuredAgentId: string) => void;
-  onSelectModel?: (modelId: string) => void;
-  onBuildDefinition: () => void;
-  onReplyChange: (value: string) => void;
-  onSendReply: () => void;
-  onUpdateNode: (nodeId: string, update: Partial<WorkflowV2Node>) => void;
-  onRunWorkflow: () => MaybePromise;
-  onResetSession: () => MaybePromise;
-  onStopGrill?: () => void;
-  onChooseWorkDir?: () => MaybePromise;
-  onReadOutputFile?: (filePath: string) => Promise<LocalFilePreview>;
-  onListOutputs?: () => Promise<Array<{ name: string; path: string }>>;
-  language?: Language;
-  defaultGraphExpanded?: boolean;
-}
-
-export type WorkflowPageProps = WorkflowPageLegacyProps | { controller: WorkflowController };
-
-function resolveWorkflowPageSource(props: WorkflowPageProps): WorkflowController | WorkflowPageLegacyProps {
-  return "controller" in props ? props.controller : props;
-}
-
-export function WorkflowPage(props: WorkflowPageProps) {
-  const source = resolveWorkflowPageSource(props);
+export function WorkflowPage({ controller: source }: { controller: WorkflowController }) {
   const workflowId = source.workflowId;
   const topologyLocked = source.topologyLocked === true;
   const title = source.title;
@@ -303,7 +140,6 @@ export function WorkflowPage(props: WorkflowPageProps) {
   const [filePreviewError, setFilePreviewError] = useState<string | undefined>(undefined);
   const [filePreviewLoadingPath, setFilePreviewLoadingPath] = useState<string | undefined>(undefined);
   const outputDocuments = outputFiles.map((file) => ({ path: file.path, title: file.name }));
-  const outputDocumentsVisible = outputDocuments.length > 0;
   const grillTranscriptRef = useRef<HTMLElement>(null);
   const grillStickRef = useRef(true);
   const openNodeConversation = nodeConversations.find((conversation) => conversation.nodeId === openNodeAgentNodeId);
@@ -710,114 +546,25 @@ export function WorkflowPage(props: WorkflowPageProps) {
               <div><b>Priorities</b><p>{runProgress.filter((item) => item.status === "running" || item.status === "queued").map((item) => item.title).join(" ? ") || "No runnable priority"}</p></div>
               <div><b>Blocked / user action</b><p>{runProgress.filter((item) => item.status === "paused" || item.status === "awaiting_input").map((item) => `${item.title}: ${item.detail || "waiting for input"}`).join(" ? ") || "None"}</p></div>
             </section> : null}
-            {finalReportVisible ? (
-              <section className="workflow-final-report" aria-label="Workflow final report">
-                <div className="workflow-final-report-head">
-                  <strong>{workflowText.finalReport}</strong>
-                  <span>{workflowText.completed}</span>
-                </div>
-                <div className="workflow-final-report-body">
-                  <Markdown text={finalReport} />
-                </div>
-              </section>
-            ) : null}
-            {artifacts.length > 0 ? (
-              <section className="workflow-output-documents" aria-label="Registered artifacts">
-                <div className="workflow-output-documents-head">
-                  <strong>{workflowText.registeredArtifacts}</strong>
-                  <span>{`${artifacts.length} ${workflowText.files}`}</span>
-                </div>
-                <div className="workflow-output-document-list">
-                  {artifacts.map((artifact) =>
-                    artifact.kind === "file" && artifact.path ? (
-                      <button
-                        key={artifact.id}
-                        className="workflow-output-document"
-                        onClick={() => void openOutputDocument(artifact.path as string)}
-                        disabled={filePreviewLoadingPath === artifact.path}
-                        title={artifact.description || artifact.path}
-                      >
-                        <FileInput size={14} />
-                        <span>{artifact.title}</span>
-                        <small>{artifact.description || artifact.path}</small>
-                      </button>
-                    ) : artifact.kind === "url" && artifact.url ? (
-                      <a
-                        key={artifact.id}
-                        className="workflow-output-document"
-                        href={artifact.url}
-                        target="_blank"
-                        rel="noreferrer"
-                        title={artifact.description || artifact.url}
-                      >
-                        <FileInput size={14} />
-                        <span>{artifact.title}</span>
-                        <small>{artifact.description || artifact.url}</small>
-                      </a>
-                    ) : (
-                      <div key={artifact.id} className="workflow-output-document" title={artifact.description || artifact.title}>
-                        <FileInput size={14} />
-                        <span>{artifact.title}</span>
-                        {artifact.description ? <small>{artifact.description}</small> : null}
-                      </div>
-                    ),
-                  )}
-                </div>
-              </section>
-            ) : null}
-            {outputDocumentsVisible ? (
-              <section className="workflow-output-documents" aria-label="Workflow output documents">
-                <div className="workflow-output-documents-head">
-                  <strong>{workflowText.outputDocuments}</strong>
-                  <span>{`${outputDocuments.length} ${workflowText.files}`}</span>
-                </div>
-                <div className="workflow-output-document-list">
-                  {outputDocuments.map((document) => (
-                    <button
-                      key={document.path}
-                      className="workflow-output-document"
-                      onClick={() => void openOutputDocument(document.path)}
-                      disabled={filePreviewLoadingPath === document.path}
-                      title={document.path}
-                    >
-                      <FileInput size={14} />
-                      <span>{document.title}</span>
-                      <small>{filePreviewLoadingPath === document.path ? workflowText.loading : document.path}</small>
-                    </button>
-                  ))}
-                </div>
-                {filePreviewError ? <div className="workflow-error">{filePreviewError}</div> : null}
-              </section>
-            ) : null}
+            <WorkflowOutputsPanel
+              finalReport={finalReport}
+              artifacts={artifacts}
+              documents={outputDocuments}
+              loadingPath={filePreviewLoadingPath}
+              error={filePreviewError}
+              text={workflowText}
+              onOpenDocument={openOutputDocument}
+            />
           </section>
         ) : null}
       </section>
 
-      {filePreview ? (
-        <section className="workflow-file-preview-overlay" role="dialog" aria-modal="true" aria-label="Workflow output document preview" onClick={() => setFilePreview(undefined)}>
-          <article className="workflow-file-preview-modal" onClick={(event) => event.stopPropagation()}>
-            <header>
-              <div>
-                <strong>{filePreview.title}</strong>
-                <span>{filePreview.path}</span>
-              </div>
-              <button className="icon-btn" onClick={() => setFilePreview(undefined)} title={workflowText.closePreview} aria-label={workflowText.closePreview}>
-                <X size={15} />
-              </button>
-            </header>
-            {filePreview.truncated ? <div className="workflow-file-preview-note">{workflowText.largeFile}</div> : null}
-            <div className="workflow-file-preview-content">
-              {/\.html?$/i.test(filePreview.path) ? (
-                <iframe className="workflow-file-preview-frame" title={filePreview.title} sandbox="" srcDoc={filePreview.content} />
-              ) : isMarkdownFilePath(filePreview.path) ? (
-                <MarkdownDocument className="workflow-file-preview-body" text={filePreview.content} />
-              ) : (
-                <pre>{filePreview.content}</pre>
-              )}
-            </div>
-          </article>
-        </section>
-      ) : null}
+      {filePreview ? <WorkflowOutputPreviewModal
+        preview={filePreview}
+        closeLabel={workflowText.closePreview}
+        truncatedLabel={workflowText.largeFile}
+        onClose={() => setFilePreview(undefined)}
+      /> : null}
 
       {openNodeConversationGraphNode ? <WorkflowNodeAgentWindow
         {...(openNodeConversation ? { conversation: openNodeConversation } : {})}
@@ -833,7 +580,7 @@ export function WorkflowPage(props: WorkflowPageProps) {
         {...(onInterruptNodeConversation && openNodeConversation ? { onInterrupt: () => onInterruptNodeConversation(openNodeConversation.conversationId) } : {})}
       /> : null}
 
-      <section className="composer workflow-composer">
+      {!graphVisible ? <section className="composer workflow-composer">
         <div className="composer-box">
           <textarea
             aria-label={workflowStarted ? (graphVisible ? workflowText.replyToAgent : workflowText.replyToQuestion) : workflowText.task}
@@ -888,7 +635,7 @@ export function WorkflowPage(props: WorkflowPageProps) {
         <div className="composer-hint">
           <kbd>↵</kbd> 发送 · <kbd>⇧↵</kbd> 换行 · {graphVisible ? "继续对话可修改 workflow" : "先对话生成 workflow"}
         </div>
-      </section>
+      </section> : null}
     </>
   );
 }

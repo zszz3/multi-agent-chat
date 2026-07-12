@@ -1,7 +1,32 @@
 import { describe, expect, test } from "vitest";
 import { AgentHub } from "../agent-hub";
+import type { WorkflowDraftState } from "../../../shared/types";
+import { finishWorkflowRunState, startWorkflowRunState, updateWorkflowRunState } from "./agent-hub-workflow-run-state";
+
+const workflowForRunState = (): WorkflowDraftState => ({
+  workflowId: "workflow-run-state", sourceType: "user" as const, topologyLocked: false, title: "Workflow",
+  status: "draft" as const, revision: 1, configuredAgentId: "agent", modelId: "model", objective: "Test",
+  definition: { workflowId: "workflow-run-state", graphVersion: 1, objective: "Test", nodes: [], edges: [] },
+  messages: [], reply: "", error: undefined, runProgress: [], runContextDocument: "", contextDocument: "", runIds: [],
+  workflowV2Plan: { workflowId: "workflow-run-state", graphVersion: 1, objective: "Test", approvedBy: "test", frozenAt: 1, definition: { workflowId: "workflow-run-state", graphVersion: 1, objective: "Test", nodes: [], edges: [] }, nodes: [], acceptanceCriteria: [], roleDefaults: { orchestrator: { role: "orchestrator" as const, modelProfile: "expert" as const }, executor: { role: "executor" as const, modelProfile: "fast" as const }, reviewer: { role: "reviewer" as const, modelProfile: "expert" as const } }, budget: { context: { maxContextTokens: 1000, maxEvidenceItems: 10 } } },
+  createdAt: 1, updatedAt: 1,
+});
 
 describe("workflow-v2 planner boundary", () => {
+  test("keeps a waiting interactive run non-terminal with the same run id", () => {
+    const workflow = workflowForRunState();
+    const started = startWorkflowRunState({ workflow, request: { workflowId: workflow.workflowId }, runId: "run-1", cloneDraft: structuredClone, now: 2 });
+    const waiting = updateWorkflowRunState({ workflow: started.nextWorkflow, run: started.nextRun, update: { workflowId: workflow.workflowId, runId: "run-1", status: "waiting_for_user" }, cloneDraft: structuredClone, now: 3 });
+    expect(waiting.nextRun).toMatchObject({ runId: "run-1", status: "waiting_for_user", finishedAt: undefined });
+    expect(waiting.nextWorkflow.status).toBe("waiting_for_user");
+  });
+
+  test("only terminal completion assigns finishedAt", () => {
+    const workflow = workflowForRunState();
+    const started = startWorkflowRunState({ workflow, request: { workflowId: workflow.workflowId }, runId: "run-1", cloneDraft: structuredClone, now: 2 });
+    const finished = finishWorkflowRunState({ workflow: started.nextWorkflow, run: started.nextRun, request: { workflowId: workflow.workflowId, runId: "run-1", status: "completed" }, cloneDraft: structuredClone, now: 4 });
+    expect(finished.nextRun.finishedAt).toBe(4);
+  });
   test("builds a frozen workflow-v2 plan through the hub boundary", async () => {
     const hub = new AgentHub({ codex: "missing-codex-for-test", claude: "missing-claude-for-test" });
 

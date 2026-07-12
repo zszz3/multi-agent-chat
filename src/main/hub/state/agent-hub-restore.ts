@@ -23,7 +23,7 @@ import {
 import { createAssistantMessage } from "../chat/agent-hub-ui";
 
 export function restoreWorkflowStatus(value: unknown): WorkflowStatus {
-  return value === "running" || value === "completed" || value === "failed" || value === "stopped" ? value : "draft";
+  return value === "running" || value === "waiting_for_user" || value === "completed" || value === "failed" || value === "stopped" ? value : "draft";
 }
 
 export function restoreWorkflowDraftStatus(value: unknown): WorkflowStatus {

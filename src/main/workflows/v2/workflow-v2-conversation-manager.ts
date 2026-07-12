@@ -95,7 +95,11 @@ export class WorkflowV2ConversationManager {
 
   markWaitingForUser(conversationId: string, question: string): WorkflowNodeConversation {
     const conversation = this.mutableRequired(conversationId);
-    this.appendMessage(conversation, "assistant", question, this.deps.now());
+    const normalizedQuestion = question.trim();
+    const lastMessage = conversation.messages.at(-1);
+    if (!lastMessage || lastMessage.role !== "assistant" || lastMessage.content.trim() !== normalizedQuestion) {
+      this.appendMessage(conversation, "assistant", normalizedQuestion, this.deps.now());
+    }
     conversation.status = "waiting_for_user";
     this.changed(conversation);
     return this.getRequired(conversationId);

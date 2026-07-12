@@ -219,5 +219,44 @@ describe("SqliteAppStore normalized persistence", () => {
     db.close();
   });
 
+  it("updates one chat aggregate without rebuilding unrelated chats", async () => {
+    const dbPath = await createDbPath();
+    const store = new SqliteAppStore(dbPath);
+    const state = sampleState();
+    const secondChat = {
+      id: "chat-2",
+      title: "Unrelated",
+      configuredAgentId: "agent-1",
+      modelId: "model-1",
+      createdAt: 30,
+      updatedAt: 30,
+    };
+    await store.save({
+      ...state,
+      sessions: [...state.sessions, secondChat],
+      messages: [...state.messages, { id: "message-3", chatId: "chat-2", role: "user", content: "keep", timestamp: 31 }],
+    });
+    store.close();
+
+    const { DatabaseSync } = require("node:sqlite") as SqliteModule;
+    const beforeDb = new DatabaseSync(dbPath);
+    const before = beforeDb.prepare("select rowid from chats where id = ?").get("chat-2") as { rowid: number };
+    beforeDb.close();
+
+    const reopened = new SqliteAppStore(dbPath);
+    await reopened.save({
+      ...state,
+      sessions: [{ ...state.sessions[0], title: "Updated architecture", updatedAt: 40 }, secondChat],
+      messages: [...state.messages, { id: "message-3", chatId: "chat-2", role: "user", content: "keep", timestamp: 31 }],
+    });
+    reopened.close();
+
+    const afterDb = new DatabaseSync(dbPath);
+    const after = afterDb.prepare("select rowid from chats where id = ?").get("chat-2") as { rowid: number };
+    expect(after.rowid).toBe(before.rowid);
+    expect(afterDb.prepare("select content from chat_messages where id = ?").get("message-3")).toEqual({ content: "keep" });
+    afterDb.close();
+  });
+
 
 });

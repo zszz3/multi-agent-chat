@@ -1,6 +1,6 @@
 import { createHash } from "node:crypto";
 import type { WorkflowV2Definition, WorkflowV2Node } from "../../../shared/workflow-v2/definition";
-import type { WorkflowV2WorkerOutput } from "../../../shared/workflow-v2/packets";
+import { workflowV2ExplicitUserFacingOutput, type WorkflowV2WorkerOutput } from "../../../shared/workflow-v2/packets";
 import type { WorkflowV2PlanNode } from "../../../shared/workflow-v2/planning";
 import {
   sameWorkflowV2CacheFingerprint,
@@ -140,6 +140,16 @@ export function buildWorkflowV2FinalReport(
   status: "completed" | "failed" | "paused" | "running",
 ): string {
   const outputByNodeId = new Map(workerOutputs.map((output) => [output.nodeId, output]));
+  if (status === "completed") {
+    const terminalNodeIds = new Set(plan.definition.nodes.map((node) => node.id));
+    for (const edge of plan.definition.edges) terminalNodeIds.delete(edge.fromNodeId);
+    for (const node of [...plan.definition.nodes].reverse()) {
+      if (!terminalNodeIds.has(node.id)) continue;
+      const output = outputByNodeId.get(node.id);
+      const userReport = output ? workflowV2ExplicitUserFacingOutput(output) : undefined;
+      if (userReport) return userReport;
+    }
+  }
   return [
     "# Workflow V2 Run Summary",
     "",

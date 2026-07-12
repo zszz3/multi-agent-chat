@@ -50,6 +50,37 @@ describe("WorkflowNodeAgentWindow", () => {
     expect(html).toContain("web_search");
     expect(html).toContain("is-tool-call");
     expect(html).toContain("is-tool-result");
+    expect(html).toContain("<details");
+    expect(html).toContain("Runtime details");
+  });
+
+  test("renders a worker-output packet as its user-facing Markdown output", () => {
+    const content = JSON.stringify({ nodeId: "research", summary: "Done", outputs: { answer_markdown: "# Latest model\n\n**GPT-5.6 Sol**", source_links: ["https://developers.openai.com/api/docs/models"] }, evidence: [], risks: [], nextStepSuggestions: [], proposals: [] });
+    const html = renderToStaticMarkup(<WorkflowNodeAgentWindow nodeTitle="Research" onClose={() => undefined} conversation={{
+      conversationId: "workflow::run::research", workflowId: "workflow", runId: "run", nodeId: "research", configuredAgentId: "agent", modelId: "model", workDir: "C:/workspace", status: "completion_proposed",
+      messages: [
+        { id: "m1", role: "assistant", content, at: 1 },
+        { id: "m2", role: "tool", content: '{"results":[{"title":"OpenAI models","count":3}]}', at: 2, eventType: "tool_result", name: "web_search" },
+      ], completionProposal: { output: { nodeId: "research", summary: "Done", outputs: { answer_markdown: "# Latest model\n\n**GPT-5.6 Sol**" }, proposals: [] }, acceptanceCriteria: [], unresolvedRisks: [], proposedAt: 2 }, createdAt: 1, updatedAt: 2, lastActivityAt: 2,
+    }} />);
+    expect(html).toContain("<h1>Latest model</h1>");
+    expect(html).toContain("<strong>GPT-5.6 Sol</strong>");
+    expect(html).not.toContain("answer_markdown");
+    expect(html).not.toContain("&quot;nodeId&quot;");
+    expect(html).toContain("results");
+  });
+
+  test("keeps agent progress text and renders the trailing packet as Markdown", () => {
+    const content = `The question is clear. Using official docs first.${JSON.stringify({ nodeId: "web-search-answer", summary: "Verified", outputs: { answer_markdown: "## Answer\n\nGPT-5.6 Sol", source_links: ["https://developers.openai.com/api/docs/models"] }, evidence: [], risks: [], nextStepSuggestions: [], proposals: [] })}`;
+    const html = renderToStaticMarkup(<WorkflowNodeAgentWindow nodeTitle="Answer" onClose={() => undefined} conversation={{
+      conversationId: "w::r::answer", workflowId: "w", runId: "r", nodeId: "answer", configuredAgentId: "a", modelId: "m", workDir: "C:/workspace", status: "completion_proposed",
+      messages: [{ id: "m1", role: "assistant", content, at: 1 }], completionProposal: { output: { nodeId: "web-search-answer", summary: "Verified", outputs: { answer_markdown: "## Answer\n\nGPT-5.6 Sol" }, proposals: [] }, acceptanceCriteria: [], unresolvedRisks: [], proposedAt: 1 }, createdAt: 1, updatedAt: 1, lastActivityAt: 1,
+    }} />);
+    expect(html).toContain("The question is clear. Using official docs first.");
+    expect(html).toContain("<h2>Answer</h2>");
+    expect(html).toContain("GPT-5.6 Sol");
+    expect(html).not.toContain("web-search-answer");
+    expect(html).not.toContain("answer_markdown");
   });
 
   test("allows messaging an active interactive node before it explicitly asks for input", () => {

@@ -1,6 +1,7 @@
 import { randomUUID } from "node:crypto";
 import path from "node:path";
-import type {
+import {
+  type
   AgentChannel,
   ConfiguredAgent,
   AgentEvent,
@@ -72,7 +73,6 @@ import type {
   WorkflowAgentRequest,
   WorkflowAgentEvent,
   WorkflowAgentResponse,
-  WorkflowArtifactReference,
   WorkflowDraftState,
   WorkflowEvent,
   WorkflowOperationResult,
@@ -110,14 +110,17 @@ import {
 } from "../channels/model-config";
 import { loadRuntimeLocalConfig } from "../channels/runtime-local-config";
 import { SqliteAppStore } from "./persisted/sqlite-store";
-import { WorkflowRuntime, parseWorkflowV2WorkerArtifact, type WorkflowRunStateUpdate } from "../workflows/workflow-runtime";
+import { WorkflowRuntime, parseWorkflowV2WorkerArtifact } from "../workflows/workflow-runtime";
 import { WorkflowV2FileStore } from "../workflows/v2/workflow-v2-store";
 import { WorkflowV2ConversationManager } from "../workflows/v2/workflow-v2-conversation-manager";
+import { WorkflowNodeConversationService } from "./workflow/workflow-node-conversation-service";
+import { WorkflowRunService } from "./workflow/workflow-run-service";
+import { WorkflowPlanningService } from "./workflow/workflow-planning-service";
+import { WorkflowDraftService } from "./workflow/workflow-draft-service";
+import { WorkflowRunStateService } from "./workflow/workflow-run-state-service";
+import { WorkflowContextService } from "./workflow/workflow-context-service";
 import {
-  buildWorkflowV2GraphRevision as buildWorkflowV2GraphRevisionValue,
-  buildWorkflowV2Plan as buildWorkflowV2PlanValue,
   buildWorkflowV2PlanSync,
-  WorkflowV2PlanBuildError,
 } from "../workflows/v2/workflow-v2-planner";
 import { executeWorkflowV2ScriptWithPolicy } from "../workflows/v2/workflow-v2-script-policy";
 import { WorkflowStore } from "../workflow-store";
@@ -249,15 +252,6 @@ import {
   waitForWorkflowRunToSettle as waitForWorkflowRunToSettleValue,
   scheduledWorkflowEventTarget as scheduledWorkflowEventTargetValue,
 } from "./workflow/agent-hub-workflow-execution";
-import {
-  contextAppendLimitError as contextAppendLimitErrorValue,
-  formatWorkflowContextAppend as formatWorkflowContextAppendValue,
-} from "./workflow/agent-hub-workflow-inputs";
-import {
-  finishWorkflowRunState as finishWorkflowRunStateValue,
-  startWorkflowRunState as startWorkflowRunStateValue,
-  updateWorkflowRunState as updateWorkflowRunStateValue,
-} from "./workflow/agent-hub-workflow-run-state";
 import {
   cloneScheduledWorkflowRun as cloneScheduledWorkflowRunValue,
   cloneScheduledWorkflowRunnerConfig as cloneScheduledWorkflowRunnerConfigValue,
@@ -401,6 +395,12 @@ export class AgentHub {
   private readonly runtimeRouter: RuntimeRouter;
   private readonly interactiveSessions: InteractiveSessionManager;
   private readonly workflowNodeConversations: WorkflowV2ConversationManager;
+  private readonly workflowNodeConversationService: WorkflowNodeConversationService;
+  private readonly workflowRunService: WorkflowRunService;
+  private readonly workflowPlanningService = new WorkflowPlanningService();
+  private readonly workflowDraftService: WorkflowDraftService;
+  private readonly workflowRunStateService: WorkflowRunStateService;
+  private readonly workflowContextService: WorkflowContextService;
   private readonly executables: Record<AgentId, string>;
   private readonly workflowRuntime: WorkflowRuntime;
   private readonly workflowStore: WorkflowStore;
@@ -463,6 +463,7 @@ export class AgentHub {
             })),
             unresolvedRisks: output.risks ?? [],
           });
+          void this.workflowNodeConversationService.completeProposed(conversation.conversationId).then(() => this.emit());
         } catch {
           this.workflowNodeConversations.markWaitingForUser(
             conversation.conversationId,
@@ -471,11 +472,29 @@ export class AgentHub {
         }
       },
     });
+    this.workflowRunStateService = new WorkflowRunStateService({
+      store: this.workflowStore,
+      createRunId: () => `run_${randomUUID()}`,
+      cloneDraft: (draft) => this.cloneWorkflowDraft(draft),
+      clearDraftRequest: (workflowId) => this.activeWorkflowDraftRequests.delete(workflowId),
+      changed: () => this.emit(),
+    });
+    this.workflowContextService = new WorkflowContextService({
+      store: this.workflowStore,
+      cloneDraft: (draft) => this.cloneWorkflowDraft(draft),
+      now: () => Date.now(),
+      changed: () => this.emit(),
+      limits: {
+        maxContextAppendChars: MAX_WORKFLOW_CONTEXT_APPEND_CHARS,
+        maxArtifactsPerAppend: MAX_WORKFLOW_ARTIFACTS_PER_APPEND,
+        maxTextArtifactChars: MAX_WORKFLOW_TEXT_ARTIFACT_CHARS,
+      },
+    });
     this.workflowRuntime = new WorkflowRuntime({
       snapshot: () => this.snapshot(),
-      startWorkflowRun: (input) => this.startWorkflowRun(input),
-      finishWorkflowRun: (input) => this.finishWorkflowRun(input),
-      updateWorkflowRunState: (input) => this.updateWorkflowRunState(input),
+      startWorkflowRun: (input) => this.workflowRunStateService.start(input),
+      finishWorkflowRun: (input) => this.workflowRunStateService.finish(input),
+      updateWorkflowRunState: (input) => this.workflowRunStateService.update(input),
       runTask: (input) => this.runTask(input),
       stopTask: (taskId) => this.stopTask(taskId),
       deleteTask: (taskId, options) => this.deleteTask(taskId, options),
@@ -486,6 +505,31 @@ export class AgentHub {
       createWorkflowV2Store: () => this.storagePath
         ? new WorkflowV2FileStore(path.dirname(this.storagePath))
         : undefined,
+    });
+    this.workflowNodeConversationService = new WorkflowNodeConversationService({
+      conversations: this.workflowNodeConversations,
+      snapshot: () => this.snapshot(),
+      completeInteractiveNode: (input) => this.workflowRuntime.completeInteractiveNode(input),
+    });
+    this.workflowRunService = new WorkflowRunService({
+      runtime: this.workflowRuntime,
+      store: this.workflowStore,
+      cloneDraft: (draft) => this.cloneWorkflowDraft(draft),
+      changed: () => this.emit(),
+      now: () => Date.now(),
+    });
+    this.workflowDraftService = new WorkflowDraftService({
+      store: this.workflowStore,
+      maxWorkflowCount: MAX_WORKFLOW_COUNT,
+      createWorkflowId: () => `wf_${randomUUID()}`,
+      now: () => Date.now(),
+      normalizeConfiguredAgentId: (configuredAgentId) => this.normalizeWorkflowConfiguredAgentId(configuredAgentId),
+      normalizeModelId: (configuredAgentId, modelId) => this.normalizeModelIdForConfiguredAgent(configuredAgentId, modelId),
+      cloneDraft: (draft) => this.cloneWorkflowDraft(draft),
+      patchDraft: (draft, patch) => this.applyWorkflowDraftPatch(draft, patch),
+      clearDraftRequests: () => this.activeWorkflowDraftRequests.clear(),
+      changed: () => this.emit(),
+      snapshot: () => this.snapshot(),
     });
     this.installRestoredConfiguredAgents([]);
     const chat = this.createChatState(this.defaultConfiguredAgentId());
@@ -949,58 +993,15 @@ export class AgentHub {
   }
 
   updateWorkflowDraft(draft: WorkflowDraftState | undefined): AppSnapshot {
-    if (!draft) {
-      this.workflowStore.workflows.clear();
-      this.activeWorkflowDraftRequests.clear();
-      this.workflowStore.runs.clear();
-      this.workflowStore.activeId = undefined;
-      this.emit();
-      return this.snapshot();
-    }
-    const normalized = this.cloneWorkflowDraft(draft);
-    this.workflowStore.workflows.set(normalized.workflowId, normalized);
-    this.workflowStore.activeId = normalized.workflowId;
-    this.emit();
-    return this.snapshot();
+    return this.workflowDraftService.replace(draft);
   }
 
   createWorkflowDraft(input: CreateWorkflowDraftRequest = {}): AppSnapshot {
-    if (this.workflowStore.workflows.size >= MAX_WORKFLOW_COUNT) return this.snapshot();
-    const now = Date.now();
-    const workflowId = `wf_${randomUUID()}`;
-    const workflow = this.cloneWorkflowDraft({
-      workflowId,
-      title: input.title?.trim() || "Untitled workflow",
-      status: "draft",
-      revision: 1,
-      configuredAgentId: this.normalizeWorkflowConfiguredAgentId(input.configuredAgentId),
-      modelId: this.normalizeModelIdForConfiguredAgent(input.configuredAgentId, input.modelId),
-      objective: "",
-      definition: { workflowId, graphVersion: 1, objective: "", nodes: [], edges: [] },
-      messages: [],
-      reply: "",
-      error: undefined,
-      runProgress: [],
-      runContextDocument: "",
-      contextDocument: "",
-      runIds: [],
-      createdAt: now,
-      updatedAt: now,
-    });
-    this.workflowStore.workflows.set(workflow.workflowId, workflow);
-    this.workflowStore.activeId = workflow.workflowId;
-    this.emit();
-    return this.snapshot();
+    return this.workflowDraftService.create(input);
   }
 
   patchWorkflowDraft(input: PatchWorkflowDraftRequest): AppSnapshot {
-    const current = this.workflowStore.workflows.get(input.workflowId);
-    if (!current) return this.snapshot();
-    const next = this.applyWorkflowDraftPatch(current, input);
-    this.workflowStore.workflows.set(next.workflowId, next);
-    this.workflowStore.activeId = next.workflowId;
-    this.emit();
-    return this.snapshot();
+    return this.workflowDraftService.patch(input);
   }
 
   async resetWorkflowDraftSession(workflowId: string): Promise<AppSnapshot> {
@@ -1069,6 +1070,7 @@ export class AgentHub {
   }
 
   createWorkflow(input: CreateWorkflowRequest): WorkflowOperationResult {
+    const activePlanningWorkflowId = this.workflowStore.activeId && this.activeWorkflowDraftRequests.has(this.workflowStore.activeId) ? this.workflowStore.activeId : undefined;
     if (this.workflowStore.workflows.size >= MAX_WORKFLOW_COUNT) return { ok: false, error: `Workflow count exceeds ${MAX_WORKFLOW_COUNT}.` };
     if (!input.definition) return { ok: false, error: "Workflow V2 definition is required." };
     if (input.definition.nodes.length > MAX_WORKFLOW_NODE_COUNT) {
@@ -1101,7 +1103,7 @@ export class AgentHub {
       cloneDraft: (draft) => this.cloneWorkflowDraft(draft),
     });
     this.workflowStore.workflows.set(workflow.workflowId, workflow);
-    this.workflowStore.activeId = workflow.workflowId;
+    if (!activePlanningWorkflowId) this.workflowStore.activeId = workflow.workflowId;
     this.emit();
     return { ok: true, workflowId: workflow.workflowId, revision: workflow.revision };
   }
@@ -1216,213 +1218,68 @@ export class AgentHub {
   }
 
   appendWorkflowContext(input: AppendWorkflowContextRequest): WorkflowOperationResult {
-    const workflow = this.workflowStore.workflows.get(input.workflowId);
-    if (!workflow) return { ok: false, error: `Workflow ${input.workflowId} was not found.` };
-    const limitError = this.contextAppendLimitError(input);
-    if (limitError) return { ok: false, workflowId: workflow.workflowId, revision: workflow.revision, error: limitError };
-    const appended = this.formatWorkflowContextAppend(input.report, input.handoff, input.artifacts);
-    const next = this.cloneWorkflowDraft({
-      ...workflow,
-      contextDocument: [workflow.contextDocument.trim(), appended].filter(Boolean).join("\n\n"),
-      revision: workflow.revision + 1,
-      updatedAt: Date.now(),
-    });
-    this.workflowStore.workflows.set(next.workflowId, next);
-    this.emit();
-    return { ok: true, workflowId: next.workflowId, revision: next.revision };
+    return this.workflowContextService.appendWorkflow(input);
   }
 
   appendWorkflowRunContext(input: AppendWorkflowRunContextRequest): WorkflowOperationResult {
-    const run = this.workflowStore.runs.get(input.runId);
-    if (!run || run.workflowId !== input.workflowId) return { ok: false, error: `Workflow run ${input.runId} was not found.` };
-    if (run.status !== "running") return { ok: false, error: "Cannot append to a workflow run after it has finished." };
-    const limitError = this.contextAppendLimitError(input);
-    if (limitError) return { ok: false, workflowId: input.workflowId, error: limitError };
-    const appended = this.formatWorkflowContextAppend(input.report, input.handoff, input.artifacts, input.nodeId);
-    this.workflowStore.runs.set(run.runId, {
-      ...run,
-      contextDocument: [run.contextDocument.trim(), appended].filter(Boolean).join("\n\n"),
-    });
-    this.emit();
-    return { ok: true, workflowId: input.workflowId };
+    return this.workflowContextService.appendRun(input);
   }
 
   startWorkflowRun(input: StartWorkflowRunRequest): WorkflowOperationResult {
-    const workflow = this.workflowStore.workflows.get(input.workflowId);
-    if (!workflow) return { ok: false, error: `Workflow ${input.workflowId} was not found.` };
-    if (workflow.status === "running") return { ok: false, error: "Workflow is already running." };
-    if (!workflow.workflowV2Plan) return { ok: false, workflowId: workflow.workflowId, error: "Workflow V2 plan is required before starting a run." };
-    this.activeWorkflowDraftRequests.delete(workflow.workflowId);
-    const runId = `run_${randomUUID()}`;
-    const next = startWorkflowRunStateValue({
-      workflow,
-      request: input,
-      runId,
-      cloneDraft: (draft) => this.cloneWorkflowDraft(draft),
-    });
-    this.workflowStore.runs.set(runId, next.nextRun);
-    this.workflowStore.workflows.set(workflow.workflowId, next.nextWorkflow);
-    this.emit();
-    return { ok: true, workflowId: workflow.workflowId, runId, revision: workflow.revision };
+    return this.workflowRunStateService.start(input);
   }
 
   finishWorkflowRun(input: FinishWorkflowRunRequest): WorkflowOperationResult {
-    const workflow = this.workflowStore.workflows.get(input.workflowId);
-    const run = this.workflowStore.runs.get(input.runId);
-    if (!workflow) return { ok: false, error: `Workflow ${input.workflowId} was not found.` };
-    if (!run || run.workflowId !== input.workflowId) return { ok: false, error: `Workflow run ${input.runId} was not found.` };
-    const next = finishWorkflowRunStateValue({
-      workflow,
-      run,
-      request: input,
-      cloneDraft: (draft) => this.cloneWorkflowDraft(draft),
-    });
-    this.workflowStore.runs.set(run.runId, next.nextRun);
-    this.workflowStore.workflows.set(workflow.workflowId, next.nextWorkflow);
-    this.emit();
-    return { ok: true, workflowId: workflow.workflowId, runId: run.runId, revision: workflow.revision };
+    return this.workflowRunStateService.finish(input);
   }
 
   runWorkflow(input: RunWorkflowRequest): WorkflowOperationResult {
-    const result = this.workflowRuntime.runWorkflow(input);
-    if (!result.ok && result.error) {
-      const workflow = this.workflowStore.workflows.get(input.workflowId);
-      if (workflow) {
-        this.workflowStore.workflows.set(workflow.workflowId, this.cloneWorkflowDraft({
-          ...workflow,
-          error: result.error,
-          updatedAt: Date.now(),
-        }));
-        this.emit();
-      }
-    }
-    return result;
+    return this.workflowRunService.run(input);
   }
 
   async buildWorkflowV2Plan(input: BuildWorkflowV2PlanRequest): Promise<BuildWorkflowV2PlanResult> {
-    let validation: ReturnType<typeof validateWorkflowV2Definition> | undefined;
-    try {
-      validation = validateWorkflowV2Definition(input.definition);
-      if (!validation.valid) {
-        return {
-          ok: false,
-          error: validation.errors.join(" "),
-          validation,
-        };
-      }
-
-      const approvedBy = typeof input.approvedBy === "string" ? input.approvedBy.trim() : "";
-      if (!approvedBy) {
-        return {
-          ok: false,
-          error: "Workflow V2 plan requires approvedBy.",
-          validation,
-        };
-      }
-
-      const plan = await buildWorkflowV2PlanValue({
-        definition: input.definition,
-        approvedBy,
-        ...(input.objective?.trim() ? { objective: input.objective.trim() } : {}),
-        ...(input.acceptanceCriteria ? { acceptanceCriteria: input.acceptanceCriteria } : {}),
-        ...(input.contextBudget ? { contextBudget: input.contextBudget } : {}),
-        ...(input.costBudget ? { costBudget: input.costBudget } : {}),
-        ...(input.roleModelProfiles ? { roleModelProfiles: input.roleModelProfiles } : {}),
-      });
-
-      return {
-        ok: true,
-        plan,
-        validation,
-      };
-    } catch (error) {
-      const message = error instanceof WorkflowV2PlanBuildError
-        ? [error.message, ...(error.details?.errors ?? [])].join(" ")
-        : error instanceof Error
-          ? error.message
-          : "Workflow V2 plan build failed unexpectedly.";
-      return {
-        ok: false,
-        error: message,
-        ...(validation ? { validation } : {}),
-      };
-    }
+    return this.workflowPlanningService.buildPlan(input);
   }
 
   async buildWorkflowV2GraphRevision(input: BuildWorkflowV2GraphRevisionRequest): Promise<BuildWorkflowV2GraphRevisionResult> {
-    try {
-      return {
-        ok: true,
-        revision: buildWorkflowV2GraphRevisionValue(input),
-      };
-    } catch (error) {
-      const message = error instanceof WorkflowV2PlanBuildError
-        ? [error.message, ...(error.details?.errors ?? [])].join(" ")
-        : error instanceof Error
-          ? error.message
-          : "Workflow V2 graph revision build failed unexpectedly.";
-      return { ok: false, error: message };
-    }
+    return this.workflowPlanningService.buildGraphRevision(input);
   }
 
+
   pauseWorkflowNode(input: PauseWorkflowNodeRequest): Promise<WorkflowOperationResult> {
-    return this.workflowRuntime.pauseWorkflowNode(input);
+    return this.workflowRunService.pauseNode(input);
   }
 
   resolveWorkflowV2Intervention(input: ResolveWorkflowV2InterventionRequest): Promise<WorkflowOperationResult> {
-    return this.workflowRuntime.resolveWorkflowV2Intervention(input);
+    return this.workflowRunService.resolveIntervention(input);
   }
 
   stopWorkflowRun(input: StopWorkflowRunRequest): Promise<WorkflowOperationResult> {
-    return this.workflowRuntime.stopWorkflowRun(input);
+    return this.workflowRunService.stop(input);
   }
 
   async sendWorkflowNodeMessage(input: SendWorkflowNodeMessageRequest): Promise<AppSnapshot> {
-    await this.workflowNodeConversations.sendUserMessage(input.conversationId, input.message);
-    return this.snapshot();
+    return this.workflowNodeConversationService.sendMessage(input.conversationId, input.message);
   }
 
   async completeWorkflowNodeConversation(input: CompleteWorkflowNodeConversationRequest): Promise<WorkflowOperationResult> {
-    const conversation = this.workflowNodeConversations.get(input.conversationId);
-    if (!conversation) return { ok: false, error: "Workflow node conversation was not found." };
-    if (!conversation.completionProposal || conversation.status !== "completion_proposed") {
-      return { ok: false, workflowId: conversation.workflowId, runId: conversation.runId, error: "The node agent has not proposed a complete output yet." };
-    }
-    let completionStarted = false;
-    try {
-      const proposal = this.workflowNodeConversations.beginCompletion(input.conversationId);
-      completionStarted = true;
-      const result = await this.workflowRuntime.completeInteractiveNode({
-        workflowId: conversation.workflowId,
-        runId: conversation.runId,
-        nodeId: conversation.nodeId,
-        output: proposal.output,
-      });
-      if (result.ok) await this.workflowNodeConversations.closeCompleted(input.conversationId);
-      else this.workflowNodeConversations.releaseCompletion(input.conversationId);
-      return result;
-    } catch (error) {
-      if (completionStarted) this.workflowNodeConversations.releaseCompletion(input.conversationId);
-      return { ok: false, workflowId: conversation.workflowId, runId: conversation.runId, error: error instanceof Error ? error.message : String(error) };
-    }
+    return this.workflowNodeConversationService.confirmCompletion(input.conversationId);
   }
 
   async rejectWorkflowNodeCompletion(input: RejectWorkflowNodeCompletionRequest): Promise<AppSnapshot> {
-    await this.workflowNodeConversations.rejectCompletion(input.conversationId, input.instruction);
-    return this.snapshot();
+    return this.workflowNodeConversationService.rejectCompletion(input.conversationId, input.instruction);
   }
 
   async interruptWorkflowNodeConversation(input: InterruptWorkflowNodeConversationRequest): Promise<AppSnapshot> {
-    await this.workflowNodeConversations.interrupt(input.conversationId);
-    return this.snapshot();
+    return this.workflowNodeConversationService.interrupt(input.conversationId);
   }
 
   startWorkflowNode(input: StartWorkflowNodeRequest): Promise<WorkflowOperationResult> {
-    return this.workflowRuntime.startWorkflowNode(input);
+    return this.workflowRunService.startNode(input);
   }
 
   answerWorkflowGate(input: AnswerWorkflowGateRequest): Promise<WorkflowOperationResult> {
-    return this.workflowRuntime.answerWorkflowGate(input);
+    return this.workflowRunService.answerGate(input);
   }
 
   async runScheduledWorkflowEvent(
@@ -1445,21 +1302,6 @@ export class AgentHub {
       },
       waitForWorkflowRunToSettle: (runId) => this.waitForWorkflowRunToSettle(runId),
     });
-  }
-
-  private updateWorkflowRunState(input: WorkflowRunStateUpdate): void {
-    const workflow = this.workflowStore.workflows.get(input.workflowId);
-    const run = this.workflowStore.runs.get(input.runId);
-    if (!workflow || !run || run.workflowId !== input.workflowId) return;
-    const next = updateWorkflowRunStateValue({
-      workflow,
-      run,
-      update: input,
-      cloneDraft: (draft) => this.cloneWorkflowDraft(draft),
-    });
-    this.workflowStore.runs.set(run.runId, next.nextRun);
-    this.workflowStore.workflows.set(workflow.workflowId, next.nextWorkflow);
-    this.emit();
   }
 
   saveScheduledWorkflowRunnerConfig(config: ScheduledWorkflowRunnerConfig): AppSnapshot {
@@ -2404,19 +2246,6 @@ export class AgentHub {
 
   private normalizeWorkflowConfiguredAgentId(configuredAgentId: string | undefined): string {
     return this.configuredAgentOrDefault(configuredAgentId)?.id ?? "";
-  }
-
-  private contextAppendLimitError(input: AppendWorkflowContextRequest): string | undefined {
-    return contextAppendLimitErrorValue({
-      request: input,
-      maxContextAppendChars: MAX_WORKFLOW_CONTEXT_APPEND_CHARS,
-      maxArtifactsPerAppend: MAX_WORKFLOW_ARTIFACTS_PER_APPEND,
-      maxTextArtifactChars: MAX_WORKFLOW_TEXT_ARTIFACT_CHARS,
-    });
-  }
-
-  private formatWorkflowContextAppend(report: string, handoff: string, artifacts: WorkflowArtifactReference[] = [], nodeId?: string): string {
-    return formatWorkflowContextAppendValue(report, handoff, artifacts, nodeId);
   }
 
   private channelById(channelId: string): AgentChannel | undefined {

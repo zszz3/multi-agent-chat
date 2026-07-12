@@ -101,7 +101,7 @@ async function fixture(): Promise<{
 }
 
 describe("Workflow V2 AgentHub durable restore", () => {
-  test("projects a paused durable run as stopped and resumable without losing completed work", async () => {
+  test("projects a paused durable run as waiting and resumable without losing completed work", async () => {
     const input = await fixture();
     let state = transitionWorkflowV2NodeState(input.persisted.runState, { nodeId: "draft", status: "running", now: 1_100 });
     state = transitionWorkflowV2NodeState(state, { nodeId: "draft", status: "completed", now: 1_200 });
@@ -129,7 +129,7 @@ describe("Workflow V2 AgentHub durable restore", () => {
     const restored = reconcileWorkflowV2RunFromDurableState({ ...input, updateWorkflowProjection: true });
 
     expect(restored?.run).toMatchObject({
-      status: "stopped",
+      status: "waiting_for_user",
       finishedAt: undefined,
       lastError: undefined,
       progress: [
@@ -143,7 +143,7 @@ describe("Workflow V2 AgentHub durable restore", () => {
       ],
       events: [expect.objectContaining({ type: "node_paused", nodeId: "verify" })],
     });
-    expect(restored?.workflow).toMatchObject({ status: "stopped", error: undefined });
+    expect(restored?.workflow).toMatchObject({ status: "waiting_for_user", error: undefined });
     expect(restored?.run.finalReport).toBeUndefined();
   });
 
@@ -234,16 +234,16 @@ describe("Workflow V2 AgentHub durable restore", () => {
     const restoredWorkflow = restored.workflowStore.workflows.find((workflow) => workflow.workflowId === workflowId);
 
     expect(restoredRun).toMatchObject({
-      status: "stopped",
+      status: "waiting_for_user",
       progress: [
         { nodeId: "draft", status: "completed", detail: "Durable draft" },
         { nodeId: "verify", status: "paused", detail: "Paused before restart" },
       ],
     });
-    expect(restoredWorkflow).toMatchObject({ status: "stopped" });
+    expect(restoredWorkflow).toMatchObject({ status: "waiting_for_user" });
     const persistedPublicState = JSON.parse(await readFile(storagePath, "utf8")) as {
       workflowStore: { runs: Array<{ runId: string; status: string }> };
     };
-    expect(persistedPublicState.workflowStore.runs.find((run) => run.runId === runId)?.status).toBe("stopped");
+    expect(persistedPublicState.workflowStore.runs.find((run) => run.runId === runId)?.status).toBe("waiting_for_user");
   });
 });

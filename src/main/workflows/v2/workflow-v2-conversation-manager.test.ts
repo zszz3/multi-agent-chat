@@ -75,6 +75,7 @@ describe("WorkflowV2ConversationManager", () => {
     });
     emit({ type: "delta", content: "Which regions should be supported?" });
     const waiting = manager.markWaitingForUser(started.conversationId, "Which regions should be supported?");
+    expect(waiting.messages.filter((message) => message.content === "Which regions should be supported?")).toHaveLength(1);
     const replied = await manager.sendUserMessage(started.conversationId, "US and EU.");
     const proposed = manager.proposeCompletion(started.conversationId, {
       output: output(),

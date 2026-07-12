@@ -1,0 +1,24 @@
+import { renderToStaticMarkup } from "react-dom/server";
+import { describe, expect, test } from "vitest";
+import type { WorkflowController } from "./workflow-controller";
+import { WorkflowPage } from "./WorkflowPage";
+
+function controller(definitionReady: boolean): WorkflowController {
+  return {
+    workflowId: "workflow", title: "Workflow", status: definitionReady ? "running" : "draft", definitionReady,
+    definition: { workflowId: "workflow", graphVersion: 1, objective: "Answer a question", nodes: [{ id: "answer", kind: "answer", title: "Answer", execModel: "llm", executionMode: "interactive", prompt: "Answer the question.", outputFields: [{ key: "answer_markdown", required: true }] }], edges: [] },
+    objective: "Answer a question", messages: [], reply: "", error: undefined, configuredAgentId: "default-agent", runtimes: [], channels: [], workDir: "C:/workspace", running: definitionReady,
+    activeRunId: definitionReady ? "run" : undefined, runProgress: definitionReady ? [{ nodeId: "answer", title: "Answer", status: "running" }] : [],
+    onObjectiveChange: () => undefined, onSelectConfiguredAgent: () => undefined, onBuildDefinition: () => undefined, onReplyChange: () => undefined, onSendReply: () => undefined, onUpdateNode: () => undefined, onRunWorkflow: () => undefined, onResetSession: () => undefined,
+  };
+}
+
+describe("WorkflowPage input ownership", () => {
+  test("renders the planning composer before a workflow graph exists", () => {
+    expect(renderToStaticMarkup(<WorkflowPage controller={controller(false)} />)).toContain("workflow-composer");
+  });
+  test("removes the planning composer once node execution owns user input", () => {
+    const html = renderToStaticMarkup(<WorkflowPage controller={controller(true)} />);
+    expect(html).not.toContain("workflow-composer");
+  });
+});

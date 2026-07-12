@@ -9811,6 +9811,26 @@ textarea:focus-visible {
 .workflow-node-agent-message.is-tool-result { border-left-color: var(--ok); background: color-mix(in srgb, var(--ok) 7%, var(--panel)); }
 .workflow-node-agent-message span { color: var(--muted); font-size: 11px; }
 .workflow-node-agent-message p { margin: 5px 0 0; white-space: pre-wrap; }
+.workflow-node-message-segments { display: grid; gap: 8px; }
+.workflow-node-message-segments > p { margin-bottom: 0; }
+.workflow-node-user-output { min-width: 0; padding: 12px; border: 1px solid color-mix(in srgb, var(--accent) 28%, var(--border)); border-radius: 10px; background: var(--panel); font-family: var(--font-sans); }
+.workflow-node-user-output > :first-child { margin-top: 0; }
+.workflow-node-user-output > :last-child { margin-bottom: 0; }
+.workflow-node-json { margin-top: 8px; padding: 10px; overflow: auto; border: 1px solid var(--border); border-radius: 9px; background: color-mix(in srgb, var(--panel) 88%, black); font-family: var(--font-mono, monospace); font-size: 12px; }
+.workflow-node-json-object, .workflow-node-json-array { margin: 0; padding: 0; }
+.workflow-node-json-object { display: grid; gap: 7px; }
+.workflow-node-json-entry { display: grid; grid-template-columns: minmax(110px, 0.35fr) minmax(0, 1fr); gap: 10px; align-items: start; }
+.workflow-node-json-entry > dt { color: var(--accent); font-weight: 650; overflow-wrap: anywhere; }
+.workflow-node-json-entry > dd { min-width: 0; margin: 0; overflow-wrap: anywhere; }
+.workflow-node-json-array { display: grid; gap: 5px; padding-left: 24px; }
+.workflow-node-json-array > li::marker { color: var(--muted); }
+.workflow-node-json-literal { color: var(--ok); }
+.workflow-node-json-null { color: var(--muted); font-style: italic; }
+.workflow-node-agent-runtime-details { max-width: 100%; border: 1px solid var(--border); border-radius: 12px; background: color-mix(in srgb, var(--muted) 5%, var(--panel)); }
+.workflow-node-agent-runtime-details > summary { cursor: pointer; padding: 10px 12px; color: var(--muted); font-size: 12px; font-weight: 600; }
+.workflow-node-agent-runtime-details > summary span { margin-left: 6px; font-weight: 400; }
+.workflow-node-agent-runtime-details > div { display: grid; gap: 8px; padding: 0 10px 10px; }
+.workflow-node-agent-runtime-details .workflow-node-agent-message { max-width: 100%; }
 .workflow-node-completion-proposal { margin: 0 18px 12px; padding: 14px; border: 1px solid color-mix(in srgb, var(--ok) 46%, var(--border)); border-radius: 14px; background: color-mix(in srgb, var(--ok) 8%, var(--panel)); }
 .workflow-node-agent-actions { display: flex; gap: 8px; flex-wrap: wrap; }
 .workflow-node-agent-main > footer { border-top: 1px solid var(--border); border-bottom: 0; align-items: end; }

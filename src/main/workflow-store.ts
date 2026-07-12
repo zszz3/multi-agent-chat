@@ -1,4 +1,5 @@
-import type { WorkflowDraftState, WorkflowRunState, WorkflowStoreState } from "../shared/types";
+import type { WorkflowDraftState, WorkflowStoreState } from "../shared/workflow/draft";
+import type { WorkflowRunState } from "../shared/workflow/run";
 
 export interface WorkflowStoreDependencies {
   normalizeDraft: (draft: WorkflowDraftState) => WorkflowDraftState;

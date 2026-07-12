@@ -2,6 +2,7 @@ import { useState } from "react";
 import { CircleStop, Send, X } from "lucide-react";
 import type { TaskRun } from "../../../../shared/types";
 import type { WorkflowNodeConversation } from "../../../../shared/workflow-v2/conversation";
+import { WorkflowMessageContent } from "./WorkflowMessageContent";
 
 export interface WorkflowNodeAgentSession {
   nodeId: string;
@@ -57,6 +58,9 @@ export function WorkflowNodeAgentWindow({ conversation, task, sessions = [], sel
       : "Node has not started yet.";
   const orderedSessions = [...sessions].sort((left, right) => sessionStatus(left).group - sessionStatus(right).group || left.nodeTitle.localeCompare(right.nodeTitle));
   const attentionCount = sessions.filter((session) => sessionStatus(session).attention).length;
+  const conversationMessages = conversation?.messages ?? [];
+  const dialogueMessages = conversationMessages.filter((item) => item.role === "user" || item.role === "assistant");
+  const runtimeMessages = conversationMessages.filter((item) => item.role === "system" || item.role === "tool");
 
   return <section className="workflow-node-agent-overlay" role="dialog" aria-modal="true" aria-label={`${nodeTitle} agent conversation`}>
     <article className="workflow-node-agent-window">
@@ -74,13 +78,21 @@ export function WorkflowNodeAgentWindow({ conversation, task, sessions = [], sel
           <button className="icon-btn" onClick={onClose} aria-label="Close node conversation"><X size={16} /></button>
         </header>
         <div className="workflow-node-agent-messages">
-          {conversation ? conversation.messages.map((item) => { const kind = item.eventType === "tool_call" ? "tool-call" : item.eventType === "tool_result" ? "tool-result" : item.role; const label = item.role === "system" ? "System instruction" : item.eventType === "tool_call" ? `Tool call${item.name ? ` · ${item.name}` : ""}` : item.eventType === "tool_result" ? `Tool result${item.name ? ` · ${item.name}` : ""}` : item.role === "assistant" ? "Agent" : "You"; return <div key={item.id} className={`workflow-node-agent-message is-${kind}`}>
-            <span>{label} · {new Date(item.at).toLocaleTimeString()}</span><p>{item.content}</p>
+          {conversation ? dialogueMessages.map((item) => { const kind = item.eventType === "tool_call" ? "tool-call" : item.eventType === "tool_result" ? "tool-result" : item.role; const label = item.role === "system" ? "System instruction" : item.eventType === "tool_call" ? `Tool call${item.name ? ` · ${item.name}` : ""}` : item.eventType === "tool_result" ? `Tool result${item.name ? ` · ${item.name}` : ""}` : item.role === "assistant" ? "Agent" : "You"; return <div key={item.id} className={`workflow-node-agent-message is-${kind}`}>
+            <span>{label} · {new Date(item.at).toLocaleTimeString()}</span><WorkflowMessageContent content={item.content} />
           </div>; }) : task ? task.messages.map((item) => <div key={item.id} className={`workflow-node-agent-message is-${item.role}`}>
-            <span>{item.role} · {new Date(item.timestamp).toLocaleTimeString()}</span><p>{item.content}</p>
+            <span>{item.role} · {new Date(item.timestamp).toLocaleTimeString()}</span><WorkflowMessageContent content={item.content} />
           </div>) : <div className="workflow-node-agent-message is-system">
             <span>Node status</span><p>This agent node has not produced runtime activity yet. Its full conversation will appear here after execution starts.</p>
           </div>}
+          {conversation && runtimeMessages.length ? <details className="workflow-node-agent-runtime-details">
+            <summary>Runtime details <span>{runtimeMessages.length} events</span></summary>
+            <div>
+              {runtimeMessages.map((item) => { const kind = item.eventType === "tool_call" ? "tool-call" : item.eventType === "tool_result" ? "tool-result" : "system"; const label = item.role === "system" ? "System instruction" : item.eventType === "tool_call" ? `Tool call${item.name ? ` · ${item.name}` : ""}` : `Tool result${item.name ? ` · ${item.name}` : ""}`; return <div key={item.id} className={`workflow-node-agent-message is-${kind}`}>
+                <span>{label} · {new Date(item.at).toLocaleTimeString()}</span><WorkflowMessageContent content={item.content} />
+              </div>; })}
+            </div>
+          </details> : null}
         </div>
         {conversation?.completionProposal ? <div className="workflow-node-completion-proposal">
           <strong>Completion proposal</strong><p>{conversation.completionProposal.output.summary}</p>

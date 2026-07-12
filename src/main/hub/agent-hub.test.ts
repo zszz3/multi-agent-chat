@@ -5039,7 +5039,7 @@ fs.writeFileSync(${JSON.stringify(argsPath)}, process.argv.slice(2).join("\\n") 
         ),
     );
     const pausedRun = pausedSnapshot.workflowStore.runs.find((item: any) => item.runId === started.runId);
-    expect(pausedRun.status).toBe("stopped");
+    expect(pausedRun.status).toBe("waiting_for_user");
     expect(pausedRun.progress.find((item: any) => item.nodeId === "work")).toMatchObject({
       status: "paused",
     });

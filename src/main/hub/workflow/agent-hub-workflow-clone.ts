@@ -1,17 +1,15 @@
 import { randomUUID } from "node:crypto";
 import { DEFAULT_SCHEDULED_WORKFLOW_TIMEZONE } from "../../../shared/types";
 import type {
-  RuntimeConversation,
   ScheduledWorkflowRun,
   ScheduledWorkflowRunnerConfig,
   ScheduledWorkflowRunnerStatus,
   ScheduledWorkflowSchedule,
   ScheduledWorkflowStoreState,
-  WorkflowDraftState,
-  WorkflowRunState,
-  WorkflowStatus,
-  WorkflowStoreState,
 } from "../../../shared/types";
+import type { RuntimeConversation } from "../../../shared/runtime/conversation";
+import type { WorkflowDraftState, WorkflowStoreState } from "../../../shared/workflow/draft";
+import type { WorkflowRunState, WorkflowStatus } from "../../../shared/workflow/run";
 import {
   isScheduledWorkflowRunStatus,
   normalizeScheduledWorkflowDayOfMonth,
@@ -22,7 +20,7 @@ import {
 import { cloneWorkflowV2Plan } from "../../../shared/workflow-v2/planning";
 
 export function normalizeWorkflowStatus(status: WorkflowStatus): WorkflowStatus {
-  return status === "running" || status === "completed" || status === "failed" || status === "stopped" ? status : "draft";
+  return status === "running" || status === "waiting_for_user" || status === "completed" || status === "failed" || status === "stopped" ? status : "draft";
 }
 
 export function cloneWorkflowRun(run: WorkflowRunState): WorkflowRunState {

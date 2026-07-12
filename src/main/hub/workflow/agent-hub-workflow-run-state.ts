@@ -1,9 +1,9 @@
 import type {
   FinishWorkflowRunRequest,
   StartWorkflowRunRequest,
-  WorkflowDraftState,
-  WorkflowRunState,
 } from "../../../shared/types";
+import type { WorkflowDraftState } from "../../../shared/workflow/draft";
+import type { WorkflowRunState } from "../../../shared/workflow/run";
 import { cloneWorkflowV2Plan } from "../../../shared/workflow-v2/planning";
 import type { WorkflowRunStateUpdate } from "../../workflows/workflow-runtime";
 
@@ -102,6 +102,7 @@ export function updateWorkflowRunState(input: {
       ? { finalReport: input.update.finalReport ?? input.run.finalReport }
       : {}),
     lastError: input.update.lastError ?? input.run.lastError,
+    finishedAt: input.run.finishedAt,
   };
 
   const nextWorkflow = input.cloneDraft({

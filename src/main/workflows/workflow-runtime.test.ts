@@ -265,7 +265,7 @@ async function workflowV2RuntimeFixture(input: {
   runtime: WorkflowRuntime;
   workflow: WorkflowDraftState;
   taskRequests: RunTaskRequest[];
-  updates: Array<{ progress?: WorkflowRunProgressItem[]; appendEvents?: WorkflowEvent[] }>;
+  updates: Array<{ status?: "running" | "waiting_for_user"; progress?: WorkflowRunProgressItem[]; appendEvents?: WorkflowEvent[] }>;
   startRequests: string[];
   stopTaskIds: string[];
   deleteTaskRequests: Array<{ taskId: string; preserveRuntimeConversation: boolean }>;
@@ -302,7 +302,7 @@ async function workflowV2RuntimeFixture(input: {
     updatedAt: 1,
   } satisfies WorkflowDraftState;
   const taskRequests: RunTaskRequest[] = [];
-  const updates: Array<{ progress?: WorkflowRunProgressItem[]; appendEvents?: WorkflowEvent[] }> = [];
+  const updates: Array<{ status?: "running" | "waiting_for_user"; progress?: WorkflowRunProgressItem[]; appendEvents?: WorkflowEvent[] }> = [];
   const startRequests: string[] = [];
   const stopTaskIds: string[] = [];
   const deleteTaskRequests: Array<{ taskId: string; preserveRuntimeConversation: boolean }> = [];
@@ -331,6 +331,7 @@ async function workflowV2RuntimeFixture(input: {
     },
     updateWorkflowRunState: (request) => {
       updates.push({
+        ...(request.status ? { status: request.status } : {}),
         ...(request.progress ? { progress: structuredClone(request.progress) } : {}),
         ...(request.appendEvents ? { appendEvents: structuredClone(request.appendEvents) } : {}),
       });
@@ -414,6 +415,29 @@ function workflowV2InterventionRun(
 }
 
 describe("WorkflowRuntime Workflow V2 bridge", () => {
+  test("keeps an interactive node on the same non-terminal run while awaiting user confirmation", async () => {
+    const definition = workflowV2Definition();
+    const interactiveNode = definition.nodes[0]!;
+    if (interactiveNode.execModel !== "llm") throw new Error("expected llm node");
+    interactiveNode.executionMode = "interactive";
+    definition.nodes = [interactiveNode];
+    definition.edges = [];
+    const conversationStarts: string[] = [];
+    const fixture = await workflowV2RuntimeFixture({
+      definition,
+      startWorkflowNodeConversation: async (input) => {
+        conversationStarts.push(input.runId);
+        return { conversationId: `${input.runId}::${input.nodeId}`, workflowId: input.workflowId, runId: input.runId, nodeId: input.nodeId, configuredAgentId: input.configuredAgentId, modelId: input.modelId, workDir: input.workDir, status: "active", messages: [], createdAt: 1, updatedAt: 1, lastActivityAt: 1 };
+      },
+      executeScript: async () => { throw new Error("script runner should not be called"); },
+    });
+
+    fixture.runtime.runWorkflow({ workflowId: fixture.workflow.workflowId });
+    while (!fixture.updates.some((update) => update.status === "waiting_for_user")) await new Promise((resolve) => setTimeout(resolve, 1));
+
+    expect(conversationStarts).toEqual(["run-v2-runtime"]);
+    expect(fixture.updates.at(-1)?.status).toBe("waiting_for_user");
+  });
   test("stops a running run without advancing queued descendants", async () => {
     const fixture = await workflowV2RuntimeFixture({
       executeScript: async () => ({ nodeId: "verify", summary: "unused", outputs: {}, evidence: [], proposals: [] }),
@@ -787,9 +811,11 @@ describe("WorkflowRuntime Workflow V2 bridge", () => {
     });
 
     fixture.runtime.runWorkflow({ workflowId: fixture.workflow.workflowId });
-    const finished = await fixture.finished;
+    while (!fixture.updates.some((update) => update.status === "waiting_for_user")) {
+      await new Promise((resolve) => setTimeout(resolve, 1));
+    }
 
-    expect(finished.status).toBe("stopped");
+    expect(fixture.updates.at(-1)?.status).toBe("waiting_for_user");
     expect(fixture.taskRequests).toHaveLength(2);
     expect(fixture.stopTaskIds).toEqual(["task-1", "task-2"]);
     expect(persistedStates.at(-1)?.runState.nodes.draft).toMatchObject({

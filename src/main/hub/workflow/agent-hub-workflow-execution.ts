@@ -2,10 +2,10 @@ import type {
   AckScheduledWorkflowEventRequest,
   ScheduledWorkflowDueEvent,
   ScheduledWorkflowRun,
-  WorkflowDraftState,
   WorkflowOperationResult,
-  WorkflowRunState,
 } from "../../../shared/types";
+import type { WorkflowDraftState } from "../../../shared/workflow/draft";
+import type { WorkflowRunState } from "../../../shared/workflow/run";
 
 export function scheduledWorkflowEventTarget(
   event: ScheduledWorkflowDueEvent,

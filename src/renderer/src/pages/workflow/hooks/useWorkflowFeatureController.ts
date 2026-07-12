@@ -29,9 +29,12 @@ export function useWorkflowFeatureController({
   onRefresh,
   onReadOutputFile,
 }: UseWorkflowFeatureControllerOptions): WorkflowController {
-  const activeRunId =
-    snapshot.workflowStore.runs.find((run) => run.workflowId === draft.workflowId && run.status === "running")?.runId ??
-    draft.workflowRunIds[draft.workflowRunIds.length - 1];
+  const activeRun = snapshot.workflowStore.runs.find((run) =>
+    run.workflowId === draft.workflowId && (run.status === "running" || run.status === "waiting_for_user"));
+  const activeRunId = activeRun?.runId;
+  const nodeConversations = activeRunId
+    ? snapshot.workflowNodeConversations.filter((conversation) => conversation.workflowId === draft.workflowId && conversation.runId === activeRunId)
+    : [];
   const artifacts = activeRunId ? (snapshot.artifacts ?? []).filter((artifact) => artifact.target === activeRunId) : [];
   const activeWorkflow = snapshot.workflowStore.workflows.find((workflow) => workflow.workflowId === draft.workflowId);
 
@@ -62,7 +65,7 @@ export function useWorkflowFeatureController({
       finalReport: draft.workflowFinalReport,
       ...(activeWorkflow?.workflowV2Plan ? { workflowV2Plan: activeWorkflow.workflowV2Plan } : {}),
       nodeTasks: snapshot.tasks.filter((task) => draft.workflowRunProgress.some((item) => item.taskId === task.id)),
-      nodeConversations: snapshot.workflowNodeConversations.filter((conversation) => conversation.workflowId === draft.workflowId && conversation.runId === activeRunId),
+      nodeConversations,
       onObjectiveChange: draft.setWorkflowObjective,
       onPauseNode: async (nodeId: string) => {
         if (!draft.workflowId || !activeRunId) return;
@@ -160,6 +163,7 @@ export function useWorkflowFeatureController({
       artifacts,
       draft,
       language,
+      nodeConversations,
       onChooseWorkDir,
       onReadOutputFile,
       onRefresh,

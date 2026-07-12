@@ -1,18 +1,19 @@
 import { randomUUID } from "node:crypto";
 import { DEFAULT_SCHEDULED_WORKFLOW_TIMEZONE } from "../../../shared/types";
 import type {
-  RuntimeConversation,
   ScheduledWorkflowRun,
   ScheduledWorkflowRunnerConfig,
   ScheduledWorkflowSchedule,
   ScheduledWorkflowStoreState,
-  WorkflowDraftState,
+  WorkflowV2Plan,
+} from "../../../shared/types";
+import type { RuntimeConversation } from "../../../shared/runtime/conversation";
+import type { WorkflowDraftState, WorkflowStoreState } from "../../../shared/workflow/draft";
+import type {
   WorkflowEvent,
   WorkflowRunProgressItem,
   WorkflowRunState,
-  WorkflowV2Plan,
-  WorkflowStoreState,
-} from "../../../shared/types";
+} from "../../../shared/workflow/run";
 import {
   asArray,
   asNumber,
@@ -269,7 +270,7 @@ export function reconcileWorkflowV2RunFromDurableState(input: {
     ? "completed"
     : durableStatus === "failed"
       ? "failed"
-      : "stopped";
+      : "waiting_for_user";
   const finalReport = status === "completed" || status === "failed"
     ? buildWorkflowV2FinalReport(input.persisted.plan, input.persisted.workerOutputs, durableStatus)
     : undefined;

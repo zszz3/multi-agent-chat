@@ -10,6 +10,7 @@ import {
 import { buildWorkflowV2Plan } from "./workflow-v2-planner";
 import { transitionWorkflowV2NodeState } from "./workflow-v2-scheduler";
 import {
+  buildWorkflowV2FinalReport,
   buildWorkflowV2RecoveryPlan,
   createWorkflowV2NodeCacheFingerprint,
   materializeWorkflowV2Recovery,
@@ -70,6 +71,17 @@ function fingerprint(graphVersion = 1): WorkflowV2NodeCacheFingerprint {
 }
 
 describe("workflow-v2 recovery", () => {
+  test("uses the terminal node Markdown output as the completed user report", async () => {
+    const workflow = definition();
+    const plan = await buildWorkflowV2Plan({ definition: workflow, approvedBy: "tester", now: 1_000 });
+    const report = buildWorkflowV2FinalReport(plan, [
+      { nodeId: "first", summary: "Prepared", outputs: { value: "context" }, proposals: [] },
+      { nodeId: "second", summary: "Answered", outputs: { answer_markdown: "# Final answer\n\nUseful result." }, proposals: [] },
+    ], "completed");
+    expect(report).toBe("# Final answer\n\nUseful result.");
+    expect(report).not.toContain("Node outputs");
+  });
+
   test("reuses completed work and resumes a checkpoint under the same graph version", async () => {
     const state = await persisted();
     const recovery = buildWorkflowV2RecoveryPlan({
