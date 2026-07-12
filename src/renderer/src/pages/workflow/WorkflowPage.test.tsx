@@ -21,4 +21,13 @@ describe("WorkflowPage input ownership", () => {
     const html = renderToStaticMarkup(<WorkflowPage controller={controller(true)} />);
     expect(html).not.toContain("workflow-composer");
   });
+
+  test("does not render the legacy inline gate input for an awaiting node", () => {
+    const value = controller(true);
+    value.runProgress = [{ nodeId: "answer", title: "Answer", status: "awaiting_input", detail: "Provide more context" }];
+    value.onAnswerGate = () => undefined;
+    const html = renderToStaticMarkup(<WorkflowPage controller={value} />);
+    expect(html).not.toContain("workflow-gate-panel");
+    expect(html).not.toContain("workflow-gate-panel-input");
+  });
 });

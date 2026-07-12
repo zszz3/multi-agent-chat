@@ -70,6 +70,18 @@ describe("WorkflowNodeAgentWindow", () => {
     expect(html).toContain("results");
   });
 
+  test("renders a standard result packet without proposals as user-facing Markdown", () => {
+    const content = JSON.stringify({ nodeId: "answer", summary: "Done", outputs: { answer_markdown: "# Final answer\n\nReadable result" }, evidence: [], risks: [] });
+    const html = renderToStaticMarkup(<WorkflowNodeAgentWindow nodeTitle="Answer" onClose={() => undefined} conversation={{
+      conversationId: "workflow::run::answer", workflowId: "workflow", runId: "run", nodeId: "answer", configuredAgentId: "agent", modelId: "model", workDir: "C:/workspace", status: "closed",
+      messages: [{ id: "m1", role: "assistant", content, at: 1 }], createdAt: 1, updatedAt: 1, lastActivityAt: 1,
+    }} />);
+    expect(html).toContain("<h1>Final answer</h1>");
+    expect(html).toContain("Readable result");
+    expect(html).not.toContain("answer_markdown");
+    expect(html).not.toContain("&quot;nodeId&quot;");
+  });
+
   test("keeps agent progress text and renders the trailing packet as Markdown", () => {
     const content = `The question is clear. Using official docs first.${JSON.stringify({ nodeId: "web-search-answer", summary: "Verified", outputs: { answer_markdown: "## Answer\n\nGPT-5.6 Sol", source_links: ["https://developers.openai.com/api/docs/models"] }, evidence: [], risks: [], nextStepSuggestions: [], proposals: [] })}`;
     const html = renderToStaticMarkup(<WorkflowNodeAgentWindow nodeTitle="Answer" onClose={() => undefined} conversation={{

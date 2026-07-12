@@ -1,5 +1,5 @@
 import { memo, type ReactElement } from "react";
-import { isWorkflowV2WorkerOutput, splitWorkflowV2WorkerOutputContent, workflowV2UserFacingOutput } from "../../../../shared/workflow-v2/packets";
+import { splitWorkflowV2WorkerOutputContent, workflowV2UserFacingOutput } from "../../../../shared/workflow-v2/packets";
 import { Markdown } from "../../Markdown";
 
 type JsonValue = null | boolean | number | string | JsonValue[] | { [key: string]: JsonValue };
@@ -45,7 +45,7 @@ function JsonNode({ value }: { value: JsonValue }): ReactElement {
 
 export const WorkflowMessageContent = memo(function WorkflowMessageContent({ content }: { content: string }) {
   const packetContent = splitWorkflowV2WorkerOutputContent(content);
-  if (packetContent && isWorkflowV2WorkerOutput(packetContent.value)) {
+  if (packetContent) {
     return <div className="workflow-node-message-segments">
       {packetContent.leadingText ? <p>{packetContent.leadingText}</p> : null}
       <div className="workflow-node-user-output"><Markdown text={workflowV2UserFacingOutput(packetContent.value)} /></div>

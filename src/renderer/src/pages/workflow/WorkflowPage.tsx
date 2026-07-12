@@ -77,7 +77,6 @@ export function WorkflowPage({ controller: source }: { controller: WorkflowContr
   const onStopRun = source.onStopRun;
   const onResolveIntervention = source.onResolveIntervention;
   const onStartNode = source.onStartNode;
-  const onAnswerGate = source.onAnswerGate;
   const onSendNodeMessage = source.onSendNodeMessage;
   const onCompleteNodeConversation = source.onCompleteNodeConversation;
   const onRejectNodeCompletion = source.onRejectNodeCompletion;
@@ -129,7 +128,6 @@ export function WorkflowPage({ controller: source }: { controller: WorkflowContr
   const composerCanSend = Boolean(composerValue.trim()) && !running;
   const composerLocked = workflowStarted || running;
   const [graphExpanded, setGraphExpanded] = useState(defaultGraphExpanded);
-  const [gateAnswers, setGateAnswers] = useState<Record<string, string>>({});
   const [interventionReasons, setInterventionReasons] = useState<Record<string, string>>({});
   const [interventionPendingNodeId, setInterventionPendingNodeId] = useState<string | undefined>(undefined);
   const [outputFiles, setOutputFiles] = useState<Array<{ name: string; path: string }>>([]);
@@ -497,44 +495,6 @@ export function WorkflowPage({ controller: source }: { controller: WorkflowContr
                               {WORKFLOW_INTERVENTION_ACTION_TEXT[language][action]}
                             </button>
                           ))}
-                        </div>
-                      </div>
-                    );
-                  })}
-                {runProgress
-                  .filter((item) => item.status === "awaiting_input" && typeof onAnswerGate === "function")
-                  .map((item) => {
-                    const gateDraft = gateAnswers[item.nodeId] ?? "";
-                    const submitGate = (): void => {
-                      const answer = gateDraft.trim();
-                      if (!answer) return;
-                      void onAnswerGate?.(item.nodeId, answer);
-                      setGateAnswers((current) => ({ ...current, [item.nodeId]: "" }));
-                    };
-                    return (
-                      <div key={`gate-${item.nodeId}`} className="workflow-gate-panel">
-                        <div className="workflow-gate-panel-head">
-                          <span className="workflow-gate-panel-badge">{workflowRunStatusLabel("awaiting_input")}</span>
-                          <strong>{item.title}</strong>
-                        </div>
-                        {item.detail ? <p className="workflow-gate-panel-question">{item.detail}</p> : null}
-                        <textarea
-                          className="workflow-gate-panel-input"
-                          value={gateDraft}
-                          placeholder={workflowText.gateAnswerPlaceholder}
-                          rows={3}
-                          onChange={(event) => setGateAnswers((current) => ({ ...current, [item.nodeId]: event.target.value }))}
-                          onKeyDown={(event) => {
-                            if (event.key === "Enter" && (event.metaKey || event.ctrlKey)) {
-                              event.preventDefault();
-                              submitGate();
-                            }
-                          }}
-                        />
-                        <div className="workflow-gate-panel-actions">
-                          <button type="button" className="workflow-node-gate-submit" onClick={submitGate} disabled={!gateDraft.trim()}>
-                            {workflowText.gateSubmit}
-                          </button>
                         </div>
                       </div>
                     );
