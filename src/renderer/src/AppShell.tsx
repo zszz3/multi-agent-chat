@@ -48,7 +48,8 @@ import {
   skillDisplayName,
 } from "./pages/skills/find-skill";
 import { AgentPage } from "./pages/agent/AgentPage";
-import { McpPage } from "./pages/agent/McpPage";
+import { McpPage } from "./pages/mcp/McpPage";
+import { EvaluationPage } from "./pages/evaluation/EvaluationPage";
 import { useConfiguredAgentsManager } from "./pages/agent/hooks/useConfiguredAgentsManager";
 import { ChatPage } from "./pages/chat/ChatPage";
 import { chatConfigLocked, SlashCommandSuggestions, slashCommandSuggestionsFor } from "./pages/chat/chat-utils";
@@ -223,7 +224,6 @@ export function AppShell() {
   const [taskStatusFilter, setTaskStatusFilter] = useState<TaskStatusFilterValue>("all");
   const [selectedTaskDetailId, setSelectedTaskDetailId] = useState<string | undefined>();
   const [activeFeature, setActiveFeature] = useState<ActiveFeature>("chat");
-  const [workflowMcpStatus, setWorkflowMcpStatus] = useState<import("../../shared/mcp-config").McpSetupStatus>();
   const [theme, setTheme] = useState<Theme>(() => loadStoredTheme(window.localStorage));
   const [providerKeys, setProviderKeys] = useState<Record<string, string>>(() => loadStoredProviderKeys(window.localStorage));
   const [language, setLanguage] = useState<Language>(() => loadStoredLanguage(window.localStorage));
@@ -290,6 +290,7 @@ export function AppShell() {
     );
   }, [activeFeature, confirmSaveBeforeSwitch, language, snapshots]);
   const {
+    configuredAgents: editableConfiguredAgents,
     selectedConfiguredAgentId,
     configuredAgentStatus,
     setSelectedConfiguredAgentId,
@@ -882,7 +883,7 @@ export function AppShell() {
       <div className={appShellClass(activeFeature)}>
         <FeatureRail activeFeature={activeFeature} theme={theme} text={text} onSelectFeature={navigateToFeature} onToggleTheme={toggleTheme} />
 
-        <ResourceSidebar
+        {activeFeature !== "mcp" && activeFeature !== "evaluation" ? <ResourceSidebar
           activeFeature={activeFeature}
           language={language}
           text={text}
@@ -896,7 +897,7 @@ export function AppShell() {
           onSelectTask={selectTask}
           onStartCreatingScheduledWorkflow={startCreatingScheduledWorkflow}
           onSelectScheduledWorkflowSchedule={selectScheduledWorkflowSchedule}
-        />
+        /> : null}
 
         <main className={appContentClass(activeFeature)}>
         {activeFeature === "tasks" ? (
@@ -904,7 +905,7 @@ export function AppShell() {
             prompt={taskPrompt}
             configuredAgentId={taskConfiguredAgentId || defaultConfiguredAgentId(snapshot.configuredAgents)}
             modelId={taskModelId}
-            configuredAgents={snapshot.configuredAgents}
+            configuredAgents={editableConfiguredAgents}
             workDir={snapshot.workDir}
             runtimes={snapshot.runtimes}
             channels={snapshot.channels}
@@ -992,7 +993,9 @@ export function AppShell() {
             onStatusChange={setConfigStatus}
           />
         ) : activeFeature === "mcp" ? (
-          <McpPage language={language} agents={snapshot.configuredAgents} status={workflowMcpStatus} />
+          <McpPage language={language} agents={snapshot.configuredAgents} />
+        ) : activeFeature === "evaluation" ? (
+          <EvaluationPage language={language} agents={snapshot.configuredAgents} channels={snapshot.channels} />
         ) : activeFeature === "agent" ? (
           <AgentPage
             language={language}
@@ -1000,7 +1003,7 @@ export function AppShell() {
             configuredAgents={snapshot.configuredAgents}
             selectedConfiguredAgentId={selectedConfiguredAgentId}
             status={configuredAgentStatus}
-            onSave={() => saveConfiguredAgents(snapshot.configuredAgents)}
+            onSave={() => saveConfiguredAgents(editableConfiguredAgents)}
             onAddConfiguredAgent={addConfiguredAgent}
             onSelectConfiguredAgent={setSelectedConfiguredAgentId}
             onUpdateConfiguredAgent={updateConfiguredAgent}

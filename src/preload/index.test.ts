@@ -72,6 +72,14 @@ describe("preload skill API", () => {
     expect(electronState.exposedApi).toHaveProperty("loadCodexDefaultConfig");
     expect(electronState.exposedApi).toHaveProperty("importRuntimeLocalConfig");
     expect(electronState.exposedApi).toHaveProperty("refreshModelCatalog");
+    expect(electronState.exposedApi).toHaveProperty("getMcpSetupStatus");
+    expect(electronState.exposedApi).toHaveProperty("listInstalledMcps");
+    expect(electronState.exposedApi).toHaveProperty("listAgentMcps");
+    expect(electronState.exposedApi).toHaveProperty("installAgentMcp");
+    expect(electronState.exposedApi).toHaveProperty("uninstallAgentMcp");
+    expect(electronState.exposedApi).not.toHaveProperty("getWorkflowMcpStatus");
+    expect(electronState.exposedApi).not.toHaveProperty("installMcp");
+    expect(electronState.exposedApi).not.toHaveProperty("uninstallMcp");
     expect(electronState.exposedApi).not.toHaveProperty("translateSkill");
   });
 

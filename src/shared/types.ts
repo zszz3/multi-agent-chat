@@ -16,8 +16,7 @@ import type { RuntimeId } from "./runtime-catalog";
 import type { ResourceSourceType } from "./resource";
 import type { RuntimeConversation } from "./runtime/conversation";
 import type { WorkflowNodeConversation } from "./workflow-v2/conversation";
-import type { AgentType } from "./agent/types";
-import type { AgentMcpBinding } from "./mcp/types";
+import type { ConfiguredAgent } from "./agent/types";
 import type { WorkflowDraftState, WorkflowGrillMessage, WorkflowStoreState } from "./workflow/draft";
 import type {
   WorkflowArtifactReference,
@@ -38,7 +37,7 @@ export {
 } from "./workflow/run";
 export type { ResourceSourceType } from "./resource";
 export type { RuntimeConversation } from "./runtime/conversation";
-export type { AgentRevision, AgentType } from "./agent/types";
+export type { AgentRevision, AgentType, ConfiguredAgent } from "./agent/types";
 export type { AgentMcpBinding, McpServerDefinition, McpToolDefinition, McpTransport } from "./mcp/types";
 export type { EvaluationCaseResult, EvaluationDataset, EvaluationDatasetItem, EvaluationEvaluator, EvaluationExperiment, EvaluationRun, EvaluationScore, EvaluatorKind } from "./evaluation/types";
 export type { WorkflowDraftState, WorkflowGrillMessage, WorkflowStoreState } from "./workflow/draft";
@@ -145,26 +144,6 @@ export interface AgentChannel {
   plugins?: AgentPluginConfig[];
   modelCatalogJson?: string;
   modelReasoningEffort?: string;
-}
-
-export interface ConfiguredAgent {
-  id: string;
-  agentType?: AgentType;
-  name: string;
-  description: string;
-  instructions?: string;
-  baseAgentId?: string;
-  mcpBindings?: AgentMcpBinding[];
-  runtimeAgentId: AgentId;
-  channelId: string;
-  modelId: string;
-  reasoningEffort?: string;
-  tags: string[];
-  currentRevisionId?: string;
-  revision?: number;
-  managed?: boolean;
-  createdAt: number;
-  updatedAt: number;
 }
 
 export interface SkillTemplate {

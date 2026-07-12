@@ -10,6 +10,7 @@ export const UI_TEXT = {
       runtimes: "配置",
       agent: "Agent",
       mcp: "MCP",
+      evaluation: "Evaluation",
     },
     chrome: {
       featureNav: "功能导航",
@@ -98,6 +99,7 @@ export const UI_TEXT = {
       runtimes: "Config",
       agent: "Agent",
       mcp: "MCP",
+      evaluation: "Evaluation",
     },
     chrome: {
       featureNav: "Feature navigation",

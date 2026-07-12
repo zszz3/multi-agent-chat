@@ -62,14 +62,17 @@ import type {
   WorkflowOperationResult,
 } from "../shared/types";
 import type { McpAgentDiagnostic, McpInstalledEntry, McpInstallRequest, McpInstallResult, McpSetupStatus } from "../shared/mcp-config";
+import type { AgentRevision } from "../shared/agent/types";
+import type { McpServerDefinition } from "../shared/mcp/types";
+import type { EvaluationDataset, EvaluationEvaluator, EvaluationExperiment, EvaluationRun } from "../shared/evaluation/types";
 
 const api = {
   getSnapshot: (): Promise<AppSnapshot> => ipcRenderer.invoke("snapshot:get"),
-  getWorkflowMcpStatus: (): Promise<McpSetupStatus> => ipcRenderer.invoke("workflow-mcp:status"),
-  listInstalledMcps: (): Promise<McpInstalledEntry[]> => ipcRenderer.invoke("workflow-mcp:list-installed"),
-  listAgentMcps: (agentId: string): Promise<McpAgentDiagnostic[]> => ipcRenderer.invoke("workflow-mcp:list-agent", agentId),
-  installMcp: (request: McpInstallRequest): Promise<McpInstallResult> => ipcRenderer.invoke("workflow-mcp:install", request),
-  uninstallMcp: (request: McpInstallRequest): Promise<McpInstallResult> => ipcRenderer.invoke("workflow-mcp:uninstall", request),
+  getMcpSetupStatus: (): Promise<McpSetupStatus> => ipcRenderer.invoke("mcp:setup-status"),
+  listInstalledMcps: (): Promise<McpInstalledEntry[]> => ipcRenderer.invoke("mcp:installed:list"),
+  listAgentMcps: (agentId: string): Promise<McpAgentDiagnostic[]> => ipcRenderer.invoke("mcp:agent:list", agentId),
+  installAgentMcp: (request: McpInstallRequest): Promise<McpInstallResult> => ipcRenderer.invoke("mcp:agent:install", request),
+  uninstallAgentMcp: (request: McpInstallRequest): Promise<McpInstallResult> => ipcRenderer.invoke("mcp:agent:uninstall", request),
   revealPath: (filePath: string): Promise<string> => ipcRenderer.invoke("file:reveal", filePath),
   refreshAgents: (): Promise<AppSnapshot> => ipcRenderer.invoke("agents:refresh"),
   createChat: (configuredAgentId?: string): Promise<AppSnapshot> => ipcRenderer.invoke("chat:create", configuredAgentId),
@@ -80,6 +83,24 @@ const api = {
   setChatModel: (chatId: string, modelId: string): Promise<AppSnapshot> => ipcRenderer.invoke("chat:set-model", chatId, modelId),
   saveModelChannels: (channels: AgentChannel[]): Promise<AppSnapshot> => ipcRenderer.invoke("model-channels:save", channels),
   saveConfiguredAgents: (agents: ConfiguredAgent[]): Promise<AppSnapshot> => ipcRenderer.invoke("configured-agents:save", agents),
+  saveComposedAgent: (agent: ConfiguredAgent): Promise<AppSnapshot> => ipcRenderer.invoke("configured-agents:save-composed", agent),
+  listAgentRevisions: (agentId?: string): Promise<AgentRevision[]> => ipcRenderer.invoke("configured-agents:revisions:list", agentId),
+  listMcpServers: (): Promise<McpServerDefinition[]> => ipcRenderer.invoke("mcp:list"),
+  saveMcpServer: (server: McpServerDefinition): Promise<McpServerDefinition> => ipcRenderer.invoke("mcp:upsert", server),
+  testMcpServer: (server: McpServerDefinition): Promise<McpServerDefinition> => ipcRenderer.invoke("mcp:test", server),
+  deleteMcpServer: (serverId: string): Promise<boolean> => ipcRenderer.invoke("mcp:delete", serverId),
+  listEvaluationDatasets: (): Promise<EvaluationDataset[]> => ipcRenderer.invoke("evaluation:datasets:list"),
+  saveEvaluationDataset: (value: EvaluationDataset): Promise<EvaluationDataset> => ipcRenderer.invoke("evaluation:datasets:save", value),
+  deleteEvaluationDataset: (id: string): Promise<boolean> => ipcRenderer.invoke("evaluation:datasets:delete", id),
+  listEvaluationEvaluators: (): Promise<EvaluationEvaluator[]> => ipcRenderer.invoke("evaluation:evaluators:list"),
+  saveEvaluationEvaluator: (value: EvaluationEvaluator): Promise<EvaluationEvaluator> => ipcRenderer.invoke("evaluation:evaluators:save", value),
+  deleteEvaluationEvaluator: (id: string): Promise<boolean> => ipcRenderer.invoke("evaluation:evaluators:delete", id),
+  listEvaluationExperiments: (): Promise<EvaluationExperiment[]> => ipcRenderer.invoke("evaluation:experiments:list"),
+  saveEvaluationExperiment: (value: EvaluationExperiment): Promise<EvaluationExperiment> => ipcRenderer.invoke("evaluation:experiments:save", value),
+  deleteEvaluationExperiment: (id: string): Promise<boolean> => ipcRenderer.invoke("evaluation:experiments:delete", id),
+  listEvaluationRuns: (experimentId?: string): Promise<EvaluationRun[]> => ipcRenderer.invoke("evaluation:runs:list", experimentId),
+  deleteEvaluationRun: (id: string): Promise<boolean> => ipcRenderer.invoke("evaluation:runs:delete", id),
+  runEvaluationExperiment: (experimentId: string): Promise<EvaluationRun> => ipcRenderer.invoke("evaluation:experiments:run", experimentId),
   testConfiguredAgent: (agentId: string): Promise<AgentTestResult> => ipcRenderer.invoke("configured-agents:test", agentId),
   testRuntimeChannel: (channelId: string): Promise<AgentTestResult> => ipcRenderer.invoke("runtime-channels:test", channelId),
   queryRuntimeChannelBalance: (channelId: string): Promise<ProviderBalanceResult> => ipcRenderer.invoke("runtime-channels:balance", channelId),

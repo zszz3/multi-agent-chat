@@ -13,15 +13,15 @@ import { loadBundledWorkflows } from "../workflows/bundled-workflows";
 import { OfficialCatalogStore } from "../official-catalog-store";
 import { UserSkillStore } from "../user-skill-store";
 import { SkillCategoryStore } from "../skill-category-store";
+import { PlatformServices } from "../platform/platform-services";
 import { centeredWindowBounds } from "../platform/window-bounds";
 import { resolvePreloadBundlePath } from "./app-paths";
 import { fetchOnlineSkills, ONLINE_SKILL_SOURCES } from "../../shared/online-skills";
 import { SKILL_TEMPLATES } from "../../shared/skill-templates";
 import { DEFAULT_SCHEDULED_WORKFLOW_CLOUD_BASE_URL } from "../../shared/types";
 import { mcpToolDefinitions } from "../../mcp/server";
-import { MCP_CATALOG, buildManagedMcpBlock, diagnoseManagedMcpsForAgent, listManagedMcpEntries, mcpServerNameForAgent, mergeManagedMcpBlock, removeManagedMcpBlock, type McpInstallRequest } from "../../shared/mcp-config";
 import { existsSync } from "node:fs";
-import { copyFile, mkdir, readFile, rename, writeFile } from "node:fs/promises";
+import { readFile } from "node:fs/promises";
 import type {
   AgentChannel,
   AgentId,
@@ -79,6 +79,12 @@ const hub = new AgentHub();
 const officialCatalog = new OfficialCatalogStore(path.join(app.getPath("userData"), OFFICIAL_CATALOG_DATABASE_FILE));
 const userSkillStore = new UserSkillStore(path.join(app.getPath("userData"), APP_DATABASE_FILE));
 const skillCategoryStore = new SkillCategoryStore(path.join(app.getPath("userData"), APP_DATABASE_FILE));
+const platformServices = new PlatformServices(path.join(app.getPath("userData"), APP_DATABASE_FILE), {
+  homeDir: () => app.getPath("home"), appDataDir: () => app.getPath("appData"), workDir: () => hub.getWorkDir(),
+  serverPath: () => path.join(__dirname, "mcp-server.js"),
+  bridgePath: () => mcpBridge?.discoveryPath ?? path.join(app.getPath("appData"), "multi-agent-chat", MCP_BRIDGE_FILE),
+  bridgeRunning: () => Boolean(mcpBridge), workflowCreateAvailable: () => mcpToolDefinitions().some((tool) => tool.name === "workflow_create"),
+});
 
 let mainWindow: BrowserWindow | null = null;
 let ipcRegistered = false;
@@ -296,50 +302,11 @@ async function bootstrap(): Promise<void> {
   });
 }
 
-async function mutateMcpConfig(request: McpInstallRequest, install: boolean) {
-  const item = MCP_CATALOG.find((candidate) => candidate.id === request.catalogId);
-  if (!item) throw new Error(`Unknown MCP catalog item: ${request.catalogId}`);
-  const configDir = path.join(app.getPath("home"), ".codex");
-  const configPath = path.join(configDir, "config.toml");
-  await mkdir(configDir, { recursive: true });
-  const content = await readFile(configPath, "utf8").catch(() => "");
-  const serverName = mcpServerNameForAgent(request.agentId, item.id);
-  let next = removeManagedMcpBlock(content, serverName);
-  if (install) {
-    const args = item.id === "workflow" ? [path.join(__dirname, "mcp-server.js")] : [...item.defaultArgs, ...(item.requiresPath ? [String(request.allowedPath || hub.getWorkDir())] : [])];
-    const env: Record<string,string> = item.id === "workflow" ? { MULTI_AGENT_CHAT_MCP_BRIDGE: mcpBridge?.discoveryPath ?? "", MULTI_AGENT_CHAT_CONFIGURED_AGENT_ID: request.agentId } : item.requiresToken ? { GITHUB_PERSONAL_ACCESS_TOKEN: String(request.token || "") } : {};
-    if (item.requiresToken && !env.GITHUB_PERSONAL_ACCESS_TOKEN) throw new Error("GitHub token is required.");
-    next = mergeManagedMcpBlock(content, buildManagedMcpBlock({ serverName, command: item.command, args, env, agentId: request.agentId, catalogId: item.id }));
-  }
-  const backupPath = existsSync(configPath) ? `${configPath}.backup-${Date.now()}` : undefined;
-  if (backupPath) await copyFile(configPath, backupPath);
-  const tempPath = `${configPath}.tmp-${process.pid}`;
-  await writeFile(tempPath, next, "utf8");
-  await rename(tempPath, configPath);
-  return { configPath, backupPath, serverName, installed: install };
-}
-
 function registerIpcHandlers(): void {
   if (ipcRegistered) return;
   ipcRegistered = true;
+  platformServices.registerIpc({ ipc: ipcMain, agents: () => hub.listConfiguredAgents(), channels: () => hub.snapshot().channels, defaultWorkDir: () => hub.getWorkDir(), executeRuntime: (request) => hub.askWorkflowAgent(request), saveAgent: (agent) => hub.updateConfiguredAgents([...hub.listConfiguredAgents().filter((item) => item.id !== agent.id), agent]) });
   ipcMain.handle("snapshot:get", () => hub.snapshot());
-  ipcMain.handle("workflow-mcp:status", () => {
-    const serverPath = path.join(__dirname, "mcp-server.js");
-    const bridgePath = mcpBridge?.discoveryPath ?? path.join(app.getPath("appData"), "multi-agent-chat", MCP_BRIDGE_FILE);
-    return { serverPath, bridgePath, configPath: path.join(app.getPath("home"), ".codex", "config.toml"), serverBuilt: existsSync(serverPath), bridgeRunning: Boolean(mcpBridge), workflowCreateAvailable: mcpToolDefinitions().some((tool) => tool.name === "workflow_create") };
-  });
-  ipcMain.handle("workflow-mcp:list-installed", async () => {
-    const configPath = path.join(app.getPath("home"), ".codex", "config.toml");
-    const content = await readFile(configPath, "utf8").catch(() => "");
-    return listManagedMcpEntries(content);
-  });
-  ipcMain.handle("workflow-mcp:list-agent", async (_event, agentId: string) => {
-    const configPath = path.join(app.getPath("home"), ".codex", "config.toml");
-    const content = await readFile(configPath, "utf8").catch(() => "");
-    return diagnoseManagedMcpsForAgent(content, agentId);
-  });
-  ipcMain.handle("workflow-mcp:install", async (_event, request: McpInstallRequest) => mutateMcpConfig(request, true));
-  ipcMain.handle("workflow-mcp:uninstall", async (_event, request: McpInstallRequest) => mutateMcpConfig(request, false));
   ipcMain.handle("agents:refresh", async () => hub.refreshAgents());
   ipcMain.handle("chat:create", (_event, configuredAgentId?: string) => {
     hub.createChat(configuredAgentId);
@@ -610,6 +577,7 @@ app.on("before-quit", (event) => {
   void codexChatRouter?.stop();
   void mcpBridge?.stop();
   officialCatalog.close();
+  platformServices.close();
   userSkillStore.close();
   skillCategoryStore.close();
 });
