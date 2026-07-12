@@ -1926,6 +1926,16 @@ export class AgentHub {
           timeout?.refresh();
           if (event.type === "runtime_conversation") {
             latestRuntimeConversation = this.runtimeRouter.cloneConversation(event.runtimeConversation);
+            const workflow = this.workflowStore.workflows.get(input.workflowId);
+            if (workflow) {
+              this.workflowStore.workflows.set(input.workflowId, this.cloneWorkflowDraft({
+                ...workflow,
+                runtimeConversation: latestRuntimeConversation,
+                updatedAt: Date.now(),
+              }));
+              this.workflowStore.activeId = input.workflowId;
+              this.emit();
+            }
             return;
           }
           if (event.type === "delta") {
