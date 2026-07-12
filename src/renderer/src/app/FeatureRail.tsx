@@ -1,9 +1,9 @@
-import { Beaker, Bot, CalendarClock, ClipboardCheck, ClipboardList, Cpu, Database, GitBranch, MessageSquareText, Moon, Server, SlidersHorizontal, Sun, Wand2 } from "lucide-react";
+import { Beaker, Bot, CalendarClock, ClipboardList, Cpu, GitBranch, MessageSquareText, Moon, Server, SlidersHorizontal, Sun, Wand2 } from "lucide-react";
 import type { Theme } from "../CommandPalette";
 import type { ActiveFeature } from "./shell";
 
 interface FeatureRailText {
-  nav: Record<"chat" | "tasks" | "workflow" | "schedules" | "skills" | "agent" | "mcp" | "datasets" | "evaluators" | "experiments" | "runtimes", string>;
+  nav: Record<"chat" | "tasks" | "workflow" | "schedules" | "skills" | "agent" | "mcp" | "evaluation" | "runtimes", string>;
   chrome: {
     featureNav: string;
     lightTheme: string;
@@ -55,9 +55,10 @@ export function FeatureRail({ activeFeature, theme, text, onSelectFeature, onTog
           <Server size={15} />
           <span>{text.nav.mcp}</span>
         </button>
-        <button className={`feature-nav-item ${activeFeature === "datasets" ? "is-active" : ""}`} onClick={() => onSelectFeature("datasets")}><Database size={15} /><span>{text.nav.datasets}</span></button>
-        <button className={`feature-nav-item ${activeFeature === "evaluators" ? "is-active" : ""}`} onClick={() => onSelectFeature("evaluators")}><ClipboardCheck size={15} /><span>{text.nav.evaluators}</span></button>
-        <button className={`feature-nav-item ${activeFeature === "experiments" ? "is-active" : ""}`} onClick={() => onSelectFeature("experiments")}><Beaker size={15} /><span>{text.nav.experiments}</span></button>
+        <button className={`feature-nav-item ${activeFeature === "evaluation" ? "is-active" : ""}`} onClick={() => onSelectFeature("evaluation")}>
+          <Beaker size={15} />
+          <span>{text.nav.evaluation}</span>
+        </button>
         <button className={`feature-nav-item ${activeFeature === "runtimes" ? "is-active" : ""}`} onClick={() => onSelectFeature("runtimes")}>
           <Cpu size={15} />
           <span>{text.nav.runtimes}</span>

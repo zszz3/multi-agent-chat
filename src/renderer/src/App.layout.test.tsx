@@ -73,6 +73,10 @@ import { SKILL_TEMPLATES } from "../../shared/skill-templates";
 import { firstWorkflowQuestionForObjective } from "../../shared/workflow-agent";
 import { formatTime } from "./app/format";
 import { loadCodexDefaultConfigFromRuntimeApi } from "./pages/runtime/runtime-utils";
+import { FeatureRail } from "./app/FeatureRail";
+import { EvaluationPage } from "./pages/evaluation/EvaluationPage";
+import { ExperimentWorkspace } from "./pages/evaluation/ExperimentWorkspace";
+import { McpPage } from "./pages/mcp/McpPage";
 import type {
   AgentId,
   AgentChannel,
@@ -202,6 +206,48 @@ test("guards only navigation away from the Runtime page", async () => {
 
   expect(confirmations).toBe(1);
   expect(navigated).toEqual(["workflow"]);
+});
+
+describe("Evaluation workbench redesign", () => {
+  const railText = {
+    nav: { chat: "Chat", tasks: "Tasks", workflow: "Workflow", schedules: "Schedules", skills: "Skills", agent: "Agent", mcp: "MCP", evaluation: "Evaluation", runtimes: "Config" },
+    chrome: { featureNav: "Features", lightTheme: "Light", darkTheme: "Dark", toggleTheme: "Toggle theme" },
+  };
+
+  test("uses one top-level Evaluation navigation entry", () => {
+    const html = renderToStaticMarkup(<FeatureRail activeFeature="evaluation" theme="light" text={railText} onSelectFeature={() => undefined} onToggleTheme={() => undefined} />);
+    expect(html.match(/>Evaluation</g)).toHaveLength(1);
+    expect(html).not.toContain(">Datasets<");
+    expect(html).not.toContain(">Evaluators<");
+    expect(html).not.toContain(">Experiments<");
+  });
+
+  test("renders four internal Evaluation views", () => {
+    const html = renderToStaticMarkup(<EvaluationPage language="en" agents={[]} />);
+    expect(html).toContain('role="tablist"');
+    expect(html).toContain(">Overview<");
+    expect(html).toContain(">Datasets<");
+    expect(html).toContain(">Evaluators<");
+    expect(html).toContain(">Experiments<");
+    expect(html).toContain("Quality overview");
+  });
+
+  test("prioritizes experiment metrics and case results", () => {
+    const experiment = { id: "experiment-1", name: "Regression", datasetId: "dataset-1", agentId: "agent-1", evaluatorIds: ["evaluator-1"], repetitions: 2, createdAt: 1, updatedAt: 2 };
+    const html = renderToStaticMarkup(<ExperimentWorkspace zh={false} experiments={[experiment]} selected={experiment} datasets={[{ id: "dataset-1", name: "Core", description: "", items: [], createdAt: 1, updatedAt: 2 }]} evaluators={[{ id: "evaluator-1", name: "Judge", kind: "contains", threshold: 0.8, enabled: true, createdAt: 1, updatedAt: 2 }]} agents={[]} busy={undefined} runs={[{ id: "run-1", experimentId: "experiment-1", status: "completed", startedAt: 3, finishedAt: 4, averageScore: 0.9, minimumScore: 0.8, passRate: 1, totalDurationMs: 1200, results: [] }]} onSelect={() => undefined} onCreate={() => undefined} onChange={() => undefined} onSave={() => undefined} onDelete={() => undefined} onRun={() => undefined} />);
+    expect(html).toContain("Average score");
+    expect(html).toContain("Minimum score");
+    expect(html).toContain("Pass rate");
+    expect(html).toContain("Case results");
+    expect(html).toContain("Run history");
+  });
+
+  test("renders MCP in the shared workbench shell", () => {
+    const html = renderToStaticMarkup(<McpPage language="en" />);
+    expect(html).toContain("CAPABILITY REGISTRY");
+    expect(html).toContain("Servers");
+    expect(html).toContain("No MCP servers");
+  });
 });
 
 const taskRuns: TaskRun[] = [

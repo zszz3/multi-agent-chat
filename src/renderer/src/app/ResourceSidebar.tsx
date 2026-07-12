@@ -21,7 +21,7 @@ import type { WorkflowSidebarController } from "../pages/workflow/workflow-contr
 type MaybePromise = void | Promise<void>;
 
 interface ResourceSidebarText {
-  nav: Record<"chat" | "tasks" | "workflow" | "schedules" | "skills" | "runtimes" | "agent" | "mcp" | "datasets" | "evaluators" | "experiments", string>;
+  nav: Record<"chat" | "tasks" | "workflow" | "schedules" | "skills" | "runtimes" | "agent" | "mcp" | "evaluation", string>;
   chrome: {
     search: string;
     newChat: string;
@@ -90,9 +90,7 @@ function resourceFeatureLabel(activeFeature: ActiveFeature, text: ResourceSideba
   if (activeFeature === "skills") return text.nav.skills;
   if (activeFeature === "agent") return text.nav.agent;
   if (activeFeature === "mcp") return text.nav.mcp;
-  if (activeFeature === "datasets") return text.nav.datasets;
-  if (activeFeature === "evaluators") return text.nav.evaluators;
-  if (activeFeature === "experiments") return text.nav.experiments;
+  if (activeFeature === "evaluation") return text.nav.evaluation;
   if (activeFeature === "runtimes") return text.nav.runtimes;
   return text.nav.chat;
 }
