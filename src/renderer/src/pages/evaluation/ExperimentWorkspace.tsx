@@ -100,7 +100,7 @@ export function ExperimentWorkspace({
             actions={
               <>
                 <button
-                  className="secondary-btn danger"
+                  className="control-btn compact danger"
                   type="button"
                   disabled={Boolean(busy)}
                   onClick={onDelete}
@@ -109,7 +109,7 @@ export function ExperimentWorkspace({
                   {zh ? "删除" : "Delete"}
                 </button>
                 <button
-                  className="secondary-btn"
+                  className="control-btn compact secondary"
                   type="button"
                   disabled={Boolean(busy)}
                   onClick={onSave}
@@ -118,7 +118,7 @@ export function ExperimentWorkspace({
                   {zh ? "保存" : "Save"}
                 </button>
                 <button
-                  className="primary-btn"
+                  className="control-btn compact is-active"
                   type="button"
                   disabled={Boolean(busy)}
                   onClick={onRun}

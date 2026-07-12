@@ -196,7 +196,7 @@ export function WorkbenchEmpty({
       <h3>{title}</h3>
       <p>{description}</p>
       {actionLabel && onAction ? (
-        <button className="secondary-btn" type="button" onClick={onAction}>
+        <button className="control-btn compact secondary" type="button" onClick={onAction}>
           <Plus size={13} />
           {actionLabel}
         </button>

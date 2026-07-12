@@ -61,7 +61,7 @@ export function DatasetWorkspace({
             actions={
               <>
                 <button
-                  className="secondary-btn danger"
+                  className="control-btn compact danger"
                   type="button"
                   disabled={Boolean(busy)}
                   onClick={onDelete}
@@ -70,7 +70,7 @@ export function DatasetWorkspace({
                   {zh ? "删除" : "Delete"}
                 </button>
                 <button
-                  className="primary-btn"
+                  className="control-btn compact is-active"
                   type="button"
                   disabled={Boolean(busy)}
                   onClick={onSave}
@@ -119,7 +119,7 @@ export function DatasetWorkspace({
               }
               action={
                 <button
-                  className="secondary-btn compact"
+                  className="control-btn compact secondary"
                   type="button"
                   onClick={() => {
                     const now = Date.now();

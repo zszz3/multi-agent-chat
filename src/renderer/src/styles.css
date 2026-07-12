@@ -5112,7 +5112,7 @@ textarea:focus-visible {
 @media (max-width: 1050px) {
   .workbench-layout { grid-template-columns: 184px minmax(0, 1fr); }
   .evaluation-overview-grid { grid-template-columns: 1fr; gap: 0; }
-  .workbench-actions .secondary-btn.danger { width: 30px; padding: 0; font-size: 0; }
+  .workbench-actions .control-btn.danger { width: 30px; padding: 0; font-size: 0; }
 }
 
 @media (max-width: 760px) {
@@ -10578,4 +10578,54 @@ textarea:focus-visible {
   .shell.evaluation-shell {
     grid-template-columns: 62px minmax(0, 1fr);
   }
+}
+
+/* Match Runtime and Agent form controls instead of falling back to browser chrome. */
+.workbench-detail input:not([type="checkbox"]):not([type="range"]),
+.workbench-detail select,
+.workbench-detail textarea {
+  width: 100%;
+  min-width: 0;
+  border: 1px solid var(--line);
+  border-radius: 8px;
+  background: var(--panel-raised);
+  color: var(--text);
+  font-size: 12px;
+  box-shadow: none;
+  transition: border-color 130ms var(--ease), background-color 130ms var(--ease), box-shadow 130ms var(--ease);
+}
+
+.workbench-detail input:not([type="checkbox"]):not([type="range"]),
+.workbench-detail select {
+  height: 34px;
+  padding: 0 9px;
+}
+
+.workbench-detail textarea {
+  min-height: 68px;
+  padding: 8px 9px;
+  resize: vertical;
+  font-family: "Geist Mono Variable", ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, monospace;
+  line-height: 1.45;
+}
+
+.workbench-detail input::placeholder,
+.workbench-detail textarea::placeholder {
+  color: var(--subtle);
+  opacity: 1;
+}
+
+.workbench-detail input:not([type="checkbox"]):not([type="range"]):hover,
+.workbench-detail select:hover,
+.workbench-detail textarea:hover {
+  border-color: var(--line-strong);
+}
+
+.workbench-detail input:not([type="checkbox"]):not([type="range"]):focus,
+.workbench-detail select:focus,
+.workbench-detail textarea:focus {
+  border-color: color-mix(in srgb, var(--accent) 65%, var(--line-strong));
+  background: var(--panel);
+  box-shadow: 0 0 0 3px color-mix(in srgb, var(--accent) 10%, transparent);
+  outline: none;
 }

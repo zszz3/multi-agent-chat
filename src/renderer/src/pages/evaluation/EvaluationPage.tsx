@@ -120,7 +120,7 @@ export function EvaluationPage({
         action={
           model.view === "overview" ? undefined : (
             <button
-              className="primary-btn"
+              className="control-btn compact is-active"
               type="button"
               onClick={createForView}
             >

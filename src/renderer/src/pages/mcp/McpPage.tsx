@@ -122,7 +122,7 @@ export function McpPage({ language = "en" }: { language?: Language }) {
                               : "Not tested"}
                     </InlineStatus>
                     <button
-                      className="secondary-btn danger"
+                      className="control-btn compact danger"
                       type="button"
                       disabled={Boolean(model.busy)}
                       onClick={() => {
@@ -140,7 +140,7 @@ export function McpPage({ language = "en" }: { language?: Language }) {
                       {zh ? "删除" : "Delete"}
                     </button>
                     <button
-                      className="secondary-btn"
+                      className="control-btn compact secondary"
                       type="button"
                       disabled={Boolean(model.busy)}
                       onClick={() => void model.test()}
@@ -155,7 +155,7 @@ export function McpPage({ language = "en" }: { language?: Language }) {
                           : "Test"}
                     </button>
                     <button
-                      className="primary-btn"
+                      className="control-btn compact is-active"
                       type="button"
                       disabled={Boolean(model.busy)}
                       onClick={() => void model.save()}
@@ -279,7 +279,7 @@ export function McpPage({ language = "en" }: { language?: Language }) {
                   action={
                     <button
                       type="button"
-                      className="secondary-btn compact"
+                      className="control-btn compact secondary"
                       onClick={() =>
                         model.update({
                           ...draft,

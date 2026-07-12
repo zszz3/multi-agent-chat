@@ -104,7 +104,7 @@ export function EvaluatorWorkspace({
                       : "Disabled"}
                 </InlineStatus>
                 <button
-                  className="secondary-btn danger"
+                  className="control-btn compact danger"
                   type="button"
                   disabled={Boolean(busy)}
                   onClick={onDelete}
@@ -113,7 +113,7 @@ export function EvaluatorWorkspace({
                   {zh ? "删除" : "Delete"}
                 </button>
                 <button
-                  className="primary-btn"
+                  className="control-btn compact is-active"
                   type="button"
                   disabled={Boolean(busy)}
                   onClick={onSave}
