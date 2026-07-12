@@ -312,7 +312,7 @@ export function WorkflowPage(props: WorkflowPageProps) {
   const nodePositionProps = {};
 
   useEffect(() => {
-    const waitingConversation = nodeConversations.find((conversation) => conversation.status === "waiting_for_user" || conversation.status === "active");
+    const waitingConversation = nodeConversations.find((conversation) => conversation.status === "waiting_for_user");
     if (waitingConversation && !openNodeAgentNodeId) setOpenNodeAgentNodeId(waitingConversation.nodeId);
   }, [nodeConversations, openNodeAgentNodeId]);
 
