@@ -5182,7 +5182,9 @@ textarea:focus-visible {
 
 .runtime-page {
   display: grid;
+  flex: 1 1 0;
   grid-template-rows: auto minmax(0, 1fr);
+  height: 100%;
   min-height: 0;
   gap: 14px;
 }
@@ -5190,6 +5192,7 @@ textarea:focus-visible {
 .runtime-layout {
   display: grid;
   grid-template-columns: minmax(190px, 240px) minmax(0, 1fr);
+  height: 100%;
   min-height: 0;
   gap: 14px;
 }
@@ -6928,6 +6931,26 @@ textarea:focus-visible {
   color: var(--text);
   font-size: 12px;
   padding: 0 9px;
+}
+
+.agent-provider-key-input {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) 32px;
+  gap: 6px;
+  align-items: center;
+}
+
+.agent-provider-key-input .icon-btn {
+  width: 32px;
+  height: 32px;
+}
+
+.runtime-secret-visibility {
+  align-items: flex-start;
+}
+
+textarea.is-secret-masked {
+  -webkit-text-security: disc;
 }
 
 .agent-advanced-panel {

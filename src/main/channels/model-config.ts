@@ -9,6 +9,7 @@ import type {
   AgentModelOption,
   AgentPluginConfig,
   CodexDefaultConfig,
+  ClaudeDefaultConfig,
   GeneratedConfigFile,
   ImportedCodexConfig,
 } from "../../shared/types";
@@ -149,23 +150,27 @@ function readKnownToml(raw: string): Record<string, Record<string, unknown>> {
     const line = stripInlineComment(rawLine);
     if (!line) continue;
 
-    if (line.startsWith("[") || line.endsWith("]")) {
+    if (line.startsWith("[")) {
       const sectionMatch = line.match(/^\[([^\]]+)\]$/);
-      if (!sectionMatch?.[1]) throw new Error(`Invalid TOML section: ${line}`);
+      if (!sectionMatch?.[1]) continue;
       activeSection = sectionMatch[1].trim();
       sections[activeSection] ??= {};
       continue;
     }
 
     const separator = line.indexOf("=");
-    if (separator < 0) throw new Error(`Invalid TOML line: ${line}`);
+    if (separator < 0) continue;
     const key = unquoteTomlKey(line.slice(0, separator));
-    if (!key) throw new Error(`Invalid TOML key: ${line}`);
+    if (!key) continue;
     const value = line.slice(separator + 1).trim();
-    const inlineTable = parseTomlInlineTable(value);
-    const section = sections[activeSection] ?? {};
-    section[key] = inlineTable ?? parseTomlScalar(value);
-    sections[activeSection] = section;
+    try {
+      const inlineTable = parseTomlInlineTable(value);
+      const section = sections[activeSection] ?? {};
+      section[key] = inlineTable ?? parseTomlScalar(value);
+      sections[activeSection] = section;
+    } catch {
+      // Unsupported TOML values must not hide otherwise valid provider fields.
+    }
   }
 
   return sections;
@@ -406,6 +411,12 @@ export function createDefaultChannels(codexModels = FALLBACK_MODEL_OPTIONS.codex
   }));
 }
 
+export function appendMissingRuntimeDefaultChannels(channels: AgentChannel[]): AgentChannel[] {
+  const configuredRuntimeIds = new Set(channels.map((channel) => channel.agentId));
+  const missingDefaults = createDefaultChannels().filter((channel) => !configuredRuntimeIds.has(channel.agentId));
+  return missingDefaults.length > 0 ? [...channels, ...missingDefaults] : channels;
+}
+
 export async function loadModelChannels(configPath: string, codexCommand = "codex"): Promise<AgentChannel[]> {
   try {
     const raw = await readFile(configPath, "utf8");
@@ -626,6 +637,44 @@ export async function loadCodexDefaultConfig(home = codexHome()): Promise<CodexD
   }
 
   return parseCodexDefaultConfig(rawConfigToml, rawAuthJson);
+}
+
+export function claudeHome(): string {
+  return process.env.CLAUDE_CONFIG_DIR ?? path.join(os.homedir(), ".claude");
+}
+
+export function parseClaudeDefaultConfig(
+  rawSettingsJson: string | undefined,
+  env: NodeJS.ProcessEnv = process.env,
+): ClaudeDefaultConfig {
+  let settings: Record<string, unknown> = {};
+  if (rawSettingsJson) {
+    try {
+      const parsed = JSON.parse(rawSettingsJson) as unknown;
+      if (parsed && typeof parsed === "object" && !Array.isArray(parsed)) settings = parsed as Record<string, unknown>;
+    } catch {
+      settings = {};
+    }
+  }
+  const settingsEnv = settings.env && typeof settings.env === "object" && !Array.isArray(settings.env)
+    ? settings.env as Record<string, unknown>
+    : {};
+  const value = (key: string): string | null => asString(env[key]) ?? asString(settingsEnv[key]) ?? null;
+  return {
+    baseUrl: value("ANTHROPIC_BASE_URL"),
+    apiKey: value("ANTHROPIC_AUTH_TOKEN") ?? value("ANTHROPIC_API_KEY"),
+    modelId: value("ANTHROPIC_MODEL") ?? asString(settings.model) ?? null,
+  };
+}
+
+export async function loadClaudeDefaultConfig(home = claudeHome(), env: NodeJS.ProcessEnv = process.env): Promise<ClaudeDefaultConfig> {
+  let rawSettingsJson: string | undefined;
+  try {
+    rawSettingsJson = await readFile(path.join(home, "settings.json"), "utf8");
+  } catch {
+    rawSettingsJson = undefined;
+  }
+  return parseClaudeDefaultConfig(rawSettingsJson, env);
 }
 
 export async function importCodexConfigs(home = codexHome()): Promise<ImportedCodexConfig[]> {

@@ -37,7 +37,7 @@ export function createCodexDriver(options: RuntimeAgentExecutorFactoryOptions): 
       new CodexInteractiveSession(context, {
         capabilities: codexInteractiveSessionCapabilities,
         createCodexClient: ({ context: sessionContext, onEvent, onExit }) => {
-          const channel = options.channelById(sessionContext.channelId);
+          const channel = sessionContext.channel ?? options.channelById(sessionContext.channelId);
           let client: CodexRpcClient;
           client = new CodexRpcClient({
             executable: sessionContext.runtime.command || options.executables.codex,

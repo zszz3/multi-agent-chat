@@ -1,4 +1,4 @@
-import { claudeCliModelForChannel } from "../../../../agents/claude/claude-env";
+import { claudeCliModelForChannel, claudeEnvironmentForChannel } from "../../../../agents/claude/claude-env";
 import type { ClaudeAgentSdkAdapter } from "../../../../agents/claude/claude-agent-sdk";
 import type { RuntimeChannelTestContext } from "../../../../agents/runtime/runtime-driver";
 import type { RuntimeAgentExecutorFactoryOptions } from "../agent-executor-types";
@@ -24,6 +24,7 @@ export async function runClaudeChannelTest(
       prompt: RUNTIME_CHANNEL_TEST_PROMPT,
       cwd: input.workDir,
       ...(sdkModel ? { modelId: sdkModel } : {}),
+      env: claudeEnvironmentForChannel(channel, input.modelId),
       onEvent: (event) => {
         if (event.type === "delta") {
           output += event.content;

@@ -15,6 +15,7 @@ import type {
   WorkflowStatus,
   WorkflowStoreState,
 } from "../../../shared/types";
+import { cloneRuntimeBindingSnapshot } from "../runtime/runtime-binding";
 import {
   isScheduledWorkflowRunStatus,
   normalizeScheduledWorkflowDayOfMonth,
@@ -158,8 +159,8 @@ export function cloneWorkflowDraft(input: {
     title: draft.title || draft.graph.title || draft.objective || "Untitled workflow",
     status: normalizeWorkflowStatus(draft.status),
     revision: Number.isFinite(draft.revision) && draft.revision > 0 ? Math.floor(draft.revision) : 1,
-    configuredAgentId: normalizeConfiguredAgentId(draft.configuredAgentId),
-    modelId: normalizeModelId(draft.configuredAgentId, draft.modelId),
+    configuredAgentId: draft.runtimeBinding?.configuredAgent.id ?? normalizeConfiguredAgentId(draft.configuredAgentId),
+    modelId: draft.runtimeBinding?.modelId ?? normalizeModelId(draft.configuredAgentId, draft.modelId),
     objective: draft.objective,
     ...(draft.workDir ? { workDir: draft.workDir } : {}),
     graph: cloneWorkflowGraph(draft.graph),
@@ -183,6 +184,7 @@ export function cloneWorkflowDraft(input: {
     ...(draft.finalReport !== undefined ? { finalReport: draft.finalReport } : {}),
     runIds: draft.runIds.map((runId) => runId),
     ...(draft.runtimeConversation ? { runtimeConversation: cloneConversation(draft.runtimeConversation) } : {}),
+    ...(draft.runtimeBinding ? { runtimeBinding: cloneRuntimeBindingSnapshot(draft.runtimeBinding) } : {}),
     createdAt: draft.createdAt || draft.updatedAt || now,
     updatedAt: draft.updatedAt,
   };

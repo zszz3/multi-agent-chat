@@ -2498,7 +2498,32 @@ fs.writeFileSync(${JSON.stringify(argsPath)}, process.argv.slice(2).join("\\n") 
     expect(activeChat?.configuredAgentId).toBe("default-agent");
   });
 
-  test("setChatChannel stores a same-runtime channel override even after the first prompt", async () => {
+  test("creates a selectable configured agent for a newly saved provider channel", async () => {
+    const dir = await mkdtemp(path.join(os.tmpdir(), "multi-agent-chat-provider-agent-"));
+    const hub = new AgentHub();
+    await hub.loadModelChannels(path.join(dir, "model-channels.json"));
+    await hub.saveModelChannels([
+      ...hub.snapshot().channels,
+      {
+        id: "api-custom-test",
+        agentId: "api",
+        label: "Custom Test API",
+        modelProvider: "custom-api",
+        baseUrl: "https://example.com/v1",
+        models: [{ id: "test-model", label: "Test Model" }],
+      },
+    ]);
+
+    expect(hub.snapshot().configuredAgents).toContainEqual(
+      expect.objectContaining({
+        name: "Custom Test API",
+        runtimeAgentId: "api",
+        channelId: "api-custom-test",
+      }),
+    );
+  });
+
+  test("setChatChannel keeps the original channel after the first prompt", async () => {
     const hub = new AgentHub({ codex: "missing-codex-for-test", claude: "missing-claude-for-test" });
     (hub as any).channels = [
       {
@@ -2521,13 +2546,10 @@ fs.writeFileSync(${JSON.stringify(argsPath)}, process.argv.slice(2).join("\\n") 
 
     hub.setChatChannel(chat.id, "codex-openrouter");
 
-    expect(hub.snapshot().chats.find((item) => item.id === chat.id)).toMatchObject({
-      id: chat.id,
-      channelId: "codex-openrouter",
-    });
+    expect(hub.snapshot().chats.find((item) => item.id === chat.id)?.channelId).toBeUndefined();
   });
 
-  test("setChatModel updates the stored model after chat history exists", () => {
+  test("setChatModel keeps the stored model after chat history exists", () => {
     const hub = createHubWithTwoCodexChannels();
     const chat = hub.createChat();
     const raw = (hub as any).chats.get(chat.id);
@@ -2535,10 +2557,10 @@ fs.writeFileSync(${JSON.stringify(argsPath)}, process.argv.slice(2).join("\\n") 
 
     hub.setChatModel(chat.id, "gpt-5.5");
 
-    expect(hub.snapshot().chats.find((item) => item.id === chat.id)?.modelId).toBe("gpt-5.5");
+    expect(hub.snapshot().chats.find((item) => item.id === chat.id)?.modelId).toBe("default");
   });
 
-  test("allows chat configuration changes after a conversation has started", () => {
+  test("rejects chat configuration changes after a conversation has started", () => {
     const hub = new AgentHub();
     addConfiguredAgents(hub, [configuredAgent("claude-agent", { runtimeAgentId: "claude", name: "Claude Agent" })]);
     const chatId = hub.snapshot().activeChatId!;
@@ -2551,10 +2573,10 @@ fs.writeFileSync(${JSON.stringify(argsPath)}, process.argv.slice(2).join("\\n") 
     hub.setChatModel(chatId, "gpt-5.5");
 
     const activeChat = hub.snapshot().chats.find((item) => item.id === chatId);
-    expect(activeChat?.configuredAgentId).toBe("claude-agent");
+    expect(activeChat?.configuredAgentId).toBe("default-agent");
   });
 
-  test("setChatAgent clears the old native handle when the runtime family changes", () => {
+  test("setChatAgent preserves the original native handle after the chat starts", () => {
     const hub = createHubWithCodexAndClaudeAgents();
     const chat = hub.createChat("codex-agent");
     const raw = (hub as any).chats.get(chat.id);
@@ -2570,9 +2592,11 @@ fs.writeFileSync(${JSON.stringify(argsPath)}, process.argv.slice(2).join("\\n") 
     hub.setChatAgent(chat.id, "claude-agent");
 
     expect(hub.snapshot().chats.find((item) => item.id === chat.id)).toMatchObject({
-      configuredAgentId: "claude-agent",
+      configuredAgentId: "codex-agent",
     });
-    expect(hub.snapshot().chats.find((item) => item.id === chat.id)?.runtimeConversation).toBeUndefined();
+    expect(hub.snapshot().chats.find((item) => item.id === chat.id)?.runtimeConversation).toEqual(
+      runtimeConversation("codex", { native: { threadId: "thread-1" } }),
+    );
   });
 
   test("stores runtime conversations without adding transcript messages", () => {
@@ -2767,7 +2791,7 @@ fs.writeFileSync(${JSON.stringify(argsPath)}, process.argv.slice(2).join("\\n") 
     hub.setChatAgent(chatId, "claude-agent");
 
     const activeChat = hub.snapshot().chats.find((item) => item.id === chatId);
-    expect(activeChat?.configuredAgentId).toBe("claude-agent");
+    expect(activeChat?.configuredAgentId).toBe("default-agent");
     expect(activeChat?.running).toBe(false);
     expect(activeChat?.lastError).toBeUndefined();
     expect(activeChat?.messages).toEqual([
@@ -3375,7 +3399,7 @@ fs.writeFileSync(${JSON.stringify(argsPath)}, process.argv.slice(2).join("\\n") 
     await hub.flushPersistence();
 
     const persisted = JSON.parse(await readFile(storagePath, "utf8")) as any;
-    expect(persisted.version).toBe(4);
+    expect(persisted.version).toBe(5);
     expect(persisted.sessions).toEqual([expect.objectContaining({ id: expect.any(String) }), expect.objectContaining({ id: chat.id })]);
     expect(persisted.messages).toEqual(expect.arrayContaining([expect.objectContaining({ chatId: chat.id, role: "assistant" })]));
     expect(persisted.events).toEqual(expect.arrayContaining([expect.objectContaining({ chatId: chat.id, type: "meta", content: "→ shell_command\npwd" })]));
@@ -3457,7 +3481,7 @@ fs.writeFileSync(${JSON.stringify(argsPath)}, process.argv.slice(2).join("\\n") 
     await hub.flushPersistence();
 
     const persisted = JSON.parse(await readFile(storagePath, "utf8")) as any;
-    expect(persisted.version).toBe(4);
+    expect(persisted.version).toBe(5);
     expect(persisted.tasks).toEqual(
       expect.arrayContaining([
         expect.objectContaining({
@@ -3556,7 +3580,7 @@ fs.writeFileSync(${JSON.stringify(argsPath)}, process.argv.slice(2).join("\\n") 
     expect(snapshot.chats).toHaveLength(1);
   });
 
-  test("persists runtimeState as V4 and restores durable fields while clearing ephemeral state", async () => {
+  test("persists runtimeState as V5 and restores durable fields while clearing ephemeral state", async () => {
     const dir = await mkdtemp(path.join(os.tmpdir(), "multi-agent-chat-runtime-session-roundtrip-"));
     const storagePath = path.join(dir, "app-chats.json");
     const hub = new AgentHub();
@@ -3594,7 +3618,7 @@ fs.writeFileSync(${JSON.stringify(argsPath)}, process.argv.slice(2).join("\\n") 
     await hub.flushPersistence();
 
     const persisted = JSON.parse(await readFile(storagePath, "utf8")) as any;
-    expect(persisted.version).toBe(4);
+    expect(persisted.version).toBe(5);
     expect(persisted.sessions).toEqual(
       expect.arrayContaining([
         expect.objectContaining({
@@ -3981,7 +4005,14 @@ fs.writeFileSync(${JSON.stringify(argsPath)}, process.argv.slice(2).join("\\n") 
     const restored = new AgentHub();
     await restored.loadPersistedState(storagePath);
 
-    expect(restored.snapshot().channels.map((channel) => channel.id)).toEqual(["codex-deepseek"]);
+    expect(restored.snapshot().channels.map((channel) => channel.id)).toEqual([
+      "codex-deepseek",
+      "claude-code",
+      "api-openai",
+      "hermes-default",
+      "opencode-default",
+      "openclaw-default",
+    ]);
   });
 
   test("does not salvage legacy JSON history into SQLite storage", async () => {
@@ -4384,6 +4415,21 @@ fs.writeFileSync(${JSON.stringify(argsPath)}, process.argv.slice(2).join("\\n") 
     expect(patched.finalReport).toBeUndefined();
     expect(patched.runtimeConversation).toBeUndefined();
     expect(patched.contextDocument).toBe("# Context");
+  });
+
+  test("locks the workflow base agent and model after planning starts", () => {
+    const hub = new AgentHub();
+    addConfiguredAgents(hub, [configuredAgent("claude-agent", { runtimeAgentId: "claude", name: "Claude Agent" })]);
+    const workflow = hub.createWorkflowDraft({ configuredAgentId: "default-agent" }).workflowDraft!;
+    hub.patchWorkflowDraft({
+      workflowId: workflow.workflowId,
+      messages: [{ id: "user-1", role: "user", content: "Build a release workflow" }],
+    });
+
+    expect(() => hub.patchWorkflowDraft({
+      workflowId: workflow.workflowId,
+      configuredAgentId: "claude-agent",
+    })).toThrow("Workflow base agent and model cannot change after planning starts.");
   });
 
   test("rejects invalid workflow creation with validation reasons", () => {

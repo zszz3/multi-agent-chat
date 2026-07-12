@@ -130,12 +130,14 @@ export class SqliteAppStore {
 
   private saveNormalized(db: DatabaseSync, raw: unknown): void {
     const payload = asRecord(raw);
-    if (payload.version !== 4) throw new Error("SQLite persistence only supports app state version 4");
+    if (payload.version !== 4 && payload.version !== 5) {
+      throw new Error("SQLite persistence only supports app state versions 4 and 5");
+    }
     db.exec("begin immediate");
     try {
       this.clearNormalizedState(db);
       const now = Date.now();
-      this.writeSetting(db, "payload_version", "4", now);
+      this.writeSetting(db, "payload_version", String(payload.version), now);
       this.writeSetting(db, "active_chat_id", typeof payload.activeChatId === "string" ? payload.activeChatId : null, now);
       this.writeSetting(db, "work_dir", asString(payload.workDir), now);
       const workflowStore = asRecord(payload.workflowStore);

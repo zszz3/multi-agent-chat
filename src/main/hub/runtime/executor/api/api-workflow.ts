@@ -8,7 +8,7 @@ export async function runApiWorkflow(
   input: RuntimeWorkflowRequestContext,
   options: RuntimeAgentExecutorFactoryOptions,
 ): Promise<WorkflowAgentResponse> {
-  const channel = options.channelById(input.channelId);
+  const channel = input.channel ?? options.channelById(input.channelId);
   if (!channel?.baseUrl) throw new Error("API workflow agent requires a provider base URL");
   const model = resolveApiModel(channel, input.runtimeConfig.model);
   if (!model) throw new Error("API workflow agent requires a model");

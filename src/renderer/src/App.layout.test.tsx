@@ -17,6 +17,7 @@ import {
   applySkillTemplate,
   applyProviderPresetToChannel,
   applyCodexDefaultConfigToChannel,
+  applyClaudeDefaultConfigToChannel,
   applyProviderPresetToConfiguredAgent,
   applyProviderModelIdToAgentConfig,
   rememberProviderKeyFromChannel,
@@ -68,7 +69,11 @@ import {
 } from "./App";
 import { DEFAULT_MODEL_ID } from "../../shared/models";
 import { generatedConfigChannels, normalizeConfigChannelsForStorage, selectConfigChannelsForDisplay } from "../../shared/config-channels";
-import { AGENT_PROVIDER_PRESETS, CODEX_DEFAULT_PRESET_ID } from "../../shared/provider-presets";
+import {
+  AGENT_PROVIDER_PRESETS,
+  CLAUDE_LOCAL_DEFAULT_PRESET_ID,
+  CODEX_LOCAL_DEFAULT_PRESET_ID,
+} from "../../shared/provider-presets";
 import { SKILL_TEMPLATES } from "../../shared/skill-templates";
 import { firstWorkflowQuestionForObjective } from "../../shared/workflow-agent";
 import { formatTime } from "./app/format";
@@ -1222,6 +1227,7 @@ describe("AgentPage", () => {
         language="en"
         channels={savedKeyChannels}
         selectedChannelId="codex-openai"
+        selectedRuntimeId="codex"
         providerKeys={{}}
         codexPluginCatalog={codexPluginCatalog}
         pluginCatalogStatus="Loaded 2 plugins"
@@ -1235,6 +1241,7 @@ describe("AgentPage", () => {
         onSave={async () => undefined}
         onLoadCodexPluginCatalog={async () => undefined}
         onSelectChannel={() => undefined}
+        onSelectRuntime={() => undefined}
         onAddConfig={() => undefined}
         onOpenContextMenu={() => undefined}
         onDeleteConfig={() => undefined}
@@ -1248,6 +1255,10 @@ describe("AgentPage", () => {
     expect(html).toContain("CLI");
     expect(html).toContain("Provider");
     expect(html).toContain("aria-label=\"Provider API key\"");
+    expect(html).toContain('aria-label="Provider API key" type="password"');
+    expect(html).toContain('aria-label="Show provider API key"');
+    expect(html).toContain('aria-label="Show advanced secrets"');
+    expect(html).toContain('class="is-secret-masked"');
     expect(html).toContain("value=\"saved-key\"");
     expect(html).toContain("aria-label=\"Agent model id\"");
     expect(html).toContain("Plugins");
@@ -1261,7 +1272,90 @@ describe("AgentPage", () => {
     expect(html).toContain('class="runtime-choice-dot agent-opencode"');
     expect(html).toContain('class="runtime-choice-dot agent-openclaw"');
     expect(styles).toContain(".agent-provider-preset-list {\n  display: grid;\n  grid-template-columns: repeat(6, minmax(0, 1fr));");
+    expect(styles).toContain(".runtime-page {\n  display: grid;\n  flex: 1 1 0;");
+    expect(styles).toContain("grid-template-columns: minmax(190px, 240px) minmax(0, 1fr);\n  height: 100%;");
     expect(styles).toContain("@media (max-width: 820px) {\n  .runtime-layout {\n    grid-template-columns: 1fr;");
+  });
+
+  test("keeps a runtime navigable when it has no config and offers local import", () => {
+    const html = renderToStaticMarkup(
+      <RuntimePage
+        language="zh"
+        channels={[channels[0]!]}
+        selectedChannelId=""
+        selectedRuntimeId="hermes"
+        providerKeys={{}}
+        codexPluginCatalog={[]}
+        pluginCatalogStatus=""
+        agentTestResults={{}}
+        testingAgentId={undefined}
+        agentTestTick={0}
+        onUpdateChannel={() => undefined}
+        onAddModel={() => undefined}
+        onUpdateModel={() => undefined}
+        onRemoveModel={() => undefined}
+        onSave={async () => undefined}
+        onLoadCodexPluginCatalog={async () => undefined}
+        onSelectChannel={() => undefined}
+        onSelectRuntime={() => undefined}
+        onAddConfig={() => undefined}
+        onImportLocalConfig={async () => undefined}
+        onOpenContextMenu={() => undefined}
+        onDeleteConfig={() => undefined}
+        onTestChannel={async () => undefined}
+        onUpdateProviderKey={() => undefined}
+      />,
+    );
+
+    expect(html).toContain('class="agent-provider-preset is-active" title="Hermes"');
+    expect(html).toContain("尚无本地配置");
+    expect(html).toContain("一键导入本地默认配置");
+    expect(html).toContain("新建配置");
+  });
+
+  test("shows imported OpenClaw model and a revealable gateway token", () => {
+    const html = renderToStaticMarkup(
+      <RuntimePage
+        language="en"
+        channels={[{
+          id: "openclaw-default",
+          agentId: "openclaw",
+          label: "OpenClaw Default",
+          presetId: "openclaw-default",
+          environment: { OPENCLAW_GATEWAY_TOKEN: "gateway-token" },
+          models: [
+            { id: DEFAULT_MODEL_ID, label: "Default" },
+            { id: "provider/model", label: "provider/model" },
+          ],
+        }]}
+        selectedChannelId="openclaw-default"
+        selectedRuntimeId="openclaw"
+        providerKeys={{}}
+        codexPluginCatalog={[]}
+        pluginCatalogStatus=""
+        agentTestResults={{}}
+        testingAgentId={undefined}
+        agentTestTick={0}
+        onUpdateChannel={() => undefined}
+        onAddModel={() => undefined}
+        onUpdateModel={() => undefined}
+        onRemoveModel={() => undefined}
+        onSave={async () => undefined}
+        onLoadCodexPluginCatalog={async () => undefined}
+        onSelectChannel={() => undefined}
+        onSelectRuntime={() => undefined}
+        onAddConfig={() => undefined}
+        onImportLocalConfig={async () => undefined}
+        onOpenContextMenu={() => undefined}
+        onDeleteConfig={() => undefined}
+        onTestChannel={async () => undefined}
+        onUpdateProviderKey={() => undefined}
+      />,
+    );
+
+    expect(html).toContain('aria-label="OpenClaw Gateway Token" type="password" value="gateway-token"');
+    expect(html).toContain('value="provider/model"');
+    expect(html).toContain('aria-label="Show advanced secrets"');
   });
 
   test("shows the stored channel key ahead of stale provider key cache", () => {
@@ -1280,6 +1374,7 @@ describe("AgentPage", () => {
         language="en"
         channels={savedKeyChannels}
         selectedChannelId="codex-openai"
+        selectedRuntimeId="codex"
         providerKeys={{ deepseek: "stale-key" }}
         codexPluginCatalog={codexPluginCatalog}
         pluginCatalogStatus=""
@@ -1293,6 +1388,7 @@ describe("AgentPage", () => {
         onSave={async () => undefined}
         onLoadCodexPluginCatalog={async () => undefined}
         onSelectChannel={() => undefined}
+        onSelectRuntime={() => undefined}
         onAddConfig={() => undefined}
         onOpenContextMenu={() => undefined}
         onDeleteConfig={() => undefined}
@@ -1311,6 +1407,7 @@ describe("AgentPage", () => {
         language="en"
         channels={channels}
         selectedChannelId="codex-openai"
+        selectedRuntimeId="codex"
         providerKeys={{}}
         codexPluginCatalog={[]}
         pluginCatalogStatus=""
@@ -1324,6 +1421,7 @@ describe("AgentPage", () => {
         onSave={async () => undefined}
         onLoadCodexPluginCatalog={async () => undefined}
         onSelectChannel={() => undefined}
+        onSelectRuntime={() => undefined}
         onAddConfig={() => undefined}
         onOpenContextMenu={() => undefined}
         onDeleteConfig={() => undefined}
@@ -1346,6 +1444,7 @@ describe("AgentPage", () => {
         language="en"
         channels={channels}
         selectedChannelId="codex-openai"
+        selectedRuntimeId="codex"
         providerKeys={{}}
         codexPluginCatalog={[]}
         pluginCatalogStatus=""
@@ -1360,6 +1459,7 @@ describe("AgentPage", () => {
         onSave={async () => undefined}
         onLoadCodexPluginCatalog={async () => undefined}
         onSelectChannel={() => undefined}
+        onSelectRuntime={() => undefined}
         onAddConfig={() => undefined}
         onOpenContextMenu={() => undefined}
         onDeleteConfig={() => undefined}
@@ -1382,19 +1482,19 @@ describe("AgentPage", () => {
     const runtimeProviderPresets = AGENT_PROVIDER_PRESETS.filter((preset) => preset.runtimeAgentId === "codex");
     const channel: AgentChannel = {
       ...channels[0]!,
-      presetId: CODEX_DEFAULT_PRESET_ID,
+      presetId: CODEX_LOCAL_DEFAULT_PRESET_ID,
       modelProvider: "bridge",
       providerName: "Bridge",
       baseUrl: "https://bridge.example/v1",
     };
 
-    expect(resolveProviderPresetId(channel, runtimeProviderPresets)).toBe(CODEX_DEFAULT_PRESET_ID);
+    expect(resolveProviderPresetId(channel, runtimeProviderPresets)).toBe(CODEX_LOCAL_DEFAULT_PRESET_ID);
   });
 
   test("shows Codex Default loaded values and blank fallbacks in runtime inputs", () => {
     const defaultChannel: AgentChannel = {
       ...channels[0]!,
-      presetId: CODEX_DEFAULT_PRESET_ID,
+      presetId: CODEX_LOCAL_DEFAULT_PRESET_ID,
       label: "Codex Default",
       modelProvider: "bridge",
       providerName: "Bridge",
@@ -1412,7 +1512,8 @@ describe("AgentPage", () => {
         language="en"
         channels={[defaultChannel]}
         selectedChannelId="codex-openai"
-        providerKeys={{ [CODEX_DEFAULT_PRESET_ID]: "stale-key" }}
+        selectedRuntimeId="codex"
+        providerKeys={{ [CODEX_LOCAL_DEFAULT_PRESET_ID]: "stale-key" }}
         codexPluginCatalog={[]}
         pluginCatalogStatus=""
         agentTestResults={{}}
@@ -1425,6 +1526,7 @@ describe("AgentPage", () => {
         onSave={async () => undefined}
         onLoadCodexPluginCatalog={async () => undefined}
         onSelectChannel={() => undefined}
+        onSelectRuntime={() => undefined}
         onAddConfig={() => undefined}
         onOpenContextMenu={() => undefined}
         onDeleteConfig={() => undefined}
@@ -1433,7 +1535,9 @@ describe("AgentPage", () => {
       />,
     );
 
-    expect(html).not.toContain('aria-label="Provider API key"');
+    expect(html).toContain('aria-label="Provider API key" type="password"');
+    expect(html).toContain('value="sk-default"');
+    expect(html).toContain('aria-label="Show provider API key"');
     expect(html).not.toContain("value=\"stale-key\"");
     expect(html).toContain("value=\"Bridge\"");
     expect(html).toContain("value=\"bridge\"");
@@ -1475,7 +1579,7 @@ describe("AgentPage", () => {
     );
 
     expect(mapped).toMatchObject({
-      presetId: CODEX_DEFAULT_PRESET_ID,
+      presetId: CODEX_LOCAL_DEFAULT_PRESET_ID,
       models: [{ id: DEFAULT_MODEL_ID, label: "Default" }],
     });
     expect(mapped.modelProvider).toBeUndefined();
@@ -1510,6 +1614,23 @@ describe("AgentPage", () => {
       { id: DEFAULT_MODEL_ID, label: "Default" },
       { id: "gpt-5.5", label: "gpt-5.5" },
     ]);
+  });
+
+  test("maps Claude Code Default values onto a Claude channel", () => {
+    const mapped = applyClaudeDefaultConfigToChannel(channels[1]!, {
+      baseUrl: "https://claude.example/anthropic",
+      apiKey: "claude-token",
+      modelId: "claude-sonnet-4-6",
+    });
+
+    expect(mapped).toMatchObject({
+      agentId: "claude",
+      presetId: CLAUDE_LOCAL_DEFAULT_PRESET_ID,
+      modelProvider: "claude-default-anthropic",
+      baseUrl: "https://claude.example/anthropic",
+      httpHeaders: { Authorization: "Bearer claude-token" },
+    });
+    expect(mapped.models).toContainEqual({ id: "claude-sonnet-4-6", label: "claude-sonnet-4-6" });
   });
 
   test("renders all stored execution configs without legacy cleanup controls", () => {
@@ -1554,6 +1675,7 @@ describe("AgentPage", () => {
         language="en"
         channels={noisyChannels}
         selectedChannelId="repo-reviewer-channel"
+        selectedRuntimeId="codex"
         providerKeys={{}}
         codexPluginCatalog={[]}
         pluginCatalogStatus=""
@@ -1568,6 +1690,7 @@ describe("AgentPage", () => {
         onSave={async () => undefined}
         onLoadCodexPluginCatalog={async () => undefined}
         onSelectChannel={() => undefined}
+        onSelectRuntime={() => undefined}
         onAddConfig={() => undefined}
         onOpenContextMenu={() => undefined}
         onDeleteConfig={() => undefined}
@@ -1657,6 +1780,7 @@ describe("AgentPage", () => {
         language="en"
         channels={channels}
         selectedChannelId="claude-code"
+        selectedRuntimeId="claude"
         providerKeys={{}}
         codexPluginCatalog={[]}
         pluginCatalogStatus=""
@@ -1670,6 +1794,7 @@ describe("AgentPage", () => {
         onSave={async () => undefined}
         onLoadCodexPluginCatalog={async () => undefined}
         onSelectChannel={() => undefined}
+        onSelectRuntime={() => undefined}
         onAddConfig={() => undefined}
         onOpenContextMenu={() => undefined}
         onDeleteConfig={() => undefined}
@@ -1680,6 +1805,8 @@ describe("AgentPage", () => {
 
     expect(html).toContain("Claude Code");
     expect(html).toContain('class="agent-provider-option is-active" aria-pressed="true" title="Claude Official">Claude Official</button>');
+    expect(html).toContain('class="agent-provider-option " aria-pressed="false" title="Default">Default</button>');
+    expect(html).toContain("Local config");
     expect(html).toContain(">DeepSeek<");
     expect(html).toContain(">Zhipu GLM<");
     expect(html).toContain(">Kimi<");
@@ -1695,6 +1822,7 @@ describe("AgentPage", () => {
         language="zh"
         channels={channels}
         selectedChannelId="codex-openai"
+        selectedRuntimeId="codex"
         providerKeys={{}}
         codexPluginCatalog={codexPluginCatalog}
         pluginCatalogStatus=""
@@ -1731,6 +1859,7 @@ describe("AgentPage", () => {
         onSave={async () => undefined}
         onLoadCodexPluginCatalog={async () => undefined}
         onSelectChannel={() => undefined}
+        onSelectRuntime={() => undefined}
         onAddConfig={() => undefined}
         onOpenContextMenu={() => undefined}
         onDeleteConfig={() => undefined}
@@ -1753,6 +1882,7 @@ describe("AgentPage", () => {
         language="zh"
         channels={channels}
         selectedChannelId="codex-openai"
+        selectedRuntimeId="codex"
         providerKeys={{}}
         codexPluginCatalog={[]}
         pluginCatalogStatus=""
@@ -1778,6 +1908,7 @@ describe("AgentPage", () => {
         onSave={async () => undefined}
         onLoadCodexPluginCatalog={async () => undefined}
         onSelectChannel={() => undefined}
+        onSelectRuntime={() => undefined}
         onAddConfig={() => undefined}
         onOpenContextMenu={() => undefined}
         onDeleteConfig={() => undefined}

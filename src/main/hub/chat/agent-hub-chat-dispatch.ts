@@ -35,6 +35,7 @@ export async function dispatchChatPromptExecution<
   createRuntimeState: (capabilities: RuntimeCapabilities) => ChatRuntimeSessionState;
   activateChat: (chatId: string) => void;
   emit: () => void;
+  onPrepared: (resolved: TResolved) => void;
   dispatchInteractivePrompt: (chat: ChatState, prompt: string, resolved: TResolved) => Promise<void>;
   run: (chat: ChatState, prompt: string, resolved: TResolved) => void;
 }): Promise<void> {
@@ -65,6 +66,7 @@ export async function dispatchChatPromptExecution<
     input.emit();
     return;
   }
+  input.onPrepared(preparedResolved);
   input.activateChat(input.chat.id);
   input.emit();
 

@@ -14,7 +14,7 @@ import { buildWorkflowSnapshot, cloneTeamMember } from "../team/agent-team-workf
 import type { AgentTeamState, ChatState, TaskState, TeamRunState } from "../state/agent-hub-state";
 import {
   cloneRuntimeState,
-  type PersistedAppStateV4,
+  type PersistedAppStateV5,
   type PersistedAgentTeamRecord,
   type PersistedChatEventRecord,
   type PersistedChatMessageRecord,
@@ -24,6 +24,7 @@ import {
   type PersistedTaskRunRecord,
   type PersistedTeamRunRecord,
 } from "./agent-hub-persistence";
+import { cloneRuntimeBindingSnapshot } from "../runtime/runtime-binding";
 
 export function buildPersistedPayload(input: {
   activeChatId: string | undefined;
@@ -42,7 +43,7 @@ export function buildPersistedPayload(input: {
   cloneConversation: (conversation: RuntimeConversation) => RuntimeConversation;
   workflowStore: WorkflowStoreState;
   scheduledWorkflowStore: ScheduledWorkflowStoreState;
-}): PersistedAppStateV4 {
+}): PersistedAppStateV5 {
   const sessions: PersistedChatSessionRecord[] = [];
   const messages: PersistedChatMessageRecord[] = [];
   const events: PersistedChatEventRecord[] = [];
@@ -61,6 +62,7 @@ export function buildPersistedPayload(input: {
       ...(chat.channelId ? { channelId: chat.channelId } : {}),
       ...(chat.runtimeState ? { runtimeState: cloneRuntimeState(chat.runtimeState) } : {}),
       ...(chat.runtimeConversation ? { runtimeConversation: input.cloneConversation(chat.runtimeConversation) } : {}),
+      ...(chat.runtimeBinding ? { runtimeBinding: cloneRuntimeBindingSnapshot(chat.runtimeBinding) } : {}),
       lastError: chat.lastError,
       createdAt: chat.createdAt,
       updatedAt: chat.updatedAt,
@@ -161,7 +163,7 @@ export function buildPersistedPayload(input: {
   void input.artifacts;
 
   return {
-    version: 4,
+    version: 5,
     activeChatId: input.activeChatId ?? null,
     activeTaskId: input.activeTaskId ?? null,
     activeTeamId: input.activeTeamId ?? null,

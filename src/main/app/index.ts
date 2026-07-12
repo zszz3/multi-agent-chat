@@ -24,10 +24,12 @@ import { SKILL_TEMPLATES } from "../../shared/skill-templates";
 import { DEFAULT_SCHEDULED_WORKFLOW_CLOUD_BASE_URL } from "../../shared/types";
 import type {
   AgentChannel,
+  AgentId,
   AssignSkillCategoryRequest,
   AckScheduledWorkflowEventRequest,
   AppSnapshot,
   CodexDefaultConfig,
+  ClaudeDefaultConfig,
   ConfiguredAgent,
   CreateWorkflowDraftRequest,
   CreateScheduledWorkflowScheduleRequest,
@@ -377,6 +379,9 @@ function registerIpcHandlers(): void {
   );
   ipcMain.handle("runtime-channels:balance", async (_event, channelId: string) => hub.queryRuntimeChannelBalance(channelId));
   ipcMain.handle("runtime-channels:load-codex-default", async (): Promise<CodexDefaultConfig> => hub.loadCodexDefaultConfig());
+  ipcMain.handle("runtime-channels:load-claude-default", async (): Promise<ClaudeDefaultConfig> => hub.loadClaudeDefaultConfig());
+  ipcMain.handle("runtime-channels:import-local", async (_event, runtimeId: AgentId, channelId?: string) =>
+    hub.importRuntimeLocalConfig(runtimeId, channelId));
   ipcMain.handle("runtime-channels:refresh-models", async (_event, channelId: string) => hub.refreshModelCatalog(channelId));
   ipcMain.handle("model-channels:generate", async () => hub.generateCodexConfigs());
   ipcMain.handle("model-channels:import-codex", async () => hub.importCodexConfigs());

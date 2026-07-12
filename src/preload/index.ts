@@ -8,6 +8,7 @@ import type {
   AckScheduledWorkflowEventRequest,
   AppSnapshot,
   CodexDefaultConfig,
+  ClaudeDefaultConfig,
   CodexPluginCatalogItem,
   ConfiguredAgent,
   CreateWorkflowDraftRequest,
@@ -28,6 +29,7 @@ import type {
   EvaluationExperiment,
   EvaluationRun,
   ModelCatalogRefreshResult,
+  RuntimeLocalConfigImportResult,
   AnswerWorkflowGateRequest,
   PauseWorkflowNodeRequest,
   ProviderBalanceResult,
@@ -90,6 +92,9 @@ const api = {
   testRuntimeChannel: (channelId: string): Promise<AgentTestResult> => ipcRenderer.invoke("runtime-channels:test", channelId),
   queryRuntimeChannelBalance: (channelId: string): Promise<ProviderBalanceResult> => ipcRenderer.invoke("runtime-channels:balance", channelId),
   loadCodexDefaultConfig: (): Promise<CodexDefaultConfig> => ipcRenderer.invoke("runtime-channels:load-codex-default"),
+  loadClaudeDefaultConfig: (): Promise<ClaudeDefaultConfig> => ipcRenderer.invoke("runtime-channels:load-claude-default"),
+  importRuntimeLocalConfig: (runtimeId: AgentChannel["agentId"], channelId?: string): Promise<RuntimeLocalConfigImportResult> =>
+    ipcRenderer.invoke("runtime-channels:import-local", runtimeId, channelId),
   refreshModelCatalog: (channelId: string): Promise<ModelCatalogRefreshResult> => ipcRenderer.invoke("runtime-channels:refresh-models", channelId),
   onAgentTestEvent: (callback: (event: AgentTestEvent) => void): (() => void) => {
     const listener = (_event: Electron.IpcRendererEvent, event: AgentTestEvent) => callback(event);
