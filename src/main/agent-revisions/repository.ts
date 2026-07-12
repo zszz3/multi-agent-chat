@@ -10,7 +10,7 @@ interface Statement { all(...params: unknown[]): unknown[]; run(...params: unkno
 interface Database { exec(sql: string): void; prepare(sql: string): Statement; close(): void }
 
 export class AgentRevisionRepository {
-  private db?: Database;
+  private db: Database | undefined;
   constructor(private readonly dbPath: string) {}
 
   async list(agentId?: string): Promise<AgentRevision[]> {
