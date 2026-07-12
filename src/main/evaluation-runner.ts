@@ -1,15 +1,145 @@
-import type { EvaluationCaseResult, EvaluationDataset, EvaluationEvaluator, EvaluationExperiment, EvaluationRun, EvaluationScore } from "../shared/types";
+import type {
+  EvaluationCaseResult,
+  EvaluationDataset,
+  EvaluationEvaluator,
+  EvaluationExperiment,
+  EvaluationRun,
+  EvaluationScore,
+} from "../shared/types";
 
-export async function runEvaluation(input:{experiment:EvaluationExperiment;dataset:EvaluationDataset;evaluators:EvaluationEvaluator[];agentRevisionId?:string;execute:(agentId:string,prompt:string)=>Promise<{output:string;durationMs:number}>}):Promise<EvaluationRun>{
- const startedAt=Date.now();const runId=`eval-run-${startedAt}`;const results:EvaluationCaseResult[]=[];
- for(const item of input.dataset.items)for(let repetition=1;repetition<=Math.max(1,Math.min(5,input.experiment.repetitions));repetition++){
-  const caseId=`${runId}:${item.id}:${repetition}`;let output="",durationMs=0,error:string|undefined;
-  try{const executed=await input.execute(input.experiment.agentId,item.input);output=executed.output;durationMs=executed.durationMs;}catch(e){error=e instanceof Error?e.message:String(e);}
-  const scores=await Promise.all(input.evaluators.filter(e=>input.experiment.evaluatorIds.includes(e.id)&&e.enabled).map(e=>score(e,item.expectedOutput,output,input.execute)));
-  results.push({id:caseId,runId,datasetItemId:item.id,repetition,input:item.input,...(item.expectedOutput!==undefined?{expectedOutput:item.expectedOutput}:{}),output,...(error?{error}:{}),durationMs,scores});
- }
- const all=results.flatMap(r=>r.scores);const values=all.map(s=>s.score);const passed=all.filter(s=>s.passed).length;const finishedAt=Date.now();return{id:runId,experimentId:input.experiment.id,status:results.some(r=>r.error)?"failed":"completed",...(input.agentRevisionId?{agentRevisionId:input.agentRevisionId}:{}),startedAt,finishedAt,averageScore:values.length?values.reduce((a,b)=>a+b,0)/values.length:0,minimumScore:values.length?Math.min(...values):0,passRate:all.length?passed/all.length:0,totalDurationMs:finishedAt-startedAt,results};
+type ExecutionResult = { output: string; durationMs: number };
+
+export async function runEvaluation(input: {
+  experiment: EvaluationExperiment;
+  dataset: EvaluationDataset;
+  evaluators: EvaluationEvaluator[];
+  agentRevisionId?: string;
+  execute: (agentId: string, prompt: string) => Promise<ExecutionResult>;
+  executeJudge?: (
+    runtimeId: string,
+    prompt: string,
+  ) => Promise<ExecutionResult>;
+}): Promise<EvaluationRun> {
+  const startedAt = Date.now();
+  const runId = `eval-run-${startedAt}`;
+  const results: EvaluationCaseResult[] = [];
+  for (const item of input.dataset.items) {
+    for (
+      let repetition = 1;
+      repetition <= Math.max(1, Math.min(5, input.experiment.repetitions));
+      repetition += 1
+    ) {
+      const caseId = `${runId}:${item.id}:${repetition}`;
+      let output = "";
+      let durationMs = 0;
+      let error: string | undefined;
+      try {
+        const executed = await input.execute(
+          input.experiment.agentId,
+          item.input,
+        );
+        output = executed.output;
+        durationMs = executed.durationMs;
+      } catch (cause) {
+        error = cause instanceof Error ? cause.message : String(cause);
+      }
+      const scores = await Promise.all(
+        input.evaluators
+          .filter(
+            (evaluator) =>
+              input.experiment.evaluatorIds.includes(evaluator.id) &&
+              evaluator.enabled,
+          )
+          .map((evaluator) =>
+            score(evaluator, item.expectedOutput, output, input.executeJudge),
+          ),
+      );
+      results.push({
+        id: caseId,
+        runId,
+        datasetItemId: item.id,
+        repetition,
+        input: item.input,
+        ...(item.expectedOutput !== undefined
+          ? { expectedOutput: item.expectedOutput }
+          : {}),
+        output,
+        ...(error ? { error } : {}),
+        durationMs,
+        scores,
+      });
+    }
+  }
+  const allScores = results.flatMap((result) => result.scores);
+  const values = allScores.map((result) => result.score);
+  const passed = allScores.filter((result) => result.passed).length;
+  const finishedAt = Date.now();
+  return {
+    id: runId,
+    experimentId: input.experiment.id,
+    status: results.some((result) => result.error) ? "failed" : "completed",
+    ...(input.agentRevisionId
+      ? { agentRevisionId: input.agentRevisionId }
+      : {}),
+    startedAt,
+    finishedAt,
+    averageScore: values.length
+      ? values.reduce((left, right) => left + right, 0) / values.length
+      : 0,
+    minimumScore: values.length ? Math.min(...values) : 0,
+    passRate: allScores.length ? passed / allScores.length : 0,
+    totalDurationMs: finishedAt - startedAt,
+    results,
+  };
 }
-async function score(e:EvaluationEvaluator,expected:string|undefined,output:string,execute:(id:string,prompt:string)=>Promise<{output:string;durationMs:number}>):Promise<EvaluationScore>{const start=Date.now();let value=0,reason:string|undefined;
- if(e.kind==="exact_match")value=output.trim()===(expected??"").trim()?1:0;else if(e.kind==="contains")value=expected&&output.includes(expected)?1:0;else if(e.kind==="json_valid"){try{JSON.parse(output);value=1;}catch{value=0;}}else{try{const r=await execute(e.agentId??"",`${e.prompt??"Score the answer from 0 to 1."}\nExpected: ${expected??"(none)"}\nAnswer: ${output}\nReturn JSON only: {"score": number, "reason": string}`);const parsed=JSON.parse(r.output.match(/\{[\s\S]*\}/)?.[0]??"{}");value=Math.max(0,Math.min(1,Number(parsed.score)||0));reason=typeof parsed.reason==="string"?parsed.reason:undefined;}catch(err){reason=err instanceof Error?err.message:String(err);value=0;}}
- return{evaluatorId:e.id,score:value,passed:value>=e.threshold,...(reason?{reason}:{}),durationMs:Date.now()-start};}
+
+async function score(
+  evaluator: EvaluationEvaluator,
+  expected: string | undefined,
+  output: string,
+  executeJudge:
+    | ((runtimeId: string, prompt: string) => Promise<ExecutionResult>)
+    | undefined,
+): Promise<EvaluationScore> {
+  const startedAt = Date.now();
+  let value = 0;
+  let reason: string | undefined;
+  if (evaluator.kind === "exact_match")
+    value = output.trim() === (expected ?? "").trim() ? 1 : 0;
+  else if (evaluator.kind === "contains")
+    value = expected && output.includes(expected) ? 1 : 0;
+  else if (evaluator.kind === "json_valid") {
+    try {
+      JSON.parse(output);
+      value = 1;
+    } catch {
+      value = 0;
+    }
+  } else {
+    try {
+      if (!evaluator.runtimeId)
+        throw new Error("LLM Judge Runtime is not configured");
+      if (!executeJudge)
+        throw new Error("LLM Judge Runtime executor is not available");
+      const result = await executeJudge(
+        evaluator.runtimeId,
+        `${evaluator.prompt ?? "Score the answer from 0 to 1."}\nExpected: ${expected ?? "(none)"}\nAnswer: ${output}\nReturn JSON only: {"score": number, "reason": string}`,
+      );
+      const parsed = JSON.parse(
+        result.output.match(/\{[\s\S]*\}/)?.[0] ?? "{}",
+      ) as { score?: unknown; reason?: unknown };
+      value = Math.max(0, Math.min(1, Number(parsed.score) || 0));
+      reason = typeof parsed.reason === "string" ? parsed.reason : undefined;
+    } catch (cause) {
+      reason = cause instanceof Error ? cause.message : String(cause);
+      value = 0;
+    }
+  }
+  return {
+    evaluatorId: evaluator.id,
+    score: value,
+    passed: value >= evaluator.threshold,
+    ...(reason ? { reason } : {}),
+    durationMs: Date.now() - startedAt,
+  };
+}

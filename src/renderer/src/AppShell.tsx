@@ -950,7 +950,7 @@ export function AppShell() {
         ) : activeFeature === "mcp" ? (
           <McpPage language={language} />
         ) : activeFeature === "evaluation" ? (
-          <EvaluationPage language={language} agents={snapshot.configuredAgents} />
+          <EvaluationPage language={language} agents={snapshot.configuredAgents} channels={snapshot.channels} />
         ) : activeFeature === "runtimes" ? (
           <RuntimePage
             language={language}

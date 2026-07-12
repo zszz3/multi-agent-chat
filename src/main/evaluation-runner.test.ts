@@ -3,11 +3,48 @@ import { runEvaluation } from "./evaluation-runner";
 
 describe("runEvaluation", () => {
   it("repeats cases and aggregates deterministic scores", async () => {
-    const execute = vi.fn(async () => ({ output: "expected answer", durationMs: 4 }));
+    const execute = vi.fn(async () => ({
+      output: "expected answer",
+      durationMs: 4,
+    }));
     const run = await runEvaluation({
-      experiment: { id: "experiment", name: "Experiment", datasetId: "dataset", agentId: "agent", evaluatorIds: ["contains"], repetitions: 2, createdAt: 1, updatedAt: 1 },
-      dataset: { id: "dataset", name: "Dataset", description: "", createdAt: 1, updatedAt: 1, items: [{ id: "case", input: "question", expectedOutput: "expected", metadata: {}, sequence: 0 }] },
-      evaluators: [{ id: "contains", name: "Contains", kind: "contains", threshold: 1, enabled: true, createdAt: 1, updatedAt: 1 }],
+      experiment: {
+        id: "experiment",
+        name: "Experiment",
+        datasetId: "dataset",
+        agentId: "agent",
+        evaluatorIds: ["contains"],
+        repetitions: 2,
+        createdAt: 1,
+        updatedAt: 1,
+      },
+      dataset: {
+        id: "dataset",
+        name: "Dataset",
+        description: "",
+        createdAt: 1,
+        updatedAt: 1,
+        items: [
+          {
+            id: "case",
+            input: "question",
+            expectedOutput: "expected",
+            metadata: {},
+            sequence: 0,
+          },
+        ],
+      },
+      evaluators: [
+        {
+          id: "contains",
+          name: "Contains",
+          kind: "contains",
+          threshold: 1,
+          enabled: true,
+          createdAt: 1,
+          updatedAt: 1,
+        },
+      ],
       agentRevisionId: "agent:v2",
       execute,
     });
@@ -20,15 +57,55 @@ describe("runEvaluation", () => {
     expect(execute).toHaveBeenCalledTimes(2);
   });
 
-  it("uses a separate agent for an LLM judge", async () => {
-    const execute = vi.fn(async (agentId: string) => agentId === "judge" ? { output: '{"score":0.8,"reason":"good"}', durationMs: 2 } : { output: "answer", durationMs: 3 });
+  it("uses a concrete Runtime config for an LLM judge", async () => {
+    const execute = vi.fn(async () => ({ output: "answer", durationMs: 3 }));
+    const executeJudge = vi.fn(async () => ({
+      output: '{"score":0.8,"reason":"good"}',
+      durationMs: 2,
+    }));
     const run = await runEvaluation({
-      experiment: { id: "experiment", name: "Experiment", datasetId: "dataset", agentId: "subject", evaluatorIds: ["judge-eval"], repetitions: 1, createdAt: 1, updatedAt: 1 },
-      dataset: { id: "dataset", name: "Dataset", description: "", createdAt: 1, updatedAt: 1, items: [{ id: "case", input: "question", metadata: {}, sequence: 0 }] },
-      evaluators: [{ id: "judge-eval", name: "Judge", kind: "llm_judge", agentId: "judge", threshold: 0.7, enabled: true, createdAt: 1, updatedAt: 1 }],
+      experiment: {
+        id: "experiment",
+        name: "Experiment",
+        datasetId: "dataset",
+        agentId: "subject",
+        evaluatorIds: ["judge-eval"],
+        repetitions: 1,
+        createdAt: 1,
+        updatedAt: 1,
+      },
+      dataset: {
+        id: "dataset",
+        name: "Dataset",
+        description: "",
+        createdAt: 1,
+        updatedAt: 1,
+        items: [{ id: "case", input: "question", metadata: {}, sequence: 0 }],
+      },
+      evaluators: [
+        {
+          id: "judge-eval",
+          name: "Judge",
+          kind: "llm_judge",
+          runtimeId: "runtime-openai",
+          threshold: 0.7,
+          enabled: true,
+          createdAt: 1,
+          updatedAt: 1,
+        },
+      ],
       execute,
+      executeJudge,
     });
-    expect(run.results[0]?.scores[0]).toMatchObject({ score: 0.8, passed: true, reason: "good" });
-    expect(execute.mock.calls.map(([agentId]) => agentId)).toEqual(["subject", "judge"]);
+    expect(run.results[0]?.scores[0]).toMatchObject({
+      score: 0.8,
+      passed: true,
+      reason: "good",
+    });
+    expect(execute).toHaveBeenCalledWith("subject", "question");
+    expect(executeJudge).toHaveBeenCalledWith(
+      "runtime-openai",
+      expect.stringContaining("Answer: answer"),
+    );
   });
 });

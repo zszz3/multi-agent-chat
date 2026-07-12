@@ -1,8 +1,5 @@
 import { ClipboardCheck, Save, Trash2 } from "lucide-react";
-import type {
-  ConfiguredAgent,
-  EvaluationEvaluator,
-} from "../../../../shared/types";
+import type { AgentChannel, EvaluationEvaluator } from "../../../../shared/types";
 import {
   BrowserHeader,
   BrowserItem,
@@ -44,7 +41,7 @@ export function EvaluatorWorkspace({
   zh,
   evaluators,
   selected,
-  agents,
+  channels,
   busy,
   onSelect,
   onCreate,
@@ -55,7 +52,7 @@ export function EvaluatorWorkspace({
   zh: boolean;
   evaluators: EvaluationEvaluator[];
   selected: EvaluationEvaluator | undefined;
-  agents: ConfiguredAgent[];
+  channels: AgentChannel[];
   busy: string | undefined;
   onSelect: (id: string) => void;
   onCreate: () => void;
@@ -207,25 +204,25 @@ export function EvaluatorWorkspace({
                 title="LLM Judge"
                 description={
                   zh
-                    ? "Judge 使用独立 Agent 对执行结果评分。"
-                    : "The Judge uses a separate Agent to score each result."
+                    ? "Judge 使用独立 Runtime 配置对执行结果评分。"
+                    : "The Judge uses a separate Runtime config to score each result."
                 }
               >
                 <div className="workbench-form-grid">
                   <label>
-                    <span>{zh ? "评分 Agent" : "Judge Agent"}</span>
+                    <span>{zh ? "评分 Runtime" : "Judge Runtime"}</span>
                     <select
-                      value={selected.agentId ?? ""}
+                      value={selected.runtimeId ?? ""}
                       onChange={(event) =>
-                        onChange({ ...selected, agentId: event.target.value })
+                        onChange({ ...selected, runtimeId: event.target.value })
                       }
                     >
                       <option value="">
-                        {zh ? "选择 Agent" : "Select an Agent"}
+                        {zh ? "选择 Runtime 配置" : "Select a Runtime config"}
                       </option>
-                      {agents.map((agent) => (
-                        <option key={agent.id} value={agent.id}>
-                          {agent.name}
+                      {channels.map((channel) => (
+                        <option key={channel.id} value={channel.id}>
+                          {channel.label} · {channel.agentId}
                         </option>
                       ))}
                     </select>

@@ -6,7 +6,7 @@ import {
   LayoutDashboard,
   Plus,
 } from "lucide-react";
-import type { ConfiguredAgent } from "../../../../shared/types";
+import type { AgentChannel, ConfiguredAgent } from "../../../../shared/types";
 import type { Language } from "../../app/language";
 import {
   WorkbenchHeader,
@@ -32,9 +32,11 @@ const VIEW_ICONS = {
 export function EvaluationPage({
   language = "en",
   agents,
+  channels,
 }: {
   language?: Language;
   agents: ConfiguredAgent[];
+  channels: AgentChannel[];
 }) {
   const zh = language === "zh";
   const model = useEvaluationWorkbench();
@@ -176,7 +178,7 @@ export function EvaluationPage({
             zh={zh}
             evaluators={model.evaluators}
             selected={model.selectedEvaluator}
-            agents={agents}
+            channels={channels}
             busy={model.busy}
             onSelect={(id) => navigate("evaluators", id)}
             onCreate={model.createEvaluator}

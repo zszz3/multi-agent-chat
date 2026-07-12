@@ -354,8 +354,22 @@ function registerIpcHandlers(): void {
     const dataset = (await evaluationStore.listDatasets()).find((item) => item.id === experiment.datasetId);
     if (!dataset) throw new Error("Dataset not found");
     const evaluators = await evaluationStore.listEvaluators();
-    const agent = hub.snapshot().configuredAgents.find((item) => item.id === experiment.agentId);
-    const run = await runEvaluation({ experiment, dataset, evaluators, ...(agent?.currentRevisionId ? { agentRevisionId: agent.currentRevisionId } : {}), execute: (agentId, prompt) => hub.executeEvaluationAgent(agentId, prompt) });
+    const snapshot = hub.snapshot();
+    const agent = snapshot.configuredAgents.find((item) => item.id === experiment.agentId);
+    const run = await runEvaluation({
+      experiment,
+      dataset,
+      evaluators,
+      ...(agent?.currentRevisionId ? { agentRevisionId: agent.currentRevisionId } : {}),
+      execute: (agentId, prompt) => hub.executeEvaluationAgent(agentId, prompt),
+      executeJudge: (runtimeId, prompt) => {
+        const executionAgent = snapshot.configuredAgents.find(
+          (item) => (item.agentType === "execution" || item.managed) && item.channelId === runtimeId,
+        );
+        if (!executionAgent) throw new Error(`Runtime ${runtimeId} does not have an execution Agent`);
+        return hub.executeEvaluationAgent(executionAgent.id, prompt);
+      },
+    });
     return evaluationStore.saveRun(run);
   });
   ipcMain.handle("runtime-channels:test", async (event, channelId: string) =>

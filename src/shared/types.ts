@@ -30,7 +30,11 @@ export interface AgentPluginConfig {
   enabled: boolean;
 }
 
-export type RuntimeProviderApiFormat = "anthropic" | "openai_chat" | "openai_responses" | "gemini_native";
+export type RuntimeProviderApiFormat =
+  | "anthropic"
+  | "openai_chat"
+  | "openai_responses"
+  | "gemini_native";
 export type ClaudeApiKeyField = "ANTHROPIC_AUTH_TOKEN" | "ANTHROPIC_API_KEY";
 
 export interface RuntimeRequestOverrides {
@@ -102,14 +106,82 @@ export interface AgentMcpBinding {
   toolAllowlist: string[];
 }
 
-export interface EvaluationDatasetItem { id: string; input: string; expectedOutput?: string; metadata: Record<string, unknown>; sequence: number; }
-export interface EvaluationDataset { id: string; name: string; description: string; items: EvaluationDatasetItem[]; createdAt: number; updatedAt: number; }
-export type EvaluatorKind = "contains" | "exact_match" | "json_valid" | "llm_judge";
-export interface EvaluationEvaluator { id: string; name: string; kind: EvaluatorKind; prompt?: string; agentId?: string; threshold: number; enabled: boolean; createdAt: number; updatedAt: number; }
-export interface EvaluationExperiment { id: string; name: string; datasetId: string; agentId: string; evaluatorIds: string[]; repetitions: number; createdAt: number; updatedAt: number; }
-export interface EvaluationScore { evaluatorId: string; score: number; passed: boolean; reason?: string; durationMs: number; tokenCount?: number; estimatedCost?: number; }
-export interface EvaluationCaseResult { id: string; runId: string; datasetItemId: string; repetition: number; input: string; expectedOutput?: string; output: string; error?: string; durationMs: number; scores: EvaluationScore[]; }
-export interface EvaluationRun { id: string; experimentId: string; status: "pending" | "running" | "completed" | "failed" | "cancelled"; agentRevisionId?: string; startedAt: number; finishedAt?: number; averageScore?: number; minimumScore?: number; passRate?: number; totalDurationMs?: number; error?: string; results: EvaluationCaseResult[]; }
+export interface EvaluationDatasetItem {
+  id: string;
+  input: string;
+  expectedOutput?: string;
+  metadata: Record<string, unknown>;
+  sequence: number;
+}
+export interface EvaluationDataset {
+  id: string;
+  name: string;
+  description: string;
+  items: EvaluationDatasetItem[];
+  createdAt: number;
+  updatedAt: number;
+}
+export type EvaluatorKind =
+  | "contains"
+  | "exact_match"
+  | "json_valid"
+  | "llm_judge";
+export interface EvaluationEvaluator {
+  id: string;
+  name: string;
+  kind: EvaluatorKind;
+  prompt?: string;
+  runtimeId?: string;
+  threshold: number;
+  enabled: boolean;
+  createdAt: number;
+  updatedAt: number;
+}
+export interface EvaluationExperiment {
+  id: string;
+  name: string;
+  datasetId: string;
+  agentId: string;
+  evaluatorIds: string[];
+  repetitions: number;
+  createdAt: number;
+  updatedAt: number;
+}
+export interface EvaluationScore {
+  evaluatorId: string;
+  score: number;
+  passed: boolean;
+  reason?: string;
+  durationMs: number;
+  tokenCount?: number;
+  estimatedCost?: number;
+}
+export interface EvaluationCaseResult {
+  id: string;
+  runId: string;
+  datasetItemId: string;
+  repetition: number;
+  input: string;
+  expectedOutput?: string;
+  output: string;
+  error?: string;
+  durationMs: number;
+  scores: EvaluationScore[];
+}
+export interface EvaluationRun {
+  id: string;
+  experimentId: string;
+  status: "pending" | "running" | "completed" | "failed" | "cancelled";
+  agentRevisionId?: string;
+  startedAt: number;
+  finishedAt?: number;
+  averageScore?: number;
+  minimumScore?: number;
+  passRate?: number;
+  totalDurationMs?: number;
+  error?: string;
+  results: EvaluationCaseResult[];
+}
 
 export interface ConfiguredAgent {
   id: string;
@@ -234,7 +306,11 @@ export interface AgentTestResult {
   modelId: string;
 }
 
-export type ProviderBalanceStatus = "success" | "unsupported" | "missing_key" | "error";
+export type ProviderBalanceStatus =
+  | "success"
+  | "unsupported"
+  | "missing_key"
+  | "error";
 
 export interface ProviderBalanceItem {
   label?: string;
@@ -259,7 +335,12 @@ export interface ProviderBalanceResult {
 export type AgentTestEvent =
   | { agentId: string; type: "phase"; content: string; timestamp: number }
   | { agentId: string; type: "user"; content: string; timestamp: number }
-  | { agentId: string; type: "assistant_delta"; content: string; timestamp: number }
+  | {
+      agentId: string;
+      type: "assistant_delta";
+      content: string;
+      timestamp: number;
+    }
   | { agentId: string; type: "assistant"; content: string; timestamp: number }
   | { agentId: string; type: "tool"; content: string; timestamp: number }
   | { agentId: string; type: "warning"; content: string; timestamp: number }
@@ -293,7 +374,10 @@ export interface CodexDefaultConfig {
 
 export type ExecutionStyle = "oneshot" | "interactive";
 export type RuntimeExecutionMode = ExecutionStyle;
-export type RuntimeContinuationPolicy = "fresh" | "resume-preferred" | "resume-required";
+export type RuntimeContinuationPolicy =
+  | "fresh"
+  | "resume-preferred"
+  | "resume-required";
 
 export interface RuntimeConfig {
   model: string;
@@ -346,13 +430,50 @@ export type AgentEvent =
   | { type: "delta"; content: string }
   | { type: "meta"; content: string }
   | { type: "system"; content: string; metadata?: Record<string, unknown> }
-  | { type: "tool_call"; content: string; name?: string; metadata?: Record<string, unknown> }
-  | { type: "tool_result"; content: string; name?: string; metadata?: Record<string, unknown> }
-  | { type: "handoff"; content: string; fromAgentId?: AgentId; toAgentId?: AgentId; metadata?: Record<string, unknown> }
-  | { type: "approval_request"; requestId: string; content: string; metadata?: Record<string, unknown> }
-  | { type: "approval_response"; requestId: string; decision: ApprovalDecision; content?: string; metadata?: Record<string, unknown> }
-  | { type: "user_input_request"; requestId: string; content: string; metadata?: Record<string, unknown> }
-  | { type: "user_input_response"; requestId: string; content: string; metadata?: Record<string, unknown> }
+  | {
+      type: "tool_call";
+      content: string;
+      name?: string;
+      metadata?: Record<string, unknown>;
+    }
+  | {
+      type: "tool_result";
+      content: string;
+      name?: string;
+      metadata?: Record<string, unknown>;
+    }
+  | {
+      type: "handoff";
+      content: string;
+      fromAgentId?: AgentId;
+      toAgentId?: AgentId;
+      metadata?: Record<string, unknown>;
+    }
+  | {
+      type: "approval_request";
+      requestId: string;
+      content: string;
+      metadata?: Record<string, unknown>;
+    }
+  | {
+      type: "approval_response";
+      requestId: string;
+      decision: ApprovalDecision;
+      content?: string;
+      metadata?: Record<string, unknown>;
+    }
+  | {
+      type: "user_input_request";
+      requestId: string;
+      content: string;
+      metadata?: Record<string, unknown>;
+    }
+  | {
+      type: "user_input_response";
+      requestId: string;
+      content: string;
+      metadata?: Record<string, unknown>;
+    }
   | { type: "completed"; content?: string }
   | { type: "error"; error: string };
 
@@ -412,8 +533,18 @@ export interface ChatSession {
   updatedAt: number;
 }
 
-export type TaskRunStatus = "queued" | "running" | "completed" | "failed" | "stopped";
-export type TaskProgress = "backlog" | "todo" | "in_progress" | "in_review" | "done";
+export type TaskRunStatus =
+  | "queued"
+  | "running"
+  | "completed"
+  | "failed"
+  | "stopped";
+export type TaskProgress =
+  | "backlog"
+  | "todo"
+  | "in_progress"
+  | "in_review"
+  | "done";
 
 export interface TaskRun {
   id: string;
@@ -454,8 +585,20 @@ export interface WorkflowAgentResponse {
 
 export type WorkflowAgentEvent =
   | { requestId: string; type: "delta"; content: string }
-  | { requestId: string; type: "workflow_graph"; graph: WorkflowGraph; workflowId?: string; revision?: number; content?: string }
-  | { requestId: string; type: "completed"; content: string; runtimeConversation?: RuntimeConversation }
+  | {
+      requestId: string;
+      type: "workflow_graph";
+      graph: WorkflowGraph;
+      workflowId?: string;
+      revision?: number;
+      content?: string;
+    }
+  | {
+      requestId: string;
+      type: "completed";
+      content: string;
+      runtimeConversation?: RuntimeConversation;
+    }
   | { requestId: string; type: "error"; error: string };
 
 export type AgentTeamMode = "pipeline" | "parallel" | "supervisor";
@@ -472,8 +615,19 @@ export interface AgentCanvasPosition {
   y: number;
 }
 
-export type AgentWorkflowNodeKind = "start" | "agent" | "join" | "synthesis" | "done";
-export type AgentWorkflowNodeStatus = "idle" | "queued" | "running" | "completed" | "failed" | "stopped";
+export type AgentWorkflowNodeKind =
+  | "start"
+  | "agent"
+  | "join"
+  | "synthesis"
+  | "done";
+export type AgentWorkflowNodeStatus =
+  | "idle"
+  | "queued"
+  | "running"
+  | "completed"
+  | "failed"
+  | "stopped";
 
 export interface AgentWorkflowNode {
   id: string;
@@ -525,8 +679,18 @@ export interface AgentTeam {
   updatedAt: number;
 }
 
-export type TeamRunStatus = "queued" | "running" | "completed" | "failed" | "stopped";
-export type TeamRunStepStatus = "queued" | "running" | "completed" | "failed" | "stopped";
+export type TeamRunStatus =
+  | "queued"
+  | "running"
+  | "completed"
+  | "failed"
+  | "stopped";
+export type TeamRunStepStatus =
+  | "queued"
+  | "running"
+  | "completed"
+  | "failed"
+  | "stopped";
 
 export interface TeamRunStep {
   id: string;
@@ -630,7 +794,13 @@ export interface WorkflowGrillMessage {
   content: string;
 }
 
-export type WorkflowRunNodeStatus = "queued" | "running" | "paused" | "awaiting_input" | "completed" | "failed";
+export type WorkflowRunNodeStatus =
+  | "queued"
+  | "running"
+  | "paused"
+  | "awaiting_input"
+  | "completed"
+  | "failed";
 
 export interface WorkflowRunProgressItem {
   nodeId: string;
@@ -673,7 +843,12 @@ export interface WorkflowEvent {
   answer?: string;
 }
 
-export type WorkflowStatus = "draft" | "running" | "completed" | "failed" | "stopped";
+export type WorkflowStatus =
+  | "draft"
+  | "running"
+  | "completed"
+  | "failed"
+  | "stopped";
 
 export interface WorkflowArtifactReference {
   kind: "text" | "file" | "url";
@@ -773,7 +948,12 @@ export const DEFAULT_SCHEDULED_WORKFLOW_CLOUD_BASE_URL = "";
 export const DEFAULT_SCHEDULED_WORKFLOW_TIME_OF_DAY = "09:00";
 export const DEFAULT_SCHEDULED_WORKFLOW_TIMEZONE = "Asia/Shanghai";
 
-export type ScheduledWorkflowRunStatus = "queued" | "running" | "completed" | "failed" | "skipped";
+export type ScheduledWorkflowRunStatus =
+  | "queued"
+  | "running"
+  | "completed"
+  | "failed"
+  | "skipped";
 export type ScheduledWorkflowFrequency = "daily" | "weekly" | "monthly";
 
 export interface ScheduledWorkflowRunnerConfig {
@@ -785,7 +965,10 @@ export interface ScheduledWorkflowRunnerConfig {
   runnerToken?: string | undefined;
 }
 
-export type RegisterScheduledWorkflowRunnerRequest = Pick<ScheduledWorkflowRunnerConfig, "baseUrl" | "tenantId" | "userId" | "deviceName">;
+export type RegisterScheduledWorkflowRunnerRequest = Pick<
+  ScheduledWorkflowRunnerConfig,
+  "baseUrl" | "tenantId" | "userId" | "deviceName"
+>;
 
 export interface ScheduledWorkflowRunnerStatus {
   connected: boolean;
@@ -825,7 +1008,8 @@ export interface CreateScheduledWorkflowScheduleRequest {
   dayOfMonth?: number | undefined;
 }
 
-export type UpdateScheduledWorkflowScheduleRequest = Partial<CreateScheduledWorkflowScheduleRequest>;
+export type UpdateScheduledWorkflowScheduleRequest =
+  Partial<CreateScheduledWorkflowScheduleRequest>;
 
 export interface ScheduledWorkflowRun {
   runId: string;
@@ -849,7 +1033,10 @@ export interface ScheduledWorkflowDueEvent {
 }
 
 export interface AckScheduledWorkflowEventRequest {
-  status: Extract<ScheduledWorkflowRunStatus, "completed" | "failed" | "skipped">;
+  status: Extract<
+    ScheduledWorkflowRunStatus,
+    "completed" | "failed" | "skipped"
+  >;
   workflowRunId?: string | undefined;
   message?: string | undefined;
 }
@@ -957,7 +1144,8 @@ export interface AppendWorkflowContextRequest {
   artifacts?: WorkflowArtifactReference[];
 }
 
-export interface AppendWorkflowRunContextRequest extends AppendWorkflowContextRequest {
+export interface AppendWorkflowRunContextRequest
+  extends AppendWorkflowContextRequest {
   runId: string;
   nodeId?: string;
 }

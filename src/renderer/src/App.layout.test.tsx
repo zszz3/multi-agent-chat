@@ -75,6 +75,7 @@ import { formatTime } from "./app/format";
 import { loadCodexDefaultConfigFromRuntimeApi } from "./pages/runtime/runtime-utils";
 import { FeatureRail } from "./app/FeatureRail";
 import { EvaluationPage } from "./pages/evaluation/EvaluationPage";
+import { EvaluatorWorkspace } from "./pages/evaluation/EvaluatorWorkspace";
 import { ExperimentWorkspace } from "./pages/evaluation/ExperimentWorkspace";
 import { McpPage } from "./pages/mcp/McpPage";
 import type {
@@ -223,7 +224,7 @@ describe("Evaluation workbench redesign", () => {
   });
 
   test("renders four internal Evaluation views", () => {
-    const html = renderToStaticMarkup(<EvaluationPage language="en" agents={[]} />);
+    const html = renderToStaticMarkup(<EvaluationPage language="en" agents={[]} channels={[]} />);
     expect(html).toContain('role="tablist"');
     expect(html).toContain(">Overview<");
     expect(html).toContain(">Datasets<");
@@ -240,6 +241,14 @@ describe("Evaluation workbench redesign", () => {
     expect(html).toContain("Pass rate");
     expect(html).toContain("Case results");
     expect(html).toContain("Run history");
+  });
+
+  test("configures LLM Judge with a concrete Runtime config", () => {
+    const evaluator = { id: "judge", name: "Quality Judge", kind: "llm_judge" as const, runtimeId: "codex-openai", threshold: 0.8, enabled: true, createdAt: 1, updatedAt: 2 };
+    const html = renderToStaticMarkup(<EvaluatorWorkspace zh evaluators={[evaluator]} selected={evaluator} channels={[{ id: "codex-openai", agentId: "codex", label: "Codex OpenAI", models: [] }]} busy={undefined} onSelect={() => undefined} onCreate={() => undefined} onChange={() => undefined} onSave={() => undefined} onDelete={() => undefined} />);
+    expect(html).toContain("评分 Runtime");
+    expect(html).toContain("Codex OpenAI · codex");
+    expect(html).not.toContain("评分 Agent");
   });
 
   test("renders MCP in the shared workbench shell", () => {
