@@ -282,8 +282,7 @@ export async function callMcpTool(name: string, args: unknown): Promise<unknown>
 }
 
 function writeJsonRpc(payload: unknown): void {
-  const text = JSON.stringify(payload);
-  process.stdout.write(`Content-Length: ${Buffer.byteLength(text, "utf8")}\r\n\r\n${text}`);
+  process.stdout.write(`${JSON.stringify(payload)}\n`);
 }
 
 async function handleJsonRpc(request: JsonRpcRequest): Promise<void> {
@@ -331,25 +330,17 @@ async function handleJsonRpc(request: JsonRpcRequest): Promise<void> {
 }
 
 export function startStdioMcpServer(): void {
-  let buffer = Buffer.alloc(0);
-  process.stdin.on("data", (chunk: Buffer) => {
-    buffer = Buffer.concat([buffer, chunk]);
+  let buffer = "";
+  process.stdin.setEncoding("utf8");
+  process.stdin.on("data", (chunk: string) => {
+    buffer += chunk;
     while (true) {
-      const separatorIndex = buffer.indexOf("\r\n\r\n");
-      if (separatorIndex < 0) return;
-      const header = buffer.slice(0, separatorIndex).toString("utf8");
-      const lengthMatch = /content-length:\s*(\d+)/i.exec(header);
-      if (!lengthMatch) {
-        buffer = buffer.slice(separatorIndex + 4);
-        continue;
-      }
-      const contentLength = Number(lengthMatch[1]);
-      const messageStart = separatorIndex + 4;
-      const messageEnd = messageStart + contentLength;
-      if (buffer.length < messageEnd) return;
-      const rawMessage = buffer.slice(messageStart, messageEnd).toString("utf8");
-      buffer = buffer.slice(messageEnd);
-      void handleJsonRpc(JSON.parse(rawMessage) as JsonRpcRequest);
+      const newlineIndex = buffer.indexOf("\n");
+      if (newlineIndex < 0) return;
+      const line = buffer.slice(0, newlineIndex).trim();
+      buffer = buffer.slice(newlineIndex + 1);
+      if (!line) continue;
+      void handleJsonRpc(JSON.parse(line) as JsonRpcRequest);
     }
   });
 }

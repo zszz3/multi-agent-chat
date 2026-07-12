@@ -1,4 +1,5 @@
 import { mkdtemp, writeFile } from "node:fs/promises";
+import { spawn } from "node:child_process";
 import os from "node:os";
 import path from "node:path";
 import { afterEach, describe, expect, test, vi } from "vitest";
@@ -57,6 +58,32 @@ describe("MCP server tools", () => {
     process.env.MULTI_AGENT_CHAT_MCP_BRIDGE = "/tmp/custom-bridge.json";
 
     expect(resolveBridgeDiscoveryPath()).toBe("/tmp/custom-bridge.json");
+  });
+
+
+  test("serves tools/list over newline-delimited stdio JSON-RPC", async () => {
+    const serverPath = path.resolve("out/main/mcp-server.js");
+    const child = spawn(process.execPath, [serverPath], {
+      cwd: process.cwd(),
+      env: { ...process.env, MULTI_AGENT_CHAT_MCP_BRIDGE: path.join(os.tmpdir(), "missing-mcp-bridge.json") },
+      stdio: ["pipe", "pipe", "pipe"],
+    });
+    const response = await new Promise<Record<string, any>>((resolve, reject) => {
+      const timer = setTimeout(() => reject(new Error("MCP stdio response timed out")), 5_000);
+      let output = "";
+      child.stdout.setEncoding("utf8");
+      child.stdout.on("data", (chunk: string) => {
+        output += chunk;
+        const newlineIndex = output.indexOf("\n");
+        if (newlineIndex < 0) return;
+        clearTimeout(timer);
+        resolve(JSON.parse(output.slice(0, newlineIndex)));
+      });
+      child.once("error", reject);
+      child.stdin.write(`${JSON.stringify({ jsonrpc: "2.0", id: 1, method: "tools/list", params: {} })}\n`);
+    }).finally(() => child.kill());
+
+    expect(response.result.tools.map((tool: { name: string }) => tool.name)).toContain("workflow_create");
   });
 
   test("calls bridge endpoints with discovery token", async () => {
