@@ -75,6 +75,7 @@ import { formatTime } from "./app/format";
 import { loadCodexDefaultConfigFromRuntimeApi } from "./pages/runtime/runtime-utils";
 import { FeatureRail } from "./app/FeatureRail";
 import { EvaluationPage } from "./pages/evaluation/EvaluationPage";
+import { EvaluatorTemplateMenu } from "./pages/evaluation/EvaluatorTemplateMenu";
 import { EvaluatorWorkspace } from "./pages/evaluation/EvaluatorWorkspace";
 import { ExperimentWorkspace } from "./pages/evaluation/ExperimentWorkspace";
 import { McpPage } from "./pages/mcp/McpPage";
@@ -249,6 +250,21 @@ describe("Evaluation workbench redesign", () => {
     expect(html).toContain("评分 Runtime");
     expect(html).toContain("Codex OpenAI · codex");
     expect(html).not.toContain("评分 Agent");
+  });
+
+  test("groups built-in Evaluator templates beside the new action", () => {
+    const html = renderToStaticMarkup(
+      <EvaluatorTemplateMenu zh onSelect={() => undefined} />,
+    );
+    expect(html).toContain("模板");
+    expect(html).toContain("确定性评估");
+    expect(html).toContain("回答质量");
+    expect(html).toContain("事实与上下文");
+    expect(html).toContain("指令遵循");
+    expect(html).toContain("安全性");
+    expect(html).toContain("专项能力");
+    expect(html).toContain("幻觉检测");
+    expect(html).toContain("代码质量");
   });
 
   test("renders MCP in the shared workbench shell", () => {

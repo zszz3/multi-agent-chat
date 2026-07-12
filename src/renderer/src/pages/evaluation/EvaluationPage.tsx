@@ -17,6 +17,7 @@ import { DatasetWorkspace } from "./DatasetWorkspace";
 import { EvaluationOverview } from "./EvaluationOverview";
 import { EvaluatorWorkspace } from "./EvaluatorWorkspace";
 import { ExperimentWorkspace } from "./ExperimentWorkspace";
+import { EvaluatorTemplateMenu } from "./EvaluatorTemplateMenu";
 import {
   type EvaluationView,
   useEvaluationWorkbench,
@@ -121,14 +122,22 @@ export function EvaluationPage({
         description={description}
         action={
           model.view === "overview" ? undefined : (
-            <button
-              className="control-btn compact is-active"
-              type="button"
-              onClick={createForView}
-            >
-              <Plus size={14} />
-              {zh ? "新建" : "New"}
-            </button>
+            <>
+              <button
+                className="control-btn compact is-active"
+                type="button"
+                onClick={createForView}
+              >
+                <Plus size={14} />
+                {zh ? "新建" : "New"}
+              </button>
+              {model.view === "evaluators" ? (
+                <EvaluatorTemplateMenu
+                  zh={zh}
+                  onSelect={model.createEvaluator}
+                />
+              ) : null}
+            </>
           )
         }
       />

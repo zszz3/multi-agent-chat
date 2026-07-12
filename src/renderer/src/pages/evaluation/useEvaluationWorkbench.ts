@@ -5,6 +5,10 @@ import type {
   EvaluationExperiment,
   EvaluationRun,
 } from "../../../../shared/types";
+import {
+  instantiateEvaluatorTemplate,
+  type EvaluationEvaluatorTemplate,
+} from "../../../../shared/evaluation-templates";
 
 export type EvaluationView =
   | "overview"
@@ -102,22 +106,27 @@ export function useEvaluationWorkbench() {
     setView("datasets");
     setDirty(true);
   }, []);
-  const createEvaluator = useCallback(() => {
-    const now = Date.now();
-    const value: EvaluationEvaluator = {
-      id: `evaluator-${now}`,
-      name: "包含匹配",
-      kind: "contains",
-      threshold: 1,
-      enabled: true,
-      createdAt: now,
-      updatedAt: now,
-    };
-    setEvaluators((items) => [value, ...items]);
-    setSelectedIds((ids) => ({ ...ids, evaluators: value.id }));
-    setView("evaluators");
-    setDirty(true);
-  }, []);
+  const createEvaluator = useCallback(
+    (template?: EvaluationEvaluatorTemplate) => {
+      const now = Date.now();
+      const value: EvaluationEvaluator = template
+        ? instantiateEvaluatorTemplate(template, now)
+        : {
+            id: `evaluator-${now}`,
+            name: "包含匹配",
+            kind: "contains",
+            threshold: 1,
+            enabled: true,
+            createdAt: now,
+            updatedAt: now,
+          };
+      setEvaluators((items) => [value, ...items]);
+      setSelectedIds((ids) => ({ ...ids, evaluators: value.id }));
+      setView("evaluators");
+      setDirty(true);
+    },
+    [],
+  );
   const createExperiment = useCallback(
     (agentId = "") => {
       const now = Date.now();

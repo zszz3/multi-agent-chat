@@ -51,7 +51,16 @@ export async function runEvaluation(input: {
               evaluator.enabled,
           )
           .map((evaluator) =>
-            score(evaluator, item.expectedOutput, output, input.executeJudge),
+            score(
+              evaluator,
+              item.input,
+              item.expectedOutput,
+              typeof item.metadata.context === "string"
+                ? item.metadata.context
+                : undefined,
+              output,
+              input.executeJudge,
+            ),
           ),
       );
       results.push({
@@ -95,7 +104,9 @@ export async function runEvaluation(input: {
 
 async function score(
   evaluator: EvaluationEvaluator,
+  input: string,
   expected: string | undefined,
+  context: string | undefined,
   output: string,
   executeJudge:
     | ((runtimeId: string, prompt: string) => Promise<ExecutionResult>)
@@ -123,7 +134,7 @@ async function score(
         throw new Error("LLM Judge Runtime executor is not available");
       const result = await executeJudge(
         evaluator.runtimeId,
-        `${evaluator.prompt ?? "Score the answer from 0 to 1."}\nExpected: ${expected ?? "(none)"}\nAnswer: ${output}\nReturn JSON only: {"score": number, "reason": string}`,
+        `${evaluator.prompt ?? "Score the answer from 0 to 1."}\n\nInput: ${input}\n\nAnswer: ${output}\n\nGround truth: ${expected ?? "(none)"}\n\nContext: ${context ?? "(none)"}\n\nReturn JSON only: {"score": number, "reason": string}`,
       );
       const parsed = JSON.parse(
         result.output.match(/\{[\s\S]*\}/)?.[0] ?? "{}",

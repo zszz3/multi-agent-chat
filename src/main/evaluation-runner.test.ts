@@ -80,7 +80,15 @@ describe("runEvaluation", () => {
         description: "",
         createdAt: 1,
         updatedAt: 1,
-        items: [{ id: "case", input: "question", metadata: {}, sequence: 0 }],
+        items: [
+          {
+            id: "case",
+            input: "question",
+            expectedOutput: "reference answer",
+            metadata: { context: "trusted context" },
+            sequence: 0,
+          },
+        ],
       },
       evaluators: [
         {
@@ -105,7 +113,9 @@ describe("runEvaluation", () => {
     expect(execute).toHaveBeenCalledWith("subject", "question");
     expect(executeJudge).toHaveBeenCalledWith(
       "runtime-openai",
-      expect.stringContaining("Answer: answer"),
+      expect.stringMatching(
+        /Input: question[\s\S]*Answer: answer[\s\S]*Ground truth: reference answer[\s\S]*Context: trusted context/,
+      ),
     );
   });
 });
