@@ -1,4 +1,4 @@
-import type { WorkflowV2ScriptNode, WorkflowV2ScriptSandboxMode } from "../../../shared/workflow-v2/definition";
+import type { WorkflowV2ScriptNode } from "../../../shared/workflow-v2/definition";
 import type { WorkflowV2WorkerOutput } from "../../../shared/workflow-v2/packets";
 import type {
   WorkflowV2PlanNode,
@@ -15,7 +15,6 @@ export interface RunWorkflowV2ScriptNodeInput {
     node: WorkflowV2ScriptNode;
     planNode: WorkflowV2PlanNode;
     taskPacket: WorkflowV2TaskPacket;
-    sandboxMode: WorkflowV2ScriptSandboxMode;
     upstreamOutputs: readonly WorkflowV2ResultPacket[];
   }) => Promise<WorkflowV2WorkerOutput>;
 }
@@ -25,7 +24,6 @@ export async function runWorkflowV2ScriptNode(input: RunWorkflowV2ScriptNodeInpu
     node: input.node,
     planNode: input.planNode,
     taskPacket: input.taskPacket,
-    sandboxMode: input.node.sandboxMode,
     upstreamOutputs: input.upstreamOutputs,
   });
 }

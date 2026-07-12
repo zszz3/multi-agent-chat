@@ -122,7 +122,7 @@ import { WorkflowContextService } from "./workflow/workflow-context-service";
 import {
   buildWorkflowV2PlanSync,
 } from "../workflows/v2/workflow-v2-planner";
-import { executeWorkflowV2ScriptWithPolicy } from "../workflows/v2/workflow-v2-script-policy";
+import { executeWorkflowV2Script } from "../workflows/v2/workflow-v2-script-executor";
 import { WorkflowStore } from "../workflow-store";
 import { ChatState, TaskState, AgentTeamState, TeamRunState } from "./state/agent-hub-state";
 import {
@@ -498,7 +498,7 @@ export class AgentHub {
       runTask: (input) => this.runTask(input),
       stopTask: (taskId) => this.stopTask(taskId),
       deleteTask: (taskId, options) => this.deleteTask(taskId, options),
-      executeWorkflowV2Script: (input) => executeWorkflowV2ScriptWithPolicy(input),
+      executeWorkflowV2Script: (input) => executeWorkflowV2Script(input),
       startWorkflowNodeConversation: (input) => this.workflowNodeConversations.start(input),
       markWorkflowNodeConversationWaiting: (conversationId, question) => this.workflowNodeConversations.markWaitingForUser(conversationId, question),
       stopWorkflowNodeConversations: (workflowId, runId) => this.workflowNodeConversations.stopRun(workflowId, runId),

@@ -9,10 +9,11 @@ import type {
   WorkflowRunState,
   WorkflowRunProgressItem,
 } from "../../shared/types";
-import type {
-  WorkflowV2ContextBudget,
-  WorkflowV2Definition,
-  WorkflowV2ScriptNode,
+import {
+  createWorkflowV2InlineScriptSpec,
+  type WorkflowV2ContextBudget,
+  type WorkflowV2Definition,
+  type WorkflowV2ScriptNode,
 } from "../../shared/workflow-v2/definition";
 import type { WorkflowV2WorkerOutput } from "../../shared/workflow-v2/packets";
 import type { WorkflowNodeConversation } from "../../shared/workflow-v2/conversation";
@@ -228,12 +229,7 @@ function workflowV2Definition(): WorkflowV2Definition {
         title: "Verify",
         execModel: "script",
         executionMode: "script",
-        sandboxMode: "workspace",
-        script: {
-          language: "bash",
-          code: "printf verified",
-          timeoutMs: 5_000,
-        },
+        script: createWorkflowV2InlineScriptSpec({ language: "bash", code: "printf verified", timeoutMs: 5_000 }),
         outputFields: [{ key: "verified", required: true }],
       },
     ],
@@ -1653,8 +1649,7 @@ describe("WorkflowRuntime Workflow V2 bridge", () => {
         title: "Script only",
         execModel: "script",
         executionMode: "script",
-        sandboxMode: "workspace",
-        script: { language: "bash", code: "printf should-not-run" },
+        script: createWorkflowV2InlineScriptSpec({ language: "bash", code: "printf should-not-run" }),
         outputFields: [{ key: "verified", required: true }],
       }],
       edges: [],
@@ -1696,8 +1691,7 @@ describe("WorkflowRuntime Workflow V2 bridge", () => {
         title: "Script only",
         execModel: "script",
         executionMode: "script",
-        sandboxMode: "workspace",
-        script: { language: "bash", code: "printf late", timeoutMs: 5_000 },
+        script: createWorkflowV2InlineScriptSpec({ language: "bash", code: "printf late", timeoutMs: 5_000 }),
         outputFields: [{ key: "verified", required: true }],
       }],
       edges: [],
@@ -1750,8 +1744,7 @@ describe("WorkflowRuntime Workflow V2 bridge", () => {
         title: "Script only",
         execModel: "script",
         executionMode: "script",
-        sandboxMode: "workspace",
-        script: { language: "bash", code: "printf bounded", timeoutMs: Number.MAX_SAFE_INTEGER },
+        script: createWorkflowV2InlineScriptSpec({ language: "bash", code: "printf bounded", timeoutMs: Number.MAX_SAFE_INTEGER }),
         outputFields: [{ key: "verified", required: true }],
       }],
       edges: [],
@@ -1874,7 +1867,7 @@ describe("WorkflowRuntime Workflow V2 bridge", () => {
     expect(scriptRequests[0]).toMatchObject({
       node: { id: "verify" },
       workDir: "/tmp/workflow-v2-runtime",
-      sandboxMode: "workspace",
+      authorization: expect.objectContaining({ decision: "auto_allow", nodeId: "verify", risk: "safe" }),
       upstreamOutputs: [{
         nodeId: "draft",
         outputs: { draft: "const ready = true;" },

@@ -4,7 +4,6 @@ import type {
   WorkflowV2ModelProfile,
   WorkflowV2Node,
   WorkflowV2NodeRole,
-  WorkflowV2ScriptSandboxMode,
   WorkflowV2ValidationResult,
 } from "./definition";
 import type {
@@ -17,8 +16,8 @@ import type { WorkflowV2TemplateRegistry } from "./templates";
 import { compileWorkflowV2Definition, WorkflowV2TemplateCompileError } from "./templates";
 import { workflowV2NodeHookValidationErrors } from "./hooks";
 
-const VALID_SANDBOX_MODES: ReadonlySet<WorkflowV2ScriptSandboxMode> = new Set(["sandbox", "workspace", "full"]);
 const VALID_SCRIPT_LANGUAGES = new Set(["python", "typescript", "bash"]);
+const VALID_SCRIPT_RISKS = new Set(["safe", "read", "write", "dangerous"]);
 const VALID_SUMMARY_FALLBACK_POLICIES = new Set(["truncate", "summarize", "ask_human"]);
 const VALID_MODEL_PROFILES = new Set(["fast", "balanced", "expert"]);
 const VALID_NODE_ROLES = new Set(["orchestrator", "executor", "reviewer"]);
@@ -165,22 +164,18 @@ function appendNodeValidationErrors(node: WorkflowV2Node, errors: string[]): voi
   }
 
   if (node.execModel === "script") {
-    const typedCommand = typeof node.script.command === "string" && Array.isArray(node.script.args);
-    if (!typedCommand && node.script.language !== undefined && !VALID_SCRIPT_LANGUAGES.has(node.script.language)) {
-      errors.push(`Workflow V2 script node ${node.id} has unsupported language ${String(node.script.language)}.`);
+    if (!isRecord(node.script) || !isRecord(node.script.executable)) {
+      errors.push(`Workflow V2 script node ${node.id} must declare an executable contract.`);
+      return;
     }
-    if (!typedCommand && !node.script.code?.trim()) errors.push(`Workflow V2 script node ${node.id} must have script code or a typed command spec.`);
-    if (typedCommand) {
-      if (!node.script.command?.trim()) errors.push(`Workflow V2 script node ${node.id} must have a command.`);
-      if (node.script.cwdPolicy !== "workflow") errors.push(`Workflow V2 script node ${node.id} must use workflow cwdPolicy.`);
-      if (node.script.access !== "read-only" && node.script.access !== "workspace-write") errors.push(`Workflow V2 script node ${node.id} has invalid access policy.`);
-      if (node.script.args?.some((argument) => typeof argument !== "string" || argument.length > 2_000)) errors.push(`Workflow V2 script node ${node.id} has invalid command arguments.`);
-    }
+    if (node.script.executable.kind === "inline" && !VALID_SCRIPT_LANGUAGES.has(node.script.executable.language)) errors.push(`Workflow V2 script node ${node.id} has unsupported language ${String(node.script.executable.language)}.`);
+    if (node.script.executable.kind === "inline" && !node.script.executable.code.trim()) errors.push(`Workflow V2 script node ${node.id} must have executable code.`);
+    if (node.script.executable.kind === "command" && !node.script.executable.command.trim()) errors.push(`Workflow V2 script node ${node.id} must have an executable command.`);
+    if (!Array.isArray(node.script.parameters)) errors.push(`Workflow V2 script node ${node.id} must declare parameters.`);
+    if (!Array.isArray(node.script.capabilities)) errors.push(`Workflow V2 script node ${node.id} must declare capabilities.`);
+    if (!VALID_SCRIPT_RISKS.has(node.script.managerRisk.level) || !node.script.managerRisk.rationale.trim()) errors.push(`Workflow V2 script node ${node.id} must declare Manager risk and rationale.`);
     if (node.script.timeoutMs !== undefined && !isPositiveSafeInteger(node.script.timeoutMs)) {
       errors.push(`Workflow V2 script node ${node.id} must have a positive safe-integer timeoutMs.`);
-    }
-    if (!VALID_SANDBOX_MODES.has(node.sandboxMode)) {
-      errors.push(`Workflow V2 script node ${node.id} has unsupported sandbox mode ${node.sandboxMode}.`);
     }
     if (node.expectedExitCode !== undefined && !isSafeInteger(node.expectedExitCode)) {
       errors.push(`Workflow V2 script node ${node.id} must have a safe-integer expectedExitCode.`);

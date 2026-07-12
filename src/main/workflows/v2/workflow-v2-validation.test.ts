@@ -1,5 +1,5 @@
 import { describe, expect, test } from "vitest";
-import type { WorkflowV2LLMNode, WorkflowV2ScriptNode } from "../../../shared/workflow-v2/definition";
+import { createWorkflowV2InlineScriptSpec, type WorkflowV2LLMNode, type WorkflowV2ScriptNode } from "../../../shared/workflow-v2/definition";
 import { validateWorkflowV2NodeOutput } from "./workflow-v2-validation";
 
 const llmNode: WorkflowV2LLMNode = {
@@ -20,8 +20,7 @@ const scriptNode: WorkflowV2ScriptNode = {
   title: "Verify",
   execModel: "script",
         executionMode: "script",
-  script: { language: "bash", code: "echo ok" },
-  sandboxMode: "sandbox",
+  script: createWorkflowV2InlineScriptSpec({ language: "bash", code: "echo ok" }),
   outputFields: [{ key: "passed", required: true }],
   onError: "ask_human",
 };

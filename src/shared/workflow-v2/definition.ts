@@ -14,7 +14,19 @@ export type WorkflowV2ExecModel = "llm" | "script";
 export type WorkflowV2ExecutionMode = "one-shot" | "interactive" | "script";
 export type WorkflowV2ModelProfile = "fast" | "balanced" | "expert";
 export type WorkflowV2ScriptLanguage = "python" | "typescript" | "bash";
-export type WorkflowV2ScriptSandboxMode = "sandbox" | "workspace" | "full";
+export type WorkflowV2ScriptRiskLevel = "safe" | "read" | "write" | "dangerous";
+export type WorkflowV2ScriptCapability = "workspace_read" | "workspace_write" | "workspace_delete" | "external_read" | "external_write" | "external_delete" | "network_read" | "network_write" | "process_spawn" | "shell_execute" | "environment_read" | "credential_read" | "system_config_write";
+export type WorkflowV2ScriptPermissionDecision = "auto_allow" | "allow_once" | "require_confirmation" | "deny";
+export interface WorkflowV2ScriptAuthorization {
+  decision: WorkflowV2ScriptPermissionDecision;
+  workflowId: string;
+  graphVersion: number;
+  runId: string;
+  nodeId: string;
+  risk: WorkflowV2ScriptRiskLevel;
+  capabilities: WorkflowV2ScriptCapability[];
+  capabilityDigest: string;
+}
 export type WorkflowV2ExhaustedPolicy = "fail" | "skip" | "ask_human";
 export type WorkflowV2PassThreshold = "must" | "should" | "nice_to_have";
 export type WorkflowV2ValidationOutcome = "pass" | "retry" | "fail" | "ask_human";
@@ -78,21 +90,35 @@ export interface WorkflowV2LLMNode extends WorkflowV2BaseNode {
 }
 
 export interface WorkflowV2ScriptSpec {
-  language?: WorkflowV2ScriptLanguage;
-  code?: string;
-  input?: string;
+  executable: { kind: "inline"; language: WorkflowV2ScriptLanguage; code: string } | { kind: "command"; command: string; args?: string[] };
+  parameters: Array<{ key: string; label: string; location: "argument" | "environment" | "header" | "query" | "body" | "stdin"; valueType: "string" | "number" | "boolean" | "json" | "secret" | "file" | "directory"; source: "user" | "workflow" | "upstream" | "literal"; required: boolean }>;
+  capabilities: WorkflowV2ScriptCapability[];
+  managerRisk: { level: WorkflowV2ScriptRiskLevel; rationale: string };
   timeoutMs?: number;
-  command?: string;
-  args?: string[];
-  cwdPolicy?: "workflow";
-  access?: "read-only" | "workspace-write";
   outputSchema?: { type: "object"; required?: string[] };
+}
+
+export function createWorkflowV2InlineScriptSpec(input: {
+  language: WorkflowV2ScriptLanguage;
+  code: string;
+  risk?: WorkflowV2ScriptRiskLevel;
+  rationale?: string;
+  timeoutMs?: number;
+  outputSchema?: { type: "object"; required?: string[] };
+}): WorkflowV2ScriptSpec {
+  return {
+    executable: { kind: "inline", language: input.language, code: input.code },
+    parameters: [],
+    capabilities: [],
+    managerRisk: { level: input.risk ?? "safe", rationale: input.rationale ?? "Pure in-memory transformation without external side effects." },
+    ...(input.timeoutMs !== undefined ? { timeoutMs: input.timeoutMs } : {}),
+    ...(input.outputSchema ? { outputSchema: input.outputSchema } : {}),
+  };
 }
 
 export interface WorkflowV2ScriptNode extends WorkflowV2BaseNode {
   execModel: "script";
   script: WorkflowV2ScriptSpec;
-  sandboxMode: WorkflowV2ScriptSandboxMode;
   expectedExitCode?: number;
   onError?: WorkflowV2ExhaustedPolicy;
 }
@@ -134,7 +160,6 @@ export interface WorkflowV2TemplateNodeOverrides {
   requiredTools?: string[];
   contextBudget?: WorkflowV2ContextBudget;
   script?: WorkflowV2ScriptSpec;
-  sandboxMode?: WorkflowV2ScriptSandboxMode;
   expectedExitCode?: number;
   onError?: WorkflowV2ExhaustedPolicy;
 }

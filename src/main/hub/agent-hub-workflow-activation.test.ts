@@ -1,5 +1,6 @@
 import { describe, expect, test } from "vitest";
 import { AgentHub } from "./agent-hub";
+import { createWorkflowV2InlineScriptSpec } from "../../shared/workflow-v2/definition";
 
 describe("AgentHub workflow materialization", () => {
   test("materializes into the originating Workflow without allocating another record", () => {
@@ -9,7 +10,7 @@ describe("AgentHub workflow materialization", () => {
     const result = hub.materializeWorkflowDraft(source.workflowId, {
       title: "Echo workflow",
       objective: "Echo user input",
-      definition: { workflowId: "ignored", graphVersion: 1, objective: "Echo user input", nodes: [{ id: "echo", kind: "transform", title: "Echo", execModel: "script", executionMode: "script", script: { language: "typescript", code: "return inputs;" }, sandboxMode: "workspace", outputFields: [{ key: "output", required: true }] }], edges: [] },
+      definition: { workflowId: "ignored", graphVersion: 1, objective: "Echo user input", nodes: [{ id: "echo", kind: "transform", title: "Echo", execModel: "script", executionMode: "script", script: createWorkflowV2InlineScriptSpec({ language: "typescript", code: "return inputs;" }), outputFields: [{ key: "output", required: true }] }], edges: [] },
     });
     expect(result).toMatchObject({ ok: true, workflowId: source.workflowId });
     expect(hub.snapshot().workflowStore.workflows).toHaveLength(beforeCount);

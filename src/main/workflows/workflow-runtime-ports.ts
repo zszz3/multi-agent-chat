@@ -5,7 +5,7 @@ import type {
 import type { FinishWorkflowRunRequest, WorkflowOperationResult } from "../../shared/workflow/commands";
 import type { WorkflowEvent, WorkflowRunProgressItem } from "../../shared/workflow/run";
 import type { WorkflowNodeConversation } from "../../shared/workflow-v2/conversation";
-import type { WorkflowV2ScriptNode } from "../../shared/workflow-v2/definition";
+import type { WorkflowV2ScriptAuthorization, WorkflowV2ScriptNode } from "../../shared/workflow-v2/definition";
 import type { WorkflowV2WorkerOutput } from "../../shared/workflow-v2/packets";
 import type { WorkflowV2ResultPacket } from "../../shared/workflow-v2/planning";
 import type {
@@ -28,11 +28,10 @@ export interface WorkflowRunStateUpdate {
 export interface ExecuteWorkflowV2ScriptRequest {
   node: WorkflowV2ScriptNode;
   workDir: string;
-  sandboxMode: WorkflowV2ScriptNode["sandboxMode"];
   upstreamOutputs: readonly WorkflowV2ResultPacket[];
   signal: AbortSignal;
   timeoutMs: number;
-  approved: boolean;
+  authorization: WorkflowV2ScriptAuthorization;
 }
 
 export interface WorkflowV2StorePort {

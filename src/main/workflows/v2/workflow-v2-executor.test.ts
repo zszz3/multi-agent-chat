@@ -1,5 +1,5 @@
 import { describe, expect, test } from "vitest";
-import type { WorkflowV2Definition, WorkflowV2LLMNode } from "../../../shared/workflow-v2/definition";
+import { createWorkflowV2InlineScriptSpec, type WorkflowV2Definition, type WorkflowV2LLMNode } from "../../../shared/workflow-v2/definition";
 import type { WorkflowV2WorkerOutput } from "../../../shared/workflow-v2/packets";
 import { createWorkflowV2RunState } from "../../../shared/workflow-v2/state";
 import { buildWorkflowV2Plan } from "./workflow-v2-planner";
@@ -29,12 +29,7 @@ function definition(): WorkflowV2Definition {
         title: "Verify implementation",
         execModel: "script",
         executionMode: "script",
-        sandboxMode: "workspace",
-        script: {
-          language: "bash",
-          code: "echo verify",
-          timeoutMs: 5_000,
-        },
+        script: createWorkflowV2InlineScriptSpec({ language: "bash", code: "echo verify", timeoutMs: 5_000 }),
         outputFields: [{ key: "verification", required: true }],
       },
     ],
@@ -122,11 +117,7 @@ function fanInDefinition(): WorkflowV2Definition {
         title: "Combine results",
         execModel: "script",
         executionMode: "script",
-        sandboxMode: "sandbox",
-        script: {
-          language: "typescript",
-          code: "combine upstream results",
-        },
+        script: createWorkflowV2InlineScriptSpec({ language: "typescript", code: "combine upstream results" }),
         outputFields: [{ key: "combined", required: true }],
       },
     ],
@@ -287,10 +278,9 @@ describe("workflow-v2 executor", () => {
           proposals: [{ kind: "continue", reason: "Draft is ready", targetNodeIds: ["verify"] }],
         };
       },
-      executeScript: async ({ node, taskPacket, sandboxMode }) => {
+      executeScript: async ({ node, taskPacket }) => {
         calls.push(`script:${node.id}`);
         expect(taskPacket.nodeId).toBe("verify");
-        expect(sandboxMode).toBe("workspace");
         return {
           nodeId: node.id,
           summary: "Verification completed",

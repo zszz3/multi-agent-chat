@@ -63,7 +63,7 @@ const workflowV2DefinitionSchema = {
           role: { type: "string", enum: ["orchestrator", "executor", "reviewer"] },
           modelProfile: { type: "string", enum: ["fast", "balanced", "expert"] }, prompt: { type: "string" },
           outputFields: { type: "array", items: objectSchema({ key: { type: "string" }, required: { type: "boolean" }, description: { type: "string" } }, ["key"]) },
-          script: { type: "object", additionalProperties: true }, sandboxMode: { type: "string", enum: ["sandbox", "workspace", "full"] },
+          script: { type: "object", additionalProperties: true },
         },
         required: ["id", "kind", "title", "execModel", "executionMode", "outputFields"],
         additionalProperties: true,

@@ -29,10 +29,11 @@ function validDefinition(): WorkflowV2Definition {
         role: "executor",
         outputFields: [{ key: "result", required: true }],
         script: {
-          language: "bash",
-          code: "echo ok",
+          executable: { kind: "inline", language: "bash", code: "echo ok" },
+          parameters: [],
+          capabilities: [],
+          managerRisk: { level: "safe", rationale: "Returns a constant value." },
         },
-        sandboxMode: "workspace",
       },
     ],
     edges: [{ fromNodeId: "plan", toNodeId: "apply" }],
@@ -40,6 +41,26 @@ function validDefinition(): WorkflowV2Definition {
 }
 
 describe("workflow-v2 validation", () => {
+  test("accepts the canonical script contract without legacy permission fields", () => {
+    const definition = validDefinition();
+    definition.nodes[1] = {
+      id: "apply",
+      kind: "apply",
+      title: "Apply",
+      execModel: "script",
+      executionMode: "script",
+      outputFields: [{ key: "result", required: true }],
+      script: {
+        executable: { kind: "inline", language: "typescript", code: "return inputs;" },
+        parameters: [],
+        capabilities: [],
+        managerRisk: { level: "safe", rationale: "Pure in-memory transform." },
+      },
+    };
+
+    expect(validateWorkflowV2Definition(definition)).toMatchObject({ valid: true, errors: [] });
+  });
+
   test("accepts a valid compiled definition", () => {
     const result = validateWorkflowV2Definition(validDefinition());
 
@@ -104,8 +125,8 @@ describe("workflow-v2 validation", () => {
   test("rejects an unsupported script language from an untrusted caller", () => {
     const invalid = validDefinition();
     const node = invalid.nodes[1]!;
-    if (node.execModel !== "script") throw new Error("expected script node");
-    node.script = { ...node.script, language: "powershell" as unknown as WorkflowV2ScriptLanguage };
+    if (node.execModel !== "script" || node.script.executable.kind !== "inline") throw new Error("expected inline script node");
+    node.script.executable.language = "powershell" as unknown as WorkflowV2ScriptLanguage;
 
     const result = validateWorkflowV2Definition(invalid);
 
@@ -202,10 +223,11 @@ describe("workflow-v2 validation", () => {
         executionMode: "script",
           outputFields: [{ key: "artifact" }],
           script: {
-            language: "python",
-            code: "",
+            executable: { kind: "inline", language: "python", code: "" },
+            parameters: [],
+            capabilities: [],
+            managerRisk: { level: "safe", rationale: "Pure transform." },
           },
-          sandboxMode: "workspace",
           expectedExitCode: 1.2 as unknown as number,
         },
       ],
@@ -217,7 +239,7 @@ describe("workflow-v2 validation", () => {
     expect(result.valid).toBe(false);
     expect(result.errors).toContain("Workflow V2 node llm-node must declare at least one output field.");
     expect(result.errors).toContain("Workflow V2 llm node llm-node must have a prompt.");
-    expect(result.errors).toContain("Workflow V2 script node script-node must have script code or a typed command spec.");
+    expect(result.errors).toContain("Workflow V2 script node script-node must have executable code.");
     expect(result.errors).toContain("Workflow V2 script node script-node must have a safe-integer expectedExitCode.");
   });
 

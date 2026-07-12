@@ -5,6 +5,7 @@ import { describe, expect, test, vi } from "vitest";
 import { AgentHub, createWorkflowAgentTimeout } from "./agent-hub";
 import { DEFAULT_MODEL_ID } from "../../shared/models";
 import { projectNodeStates } from "../../shared/workflow-v2/runtime-utils";
+import { createWorkflowV2InlineScriptSpec } from "../../shared/workflow-v2/definition";
 import type { AgentChannel, AgentId, ChatRuntimeSessionState, ConfiguredAgent, RuntimeConversation } from "../../shared/types";
 import { createRuntimeDriverRegistry, RuntimeDriverRegistry } from "./runtime/executor/agent-executor";
 import type {
@@ -4726,11 +4727,11 @@ fs.writeFileSync(${JSON.stringify(argsPath)}, process.argv.slice(2).join("\\n") 
     );
   });
 
-  test("fails a Workflow V2 script node through the AgentHub product sandbox policy", async () => {
+  test("runs a safe Workflow V2 script node without user approval", async () => {
     const hub = new AgentHub({ codex: "codex-for-test", claude: "missing-claude-for-test" });
     const created = createV2Workflow(hub, {
-      title: "Script policy workflow",
-      objective: "Fail closed without an isolation backend",
+      title: "Safe script workflow",
+      objective: "Run a pure in-memory script",
       graph: {
         title: "Legacy graph is not executed",
         objective: "Legacy graph is not executed",
@@ -4750,16 +4751,15 @@ fs.writeFileSync(${JSON.stringify(argsPath)}, process.argv.slice(2).join("\\n") 
       definition: {
         workflowId: created.workflowId,
         graphVersion: 1,
-        objective: "Exercise the product script policy",
+        objective: "Exercise automatic safe script authorization",
         nodes: [{
           id: "script",
           kind: "verification",
           title: "Script",
           execModel: "script",
-        executionMode: "script",
-          sandboxMode: "workspace",
-          script: { language: "bash", code: "printf unsafe", timeoutMs: 1_000 },
-          outputFields: [{ key: "stdout", required: true }],
+          executionMode: "script",
+          script: createWorkflowV2InlineScriptSpec({ language: "typescript", code: "return { result: 'ok' };", timeoutMs: 1_000, outputSchema: { type: "object", required: ["result"] } }),
+          outputFields: [{ key: "result", required: true }],
         }],
         edges: [],
       },
@@ -4769,25 +4769,13 @@ fs.writeFileSync(${JSON.stringify(argsPath)}, process.argv.slice(2).join("\\n") 
     const started = await (hub as any).runWorkflow({ workflowId: created.workflowId });
     const snapshot = await waitFor(
       () => hub.snapshot() as any,
-      (value) => value.workflowStore.runs.some((run: any) => run.workflowId === created.workflowId && run.status === "failed"),
+      (value) => value.workflowStore.runs.some((run: any) => run.workflowId === created.workflowId && run.status === "completed"),
     );
     const run = snapshot.workflowStore.runs.find((item: any) => item.runId === started.runId);
 
-    expect(run).toMatchObject({
-      status: "failed",
-      progress: [{
-        nodeId: "script",
-        status: "failed",
-        detail: expect.stringContaining("legacy/free-form scripts remain disabled"),
-      }],
-      lastError: expect.stringContaining("legacy/free-form scripts remain disabled"),
-    });
-    expect(run.events.filter((event: any) => event.nodeId === "script").map((event: any) => event.type)).toEqual([
-      "node_started",
-      "node_failed",
-    ]);
+    expect(run).toMatchObject({ status: "completed", progress: [{ nodeId: "script", status: "completed", detail: "Script completed." }] });
+    expect(run.events.filter((event: any) => event.nodeId === "script").map((event: any) => event.type)).toEqual(["node_started", "node_output", "node_completed"]);
   });
-
   test("pauses a running workflow node without evaluating it or starting downstream nodes", async () => {
     const contexts: AgentExecutionContext[] = [];
     let stopCount = 0;

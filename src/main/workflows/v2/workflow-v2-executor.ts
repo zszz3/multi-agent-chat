@@ -48,7 +48,6 @@ export interface ExecuteWorkflowV2PlanInput {
     node: WorkflowV2ScriptNode;
     planNode: WorkflowV2PlanNode;
     taskPacket: WorkflowV2PlanNode["taskPacket"];
-    sandboxMode: WorkflowV2ScriptNode["sandboxMode"];
     upstreamOutputs: readonly WorkflowV2ResultPacket[];
   }) => Promise<WorkflowV2WorkerOutput>;
   isNodeOutputSuccessful?: (input: {

@@ -1,6 +1,6 @@
 import { describe, expect, test } from "vitest";
 
-import type { WorkflowV2AuthoredDefinition, WorkflowV2NodeTemplate } from "./definition";
+import { createWorkflowV2InlineScriptSpec, type WorkflowV2AuthoredDefinition, type WorkflowV2NodeTemplate } from "./definition";
 import { compileWorkflowV2Definition, createWorkflowV2TemplateRegistry } from "./templates";
 
 describe("workflow-v2 templates", () => {
@@ -75,12 +75,8 @@ describe("workflow-v2 templates", () => {
         kind: "export",
         execModel: "script",
         executionMode: "script",
-        script: {
-          language: "typescript",
-          code: "console.log('{{params.payload}}')",
-        },
+        script: createWorkflowV2InlineScriptSpec({ language: "typescript", code: "console.log('{{params.payload}}')" }),
         outputFields: [{ key: "artifact", required: true }],
-        sandboxMode: "workspace",
       },
     ];
 
@@ -99,8 +95,7 @@ describe("workflow-v2 templates", () => {
       id: "n1",
       execModel: "script",
         executionMode: "script",
-      script: { language: "typescript", code: "console.log('ok')" },
-      sandboxMode: "workspace",
+      script: { executable: { kind: "inline", language: "typescript", code: "console.log('ok')" } },
     });
   });
 

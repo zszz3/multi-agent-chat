@@ -749,11 +749,12 @@ export class WorkflowV2RunExecutor {
         MAX_NODE_TIMER_DELAY_MS,
       );
       const controller = new AbortController();
-      const approved = request.node.script.access !== "workspace-write" || input.recoveryOverrides?.has(request.node.id) === true;
-      if (request.node.script.access === "workspace-write" && !approved) {
+      const requiresApproval = request.node.script.managerRisk.level === "write" || request.node.script.managerRisk.level === "dangerous";
+      const approved = !requiresApproval || input.recoveryOverrides?.has(request.node.id) === true;
+      if (!approved) {
         throw new WorkflowV2SupervisionSignal({
-          resolution: { action: "pause", question: `Approve workspace-write script node ${request.node.title}?`, reason: "Workspace-write script requires explicit approval." },
-          report: { nodeId: request.node.id, attempt: 1, phase: "approval", completedItems: [], remainingItems: ["Human approval"], blockers: ["Workspace-write capability is not approved."], evidence: [], safeToInterrupt: true, requestedAction: "need_input", reportedAt: Date.now() },
+          resolution: { action: "pause", question: `Approve ${request.node.script.managerRisk.level} script node ${request.node.title}?`, reason: request.node.script.managerRisk.rationale },
+          report: { nodeId: request.node.id, attempt: 1, phase: "approval", completedItems: [], remainingItems: ["Human approval"], blockers: ["Script permission is not approved."], evidence: request.node.script.capabilities, safeToInterrupt: true, requestedAction: "need_input", reportedAt: Date.now() },
         });
       }
       this.runRegistry.get(runId)?.abortControllerByNodeId?.set(request.node.id, controller);
@@ -770,11 +771,19 @@ export class WorkflowV2RunExecutor {
         const execution = this.deps.executeWorkflowV2Script({
           node: request.node,
           workDir: workflowWorkDir,
-          sandboxMode: request.node.sandboxMode,
           upstreamOutputs: request.upstreamOutputs,
           signal: controller.signal,
           timeoutMs,
-          approved,
+          authorization: {
+            decision: approved && requiresApproval ? "allow_once" : "auto_allow",
+            workflowId: workflow.workflowId,
+            graphVersion: workflow.workflowV2Plan?.graphVersion ?? workflow.definition.graphVersion,
+            runId,
+            nodeId: request.node.id,
+            risk: request.node.script.managerRisk.level,
+            capabilities: [...request.node.script.capabilities],
+            capabilityDigest: JSON.stringify([...request.node.script.capabilities].sort()),
+          },
         });
         output = await Promise.race([execution, deadline]);
       } catch (error) {

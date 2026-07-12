@@ -45,9 +45,12 @@ function renderScriptSpec(
 ): WorkflowV2ScriptSpec {
   return {
     ...script,
-    ...(script.code !== undefined ? { code: renderTemplateValue(script.code, params) } : {}),
-    ...(script.args ? { args: script.args.map((argument) => renderTemplateValue(argument, params)) } : {}),
-    ...(script.input !== undefined ? { input: renderTemplateValue(script.input, params) } : {}),
+    executable: script.executable.kind === "inline"
+      ? { ...script.executable, code: renderTemplateValue(script.executable.code, params) }
+      : { ...script.executable, ...(script.executable.args ? { args: script.executable.args.map((argument) => renderTemplateValue(argument, params)) } : {}) },
+    parameters: script.parameters.map((parameter) => ({ ...parameter })),
+    capabilities: [...script.capabilities],
+    managerRisk: { ...script.managerRisk },
   };
 }
 
@@ -115,7 +118,6 @@ export function compileWorkflowV2Node(
         executionMode: "script",
     outputFields,
     script: overrides.script ?? renderScriptSpec(template.script, node.params),
-    sandboxMode: overrides.sandboxMode ?? template.sandboxMode,
     ...(role ? { role } : {}),
     ...(hooks ? { hooks } : {}),
     ...(resourceLocks ? { resourceLocks } : {}),

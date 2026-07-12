@@ -61,7 +61,7 @@ export function buildWorkflowAgentPrompt({ objective }: WorkflowAgentPromptInput
     "- Use execModel script for deterministic parsing, formatting, validation, conversion, filtering, merging, echoing or passing through input unchanged, and file operations that do not need agent reasoning.",
     "- When a workflow both collects user input and performs a deterministic transformation, separate the interactive input collection from the deterministic script transformation instead of assigning the transformation to an LLM node.",
     "- Do not use an LLM node for copying, echoing, renaming, mapping, selecting, or serializing already available values unless reasoning is genuinely required.",
-    "- Each LLM node requires prompt and outputFields; each script node requires script, sandboxMode, and outputFields.",
+    "- Each LLM node requires prompt and outputFields; each script node requires executable source, typed parameters, declared capabilities, Manager risk with rationale, and outputFields.",
     "- Edges express all topology dependencies. Downstream nodes must not run before every upstream dependency completes.",
     "- Node prompts must state required inputs, completion criteria, output fields, and downstream handoff expectations.",
     "",

@@ -14,6 +14,7 @@ import { buildWorkflowV2Plan } from "../../workflows/v2/workflow-v2-planner";
 import { transitionWorkflowV2NodeState } from "../../workflows/v2/workflow-v2-scheduler";
 import { WorkflowV2FileStore } from "../../workflows/v2/workflow-v2-store";
 import { AgentHub } from "../agent-hub";
+import { createWorkflowV2InlineScriptSpec } from "../../../shared/workflow-v2/definition";
 import { reconcileWorkflowV2RunFromDurableState, restoreWorkflowDraft, restoreWorkflowStoreCollections } from "./agent-hub-workflow-restore";
 
 function definition(workflowId = "workflow-recovery"): WorkflowV2Definition {
@@ -37,8 +38,7 @@ function definition(workflowId = "workflow-recovery"): WorkflowV2Definition {
         title: "Verify",
         execModel: "script",
         executionMode: "script",
-        sandboxMode: "workspace",
-        script: { language: "bash", code: "true", timeoutMs: 1_000 },
+        script: createWorkflowV2InlineScriptSpec({ language: "bash", code: "true", timeoutMs: 1_000 }),
         outputFields: [{ key: "verified", required: true }],
       },
     ],

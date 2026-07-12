@@ -1,5 +1,5 @@
 import { describe, expect, test } from "vitest";
-import type { WorkflowV2Definition } from "../../../shared/workflow-v2/definition";
+import { createWorkflowV2InlineScriptSpec, type WorkflowV2Definition } from "../../../shared/workflow-v2/definition";
 import { buildWorkflowV2GraphRevision, buildWorkflowV2Plan, WorkflowV2PlanBuildError } from "./workflow-v2-planner";
 
 function definition(): WorkflowV2Definition {
@@ -97,8 +97,7 @@ describe("workflow-v2 planner", () => {
       title: "Format",
       execModel: "script",
         executionMode: "script",
-      sandboxMode: "sandbox",
-      script: { language: "typescript", code: "return input", timeoutMs: 1_000 },
+      script: createWorkflowV2InlineScriptSpec({ language: "typescript", code: "return input", timeoutMs: 1_000 }),
       outputFields: [{ key: "formatted", required: true }],
     });
     source.edges.push({ fromNodeId: "review", toNodeId: "format" });

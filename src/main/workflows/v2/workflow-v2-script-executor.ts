@@ -1,0 +1,40 @@
+import { spawn } from "node:child_process";
+import type { WorkflowV2WorkerOutput } from "../../../shared/workflow-v2/packets";
+import type { ExecuteWorkflowV2ScriptRequest } from "../workflow-runtime-ports";
+
+function assertAuthorized(input: ExecuteWorkflowV2ScriptRequest): void {
+  if (input.authorization.nodeId !== input.node.id) throw new Error("Script authorization does not belong to this node.");
+  if (input.authorization.decision !== "auto_allow" && input.authorization.decision !== "allow_once") throw new Error("Script execution is not authorized.");
+}
+
+function validateOutput(input: ExecuteWorkflowV2ScriptRequest, output: Record<string, unknown>): void {
+  for (const key of input.node.script.outputSchema?.required ?? []) {
+    if (!(key in output)) throw new Error(`Workflow V2 script output is missing required field ${key}.`);
+  }
+}
+
+async function executeCommand(input: ExecuteWorkflowV2ScriptRequest): Promise<Record<string, unknown>> {
+  const executable = input.node.script.executable;
+  if (executable.kind !== "command") throw new Error("Expected command executable.");
+  return new Promise((resolve, reject) => {
+    const child = spawn(executable.command, executable.args ?? [], { cwd: input.workDir, shell: false, windowsHide: true, signal: input.signal });
+    let stdout = "";
+    let stderr = "";
+    child.stdout.on("data", (chunk) => { stdout += String(chunk); });
+    child.stderr.on("data", (chunk) => { stderr += String(chunk); });
+    child.on("error", reject);
+    child.on("close", (code) => code === (input.node.expectedExitCode ?? 0) ? resolve({ stdout: stdout.trim() }) : reject(new Error(stderr || `Script exited with code ${code}.`)));
+  });
+}
+
+export async function executeWorkflowV2Script(input: ExecuteWorkflowV2ScriptRequest): Promise<WorkflowV2WorkerOutput> {
+  assertAuthorized(input);
+  const executable = input.node.script.executable;
+  const outputs = executable.kind === "command"
+    ? await executeCommand(input)
+    : executable.language === "typescript"
+      ? await Promise.resolve(new Function("inputs", executable.code)({})) as Record<string, unknown>
+      : (() => { throw new Error(`Inline ${executable.language} execution is not available.`); })();
+  validateOutput(input, outputs);
+  return { nodeId: input.node.id, summary: `${input.node.title} completed.`, outputs, evidence: [], proposals: [] };
+}

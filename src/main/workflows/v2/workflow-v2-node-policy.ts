@@ -27,7 +27,12 @@ export function workflowV2ExecutionEnvironment(input: {
     configuredAgentId: input.configuredAgentId,
     modelId: input.modelId,
     execModel: input.node.execModel,
-    ...(input.node.execModel === "script" ? { sandboxMode: input.node.sandboxMode, language: input.node.script.language } : {}),
+    ...(input.node.execModel === "script" ? {
+      executableKind: input.node.script.executable.kind,
+      ...(input.node.script.executable.kind === "inline" ? { language: input.node.script.executable.language } : { command: input.node.script.executable.command }),
+      capabilities: input.node.script.capabilities,
+      managerRisk: input.node.script.managerRisk.level,
+    } : {}),
   };
 }
 
