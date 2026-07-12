@@ -1,5 +1,6 @@
 import { ClipboardCheck, Save, Trash2 } from "lucide-react";
 import type { AgentChannel, EvaluationEvaluator } from "../../../../shared/types";
+import { createDefaultEvaluationRubric } from "../../../../shared/evaluation-rubric";
 import {
   BrowserHeader,
   BrowserItem,
@@ -9,6 +10,7 @@ import {
   WorkbenchLayout,
   WorkbenchSection,
 } from "../../ui/workbench/Workbench";
+import { EvaluatorRubricEditor } from "./EvaluatorRubricEditor";
 
 const KINDS: Array<{
   id: EvaluationEvaluator["kind"];
@@ -166,7 +168,15 @@ export function EvaluatorWorkspace({
                         type="button"
                         key={kind.id}
                         className={selected.kind === kind.id ? "is-active" : ""}
-                        onClick={() => onChange({ ...selected, kind: kind.id })}
+                        onClick={() =>
+                          onChange({
+                            ...selected,
+                            kind: kind.id,
+                            ...(kind.id === "llm_judge" && !selected.rubric
+                              ? { rubric: createDefaultEvaluationRubric() }
+                              : {}),
+                          })
+                        }
                       >
                         <strong>{kind.label}</strong>
                         <small>{kind.description}</small>
@@ -185,7 +195,7 @@ export function EvaluatorWorkspace({
                       type="range"
                       min="0"
                       max="1"
-                      step="0.05"
+                      step={selected.rubric ? "0.25" : "0.05"}
                       value={selected.threshold}
                       onChange={(event) =>
                         onChange({
@@ -227,22 +237,35 @@ export function EvaluatorWorkspace({
                       ))}
                     </select>
                   </label>
-                  <label className="is-wide">
-                    <span>{zh ? "评分标准" : "Rubric"}</span>
-                    <textarea
-                      rows={7}
-                      value={selected.prompt ?? ""}
-                      placeholder={
-                        zh
-                          ? "描述如何判断结果质量，以及不同分数代表什么。"
-                          : "Describe how to judge quality and what each score means."
-                      }
-                      onChange={(event) =>
-                        onChange({ ...selected, prompt: event.target.value })
-                      }
-                    />
-                  </label>
+                  {!selected.rubric ? (
+                    <label className="is-wide">
+                      <span>{zh ? "评分标准" : "Rubric"}</span>
+                      <textarea
+                        rows={10}
+                        value={selected.prompt ?? ""}
+                        placeholder={
+                          zh
+                            ? "填写完整的评估目标、检查步骤和评分分档。"
+                            : "Define the objective, evaluation steps, and score anchors."
+                        }
+                        onChange={(event) =>
+                          onChange({ ...selected, prompt: event.target.value })
+                        }
+                      />
+                    </label>
+                  ) : null}
                 </div>
+                {selected.rubric ? (
+                  <EvaluatorRubricEditor
+                    zh={zh}
+                    rubric={selected.rubric}
+                    customInstructions={selected.prompt ?? ""}
+                    onChange={(rubric) => onChange({ ...selected, rubric })}
+                    onChangeCustomInstructions={(prompt) =>
+                      onChange({ ...selected, prompt })
+                    }
+                  />
+                ) : null}
               </WorkbenchSection>
             ) : null}
           </div>

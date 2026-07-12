@@ -1,4 +1,5 @@
 import { describe, expect, it, vi } from "vitest";
+import { BUILT_IN_EVALUATION_RUBRICS } from "../shared/built-in-evaluation-rubrics";
 import { runEvaluation } from "./evaluation-runner";
 
 describe("runEvaluation", () => {
@@ -59,8 +60,9 @@ describe("runEvaluation", () => {
 
   it("uses a concrete Runtime config for an LLM judge", async () => {
     const execute = vi.fn(async () => ({ output: "answer", durationMs: 3 }));
-    const executeJudge = vi.fn(async () => ({
-      output: '{"score":0.8,"reason":"good"}',
+    const executeJudge = vi.fn(async (_runtimeId: string, _prompt: string) => ({
+      output:
+        '{"score":0.7,"reason":"minor padding","evidence":["answer"],"failedCriteria":["no-meta"]}',
       durationMs: 2,
     }));
     const run = await runEvaluation({
@@ -96,6 +98,7 @@ describe("runEvaluation", () => {
           name: "Judge",
           kind: "llm_judge",
           runtimeId: "runtime-openai",
+          rubric: BUILT_IN_EVALUATION_RUBRICS.conciseness,
           threshold: 0.7,
           enabled: true,
           createdAt: 1,
@@ -106,16 +109,67 @@ describe("runEvaluation", () => {
       executeJudge,
     });
     expect(run.results[0]?.scores[0]).toMatchObject({
-      score: 0.8,
+      score: 0.75,
       passed: true,
-      reason: "good",
+      reason: "minor padding",
+      evidence: ["answer"],
+      failedCriteria: ["no-meta"],
     });
     expect(execute).toHaveBeenCalledWith("subject", "question");
     expect(executeJudge).toHaveBeenCalledWith(
       "runtime-openai",
-      expect.stringMatching(
-        /Input: question[\s\S]*Answer: answer[\s\S]*Ground truth: reference answer[\s\S]*Context: trusted context/,
-      ),
+      expect.stringMatching(/## Evaluation checks[\s\S]*### Input\nquestion[\s\S]*### Answer\nanswer/),
     );
+    const judgePrompt = executeJudge.mock.calls[0]?.[1] ?? "";
+    expect(judgePrompt).not.toContain("reference answer");
+    expect(judgePrompt).not.toContain("trusted context");
+  });
+
+  it("fails explicitly when a structured rubric input is missing", async () => {
+    const executeJudge = vi.fn();
+    const run = await runEvaluation({
+      experiment: {
+        id: "experiment",
+        name: "Experiment",
+        datasetId: "dataset",
+        agentId: "subject",
+        evaluatorIds: ["hallucination"],
+        repetitions: 1,
+        createdAt: 1,
+        updatedAt: 1,
+      },
+      dataset: {
+        id: "dataset",
+        name: "Dataset",
+        description: "",
+        createdAt: 1,
+        updatedAt: 1,
+        items: [
+          { id: "case", input: "question", metadata: {}, sequence: 0 },
+        ],
+      },
+      evaluators: [
+        {
+          id: "hallucination",
+          name: "Hallucination",
+          kind: "llm_judge",
+          runtimeId: "runtime-openai",
+          rubric: BUILT_IN_EVALUATION_RUBRICS.hallucination,
+          threshold: 0.75,
+          enabled: true,
+          createdAt: 1,
+          updatedAt: 1,
+        },
+      ],
+      execute: vi.fn(async () => ({ output: "answer", durationMs: 1 })),
+      executeJudge,
+    });
+
+    expect(run.results[0]?.scores[0]).toMatchObject({
+      score: 0,
+      passed: false,
+      reason: "Missing required rubric inputs: context",
+    });
+    expect(executeJudge).not.toHaveBeenCalled();
   });
 });

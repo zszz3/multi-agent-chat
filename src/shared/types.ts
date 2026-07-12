@@ -126,11 +126,51 @@ export type EvaluatorKind =
   | "exact_match"
   | "json_valid"
   | "llm_judge";
+export type EvaluationRubricInput =
+  | "input"
+  | "output"
+  | "ground_truth"
+  | "context";
+export type EvaluationRubricScore = 0 | 0.25 | 0.5 | 0.75 | 1;
+export interface EvaluationRubricCheck {
+  id: string;
+  label: string;
+  description: string;
+}
+export interface EvaluationRubricAnchor {
+  score: EvaluationRubricScore;
+  label: string;
+  description: string;
+}
+export interface EvaluationRubricExample {
+  input?: string;
+  output: string;
+  score: EvaluationRubricScore;
+  reason: string;
+}
+export interface EvaluationRubricSource {
+  framework: string;
+  url: string;
+  license: string;
+  adapted: boolean;
+}
+export interface EvaluationRubric {
+  version: 1;
+  objective: string;
+  requiredInputs: EvaluationRubricInput[];
+  checks: EvaluationRubricCheck[];
+  steps: string[];
+  anchors: EvaluationRubricAnchor[];
+  rules: string[];
+  examples?: EvaluationRubricExample[];
+  source?: EvaluationRubricSource;
+}
 export interface EvaluationEvaluator {
   id: string;
   name: string;
   kind: EvaluatorKind;
   prompt?: string;
+  rubric?: EvaluationRubric;
   runtimeId?: string;
   threshold: number;
   enabled: boolean;
@@ -152,6 +192,8 @@ export interface EvaluationScore {
   score: number;
   passed: boolean;
   reason?: string;
+  evidence?: string[];
+  failedCriteria?: string[];
   durationMs: number;
   tokenCount?: number;
   estimatedCost?: number;
