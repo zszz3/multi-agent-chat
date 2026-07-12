@@ -25,7 +25,6 @@ describe("WorkflowPage input ownership", () => {
   test("does not render the legacy inline gate input for an awaiting node", () => {
     const value = controller(true);
     value.runProgress = [{ nodeId: "answer", title: "Answer", status: "awaiting_input", detail: "Provide more context" }];
-    value.onAnswerGate = () => undefined;
     const html = renderToStaticMarkup(<WorkflowPage controller={value} />);
     expect(html).not.toContain("workflow-gate-panel");
     expect(html).not.toContain("workflow-gate-panel-input");
@@ -45,7 +44,6 @@ describe("WorkflowPage input ownership", () => {
         requestedAt: 1,
       },
     }];
-    value.onResolveIntervention = () => undefined;
     const html = renderToStaticMarkup(<WorkflowPage controller={value} />);
     expect(html).not.toContain("workflow-intervention-panel");
     expect(html).not.toContain("Interactive node is waiting for user confirmation.");

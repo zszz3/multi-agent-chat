@@ -1,10 +1,8 @@
 import type {
-  AnswerWorkflowGateRequest,
   AppSnapshot,
   CreateWorkflowDraftRequest,
   PatchWorkflowDraftRequest,
   PauseWorkflowNodeRequest,
-  ResolveWorkflowV2InterventionRequest,
   RunWorkflowRequest,
   ListWorkflowOutputsRequest,
   SendWorkflowDraftReplyRequest,
@@ -30,9 +28,7 @@ export interface WorkflowService {
   runWorkflow: (request: RunWorkflowRequest) => Promise<WorkflowOperationResult>;
   pauseNode: (request: PauseWorkflowNodeRequest) => Promise<WorkflowOperationResult>;
   stopRun: (request: StopWorkflowRunRequest) => Promise<WorkflowOperationResult>;
-  resolveIntervention: (request: ResolveWorkflowV2InterventionRequest) => Promise<WorkflowOperationResult>;
   startNode: (request: StartWorkflowNodeRequest) => Promise<WorkflowOperationResult>;
-  answerGate: (request: AnswerWorkflowGateRequest) => Promise<WorkflowOperationResult>;
   sendNodeMessage: (request: SendWorkflowNodeMessageRequest) => Promise<AppSnapshot>;
   completeNodeConversation: (request: CompleteWorkflowNodeConversationRequest) => Promise<WorkflowOperationResult>;
   rejectNodeCompletion: (request: RejectWorkflowNodeCompletionRequest) => Promise<AppSnapshot>;
@@ -54,9 +50,7 @@ export function workflowService(): WorkflowService {
     runWorkflow: (request) => api.runWorkflow(request),
     pauseNode: (request) => api.pauseWorkflowNode(request),
     stopRun: (request) => api.stopWorkflowRun(request),
-    resolveIntervention: (request) => api.resolveWorkflowV2Intervention(request),
     startNode: (request) => api.startWorkflowNode(request),
-    answerGate: (request) => api.answerWorkflowGate(request),
     sendNodeMessage: (request) => api.sendWorkflowNodeMessage(request),
     completeNodeConversation: (request) => api.completeWorkflowNodeConversation(request),
     rejectNodeCompletion: (request) => api.rejectWorkflowNodeCompletion(request),
