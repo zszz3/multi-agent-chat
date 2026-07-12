@@ -88,7 +88,7 @@ export function restorePersistedMessageMap(input: {
     const messageRecord = asRecord(item);
     const ownerId = asOptionalString(messageRecord?.[input.ownerKey]);
     const message = messageRecord ? restoreMessage(messageRecord) : undefined;
-    if (!ownerId || !message) return undefined;
+    if (!ownerId || !message) continue;
     const messages = messagesByOwner.get(ownerId) ?? [];
     messages.push(message);
     messagesByOwner.set(ownerId, messages);
@@ -99,7 +99,7 @@ export function restorePersistedMessageMap(input: {
     const eventRecord = asRecord(item);
     const messageId = asOptionalString(eventRecord?.messageId);
     const event = eventRecord ? restoreEvent(eventRecord) : undefined;
-    if (!messageId || !event) return undefined;
+    if (!messageId || !event) continue;
     const events = eventsByMessage.get(messageId) ?? [];
     events.push(event);
     eventsByMessage.set(messageId, events);
@@ -141,12 +141,12 @@ export function restorePersistedCollections(
   for (const item of record.sessions) {
     const sessionRecord = asRecord(item);
     const chatId = asOptionalString(sessionRecord?.id);
-    if (!sessionRecord || !chatId) return undefined;
+    if (!sessionRecord || !chatId) continue;
     const chat = deps.restoreChatState({
       ...sessionRecord,
       messages: messagesByChat.get(chatId) ?? [],
     });
-    if (!chat) return undefined;
+    if (!chat) continue;
     chats.push(chat);
   }
 
@@ -154,24 +154,24 @@ export function restorePersistedCollections(
   for (const item of record.tasks ?? []) {
     const taskRecord = asRecord(item);
     const taskId = asOptionalString(taskRecord?.id);
-    if (!taskRecord || !taskId) return undefined;
+    if (!taskRecord || !taskId) continue;
     const task = deps.restoreTaskState({
       ...taskRecord,
       messages: messagesByTask.get(taskId) ?? [],
     });
-    if (!task) return undefined;
+    if (!task) continue;
     tasks.push(task);
   }
 
   const teams = (record.teams ?? []).map((item) => deps.restoreTeamState(item));
-  if (teams.some((item) => !item)) return undefined;
+  const validTeams = teams.filter((item): item is AgentTeamState => Boolean(item));
   const teamRuns = (record.teamRuns ?? []).map((item) => deps.restoreTeamRunState(item));
-  if (teamRuns.some((item) => !item)) return undefined;
+  const validTeamRuns = teamRuns.filter((item): item is TeamRunState => Boolean(item));
 
   return {
     chats,
     tasks,
-    teams: teams.filter((item): item is AgentTeamState => Boolean(item)),
-    teamRuns: teamRuns.filter((item): item is TeamRunState => Boolean(item)),
+    teams: validTeams,
+    teamRuns: validTeamRuns,
   };
 }

@@ -310,18 +310,18 @@ export function WorkflowPage(props: WorkflowPageProps) {
   const openNodeConversationGraphNode = graph.nodes.find((node) => node.id === openNodeAgentNodeId);
   const openNodeTaskId = openNodeAgentNodeId ? runProgressByNodeId.get(openNodeAgentNodeId)?.taskId : undefined;
   const openNodeTask = nodeTasks.find((task) => task.id === openNodeTaskId);
-  const nodeAgentSessions = graph.nodes.flatMap((node) => {
+  const nodeAgentSessions = graph.nodes.filter((node) => node.execModel === "llm").map((node) => {
     const conversation = nodeConversations.find((candidate) => candidate.nodeId === node.id);
     const taskId = runProgressByNodeId.get(node.id)?.taskId;
     const task = taskId ? nodeTasks.find((candidate) => candidate.id === taskId) : undefined;
-    return conversation || task ? [{ nodeId: node.id, nodeTitle: node.title, ...(conversation ? { conversation } : {}), ...(task ? { task } : {}) }] : [];
+    return { nodeId: node.id, nodeTitle: node.title, ...(conversation ? { conversation } : {}), ...(task ? { task } : {}) };
   });
   const nodePositionProps = {};
 
   useEffect(() => {
     if (dismissedNodeAgentRunIdRef.current && dismissedNodeAgentRunIdRef.current !== activeRunId) dismissedNodeAgentRunIdRef.current = undefined;
-    const waitingConversation = nodeConversations.find((conversation) => conversation.status === "waiting_for_user");
-    if (waitingConversation && !openNodeAgentNodeId && dismissedNodeAgentRunIdRef.current !== activeRunId) setOpenNodeAgentNodeId(waitingConversation.nodeId);
+    const attentionConversation = nodeConversations.find((conversation) => conversation.status === "waiting_for_user" || conversation.status === "completion_proposed");
+    if (attentionConversation && !openNodeAgentNodeId && dismissedNodeAgentRunIdRef.current !== activeRunId) setOpenNodeAgentNodeId(attentionConversation.nodeId);
   }, [activeRunId, nodeConversations, openNodeAgentNodeId]);
 
   useEffect(() => {
@@ -568,10 +568,10 @@ export function WorkflowPage(props: WorkflowPageProps) {
                 <button className="workflow-graph-close icon-btn" onClick={() => setGraphExpanded(false)} title="Close graph board" aria-label="Close workflow graph board">
                   <X size={15} />
                 </button>
-                {definition ? <WorkflowCanvasBoard definition={definition} expanded renderNodeCard={(node) => renderWorkflowNodeCard(node, false)} /> : null}
+                {definition ? <WorkflowCanvasBoard definition={definition} expanded onOpenAgentNode={setOpenNodeAgentNodeId} renderNodeCard={(node) => renderWorkflowNodeCard(node, false)} /> : null}
               </>
             ) : (
-              definition ? <WorkflowCanvasBoard definition={definition} runProgressByNodeId={runProgressByNodeId} onExpand={() => setGraphExpanded(true)} renderNodeCard={(node) => renderWorkflowNodeCard(node, true)} /> : null
+              definition ? <WorkflowCanvasBoard definition={definition} runProgressByNodeId={runProgressByNodeId} onOpenAgentNode={setOpenNodeAgentNodeId} onExpand={() => setGraphExpanded(true)} renderNodeCard={(node) => renderWorkflowNodeCard(node, true)} /> : null
             )}
             {runProgressVisible ? (
               <section className="workflow-run-progress" aria-label={workflowText.runProgress}>

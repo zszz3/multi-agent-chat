@@ -395,6 +395,7 @@ export class AgentHub {
   private persistTimer: ReturnType<typeof setTimeout> | undefined = undefined;
   private idleSweepTimer: ReturnType<typeof setInterval> | undefined = undefined;
   private persistInFlight: Promise<void> | undefined = undefined;
+  private persistenceWriteBlocked = false;
   private readonly executorFactory: AgentExecutorFactory;
   private readonly runtimeDrivers: RuntimeDriverRegistry;
   private readonly runtimeRouter: RuntimeRouter;
@@ -508,6 +509,7 @@ export class AgentHub {
 
   async loadPersistedState(storagePath: string): Promise<void> {
     this.storagePath = storagePath;
+    this.persistenceWriteBlocked = false;
     const loaded = await loadPersistedPayloadValue({
       storagePath,
       sqliteStoreFactory: (dbPath) => new SqliteAppStore(dbPath),
@@ -518,14 +520,14 @@ export class AgentHub {
     if (loaded.payload !== undefined) {
       const restored = this.restorePersistedState(loaded.payload);
       if (!restored) {
-        this.reinitializePersistedState();
+        this.persistenceWriteBlocked = true;
+        console.warn(`Persisted state at ${storagePath} could not be fully restored; keeping the database intact and starting with in-memory defaults.`);
+        return;
       }
       const reconciledWorkflowV2 = restored
         ? await this.reconcileRestoredWorkflowV2Runs()
         : false;
-      if (reconciledWorkflowV2
-        || !restored
-        || !Array.isArray(asRecord(loaded.payload)?.channels)) {
+      if (reconciledWorkflowV2 || !Array.isArray(asRecord(loaded.payload)?.channels)) {
         await this.persistState();
       }
       return;
@@ -1383,13 +1385,26 @@ export class AgentHub {
   async completeWorkflowNodeConversation(input: CompleteWorkflowNodeConversationRequest): Promise<WorkflowOperationResult> {
     const conversation = this.workflowNodeConversations.get(input.conversationId);
     if (!conversation) return { ok: false, error: "Workflow node conversation was not found." };
-    const proposal = this.workflowNodeConversations.confirmCompletion(input.conversationId);
-    return this.workflowRuntime.completeInteractiveNode({
-      workflowId: conversation.workflowId,
-      runId: conversation.runId,
-      nodeId: conversation.nodeId,
-      output: proposal.output,
-    });
+    if (!conversation.completionProposal || conversation.status !== "completion_proposed") {
+      return { ok: false, workflowId: conversation.workflowId, runId: conversation.runId, error: "The node agent has not proposed a complete output yet." };
+    }
+    let completionStarted = false;
+    try {
+      const proposal = this.workflowNodeConversations.beginCompletion(input.conversationId);
+      completionStarted = true;
+      const result = await this.workflowRuntime.completeInteractiveNode({
+        workflowId: conversation.workflowId,
+        runId: conversation.runId,
+        nodeId: conversation.nodeId,
+        output: proposal.output,
+      });
+      if (result.ok) await this.workflowNodeConversations.closeCompleted(input.conversationId);
+      else this.workflowNodeConversations.releaseCompletion(input.conversationId);
+      return result;
+    } catch (error) {
+      if (completionStarted) this.workflowNodeConversations.releaseCompletion(input.conversationId);
+      return { ok: false, workflowId: conversation.workflowId, runId: conversation.runId, error: error instanceof Error ? error.message : String(error) };
+    }
   }
 
   async rejectWorkflowNodeCompletion(input: RejectWorkflowNodeCompletionRequest): Promise<AppSnapshot> {
@@ -2599,7 +2614,6 @@ export class AgentHub {
     );
     if (!this.restoreWorkflowStore(record.workflowStore)) return false;
     this.workflowNodeConversations.restore(record.workflowNodeConversations ?? []);
-    this.workflowNodeConversations.restore(record.workflowNodeConversations ?? []);
     this.restoreScheduledWorkflowStore(record.scheduledWorkflowStore);
     return true;
   }
@@ -2838,7 +2852,7 @@ export class AgentHub {
   }
 
   private schedulePersist(): void {
-    if (!this.storagePath) return;
+    if (!this.storagePath || this.persistenceWriteBlocked) return;
     if (this.persistTimer) clearTimeout(this.persistTimer);
     this.persistTimer = setTimeout(() => {
       this.persistTimer = undefined;
@@ -2868,7 +2882,7 @@ export class AgentHub {
   }
 
   private async persistState(): Promise<void> {
-    if (!this.storagePath) return;
+    if (!this.storagePath || this.persistenceWriteBlocked) return;
     if (this.persistInFlight) await this.persistInFlight;
 
     const payload = this.buildPersistedPayload();

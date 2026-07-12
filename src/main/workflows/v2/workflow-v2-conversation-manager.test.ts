@@ -89,10 +89,49 @@ describe("WorkflowV2ConversationManager", () => {
     expect(proposed.status).toBe("completion_proposed");
     expect(manager.get(started.conversationId)?.status).not.toBe("closed");
 
-    const confirmed = manager.confirmCompletion(started.conversationId);
+    const confirmed = manager.completionProposal(started.conversationId);
     expect(confirmed.output).toEqual(output());
+    expect(manager.get(started.conversationId)?.status).toBe("completion_proposed");
+    await manager.closeCompleted(started.conversationId);
     expect(manager.get(started.conversationId)?.status).toBe("closed");
     expect(started.conversationId).toBe(workflowNodeConversationId("workflow-1", "run-1", "collect"));
+  });
+
+  test("keeps the conversation open until downstream persistence succeeds", async () => {
+    const manager = new WorkflowV2ConversationManager({ now: () => 1, createSession: () => ({ sendPrompt: async () => undefined, interrupt: async () => undefined, close: async () => undefined, runtimeConversation: () => undefined }) });
+    const started = await manager.start({ workflowId: "w", runId: "r", nodeId: "n", configuredAgentId: "a", modelId: "m", workDir: "C:/workspace", initialPrompt: "Work" });
+    expect(() => manager.completionProposal(started.conversationId)).toThrow(/no completion proposal/i);
+    expect(manager.get(started.conversationId)?.status).toBe("active");
+  });
+
+  test("serializes completion confirmation and releases the interactive session", async () => {
+    let closed = 0;
+    const manager = new WorkflowV2ConversationManager({ now: () => 1, createSession: () => ({ sendPrompt: async () => undefined, interrupt: async () => undefined, close: async () => { closed += 1; }, runtimeConversation: () => undefined }) });
+    const started = await manager.start({ workflowId: "w", runId: "r", nodeId: "n", configuredAgentId: "a", modelId: "m", workDir: "C:/workspace", initialPrompt: "Work" });
+    manager.proposeCompletion(started.conversationId, { output: output(), acceptanceCriteria: [], unresolvedRisks: [] });
+    manager.beginCompletion(started.conversationId);
+    expect(() => manager.beginCompletion(started.conversationId)).toThrow(/already being confirmed/i);
+    await manager.closeCompleted(started.conversationId);
+    expect(closed).toBe(1);
+  });
+
+  test("does not accept a new user message while completion is being confirmed", async () => {
+    const manager = new WorkflowV2ConversationManager({ now: () => 1, createSession: () => ({ sendPrompt: async () => undefined, interrupt: async () => undefined, close: async () => undefined, runtimeConversation: () => undefined }) });
+    const started = await manager.start({ workflowId: "w", runId: "r", nodeId: "n", configuredAgentId: "a", modelId: "m", workDir: "C:/workspace", initialPrompt: "Work" });
+    manager.proposeCompletion(started.conversationId, { output: output(), acceptanceCriteria: [], unresolvedRisks: [] });
+    manager.beginCompletion(started.conversationId);
+    await expect(manager.sendUserMessage(started.conversationId, "Actually change this.")).rejects.toThrow(/being confirmed/i);
+  });
+
+  test("ignores late agent events after a completed conversation is closed", async () => {
+    let emit!: (event: AgentEvent) => void;
+    const manager = new WorkflowV2ConversationManager({ now: () => 1, createSession: (input) => { emit = input.emit; return { sendPrompt: async () => undefined, interrupt: async () => undefined, close: async () => undefined, runtimeConversation: () => undefined }; } });
+    const started = await manager.start({ workflowId: "w", runId: "r", nodeId: "n", configuredAgentId: "a", modelId: "m", workDir: "C:/workspace", initialPrompt: "Work" });
+    manager.proposeCompletion(started.conversationId, { output: output(), acceptanceCriteria: [], unresolvedRisks: [] });
+    manager.beginCompletion(started.conversationId);
+    await manager.closeCompleted(started.conversationId);
+    emit({ type: "completed", content: "late result" });
+    expect(manager.get(started.conversationId)?.status).toBe("closed");
   });
 
   test("rejects a completion proposal by continuing the same conversation", async () => {

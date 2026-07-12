@@ -110,7 +110,11 @@ export function useWorkflowFeatureController({
       onSendNodeMessage: async (conversationId, message) => setSnapshot(await workflows.sendNodeMessage({ conversationId, message })),
       onCompleteNodeConversation: async (conversationId) => {
         const result = await workflows.completeNodeConversation({ conversationId });
-        if (!result.ok && result.error && draft.workflowId) setSnapshot(await workflows.patchDraft({ workflowId: draft.workflowId, error: result.error }));
+        if (!result.ok) {
+          const error = result.error ?? "Workflow node completion could not be confirmed.";
+          if (draft.workflowId) setSnapshot(await workflows.patchDraft({ workflowId: draft.workflowId, error }));
+          throw new Error(error);
+        }
       },
       onRejectNodeCompletion: async (conversationId, instruction) => setSnapshot(await workflows.rejectNodeCompletion({ conversationId, instruction })),
       onInterruptNodeConversation: async (conversationId) => setSnapshot(await workflows.interruptNodeConversation({ conversationId })),

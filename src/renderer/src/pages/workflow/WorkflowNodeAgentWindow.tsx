@@ -34,23 +34,27 @@ export function WorkflowNodeAgentWindow({ conversation, task, sessions = [], sel
 }) {
   const [drafts, setDrafts] = useState<Record<string, string>>({});
   const [rejecting, setRejecting] = useState(false);
+  const [actionError, setActionError] = useState<string | undefined>(undefined);
   const draftKey = selectedNodeId ?? conversation?.nodeId ?? task?.id ?? "current";
   const message = drafts[draftKey] ?? "";
   const setMessage = (value: string) => setDrafts((current) => ({ ...current, [draftKey]: value }));
-  const acceptsInput = conversation?.status === "waiting_for_user" || (conversation?.status === "completion_proposed" && rejecting);
+  const acceptsInput = Boolean(conversation && conversation.status !== "closed" && conversation.status !== "failed" && (conversation.status !== "completion_proposed" || rejecting));
   const submit = async () => {
     const content = message.trim();
     if (!content) return;
-    if (rejecting && onReject) await onReject(content);
-    else if (onSend) await onSend(content);
-    setMessage("");
-    setRejecting(false);
+    try {
+      setActionError(undefined);
+      if (rejecting && onReject) await onReject(content);
+      else if (onSend) await onSend(content);
+      setMessage("");
+      setRejecting(false);
+    } catch (error) { setActionError(error instanceof Error ? error.message : String(error)); }
   };
   const identity = conversation
     ? `${conversation.status} · ${conversation.modelId} · ${conversation.conversationId}`
     : task
       ? `${task.status} · ${task.modelId} · ${task.runtimeConversation?.runtimeId ?? "one-shot"}`
-      : "Connecting to node agent...";
+      : "Node has not started yet.";
   const orderedSessions = [...sessions].sort((left, right) => sessionStatus(left).group - sessionStatus(right).group || left.nodeTitle.localeCompare(right.nodeTitle));
   const attentionCount = sessions.filter((session) => sessionStatus(session).attention).length;
 
@@ -75,19 +79,20 @@ export function WorkflowNodeAgentWindow({ conversation, task, sessions = [], sel
           </div>; }) : task ? task.messages.map((item) => <div key={item.id} className={`workflow-node-agent-message is-${item.role}`}>
             <span>{item.role} · {new Date(item.timestamp).toLocaleTimeString()}</span><p>{item.content}</p>
           </div>) : <div className="workflow-node-agent-message is-system">
-            <span>system</span><p>The interactive session is being created. Input will be enabled as soon as it is ready.</p>
+            <span>Node status</span><p>This agent node has not produced runtime activity yet. Its full conversation will appear here after execution starts.</p>
           </div>}
         </div>
         {conversation?.completionProposal ? <div className="workflow-node-completion-proposal">
           <strong>Completion proposal</strong><p>{conversation.completionProposal.output.summary}</p>
           {conversation.completionProposal.unresolvedRisks.length ? <ul>{conversation.completionProposal.unresolvedRisks.map((risk) => <li key={risk}>{risk}</li>)}</ul> : null}
           <div className="workflow-node-agent-actions">
-            <button className="control-btn compact" onClick={() => void onConfirm?.()}>Confirm and continue</button>
+            <button className="control-btn compact" onClick={() => void Promise.resolve(onConfirm?.()).catch((error) => setActionError(error instanceof Error ? error.message : String(error)))}>Confirm and continue</button>
             <button className="control-btn compact secondary" onClick={() => setRejecting(true)}>Reject / request changes</button>
           </div>
         </div> : null}
+        {actionError ? <div className="workflow-node-agent-error" role="alert">{actionError}</div> : null}
         <footer>
-          <textarea value={message} disabled={!acceptsInput} onChange={(event) => setMessage(event.currentTarget.value)} placeholder={conversation ? (rejecting ? "Describe required changes..." : "Send information to this node agent...") : task ? "This one-shot node is read-only." : "Connecting; input will be available shortly..."} rows={3} />
+          <textarea value={message} disabled={!acceptsInput} onChange={(event) => setMessage(event.currentTarget.value)} placeholder={conversation ? (rejecting ? "Describe required changes..." : "Send information to this node agent...") : task ? "This one-shot node is read-only." : "This node has not started; there is no active conversation yet."} rows={3} />
           <div>
             <button className="icon-btn" disabled={!conversation} onClick={() => void onInterrupt?.()} title="Interrupt agent"><CircleStop size={16} /></button>
             <button className="send-btn" disabled={!acceptsInput || !message.trim()} onClick={() => void submit()}><Send size={14} /><span>Send</span></button>

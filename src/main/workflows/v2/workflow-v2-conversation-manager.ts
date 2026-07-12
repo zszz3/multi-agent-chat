@@ -29,6 +29,7 @@ export class WorkflowV2ConversationManager {
   private readonly conversations = new Map<string, WorkflowNodeConversation>();
   private readonly sessions = new Map<string, WorkflowNodeInteractiveSession>();
   private readonly restoredInputs = new Map<string, CreateWorkflowNodeConversationInput>();
+  private readonly completing = new Set<string>();
 
   constructor(private readonly deps: {
     now: () => number;
@@ -77,6 +78,7 @@ export class WorkflowV2ConversationManager {
 
   async sendUserMessage(conversationId: string, content: string): Promise<WorkflowNodeConversation> {
     const conversation = this.mutableRequired(conversationId);
+    if (this.completing.has(conversationId)) throw new Error("Workflow node completion is being confirmed.");
     const session = this.sessionForConversation(conversationId);
     const message = content.trim();
     if (!message) throw new Error("Workflow node conversation message is required.");
@@ -107,14 +109,35 @@ export class WorkflowV2ConversationManager {
     return this.getRequired(conversationId);
   }
 
-  confirmCompletion(conversationId: string): WorkflowNodeCompletionProposal {
+  completionProposal(conversationId: string): WorkflowNodeCompletionProposal {
     const conversation = this.mutableRequired(conversationId);
     if (conversation.status !== "completion_proposed" || !conversation.completionProposal) {
       throw new Error("Workflow node conversation has no completion proposal to confirm.");
     }
-    conversation.status = "closed";
-    this.changed(conversation);
     return structuredClone(conversation.completionProposal);
+  }
+
+  beginCompletion(conversationId: string): WorkflowNodeCompletionProposal {
+    if (this.completing.has(conversationId)) throw new Error("Workflow node completion is already being confirmed.");
+    const proposal = this.completionProposal(conversationId);
+    this.completing.add(conversationId);
+    return proposal;
+  }
+
+  async closeCompleted(conversationId: string): Promise<WorkflowNodeConversation> {
+    const conversation = this.mutableRequired(conversationId);
+    if (!conversation.completionProposal) throw new Error("Workflow node conversation has no completed output.");
+    conversation.status = "closed";
+    this.completing.delete(conversationId);
+    const session = this.sessions.get(conversationId);
+    this.sessions.delete(conversationId);
+    await session?.close().catch(() => undefined);
+    this.changed(conversation);
+    return this.getRequired(conversationId);
+  }
+
+  releaseCompletion(conversationId: string): void {
+    this.completing.delete(conversationId);
   }
 
   async rejectCompletion(conversationId: string, instruction: string): Promise<WorkflowNodeConversation> {
@@ -167,7 +190,8 @@ export class WorkflowV2ConversationManager {
   }
 
   private recordEvent(conversationId: string, event: AgentEvent): void {
-    const conversation = this.mutableRequired(conversationId);
+    const conversation = this.conversations.get(conversationId);
+    if (!conversation || conversation.status === "closed") return;
     const content = "content" in event && typeof event.content === "string" ? event.content : "";
     if (content && event.type !== "delta" && event.type !== "completed") {
       this.appendMessage(conversation, event.type === "tool_call" || event.type === "tool_result" ? "tool" : "assistant", content, this.deps.now(), event.type, "name" in event && typeof event.name === "string" ? event.name : undefined);
@@ -192,8 +216,10 @@ export class WorkflowV2ConversationManager {
   }
 
   private syncRuntimeConversation(conversationId: string): void {
-    const conversation = this.mutableRequired(conversationId);
-    const runtimeConversation = this.sessionRequired(conversationId).runtimeConversation();
+    const conversation = this.conversations.get(conversationId);
+    const session = this.sessions.get(conversationId);
+    if (!conversation || !session || conversation.status === "closed") return;
+    const runtimeConversation = session.runtimeConversation();
     if (runtimeConversation) conversation.runtimeConversation = structuredClone(runtimeConversation);
   }
 

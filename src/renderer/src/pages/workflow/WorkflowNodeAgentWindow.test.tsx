@@ -3,11 +3,11 @@ import { describe, expect, test } from "vitest";
 import { WorkflowNodeAgentWindow } from "./WorkflowNodeAgentWindow";
 
 describe("WorkflowNodeAgentWindow", () => {
-  test("renders a connecting conversation surface before the backend session arrives", () => {
+  test("renders a queued agent node before runtime activity exists", () => {
     const html = renderToStaticMarkup(<WorkflowNodeAgentWindow nodeTitle="Collect requirements" onClose={() => undefined} />);
-    expect(html).toContain("Connecting to node agent");
-    expect(html).toContain("interactive session is being created");
-    expect(html).toContain("Connecting; input will be available shortly");
+    expect(html).toContain("Node has not started yet");
+    expect(html).toContain("has not produced runtime activity yet");
+    expect(html).toContain("there is no active conversation yet");
   });
 
   test("renders durable agent activity and enables the independent composer", () => {
@@ -50,6 +50,14 @@ describe("WorkflowNodeAgentWindow", () => {
     expect(html).toContain("web_search");
     expect(html).toContain("is-tool-call");
     expect(html).toContain("is-tool-result");
+  });
+
+  test("allows messaging an active interactive node before it explicitly asks for input", () => {
+    const html = renderToStaticMarkup(<WorkflowNodeAgentWindow nodeTitle="Research" onClose={() => undefined} onSend={() => undefined} conversation={{
+      conversationId: "w::r::research", workflowId: "w", runId: "r", nodeId: "research", configuredAgentId: "a", modelId: "m", workDir: "C:/workspace", status: "active", messages: [], createdAt: 1, updatedAt: 1, lastActivityAt: 1,
+    }} />);
+    expect(html).not.toContain("textarea disabled");
+    expect(html).toContain("Send information to this node agent");
   });
   test("renders a switchable queue for parallel node conversations", () => {
     const html = renderToStaticMarkup(<WorkflowNodeAgentWindow
