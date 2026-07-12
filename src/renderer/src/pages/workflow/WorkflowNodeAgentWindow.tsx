@@ -37,10 +37,10 @@ export function WorkflowNodeAgentWindow({ conversation, task, nodeTitle, onClose
         <button className="icon-btn" onClick={onClose} aria-label="Close node conversation"><X size={16} /></button>
       </header>
       <div className="workflow-node-agent-messages">
-        {conversation ? conversation.messages.map((item) => <div key={item.id} className={`workflow-node-agent-message is-${item.role}`}>
-          <span>{item.role} Â· {new Date(item.at).toLocaleTimeString()}</span><p>{item.content}</p>
-        </div>) : task ? task.messages.map((item) => <div key={item.id} className={`workflow-node-agent-message is-${item.role}`}>
-          <span>{item.role} Â· {new Date(item.timestamp).toLocaleTimeString()}</span><p>{item.content}</p>
+        {conversation ? conversation.messages.map((item) => { const kind = item.eventType === "tool_call" ? "tool-call" : item.eventType === "tool_result" ? "tool-result" : item.role; const label = item.role === "system" ? "System instruction" : item.eventType === "tool_call" ? `Tool call${item.name ? ` ¡¤ ${item.name}` : ""}` : item.eventType === "tool_result" ? `Tool result${item.name ? ` ¡¤ ${item.name}` : ""}` : item.role === "assistant" ? "Agent" : "You"; return <div key={item.id} className={`workflow-node-agent-message is-${kind}`}>
+          <span>{label} ¡¤ {new Date(item.at).toLocaleTimeString()}</span><p>{item.content}</p>
+        </div>; }) : task ? task.messages.map((item) => <div key={item.id} className={`workflow-node-agent-message is-${item.role}`}>
+          <span>{item.role} ¡¤ {new Date(item.timestamp).toLocaleTimeString()}</span><p>{item.content}</p>
         </div>) : <div className="workflow-node-agent-message is-system">
           <span>system</span><p>The interactive session is being created. Input will be enabled as soon as it is ready.</p>
         </div>}

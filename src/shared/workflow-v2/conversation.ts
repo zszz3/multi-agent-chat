@@ -15,6 +15,7 @@ export interface WorkflowNodeMessage {
   content: string;
   at: number;
   eventType?: AgentEvent["type"];
+  name?: string;
 }
 
 export interface WorkflowNodeCompletionProposal {

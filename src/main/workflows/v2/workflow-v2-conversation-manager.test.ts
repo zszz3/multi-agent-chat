@@ -24,8 +24,25 @@ describe("WorkflowV2ConversationManager", () => {
     const started = await manager.start({ workflowId: "w", runId: "r", nodeId: "interactive", configuredAgentId: "a", modelId: "m", workDir: "C:/workspace", initialPrompt: "Collect requirements" });
 
     expect(started).toMatchObject({ status: "active", nodeId: "interactive" });
-    expect(manager.get(started.conversationId)?.messages).toEqual([expect.objectContaining({ role: "user", content: "Collect requirements" })]);
+    expect(manager.get(started.conversationId)?.messages).toEqual([expect.objectContaining({ role: "system", content: "Collect requirements" })]);
     release();
+  });
+  test("preserves tool names so the node window can distinguish calls from results", async () => {
+    let emit!: (event: AgentEvent) => void;
+    const manager = new WorkflowV2ConversationManager({
+      now: () => 8,
+      createSession: (input) => {
+        emit = input.emit;
+        return { sendPrompt: async () => undefined, interrupt: async () => undefined, close: async () => undefined, runtimeConversation: () => undefined };
+      },
+    });
+    const started = await manager.start({ workflowId: "w", runId: "r", nodeId: "n", configuredAgentId: "a", modelId: "m", workDir: "C:/workspace", initialPrompt: "Inspect files" });
+    emit({ type: "tool_call", name: "shell_command", content: "Get-ChildItem" });
+    emit({ type: "tool_result", name: "shell_command", content: "package.json" });
+    expect(manager.get(started.conversationId)?.messages.slice(-2)).toEqual([
+      expect.objectContaining({ role: "tool", eventType: "tool_call", name: "shell_command" }),
+      expect.objectContaining({ role: "tool", eventType: "tool_result", name: "shell_command" }),
+    ]);
   });
   test("reuses one interactive session across multiple user turns and requires confirmation", async () => {
     let now = 10;

@@ -1,4 +1,4 @@
-ï»¿import { mkdir, mkdtemp, readFile, writeFile } from "node:fs/promises";
+import { mkdir, mkdtemp, readFile, writeFile } from "node:fs/promises";
 import os from "node:os";
 import path from "node:path";
 import { describe, expect, test, vi } from "vitest";
@@ -2706,7 +2706,7 @@ fs.writeFileSync(${JSON.stringify(argsPath)}, process.argv.slice(2).join("\\n") 
     const chat = (hub as any).chats.get(chatId);
 
     (hub as any).handleAgentEvent(chat, { type: "delta", content: "I will inspect files." });
-    (hub as any).handleAgentEvent(chat, { type: "meta", content: "éˆ«?shell_command\nls" });
+    (hub as any).handleAgentEvent(chat, { type: "meta", content: "â†?shell_command\nls" });
     (hub as any).handleAgentEvent(chat, { type: "delta", content: "Found the files." });
 
     const activeChat = hub.snapshot().chats.find((item) => item.id === chatId);
@@ -2714,7 +2714,7 @@ fs.writeFileSync(${JSON.stringify(argsPath)}, process.argv.slice(2).join("\\n") 
     expect(activeChat?.messages[0]).toMatchObject({
       role: "assistant",
       content: "I will inspect files.Found the files.",
-      events: [expect.objectContaining({ type: "meta", content: "éˆ«?shell_command\nls" })],
+      events: [expect.objectContaining({ type: "meta", content: "â†?shell_command\nls" })],
     });
   });
 
@@ -2959,7 +2959,7 @@ fs.writeFileSync(${JSON.stringify(argsPath)}, process.argv.slice(2).join("\\n") 
     expect(argv.join("\n").split("\\").join("/").replaceAll("//", "/")).toContain(path.join(dir, "mcp-bridge.json").split("\\").join("/"));
   });
 
-  test("creates and activates a workflow from Codex workflow_create tool calls", async () => {
+  test("materializes Codex workflow_create results into the originating workflow session", async () => {
     const dir = await mkdtemp(path.join(os.tmpdir(), "multi-agent-chat-workflow-tool-"));
     const fake = await writeWorkflowToolCodexFake(dir);
     const hub = new AgentHub({ codex: fake.executable, claude: "missing-claude-for-test" });
@@ -2980,7 +2980,7 @@ fs.writeFileSync(${JSON.stringify(argsPath)}, process.argv.slice(2).join("\\n") 
     });
 
     expect(next.workflowDraft).toMatchObject({
-      workflowId: expect.stringMatching(/^wf_/),
+      workflowId: sourceWorkflowId,
       title: "MCP Planned Workflow",
       objective: "Build a workflow through MCP",
       messages: [
@@ -2989,14 +2989,16 @@ fs.writeFileSync(${JSON.stringify(argsPath)}, process.argv.slice(2).join("\\n") 
       ],
       runtimeConversation: runtimeConversation("codex", { native: { threadId: "thread-1" } }),
     });
-    expect(next.workflowDraft?.workflowId).not.toBe(sourceWorkflowId);
+    expect(next.workflowDraft?.workflowId).toBe(sourceWorkflowId);
+    expect(next.workflowDraft?.definition?.workflowId).toBe(sourceWorkflowId);
+    expect(next.workflowDraft?.workflowV2Plan?.workflowId).toBe(sourceWorkflowId);
     expect(next.workflowDraft?.definition?.nodes).toEqual([
       expect.objectContaining({ id: "plan", executionMode: "interactive" }),
     ]);
     expect(next.workflowDraft?.workflowV2Plan?.nodes).toEqual([
       expect.objectContaining({ nodeId: "plan", executionMode: "interactive" }),
     ]);
-    expect(next.workflowStore.workflows.some((workflow) => workflow.workflowId === sourceWorkflowId)).toBe(false);
+    expect(next.workflowStore.workflows.filter((workflow) => workflow.workflowId === sourceWorkflowId)).toHaveLength(1);
 
     const calls = (await readFile(fake.callsPath, "utf8")).trim().split("\n").map((line) => JSON.parse(line) as any);
     expect(calls.some((call) => call.method === "client/toolResponse" && call.params.success === true)).toBe(true);
@@ -3368,7 +3370,7 @@ fs.writeFileSync(${JSON.stringify(argsPath)}, process.argv.slice(2).join("\\n") 
     addConfiguredAgents(hub, [configuredAgent("claude-agent", { runtimeAgentId: "claude", name: "Claude Agent" })]);
     const chat = hub.createChat("claude-agent");
     const chatState = (hub as any).chats.get(chat.id);
-    (hub as any).handleAgentEvent(chatState, { type: "meta", content: "éˆ«?shell_command\npwd" });
+    (hub as any).handleAgentEvent(chatState, { type: "meta", content: "â†?shell_command\npwd" });
     (hub as any).handleAgentEvent(chatState, { type: "delta", content: "Saved response" });
     (hub as any).handleAgentEvent(chatState, { type: "completed" });
     await hub.flushPersistence();
@@ -3377,7 +3379,7 @@ fs.writeFileSync(${JSON.stringify(argsPath)}, process.argv.slice(2).join("\\n") 
     expect(persisted.version).toBe(5);
     expect(persisted.sessions).toEqual([expect.objectContaining({ id: expect.any(String) }), expect.objectContaining({ id: chat.id })]);
     expect(persisted.messages).toEqual(expect.arrayContaining([expect.objectContaining({ chatId: chat.id, role: "assistant" })]));
-    expect(persisted.events).toEqual(expect.arrayContaining([expect.objectContaining({ chatId: chat.id, type: "meta", content: "éˆ«?shell_command\npwd" })]));
+    expect(persisted.events).toEqual(expect.arrayContaining([expect.objectContaining({ chatId: chat.id, type: "meta", content: "â†?shell_command\npwd" })]));
 
     const restored = new AgentHub();
     await restored.loadPersistedState(storagePath);
@@ -3392,7 +3394,7 @@ fs.writeFileSync(${JSON.stringify(argsPath)}, process.argv.slice(2).join("\\n") 
       expect.objectContaining({
         role: "assistant",
         content: "Saved response",
-        events: [expect.objectContaining({ type: "meta", content: "éˆ«?shell_command\npwd" })],
+        events: [expect.objectContaining({ type: "meta", content: "â†?shell_command\npwd" })],
       }),
     ]);
   });
@@ -5482,7 +5484,7 @@ describe("AgentHub task runs", () => {
     });
     (hub as any).tasks.set(task.id, task);
     (hub as any).handleAgentEvent(task, { type: "delta", content: "Working" });
-    (hub as any).handleAgentEvent(task, { type: "meta", content: "éˆ«?shell_command\npwd" });
+    (hub as any).handleAgentEvent(task, { type: "meta", content: "â†?shell_command\npwd" });
     (hub as any).handleAgentEvent(task, { type: "completed" });
 
     const snapshot = hub.snapshot();
@@ -5491,7 +5493,7 @@ describe("AgentHub task runs", () => {
       expect.objectContaining({
         role: "assistant",
         content: "Working",
-        events: [expect.objectContaining({ type: "meta", content: "éˆ«?shell_command\npwd" })],
+        events: [expect.objectContaining({ type: "meta", content: "â†?shell_command\npwd" })],
       }),
     ]);
     expect(snapshot.chats[0]?.messages).toEqual([]);

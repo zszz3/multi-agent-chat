@@ -2223,16 +2223,19 @@ export class AgentHub {
         ? this.replaceWorkflowDraftMessage(sourceMessages, activeRequest.assistantMessageId, event.content)
         : [...sourceMessages, { id: activeRequest.assistantMessageId, role: "assistant" as const, content: event.content }];
       const runtimeConversation = sourceWorkflow?.runtimeConversation ?? targetWorkflow.runtimeConversation;
-      this.workflowStore.workflows.set(event.workflowId, this.cloneWorkflowDraft({
+      this.workflowStore.workflows.set(workflowId, this.cloneWorkflowDraft({
         ...targetWorkflow,
+        workflowId,
+        ...(targetWorkflow.definition ? { definition: { ...targetWorkflow.definition, workflowId } } : {}),
+        ...(targetWorkflow.workflowV2Plan ? { workflowV2Plan: { ...targetWorkflow.workflowV2Plan, workflowId } } : {}),
         messages,
         ...(runtimeConversation ? { runtimeConversation } : {}),
         updatedAt: Date.now(),
       }));
       this.activeWorkflowDraftRequests.delete(workflowId);
-      this.activeWorkflowDraftRequests.set(event.workflowId, activeRequest);
-      if (workflowId !== event.workflowId) this.workflowStore.workflows.delete(workflowId);
-      this.workflowStore.activeId = event.workflowId;
+      this.activeWorkflowDraftRequests.set(workflowId, activeRequest);
+      if (workflowId !== event.workflowId) this.workflowStore.workflows.delete(event.workflowId);
+      this.workflowStore.activeId = workflowId;
       this.emit();
       return;
     }

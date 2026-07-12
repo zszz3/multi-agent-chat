@@ -34,4 +34,20 @@ describe("WorkflowNodeAgentWindow", () => {
     expect(html).toContain("workflow::run::collect");
     expect(html).not.toContain("textarea disabled");
   });
-});
+
+  test("visually labels system instructions, tool calls, and tool results", () => {
+    const html = renderToStaticMarkup(<WorkflowNodeAgentWindow nodeTitle="Research" onClose={() => undefined} conversation={{
+      conversationId: "workflow::run::research", workflowId: "workflow", runId: "run", nodeId: "research", configuredAgentId: "agent", modelId: "model", workDir: "C:/workspace", status: "active",
+      messages: [
+        { id: "m1", role: "system", content: "Research the topic", at: 1 },
+        { id: "m2", role: "tool", content: "query", at: 2, eventType: "tool_call", name: "web_search" },
+        { id: "m3", role: "tool", content: "3 results", at: 3, eventType: "tool_result", name: "web_search" },
+      ], createdAt: 1, updatedAt: 4, lastActivityAt: 4,
+    }} />);
+    expect(html).toContain("System instruction");
+    expect(html).toContain("Tool call");
+    expect(html).toContain("Tool result");
+    expect(html).toContain("web_search");
+    expect(html).toContain("is-tool-call");
+    expect(html).toContain("is-tool-result");
+  });});

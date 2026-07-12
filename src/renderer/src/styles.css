@@ -5953,7 +5953,7 @@ textarea:focus-visible {
 }
 
 .agent-provider-disclosure[open] > summary::after {
-  content: "âˆ’";
+  content: "âˆ?;
 }
 
 .agent-provider-preset-list {
@@ -7378,7 +7378,7 @@ body,
 }
 
 /* ============================================================================
-   LINEAR DESIGN LAYER â€” consolidated
+   LINEAR DESIGN LAYER â€?consolidated
    Replaces the former stacked reskin layers (v2â€“v6). The structural base lives
    above; this single, deduplicated layer carries the Linear identity: tokens,
    density, the frameless icon rail, the centered chat reading column, the
@@ -8180,7 +8180,7 @@ textarea:focus-visible {
 }
 
 /* feature panes that own their padding must win over .content (equal
-   specificity â†’ must come after it in the cascade) */
+   specificity â†?must come after it in the cascade) */
 .chat-content {
   gap: 0;
   padding: 0;
@@ -9795,6 +9795,10 @@ textarea:focus-visible {
 .workflow-node-agent-messages { overflow: auto; padding: 18px; display: grid; align-content: start; gap: 12px; }
 .workflow-node-agent-message { max-width: 84%; padding: 10px 12px; border-radius: 14px; background: var(--soft); }
 .workflow-node-agent-message.is-user { justify-self: end; background: color-mix(in srgb, var(--accent) 16%, var(--panel)); }
+.workflow-node-agent-message.is-system { max-width: 100%; border: 1px solid color-mix(in srgb, var(--muted) 30%, var(--border)); background: color-mix(in srgb, var(--muted) 8%, var(--panel)); }
+.workflow-node-agent-message.is-tool-call,
+.workflow-node-agent-message.is-tool-result { max-width: 100%; border-left: 3px solid var(--accent); border-radius: 8px; background: color-mix(in srgb, var(--accent) 7%, var(--panel)); font-family: var(--font-mono, monospace); }
+.workflow-node-agent-message.is-tool-result { border-left-color: var(--ok); background: color-mix(in srgb, var(--ok) 7%, var(--panel)); }
 .workflow-node-agent-message span { color: var(--muted); font-size: 11px; }
 .workflow-node-agent-message p { margin: 5px 0 0; white-space: pre-wrap; }
 .workflow-node-completion-proposal { margin: 0 18px 12px; padding: 14px; border: 1px solid color-mix(in srgb, var(--ok) 46%, var(--border)); border-radius: 14px; background: color-mix(in srgb, var(--ok) 8%, var(--panel)); }

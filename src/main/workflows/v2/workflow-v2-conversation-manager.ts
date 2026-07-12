@@ -58,7 +58,7 @@ export class WorkflowV2ConversationManager {
     const session = this.deps.createSession({ ...input, emit: (event) => this.recordEvent(conversationId, event) });
     this.conversations.set(conversationId, conversation);
     this.sessions.set(conversationId, session);
-    this.appendMessage(conversation, "user", input.initialPrompt, now);
+    this.appendMessage(conversation, "system", input.initialPrompt, now);
     conversation.status = "active";
     this.changed(conversation);
     void session.sendPrompt(input.initialPrompt)
@@ -158,7 +158,7 @@ export class WorkflowV2ConversationManager {
     const conversation = this.mutableRequired(conversationId);
     const content = "content" in event && typeof event.content === "string" ? event.content : "";
     if (content && event.type !== "delta" && event.type !== "completed") {
-      this.appendMessage(conversation, event.type === "tool_call" || event.type === "tool_result" ? "tool" : "assistant", content, this.deps.now(), event.type);
+      this.appendMessage(conversation, event.type === "tool_call" || event.type === "tool_result" ? "tool" : "assistant", content, this.deps.now(), event.type, "name" in event && typeof event.name === "string" ? event.name : undefined);
     }
     if (event.type === "delta") {
       const last = conversation.messages.at(-1);
@@ -185,8 +185,8 @@ export class WorkflowV2ConversationManager {
     if (runtimeConversation) conversation.runtimeConversation = structuredClone(runtimeConversation);
   }
 
-  private appendMessage(conversation: WorkflowNodeConversation, role: WorkflowNodeMessage["role"], content: string, at: number, eventType?: AgentEvent["type"]): void {
-    conversation.messages.push({ id: `${conversation.conversationId}:${conversation.messages.length + 1}`, role, content, at, ...(eventType ? { eventType } : {}) });
+  private appendMessage(conversation: WorkflowNodeConversation, role: WorkflowNodeMessage["role"], content: string, at: number, eventType?: AgentEvent["type"], name?: string): void {
+    conversation.messages.push({ id: `${conversation.conversationId}:${conversation.messages.length + 1}`, role, content, at, ...(eventType ? { eventType } : {}), ...(name ? { name } : {}) });
     conversation.updatedAt = at;
     conversation.lastActivityAt = at;
   }
