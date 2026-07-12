@@ -16,6 +16,8 @@ describe("workflow V2 manager prompt", () => {
     expect(prompt).toContain("it must use executionMode interactive");
     expect(prompt).toContain("Never classify an input-dependent node as one-shot");
     expect(prompt).toContain("execModel script");
+    expect(prompt).toContain("echoing or passing through input unchanged");
+    expect(prompt).toContain("separate the interactive input collection from the deterministic script transformation");
   });
 
   test("provides a valid-shape V2 definition example", () => {

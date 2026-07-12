@@ -169,7 +169,7 @@ export function mcpToolDefinitions(): McpToolDefinition[] {
     },
     {
       name: "workflow_create",
-      description: "Create a new editable workflow DAG in Multi Agent Chat. Invalid graphs are rejected with validation errors.",
+      description: "Create a new editable workflow DAG in Multi Agent Chat. Invalid graphs are rejected with validation errors. Use interactive LLM nodes only to collect or clarify user input, and use script nodes for deterministic work such as echoing, copying, formatting, mapping, or passing values through unchanged.",
       inputSchema: objectSchema(
         {
           title: { type: "string" },

@@ -14,7 +14,6 @@ import type {
   WorkflowGrillMessage,
   WorkflowRunProgressItem,
   WorkflowStatus,
-  WorkflowV2InterventionAction,
 } from "../../../../shared/types";
 import {
   agentAccent,
@@ -35,7 +34,7 @@ import { WorkflowCanvasBoard } from "./WorkflowCanvasBoard";
 import { WorkflowNodeAgentWindow } from "./WorkflowNodeAgentWindow";
 import { WorkflowOutputPreviewModal } from "./WorkflowOutputPreviewModal";
 import { WorkflowOutputsPanel } from "./WorkflowOutputsPanel";
-import { WORKFLOW_INTERVENTION_ACTION_TEXT, WORKFLOW_TEXT } from "./workflow-text";
+import { WORKFLOW_TEXT } from "./workflow-text";
 import type { WorkflowController } from "./workflow-controller";
 import { workflowNodeOpenTarget } from "./workflow-node-open-policy";
 import {
@@ -76,7 +75,6 @@ export function WorkflowPage({ controller: source }: { controller: WorkflowContr
   const onObjectiveChange = source.onObjectiveChange;
   const onPauseNode = source.onPauseNode;
   const onStopRun = source.onStopRun;
-  const onResolveIntervention = source.onResolveIntervention;
   const onStartNode = source.onStartNode;
   const onSendNodeMessage = source.onSendNodeMessage;
   const onCompleteNodeConversation = source.onCompleteNodeConversation;
@@ -129,8 +127,6 @@ export function WorkflowPage({ controller: source }: { controller: WorkflowContr
   const composerCanSend = Boolean(composerValue.trim()) && !running;
   const composerLocked = workflowStarted || running;
   const [graphExpanded, setGraphExpanded] = useState(defaultGraphExpanded);
-  const [interventionReasons, setInterventionReasons] = useState<Record<string, string>>({});
-  const [interventionPendingNodeId, setInterventionPendingNodeId] = useState<string | undefined>(undefined);
   const [outputFiles, setOutputFiles] = useState<Array<{ name: string; path: string }>>([]);
   const [editingWorkflowNodeId, setEditingWorkflowNodeId] = useState<string | undefined>(undefined);
   const [openNodeAgentNodeId, setOpenNodeAgentNodeId] = useState<string | undefined>(undefined);
@@ -452,53 +448,6 @@ export function WorkflowPage({ controller: source }: { controller: WorkflowContr
                     );
                   })}
                 </div>
-                {runProgress
-                  .filter((item) => item.status === "paused" && item.intervention && typeof onResolveIntervention === "function")
-                  .map((item) => {
-                    const intervention = item.intervention!;
-                    const reason = interventionReasons[item.nodeId] ?? "";
-                    const resolve = async (action: WorkflowV2InterventionAction): Promise<void> => {
-                      setInterventionPendingNodeId(item.nodeId);
-                      try {
-                        await onResolveIntervention?.(item.nodeId, action, reason);
-                        setInterventionReasons((current) => ({ ...current, [item.nodeId]: "" }));
-                      } finally {
-                        setInterventionPendingNodeId(undefined);
-                      }
-                    };
-                    return (
-                      <div key={`intervention-${item.nodeId}`} className="workflow-intervention-panel">
-                        <div className="workflow-gate-panel-head">
-                          <span className="workflow-gate-panel-badge">{workflowRunStatusLabel("paused")}</span>
-                          <strong>{item.title}</strong>
-                        </div>
-                        <p className="workflow-gate-panel-question">{intervention.reason}</p>
-                        <textarea
-                          className="workflow-gate-panel-input"
-                          value={reason}
-                          placeholder={workflowText.interventionReasonPlaceholder}
-                          rows={2}
-                          onChange={(event) => setInterventionReasons((current) => ({
-                            ...current,
-                            [item.nodeId]: event.target.value,
-                          }))}
-                        />
-                        <div className="workflow-intervention-actions">
-                          {intervention.allowedActions.map((action) => (
-                            <button
-                              key={action}
-                              type="button"
-                              className="workflow-node-gate-submit"
-                              disabled={interventionPendingNodeId === item.nodeId}
-                              onClick={() => void resolve(action)}
-                            >
-                              {WORKFLOW_INTERVENTION_ACTION_TEXT[language][action]}
-                            </button>
-                          ))}
-                        </div>
-                      </div>
-                    );
-                  })}
               </section>
             ) : null}
             {runProgressVisible ? <section className="workflow-leader-activity" aria-label="Leader Activity">

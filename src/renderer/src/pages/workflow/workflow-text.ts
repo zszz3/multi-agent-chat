@@ -1,5 +1,3 @@
-import type { WorkflowV2InterventionAction } from "../../../../shared/types";
-import type { Language } from "../../app/language";
 
 export const WORKFLOW_TEXT = {
   zh: {
@@ -19,7 +17,6 @@ export const WORKFLOW_TEXT = {
     startNode: "启动节点",
     gateAnswerPlaceholder: "输入你的决定...",
     gateSubmit: "提交决定",
-    interventionReasonPlaceholder: "可选：说明本次处理原因...",
     finalReport: "主 Agent 总结",
     completed: "工作流已完成",
     registeredArtifacts: "Agent 登记的产出",
@@ -60,7 +57,6 @@ export const WORKFLOW_TEXT = {
     startNode: "Start node",
     gateAnswerPlaceholder: "Enter your decision...",
     gateSubmit: "Submit decision",
-    interventionReasonPlaceholder: "Optional: explain this intervention decision...",
     finalReport: "Main agent summary",
     completed: "Workflow completed",
     registeredArtifacts: "Agent-published artifacts",
@@ -85,20 +81,3 @@ export const WORKFLOW_TEXT = {
     taskPlaceholder: "Describe the workflow task...",
   },
 } as const;
-
-export const WORKFLOW_INTERVENTION_ACTION_TEXT: Record<Language, Record<WorkflowV2InterventionAction, string>> = {
-  zh: {
-    continue: "继续",
-    skip: "跳过",
-    escalate: "升级处理",
-    replan: "重新规划",
-    increase_review_strength: "加强审查",
-  },
-  en: {
-    continue: "Continue",
-    skip: "Skip",
-    escalate: "Escalate",
-    replan: "Replan",
-    increase_review_strength: "Strengthen review",
-  },
-};

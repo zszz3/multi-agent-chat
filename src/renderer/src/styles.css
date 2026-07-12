@@ -2837,8 +2837,7 @@ textarea:focus-visible {
   color: #fff;
 }
 
-.workflow-gate-panel,
-.workflow-intervention-panel {
+.workflow-gate-panel {
   display: grid;
   gap: 8px;
   margin-top: 10px;
@@ -2846,18 +2845,6 @@ textarea:focus-visible {
   border: 1px solid var(--warning, #b7791f);
   border-radius: 8px;
   background: color-mix(in srgb, var(--warning, #b7791f) 8%, var(--bg));
-}
-
-.workflow-intervention-panel {
-  border-color: color-mix(in srgb, var(--accent) 45%, var(--line));
-  background: color-mix(in srgb, var(--accent) 7%, var(--bg));
-}
-
-.workflow-intervention-actions {
-  display: flex;
-  flex-wrap: wrap;
-  justify-content: flex-end;
-  gap: 6px;
 }
 
 .workflow-gate-panel-head {

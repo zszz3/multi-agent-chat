@@ -30,4 +30,24 @@ describe("WorkflowPage input ownership", () => {
     expect(html).not.toContain("workflow-gate-panel");
     expect(html).not.toContain("workflow-gate-panel-input");
   });
+
+  test("does not render the legacy intervention action panel for a paused node", () => {
+    const value = controller(true);
+    value.runProgress = [{
+      nodeId: "answer",
+      title: "Echo User Input",
+      status: "paused",
+      intervention: {
+        nodeId: "answer",
+        source: "supervision_pause",
+        reason: "Interactive node is waiting for user confirmation.",
+        allowedActions: ["continue", "skip", "escalate", "replan", "increase_review_strength"],
+        requestedAt: 1,
+      },
+    }];
+    value.onResolveIntervention = () => undefined;
+    const html = renderToStaticMarkup(<WorkflowPage controller={value} />);
+    expect(html).not.toContain("workflow-intervention-panel");
+    expect(html).not.toContain("Interactive node is waiting for user confirmation.");
+  });
 });
