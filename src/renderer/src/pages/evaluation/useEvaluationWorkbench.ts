@@ -72,25 +72,6 @@ export function useEvaluationWorkbench() {
     if (id) setSelectedIds((current) => ({ ...current, [targetView]: id }));
   }, []);
 
-  const updateDataset = useCallback((value: EvaluationDataset) => {
-    setDatasets((items) =>
-      items.map((item) => (item.id === value.id ? value : item)),
-    );
-    setDirty(true);
-  }, []);
-  const updateEvaluator = useCallback((value: EvaluationEvaluator) => {
-    setEvaluators((items) =>
-      items.map((item) => (item.id === value.id ? value : item)),
-    );
-    setDirty(true);
-  }, []);
-  const updateExperiment = useCallback((value: EvaluationExperiment) => {
-    setExperiments((items) =>
-      items.map((item) => (item.id === value.id ? value : item)),
-    );
-    setDirty(true);
-  }, []);
-
   const createDataset = useCallback(() => {
     const now = Date.now();
     const value: EvaluationDataset = {
@@ -150,32 +131,44 @@ export function useEvaluationWorkbench() {
     [datasets, evaluators],
   );
 
-  const saveCurrent = useCallback(async () => {
+  const saveDataset = useCallback(async (value: EvaluationDataset) => {
     setBusy("save");
     setError(undefined);
     try {
-      if (view === "datasets" && selectedDataset)
-        await window.multiAgentChat.saveEvaluationDataset({
-          ...selectedDataset,
-          updatedAt: Date.now(),
-        });
-      if (view === "evaluators" && selectedEvaluator)
-        await window.multiAgentChat.saveEvaluationEvaluator({
-          ...selectedEvaluator,
-          updatedAt: Date.now(),
-        });
-      if (view === "experiments" && selectedExperiment)
-        await window.multiAgentChat.saveEvaluationExperiment({
-          ...selectedExperiment,
-          updatedAt: Date.now(),
-        });
+      await window.multiAgentChat.saveEvaluationDataset({ ...value, updatedAt: Date.now() });
       await reload();
     } catch (cause) {
       setError(cause instanceof Error ? cause.message : String(cause));
     } finally {
       setBusy((current) => (current === "save" ? undefined : current));
     }
-  }, [reload, selectedDataset, selectedEvaluator, selectedExperiment, view]);
+  }, [reload]);
+
+  const saveEvaluator = useCallback(async (value: EvaluationEvaluator) => {
+    setBusy("save");
+    setError(undefined);
+    try {
+      await window.multiAgentChat.saveEvaluationEvaluator({ ...value, updatedAt: Date.now() });
+      await reload();
+    } catch (cause) {
+      setError(cause instanceof Error ? cause.message : String(cause));
+    } finally {
+      setBusy((current) => (current === "save" ? undefined : current));
+    }
+  }, [reload]);
+
+  const saveExperiment = useCallback(async (value: EvaluationExperiment) => {
+    setBusy("save");
+    setError(undefined);
+    try {
+      await window.multiAgentChat.saveEvaluationExperiment({ ...value, updatedAt: Date.now() });
+      await reload();
+    } catch (cause) {
+      setError(cause instanceof Error ? cause.message : String(cause));
+    } finally {
+      setBusy((current) => (current === "save" ? undefined : current));
+    }
+  }, [reload]);
 
   const deleteCurrent = useCallback(async () => {
     setBusy("delete");
@@ -199,17 +192,16 @@ export function useEvaluationWorkbench() {
     }
   }, [reload, selectedDataset, selectedEvaluator, selectedExperiment, view]);
 
-  const runExperiment = useCallback(async () => {
-    if (!selectedExperiment) return;
+  const runExperiment = useCallback(async (value: EvaluationExperiment) => {
     setBusy("run");
     setError(undefined);
     try {
       await window.multiAgentChat.saveEvaluationExperiment({
-        ...selectedExperiment,
+        ...value,
         updatedAt: Date.now(),
       });
       await window.multiAgentChat.runEvaluationExperiment(
-        selectedExperiment.id,
+        value.id,
       );
       await reload();
     } catch (cause) {
@@ -217,7 +209,7 @@ export function useEvaluationWorkbench() {
     } finally {
       setBusy((current) => (current === "run" ? undefined : current));
     }
-  }, [reload, selectedExperiment]);
+  }, [reload]);
 
   const experimentRuns = useMemo(
     () =>
@@ -241,13 +233,12 @@ export function useEvaluationWorkbench() {
     error,
     select,
     setDirty,
-    updateDataset,
-    updateEvaluator,
-    updateExperiment,
     createDataset,
     createEvaluator,
     createExperiment,
-    saveCurrent,
+    saveDataset,
+    saveEvaluator,
+    saveExperiment,
     deleteCurrent,
     runExperiment,
   };

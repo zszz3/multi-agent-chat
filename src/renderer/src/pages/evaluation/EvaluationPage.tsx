@@ -1,4 +1,4 @@
-import { useCallback, useEffect } from "react";
+import { useCallback, useEffect, useRef } from "react";
 import {
   Beaker,
   ClipboardCheck,
@@ -6,7 +6,7 @@ import {
   LayoutDashboard,
   Plus,
 } from "lucide-react";
-import type { AgentChannel, ConfiguredAgent } from "../../../../shared/types";
+import type { AgentChannel, ConfiguredAgent, EvaluationDataset, EvaluationEvaluator, EvaluationExperiment } from "../../../../shared/types";
 import type { Language } from "../../app/language";
 import { APP_SAVE_REQUEST_EVENT } from "../../app/save-shortcut";
 import {
@@ -42,6 +42,11 @@ export function EvaluationPage({
 }) {
   const zh = language === "zh";
   const model = useEvaluationWorkbench();
+  const draftRef = useRef<EvaluationDataset | EvaluationEvaluator | EvaluationExperiment | undefined>(undefined);
+  const registerDraft = useCallback((value: EvaluationDataset | EvaluationEvaluator | EvaluationExperiment) => {
+    draftRef.current = value;
+    model.setDirty(true);
+  }, [model.setDirty]);
   const tabs: WorkbenchTab<EvaluationView>[] = [
     { id: "overview", label: zh ? "概览" : "Overview" },
     {
@@ -72,11 +77,15 @@ export function EvaluationPage({
 
   useEffect(() => {
     const save = () => {
-      if (model.dirty) void model.saveCurrent();
+      const draft = draftRef.current;
+      if (!model.dirty || !draft) return;
+      if (model.view === "datasets") void model.saveDataset(draft as EvaluationDataset);
+      if (model.view === "evaluators") void model.saveEvaluator(draft as EvaluationEvaluator);
+      if (model.view === "experiments") void model.saveExperiment(draft as EvaluationExperiment);
     };
     window.addEventListener(APP_SAVE_REQUEST_EVENT, save);
     return () => window.removeEventListener(APP_SAVE_REQUEST_EVENT, save);
-  }, [model.dirty, model.saveCurrent]);
+  }, [model.dirty, model.saveDataset, model.saveEvaluator, model.saveExperiment, model.view]);
 
   const navigate = useCallback(
     (view: EvaluationView, id?: string) => {
@@ -90,6 +99,7 @@ export function EvaluationPage({
       )
         return;
       model.setDirty(false);
+      draftRef.current = undefined;
       model.select(view, id);
     },
     [model, zh],
@@ -181,8 +191,8 @@ export function EvaluationPage({
             busy={model.busy}
             onSelect={(id) => navigate("datasets", id)}
             onCreate={model.createDataset}
-            onChange={model.updateDataset}
-            onSave={() => void model.saveCurrent()}
+            onDraftChange={registerDraft}
+            onSave={(value) => void model.saveDataset(value)}
             onDelete={() => {
               if (
                 window.confirm(zh ? "删除这个数据集？" : "Delete this dataset?")
@@ -200,8 +210,8 @@ export function EvaluationPage({
             busy={model.busy}
             onSelect={(id) => navigate("evaluators", id)}
             onCreate={model.createEvaluator}
-            onChange={model.updateEvaluator}
-            onSave={() => void model.saveCurrent()}
+            onDraftChange={registerDraft}
+            onSave={(value) => void model.saveEvaluator(value)}
             onDelete={() => {
               if (
                 window.confirm(
@@ -224,8 +234,8 @@ export function EvaluationPage({
             busy={model.busy}
             onSelect={(id) => navigate("experiments", id)}
             onCreate={() => model.createExperiment(agents[0]?.id)}
-            onChange={model.updateExperiment}
-            onSave={() => void model.saveCurrent()}
+            onDraftChange={registerDraft}
+            onSave={(value) => void model.saveExperiment(value)}
             onDelete={() => {
               if (
                 window.confirm(
@@ -234,7 +244,7 @@ export function EvaluationPage({
               )
                 void model.deleteCurrent();
             }}
-            onRun={() => void model.runExperiment()}
+            onRun={(value) => void model.runExperiment(value)}
           />
         ) : null}
       </div>

@@ -1,4 +1,4 @@
-import type { ReactElement } from "react";
+import { memo, type ReactElement } from "react";
 import { isWorkflowV2WorkerOutput, splitWorkflowV2WorkerOutputContent, workflowV2UserFacingOutput } from "../../../../shared/workflow-v2/packets";
 import { Markdown } from "../../Markdown";
 
@@ -43,7 +43,7 @@ function JsonNode({ value }: { value: JsonValue }): ReactElement {
   return <span className="workflow-node-json-literal">{String(value)}</span>;
 }
 
-export function WorkflowMessageContent({ content }: { content: string }) {
+export const WorkflowMessageContent = memo(function WorkflowMessageContent({ content }: { content: string }) {
   const packetContent = splitWorkflowV2WorkerOutputContent(content);
   if (packetContent && isWorkflowV2WorkerOutput(packetContent.value)) {
     return <div className="workflow-node-message-segments">
@@ -59,4 +59,4 @@ export function WorkflowMessageContent({ content }: { content: string }) {
     {trailing.text ? <p>{trailing.text}</p> : null}
     <div className="workflow-node-json"><JsonNode value={trailing.value} /></div>
   </div>;
-}
+});

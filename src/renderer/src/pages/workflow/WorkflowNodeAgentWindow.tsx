@@ -1,4 +1,4 @@
-import { useState } from "react";
+import { useMemo, useState } from "react";
 import { CircleStop, Send, X } from "lucide-react";
 import type { TaskRun } from "../../../../shared/types";
 import type { WorkflowNodeConversation } from "../../../../shared/workflow-v2/conversation";
@@ -56,8 +56,8 @@ export function WorkflowNodeAgentWindow({ conversation, task, sessions = [], sel
     : task
       ? `${task.status} · ${task.modelId} · ${task.runtimeConversation?.runtimeId ?? "one-shot"}`
       : "Node has not started yet.";
-  const orderedSessions = [...sessions].sort((left, right) => sessionStatus(left).group - sessionStatus(right).group || left.nodeTitle.localeCompare(right.nodeTitle));
-  const attentionCount = sessions.filter((session) => sessionStatus(session).attention).length;
+  const orderedSessions = useMemo(() => [...sessions].sort((left, right) => sessionStatus(left).group - sessionStatus(right).group || left.nodeTitle.localeCompare(right.nodeTitle)), [sessions]);
+  const attentionCount = useMemo(() => sessions.filter((session) => sessionStatus(session).attention).length, [sessions]);
   const conversationMessages = conversation?.messages ?? [];
   const dialogueMessages = conversationMessages.filter((item) => item.role === "user" || item.role === "assistant");
   const runtimeMessages = conversationMessages.filter((item) => item.role === "system" || item.role === "tool");

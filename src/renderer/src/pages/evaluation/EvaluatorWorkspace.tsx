@@ -9,6 +9,7 @@ import {
   WorkbenchLayout,
   WorkbenchSection,
 } from "../../ui/workbench/Workbench";
+import { useEntityDraft } from "../../ui/workbench/useEntityDraft";
 
 const KINDS: Array<{
   id: EvaluationEvaluator["kind"];
@@ -40,12 +41,12 @@ const KINDS: Array<{
 export function EvaluatorWorkspace({
   zh,
   evaluators,
-  selected,
+  selected: persistedSelected,
   channels,
   busy,
   onSelect,
   onCreate,
-  onChange,
+  onDraftChange,
   onSave,
   onDelete,
 }: {
@@ -56,10 +57,11 @@ export function EvaluatorWorkspace({
   busy: string | undefined;
   onSelect: (id: string) => void;
   onCreate: () => void;
-  onChange: (value: EvaluationEvaluator) => void;
-  onSave: () => void;
+  onDraftChange?: (value: EvaluationEvaluator) => void;
+  onSave: (value: EvaluationEvaluator) => void;
   onDelete: () => void;
 }) {
+  const [selected, onChange] = useEntityDraft(persistedSelected, onDraftChange);
   return (
     <WorkbenchLayout
       browser={
@@ -113,7 +115,7 @@ export function EvaluatorWorkspace({
                   className="control-btn compact is-active"
                   type="button"
                   disabled={Boolean(busy)}
-                  onClick={onSave}
+                  onClick={() => selected && onSave(selected)}
                 >
                   <Save size={13} />
                   {busy === "save"
