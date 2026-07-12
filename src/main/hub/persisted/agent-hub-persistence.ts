@@ -26,6 +26,7 @@ import {
   type WorkflowStoreState,
 } from "../../../shared/types";
 import { isRuntimeId } from "../../../shared/runtime-catalog";
+import type { WorkflowNodeConversation } from "../../../shared/workflow-v2/conversation";
 
 export interface PersistedChatSessionRecord {
   id: string;
@@ -136,6 +137,7 @@ export interface PersistedAppStateV5 {
   scheduledWorkflowStore?: ScheduledWorkflowStoreState;
   channels?: AgentChannel[];
   configuredAgents?: ConfiguredAgent[];
+  workflowNodeConversations?: WorkflowNodeConversation[];
 }
 
 export type PersistedAppState = PersistedAppStateV5;

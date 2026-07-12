@@ -11,6 +11,7 @@ import {
 } from "../chat/agent-hub-ui";
 import { buildWorkflowSnapshot, cloneTeamMember } from "../team/agent-team-workflow";
 import type { AgentTeamState, ChatState, TaskState, TeamRunState } from "../state/agent-hub-state";
+import type { WorkflowNodeConversation } from "../../../shared/workflow-v2/conversation";
 import {
   cloneRuntimeState,
   type PersistedAppStateV5,
@@ -40,6 +41,7 @@ export function buildPersistedPayload(input: {
   cloneConversation: (conversation: RuntimeConversation) => RuntimeConversation;
   workflowStore: WorkflowStoreState;
   scheduledWorkflowStore: ScheduledWorkflowStoreState;
+  workflowNodeConversations: WorkflowNodeConversation[];
 }): PersistedAppStateV5 {
   const sessions: PersistedChatSessionRecord[] = [];
   const messages: PersistedChatMessageRecord[] = [];
@@ -179,5 +181,6 @@ export function buildPersistedPayload(input: {
     configuredAgents: input.configuredAgents,
     workflowStore: input.workflowStore,
     scheduledWorkflowStore: input.scheduledWorkflowStore,
+    workflowNodeConversations: input.workflowNodeConversations.map((conversation) => structuredClone(conversation)),
   };
 }

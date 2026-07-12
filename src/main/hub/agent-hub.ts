@@ -2586,6 +2586,8 @@ export class AgentHub {
       asOptionalString(record.activeTeamRunId),
     );
     if (!this.restoreWorkflowStore(record.workflowStore)) return false;
+    this.workflowNodeConversations.restore(record.workflowNodeConversations ?? []);
+    this.workflowNodeConversations.restore(record.workflowNodeConversations ?? []);
     this.restoreScheduledWorkflowStore(record.scheduledWorkflowStore);
     return true;
   }
@@ -2849,6 +2851,7 @@ export class AgentHub {
       cloneConversation: (conversation) => this.runtimeRouter.cloneConversation(conversation),
       workflowStore: this.cloneWorkflowStore(),
       scheduledWorkflowStore: this.cloneScheduledWorkflowStore(),
+      workflowNodeConversations: this.workflowNodeConversations.list(),
     });
   }
 

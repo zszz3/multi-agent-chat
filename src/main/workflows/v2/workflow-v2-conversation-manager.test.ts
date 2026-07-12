@@ -142,4 +142,24 @@ describe("WorkflowV2ConversationManager", () => {
     expect(manager.get(second.conversationId)).toMatchObject({ status: "closed" });
     expect(manager.get(first.conversationId)?.messages.at(-1)?.content).toBe("Workflow run stopped by user.");
   });
-});
+
+  test("restores a conversation snapshot and lazily recreates its runtime session", async () => {
+    const prompts: string[] = [];
+    const manager = new WorkflowV2ConversationManager({
+      now: () => 50,
+      createSession: (input) => ({
+        sendPrompt: async (prompt) => { prompts.push(prompt); },
+        interrupt: async () => undefined,
+        close: async () => undefined,
+        runtimeConversation: () => undefined,
+      }),
+    });
+    manager.restore([{
+      conversationId: "w::r::n", workflowId: "w", runId: "r", nodeId: "n", configuredAgentId: "a", modelId: "m", workDir: "C:/workspace", status: "waiting_for_user",
+      messages: [{ id: "w::r::n:1", role: "system", content: "Collect requirements", at: 1 }], createdAt: 1, updatedAt: 1, lastActivityAt: 1,
+    }]);
+    const restored = manager.get("w::r::n");
+    expect(restored?.status).toBe("waiting_for_user");
+    await manager.sendUserMessage("w::r::n", "US and EU");
+    expect(prompts).toEqual(["US and EU"]);
+  });});

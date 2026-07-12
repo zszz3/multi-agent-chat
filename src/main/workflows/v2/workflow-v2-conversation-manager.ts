@@ -28,6 +28,7 @@ export interface CreateWorkflowNodeConversationInput {
 export class WorkflowV2ConversationManager {
   private readonly conversations = new Map<string, WorkflowNodeConversation>();
   private readonly sessions = new Map<string, WorkflowNodeInteractiveSession>();
+  private readonly restoredInputs = new Map<string, CreateWorkflowNodeConversationInput>();
 
   constructor(private readonly deps: {
     now: () => number;
@@ -76,7 +77,7 @@ export class WorkflowV2ConversationManager {
 
   async sendUserMessage(conversationId: string, content: string): Promise<WorkflowNodeConversation> {
     const conversation = this.mutableRequired(conversationId);
-    const session = this.sessionRequired(conversationId);
+    const session = this.sessionForConversation(conversationId);
     const message = content.trim();
     if (!message) throw new Error("Workflow node conversation message is required.");
     if (conversation.status === "closed" || conversation.status === "failed") throw new Error("Workflow node conversation is not active.");
@@ -150,6 +151,17 @@ export class WorkflowV2ConversationManager {
       .map((conversation) => structuredClone(conversation));
   }
 
+  restore(conversations: WorkflowNodeConversation[]): void {
+    for (const conversation of conversations) {
+      this.conversations.set(conversation.conversationId, structuredClone(conversation));
+      this.restoredInputs.set(conversation.conversationId, {
+        workflowId: conversation.workflowId, runId: conversation.runId, nodeId: conversation.nodeId,
+        configuredAgentId: conversation.configuredAgentId, modelId: conversation.modelId, workDir: conversation.workDir,
+        initialPrompt: conversation.messages.find((message) => message.role === "system")?.content ?? "Continue this workflow node.",
+      });
+    }
+  }
+
   list(): WorkflowNodeConversation[] {
     return [...this.conversations.values()].map((conversation) => structuredClone(conversation));
   }
@@ -204,6 +216,19 @@ export class WorkflowV2ConversationManager {
 
   private getRequired(conversationId: string): WorkflowNodeConversation {
     return structuredClone(this.mutableRequired(conversationId));
+  }
+
+  private sessionForConversation(conversationId: string): WorkflowNodeInteractiveSession {
+    const existing = this.sessions.get(conversationId);
+    if (existing) return existing;
+    const input = this.restoredInputs.get(conversationId);
+    if (input) {
+      const session = this.deps.createSession({ ...input, emit: (event) => this.recordEvent(conversationId, event) });
+      this.sessions.set(conversationId, session);
+      this.restoredInputs.delete(conversationId);
+      return session;
+    }
+    return this.sessionRequired(conversationId);
   }
 
   private sessionRequired(conversationId: string): WorkflowNodeInteractiveSession {
