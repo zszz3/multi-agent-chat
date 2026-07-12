@@ -77,6 +77,11 @@ import {
 import { SKILL_TEMPLATES } from "../../shared/skill-templates";
 import { firstWorkflowQuestionForObjective } from "../../shared/workflow-agent";
 import { formatTime } from "./app/format";
+import {
+  APP_SAVE_REQUEST_EVENT,
+  dispatchAppSaveRequest,
+  isSaveKeyboardShortcut,
+} from "./app/save-shortcut";
 import { loadCodexDefaultConfigFromRuntimeApi } from "./pages/runtime/runtime-utils";
 import { FeatureRail } from "./app/FeatureRail";
 import { EvaluationPage } from "./pages/evaluation/EvaluationPage";
@@ -213,6 +218,38 @@ test("guards only navigation away from the Runtime page", async () => {
 
   expect(confirmations).toBe(1);
   expect(navigated).toEqual(["workflow"]);
+});
+
+describe("global save shortcut", () => {
+  test("accepts Command+S and Ctrl+S without hijacking other modifiers", () => {
+    expect(
+      isSaveKeyboardShortcut({ key: "s", metaKey: true, ctrlKey: false }),
+    ).toBe(true);
+    expect(
+      isSaveKeyboardShortcut({ key: "S", metaKey: false, ctrlKey: true }),
+    ).toBe(true);
+    expect(
+      isSaveKeyboardShortcut({
+        key: "s",
+        metaKey: true,
+        ctrlKey: false,
+        altKey: true,
+      }),
+    ).toBe(false);
+    expect(
+      isSaveKeyboardShortcut({ key: "k", metaKey: true, ctrlKey: false }),
+    ).toBe(false);
+  });
+
+  test("dispatches one save request to the active page", () => {
+    const target = new EventTarget();
+    let saves = 0;
+    target.addEventListener(APP_SAVE_REQUEST_EVENT, () => {
+      saves += 1;
+    });
+    dispatchAppSaveRequest(target);
+    expect(saves).toBe(1);
+  });
 });
 
 describe("Evaluation workbench redesign", () => {

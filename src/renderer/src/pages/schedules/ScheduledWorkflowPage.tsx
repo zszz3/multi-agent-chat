@@ -9,6 +9,7 @@ import type {
 } from "../../../../shared/types";
 import { formatTime } from "../../app/format";
 import type { Language } from "../../app/language";
+import { APP_SAVE_REQUEST_EVENT } from "../../app/save-shortcut";
 import { WorkflowCanvasBoard } from "../workflow/WorkflowCanvasBoard";
 import {
   formatScheduleRecurrence,
@@ -106,6 +107,30 @@ export function ScheduledWorkflowPage({
       ...(scheduleEditDraft.frequency === "monthly" ? { dayOfMonth: normalizeScheduleDayOfMonth(scheduleEditDraft.dayOfMonth) } : {}),
     });
   }
+
+  useEffect(() => {
+    const save = () => {
+      if (mode === "create") {
+        if (draft.workflowId && workflows.length > 0) void onCreateSchedule();
+        return;
+      }
+      if (scheduleEditDirty) applyScheduleEdit();
+    };
+    window.addEventListener(APP_SAVE_REQUEST_EVENT, save);
+    return () => window.removeEventListener(APP_SAVE_REQUEST_EVENT, save);
+  }, [
+    draft.workflowId,
+    mode,
+    onCreateSchedule,
+    onUpdateSchedule,
+    scheduleEditDirty,
+    scheduleEditDraft.dayOfMonth,
+    scheduleEditDraft.frequency,
+    scheduleEditDraft.timeOfDay,
+    scheduleEditDraft.weekdays,
+    selectedSchedule,
+    workflows.length,
+  ]);
 
   const createForm = (
     <section className="scheduled-panel scheduled-create-panel scheduled-workflow-detail-panel" aria-label={zh ? "新增定时任务" : "Create scheduled task"}>

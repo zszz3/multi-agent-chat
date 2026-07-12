@@ -1,6 +1,7 @@
 import { useCallback, useEffect } from "react";
 import { PlugZap, Save, Server, Trash2, Wifi } from "lucide-react";
 import type { Language } from "../../app/language";
+import { APP_SAVE_REQUEST_EVENT } from "../../app/save-shortcut";
 import {
   BrowserHeader,
   BrowserItem,
@@ -24,6 +25,13 @@ export function McpPage({ language = "en" }: { language?: Language }) {
     window.addEventListener("beforeunload", handler);
     return () => window.removeEventListener("beforeunload", handler);
   }, [model.dirty]);
+  useEffect(() => {
+    const save = () => {
+      if (model.dirty && model.draft) void model.save();
+    };
+    window.addEventListener(APP_SAVE_REQUEST_EVENT, save);
+    return () => window.removeEventListener(APP_SAVE_REQUEST_EVENT, save);
+  }, [model.dirty, model.draft, model.save]);
   const select = useCallback(
     (id: string) => {
       if (

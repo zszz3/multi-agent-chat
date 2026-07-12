@@ -39,6 +39,10 @@ import {
 import { UI_TEXT } from "./app/text";
 import { useShellMenuCoordinator } from "./app/useShellMenuCoordinator";
 import {
+  dispatchAppSaveRequest,
+  isSaveKeyboardShortcut,
+} from "./app/save-shortcut";
+import {
   buildFindSkillAgentPrompt,
   findSkillFallbackMessage,
   findSkillImportRequest,
@@ -495,6 +499,11 @@ export function AppShell() {
     }
 
     function onKeyDown(event: globalThis.KeyboardEvent): void {
+      if (isSaveKeyboardShortcut(event)) {
+        event.preventDefault();
+        dispatchAppSaveRequest(window);
+        return;
+      }
       if ((event.metaKey || event.ctrlKey) && event.key.toLowerCase() === "k") {
         event.preventDefault();
         setPaletteOpen((current) => !current);

@@ -4,6 +4,7 @@ import { configuredAgentType } from "../../../../shared/agent-revisions";
 import type { AgentChannel, AgentRevision, ConfiguredAgent, McpServerDefinition } from "../../../../shared/types";
 import { agentAccent, agentLabel, resolveConfiguredAgentChannel } from "../../app/agents";
 import type { Language } from "../../app/language";
+import { APP_SAVE_REQUEST_EVENT } from "../../app/save-shortcut";
 
 type MaybePromise = void | Promise<void>;
 
@@ -87,6 +88,12 @@ export function AgentPage({
   const executionAgents = configuredAgents.filter((agent) => configuredAgentType(agent) === "execution");
   const composedAgents = configuredAgents.filter((agent) => configuredAgentType(agent) === "composed");
   const selectedType = selected ? configuredAgentType(selected) : undefined;
+  useEffect(() => {
+    if (selectedType !== "composed") return;
+    const save = () => void onSave();
+    window.addEventListener(APP_SAVE_REQUEST_EVENT, save);
+    return () => window.removeEventListener(APP_SAVE_REQUEST_EVENT, save);
+  }, [onSave, selectedType]);
   const selectedChannel = selected ? resolveConfiguredAgentChannel(selected, channels) : undefined;
   const selectedModelLabel = selectedChannel?.models.find((model) => model.id === selected?.modelId)?.label ?? selected?.modelId ?? "";
   const selectedRevisions = selected

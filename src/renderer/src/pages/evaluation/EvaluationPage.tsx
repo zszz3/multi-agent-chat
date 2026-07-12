@@ -8,6 +8,7 @@ import {
 } from "lucide-react";
 import type { AgentChannel, ConfiguredAgent } from "../../../../shared/types";
 import type { Language } from "../../app/language";
+import { APP_SAVE_REQUEST_EVENT } from "../../app/save-shortcut";
 import {
   WorkbenchHeader,
   WorkbenchTabs,
@@ -68,6 +69,14 @@ export function EvaluationPage({
     window.addEventListener("beforeunload", beforeUnload);
     return () => window.removeEventListener("beforeunload", beforeUnload);
   }, [model.dirty]);
+
+  useEffect(() => {
+    const save = () => {
+      if (model.dirty) void model.saveCurrent();
+    };
+    window.addEventListener(APP_SAVE_REQUEST_EVENT, save);
+    return () => window.removeEventListener(APP_SAVE_REQUEST_EVENT, save);
+  }, [model.dirty, model.saveCurrent]);
 
   const navigate = useCallback(
     (view: EvaluationView, id?: string) => {
