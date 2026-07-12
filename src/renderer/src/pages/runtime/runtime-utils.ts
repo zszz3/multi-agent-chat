@@ -1,6 +1,6 @@
 import { DEFAULT_MODEL_ID } from "../../../../shared/models";
 import type { AgentChannel, AgentModelOption, AgentPluginConfig, CodexDefaultConfig, ProviderBalanceResult } from "../../../../shared/types";
-import { CODEX_DEFAULT_PRESET_ID, type AgentProviderPreset } from "../../../../shared/provider-presets";
+import { CODEX_LOCAL_DEFAULT_PRESET_ID, type AgentProviderPreset } from "../../../../shared/provider-presets";
 import type { Language } from "../../app/language";
 import { missingAppCapabilityMessage } from "../../app/shell";
 import type { AgentTestUiState } from "./runtime-types";
@@ -99,7 +99,7 @@ export function applyCodexDefaultConfigToChannel(channel: AgentChannel, config: 
   const next: AgentChannel = {
     ...channel,
     agentId: "codex",
-    presetId: CODEX_DEFAULT_PRESET_ID,
+    presetId: CODEX_LOCAL_DEFAULT_PRESET_ID,
     models: defaultModelsForCodexConfig(config.modelId),
   };
 

@@ -11,11 +11,11 @@ import {
   WorkbenchHeader,
   WorkbenchLayout,
   WorkbenchSection,
+  WorkbenchTabs,
 } from "../../ui/workbench/Workbench";
 import { useMcpRegistry } from "./useMcpRegistry";
 import { McpAgentBindings } from "./McpAgentBindings";
 import type { ConfiguredAgent } from "../../../../shared/types";
-import { WorkbenchTabs } from "../../ui/workbench/Workbench";
 
 export function McpPage({ language = "en", agents }: { language?: Language; agents: ConfiguredAgent[] }) {
   const zh = language === "zh";
@@ -64,8 +64,17 @@ export function McpPage({ language = "en", agents }: { language?: Language; agen
             : "Manage local and remote tool servers available to Agents."
         }
       />
-      <WorkbenchTabs label="MCP views" active={view} onChange={setView} tabs={[{ id: "servers", label: "Servers", count: model.servers.length }, { id: "agents", label: "Agent bindings", count: agents.length }]} />
-      {view === "agents" ? <McpAgentBindings agents={agents} /> : <>
+      <WorkbenchTabs
+        label={zh ? "MCP 视图" : "MCP views"}
+        active={view}
+        onChange={setView}
+        tabs={[
+          { id: "servers", label: zh ? "服务器" : "Servers", count: model.servers.length },
+          { id: "agents", label: zh ? "Agent 绑定" : "Agent bindings", count: agents.length },
+        ]}
+      />
+      {view === "agents" ? <McpAgentBindings agents={agents} /> : (
+        <>
       {model.error ? (
         <div className="workbench-error" role="alert">
           {model.error}
@@ -411,7 +420,9 @@ export function McpPage({ language = "en", agents }: { language?: Language; agen
             />
           )}
         </WorkbenchLayout>
-      </div></>}
+      </div>
+        </>
+      )}
     </section>
   );
 }

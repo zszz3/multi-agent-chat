@@ -4,7 +4,7 @@ import type {
   EvaluationEvaluator,
   EvaluationExperiment,
   EvaluationRun,
-} from "../../../../shared/evaluation/types";
+} from "../../../../shared/types";
 import {
   instantiateEvaluatorTemplate,
   type EvaluationEvaluatorTemplate,

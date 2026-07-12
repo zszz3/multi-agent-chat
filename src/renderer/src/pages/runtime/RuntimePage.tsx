@@ -2,7 +2,14 @@ import { useMemo, useState, type MouseEvent } from "react";
 import { CheckCircle2, Cpu, Eye, EyeOff, Plus, RefreshCw, Save, Trash2 } from "lucide-react";
 import { configChannelForSelection, selectConfigChannelsForDisplay } from "../../../../shared/config-channels";
 import { DEFAULT_MODEL_ID } from "../../../../shared/models";
-import { AGENT_PROVIDER_PRESETS, CODEX_DEFAULT_PRESET_ID, type AgentProviderPreset } from "../../../../shared/provider-presets";
+import {
+  AGENT_PROVIDER_PRESETS,
+  CLAUDE_LOCAL_DEFAULT_PRESET_ID,
+  CODEX_LOCAL_DEFAULT_PRESET_ID,
+  OPENCODE_DEFAULT_PRESET_ID,
+  OPENCLAW_DEFAULT_PRESET_ID,
+  type AgentProviderPreset,
+} from "../../../../shared/provider-presets";
 import { RUNTIME_IDS, runtimeDefinition } from "../../../../shared/runtime-catalog";
 import type {
   AgentChannel,
@@ -35,10 +42,11 @@ import {
 import { RuntimeProviderFields } from "./RuntimeProviderFields";
 
 const AGENTS: AgentId[] = [...RUNTIME_IDS];
-const PROVIDER_CATEGORY_ORDER = ["official", "cn_official", "cloud_provider", "aggregator", "third_party", "custom"];
+const PROVIDER_CATEGORY_ORDER = ["local", "official", "cn_official", "cloud_provider", "aggregator", "third_party", "custom"];
 
 function providerCategoryLabel(category: string, language: Language): string {
   const labels: Record<string, [string, string]> = {
+    local: ["本地配置", "Local config"],
     official: ["官方", "Official"],
     cn_official: ["国内官方 / Coding Plan", "China official / Coding plan"],
     cloud_provider: ["云服务商", "Cloud providers"],
@@ -233,15 +241,17 @@ export function RuntimePage({
 
   const applyRuntimePreset = async (preset: AgentProviderPreset): Promise<void> => {
     if (!selectedRuntimeChannelRecord) return;
-    if (preset.id === CODEX_DEFAULT_PRESET_ID) {
-      onStatusChange?.("");
-      onUpdateProviderKey(CODEX_DEFAULT_PRESET_ID, "");
-      const nextChannel = applyProviderPresetToChannel(selectedRuntimeChannelRecord, preset);
-      if (onReplaceChannelAndPersist) {
-        await onReplaceChannelAndPersist(selectedRuntimeChannelRecord.id, nextChannel);
-      } else {
-        updateSelectedRuntimeChannel(() => nextChannel);
+    if (
+      preset.id === CODEX_LOCAL_DEFAULT_PRESET_ID ||
+      preset.id === CLAUDE_LOCAL_DEFAULT_PRESET_ID ||
+      preset.id === OPENCODE_DEFAULT_PRESET_ID ||
+      preset.id === OPENCLAW_DEFAULT_PRESET_ID
+    ) {
+      if (!onImportLocalConfig) {
+        onStatusChange?.("Local default import requires a full app restart.");
+        return;
       }
+      await onImportLocalConfig(selectedRuntime, selectedRuntimeChannelRecord.id);
       return;
     }
     const cachedProviderKeys = rememberProviderKeyFromChannel(providerKeys, selectedRuntimePreset, selectedRuntimeChannelRecord);
@@ -256,7 +266,9 @@ export function RuntimePage({
     if (!selectedRuntimePreset) return;
     onUpdateProviderKey(selectedRuntimePreset.id, value);
     updateSelectedRuntimeChannel((channel) =>
-      selectedRuntimePreset.id === CODEX_DEFAULT_PRESET_ID
+      selectedRuntimePreset.id === CODEX_LOCAL_DEFAULT_PRESET_ID ||
+      selectedRuntimePreset.id === CLAUDE_LOCAL_DEFAULT_PRESET_ID ||
+      selectedRuntimePreset.id === OPENCODE_DEFAULT_PRESET_ID
         ? applyProviderApiKeyToChannel(channel, selectedRuntimePreset, value)
         : applyProviderPresetToChannel(channel, selectedRuntimePreset, value),
     );

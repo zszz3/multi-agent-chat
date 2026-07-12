@@ -3,6 +3,8 @@ import type { AgentId, AgentModelOption, ClaudeApiKeyField, RuntimeProviderApiFo
 import { CC_SWITCH_PROVIDER_PRESETS } from "./cc-switch-provider-presets.generated";
 
 export const CODEX_DEFAULT_PRESET_ID = "codex-default";
+export const CODEX_LOCAL_DEFAULT_PRESET_ID = "codex-local-default";
+export const CLAUDE_LOCAL_DEFAULT_PRESET_ID = "claude-local-default";
 export const HERMES_DEFAULT_PRESET_ID = "hermes-default";
 export const OPENCODE_DEFAULT_PRESET_ID = "opencode-default";
 export const OPENCLAW_DEFAULT_PRESET_ID = "openclaw-default";
@@ -559,6 +561,7 @@ const LEGACY_PROVIDER_PRESETS: AgentProviderPreset[] = [
     id: OPENCODE_DEFAULT_PRESET_ID,
     label: "Default",
     runtimeAgentId: "opencode",
+    usesApiKey: true,
     models: FALLBACK_MODEL_OPTIONS.opencode,
     configurableModelId: true,
     configurableModelLabel: "OpenCode model",
@@ -577,6 +580,23 @@ const LEGACY_PROVIDER_PRESETS: AgentProviderPreset[] = [
 
 export const AGENT_PROVIDER_PRESETS: AgentProviderPreset[] = [
   ...CC_SWITCH_PROVIDER_PRESETS,
+  {
+    id: CODEX_LOCAL_DEFAULT_PRESET_ID,
+    label: "Default",
+    runtimeAgentId: "codex",
+    category: "local",
+    usesApiKey: true,
+    models: [{ id: DEFAULT_MODEL_ID, label: "Default" }],
+  },
+  {
+    id: CLAUDE_LOCAL_DEFAULT_PRESET_ID,
+    label: "Default",
+    runtimeAgentId: "claude",
+    category: "local",
+    apiFormat: "anthropic",
+    usesApiKey: true,
+    models: [{ id: DEFAULT_MODEL_ID, label: "Default" }],
+  },
   {
     id: "custom",
     label: "Custom",

@@ -93,4 +93,22 @@ describe("runtime local config import", () => {
       "API does not have a local CLI config to import",
     );
   });
+
+  test("keeps OpenCode on its runtime default when no model or provider is configured", async () => {
+    const result = await loadRuntimeLocalConfig({
+      runtimeId: "opencode",
+      executable: "opencode",
+      dependencies: {
+        exec: vi.fn(async () => ({ stdout: JSON.stringify({ plugin: [] }), stderr: "" })) as never,
+      },
+    });
+
+    expect(result.channel).toMatchObject({
+      id: "opencode-default",
+      presetId: "opencode-default",
+      models: [{ id: "default", label: "Default" }],
+    });
+    expect(result.channel.modelProvider).toBeUndefined();
+    expect(result.channel.baseUrl).toBeUndefined();
+  });
 });

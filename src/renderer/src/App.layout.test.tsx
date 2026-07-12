@@ -63,7 +63,7 @@ import {
 } from "./App";
 import { DEFAULT_MODEL_ID } from "../../shared/models";
 import { generatedConfigChannels, normalizeConfigChannelsForStorage, selectConfigChannelsForDisplay } from "../../shared/config-channels";
-import { AGENT_PROVIDER_PRESETS, CODEX_DEFAULT_PRESET_ID } from "../../shared/provider-presets";
+import { AGENT_PROVIDER_PRESETS, CODEX_DEFAULT_PRESET_ID, CODEX_LOCAL_DEFAULT_PRESET_ID } from "../../shared/provider-presets";
 import { SKILL_TEMPLATES } from "../../shared/skill-templates";
 import { firstWorkflowQuestionForObjective } from "../../shared/workflow-agent";
 import { formatTime } from "./app/format";
@@ -1434,7 +1434,7 @@ describe("AgentPage", () => {
     );
 
     expect(mapped).toMatchObject({
-      presetId: CODEX_DEFAULT_PRESET_ID,
+      presetId: CODEX_LOCAL_DEFAULT_PRESET_ID,
       models: [{ id: DEFAULT_MODEL_ID, label: "Default" }],
     });
     expect(mapped.modelProvider).toBeUndefined();
