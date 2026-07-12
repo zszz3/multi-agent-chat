@@ -115,6 +115,8 @@ async function score(
   const startedAt = Date.now();
   let value = 0;
   let reason: string | undefined;
+  let evidence: string[] | undefined;
+  let failedCriteria: string[] | undefined;
   if (evaluator.kind === "exact_match")
     value = output.trim() === (expected ?? "").trim() ? 1 : 0;
   else if (evaluator.kind === "contains")
@@ -132,15 +134,39 @@ async function score(
         throw new Error("LLM Judge Runtime is not configured");
       if (!executeJudge)
         throw new Error("LLM Judge Runtime executor is not available");
+      const template = evaluator.prompt ?? "Score the answer from 0 to 1.";
+      const usesPlaceholders = /\{\{(?:input|output|ground_truth|context)\}\}/.test(
+        template,
+      );
+      let judgePrompt = renderEvaluationPrompt(template, {
+        input,
+        output,
+        ...(expected !== undefined ? { ground_truth: expected } : {}),
+        ...(context !== undefined ? { context } : {}),
+      });
+      if (!usesPlaceholders) {
+        judgePrompt += `\n\nInput: ${input}\n\nAnswer: ${output}\n\nGround truth: ${expected ?? "(none)"}\n\nContext: ${context ?? "(none)"}`;
+      }
+      if (!judgePrompt.includes('"failedCriteria"')) {
+        judgePrompt +=
+          '\n\nReturn JSON only: {"score": number, "reason": string, "evidence": [string], "failedCriteria": [string]}';
+      }
       const result = await executeJudge(
         evaluator.runtimeId,
-        `${evaluator.prompt ?? "Score the answer from 0 to 1."}\n\nInput: ${input}\n\nAnswer: ${output}\n\nGround truth: ${expected ?? "(none)"}\n\nContext: ${context ?? "(none)"}\n\nReturn JSON only: {"score": number, "reason": string}`,
+        judgePrompt,
       );
       const parsed = JSON.parse(
         result.output.match(/\{[\s\S]*\}/)?.[0] ?? "{}",
-      ) as { score?: unknown; reason?: unknown };
+      ) as {
+        score?: unknown;
+        reason?: unknown;
+        evidence?: unknown;
+        failedCriteria?: unknown;
+      };
       value = Math.max(0, Math.min(1, Number(parsed.score) || 0));
       reason = typeof parsed.reason === "string" ? parsed.reason : undefined;
+      evidence = stringArray(parsed.evidence);
+      failedCriteria = stringArray(parsed.failedCriteria);
     } catch (cause) {
       reason = cause instanceof Error ? cause.message : String(cause);
       value = 0;
@@ -151,6 +177,28 @@ async function score(
     score: value,
     passed: value >= evaluator.threshold,
     ...(reason ? { reason } : {}),
+    ...(evidence ? { evidence } : {}),
+    ...(failedCriteria ? { failedCriteria } : {}),
     durationMs: Date.now() - startedAt,
   };
+}
+
+export function renderEvaluationPrompt(
+  template: string,
+  values: {
+    input: string;
+    output: string;
+    ground_truth?: string;
+    context?: string;
+  },
+): string {
+  return template.replace(
+    /\{\{(input|output|ground_truth|context)\}\}/g,
+    (_match, key: keyof typeof values) => values[key] ?? "(not provided)",
+  );
+}
+
+function stringArray(value: unknown): string[] | undefined {
+  if (!Array.isArray(value)) return undefined;
+  return value.filter((item): item is string => typeof item === "string");
 }

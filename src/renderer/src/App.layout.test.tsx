@@ -245,11 +245,14 @@ describe("Evaluation workbench redesign", () => {
   });
 
   test("configures LLM Judge with a concrete Runtime config", () => {
-    const evaluator = { id: "judge", name: "Quality Judge", kind: "llm_judge" as const, runtimeId: "codex-openai", threshold: 0.8, enabled: true, createdAt: 1, updatedAt: 2 };
+    const evaluator = { id: "judge", name: "Quality Judge", kind: "llm_judge" as const, runtimeId: "codex-openai", prompt: "<Rubric>Full scoring rubric</Rubric>", threshold: 0.8, enabled: true, createdAt: 1, updatedAt: 2 };
     const html = renderToStaticMarkup(<EvaluatorWorkspace zh evaluators={[evaluator]} selected={evaluator} channels={[{ id: "codex-openai", agentId: "codex", label: "Codex OpenAI", models: [] }]} busy={undefined} onSelect={() => undefined} onCreate={() => undefined} onChange={() => undefined} onSave={() => undefined} onDelete={() => undefined} />);
     expect(html).toContain("评分 Runtime");
     expect(html).toContain("Codex OpenAI · codex");
     expect(html).not.toContain("评分 Agent");
+    expect(html).toContain("完整评分 Prompt");
+    expect(html).toContain('rows="24"');
+    expect(html).toContain("&lt;Rubric&gt;Full scoring rubric&lt;/Rubric&gt;");
   });
 
   test("groups built-in Evaluator templates beside the new action", () => {

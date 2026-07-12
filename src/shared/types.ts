@@ -152,6 +152,8 @@ export interface EvaluationScore {
   score: number;
   passed: boolean;
   reason?: string;
+  evidence?: string[];
+  failedCriteria?: string[];
   durationMs: number;
   tokenCount?: number;
   estimatedCost?: number;

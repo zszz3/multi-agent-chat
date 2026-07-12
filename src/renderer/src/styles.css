@@ -10710,3 +10710,12 @@ textarea:focus-visible {
   font-size: 9px;
   line-height: 1.4;
 }
+
+.evaluator-prompt-editor {
+  min-height: 420px;
+  resize: vertical;
+  font-family: var(--font-mono);
+  font-size: 10px;
+  line-height: 1.55;
+  tab-size: 2;
+}

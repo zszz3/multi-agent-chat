@@ -59,8 +59,9 @@ describe("runEvaluation", () => {
 
   it("uses a concrete Runtime config for an LLM judge", async () => {
     const execute = vi.fn(async () => ({ output: "answer", durationMs: 3 }));
-    const executeJudge = vi.fn(async () => ({
-      output: '{"score":0.8,"reason":"good"}',
+    const executeJudge = vi.fn(async (_runtimeId: string, _prompt: string) => ({
+      output:
+        '{"score":0.8,"reason":"good","evidence":["answer"],"failedCriteria":["focus"]}',
       durationMs: 2,
     }));
     const run = await runEvaluation({
@@ -96,6 +97,8 @@ describe("runEvaluation", () => {
           name: "Judge",
           kind: "llm_judge",
           runtimeId: "runtime-openai",
+          prompt:
+            "<Rubric>Evaluate focus.</Rubric>\n<Input>{{input}}</Input>\n<Answer>{{output}}</Answer>\n<OutputFormat>JSON</OutputFormat>",
           threshold: 0.7,
           enabled: true,
           createdAt: 1,
@@ -109,13 +112,16 @@ describe("runEvaluation", () => {
       score: 0.8,
       passed: true,
       reason: "good",
+      evidence: ["answer"],
+      failedCriteria: ["focus"],
     });
     expect(execute).toHaveBeenCalledWith("subject", "question");
     expect(executeJudge).toHaveBeenCalledWith(
       "runtime-openai",
-      expect.stringMatching(
-        /Input: question[\s\S]*Answer: answer[\s\S]*Ground truth: reference answer[\s\S]*Context: trusted context/,
-      ),
+      expect.stringMatching(/<Input>question<\/Input>[\s\S]*<Answer>answer<\/Answer>/),
     );
+    const judgePrompt = executeJudge.mock.calls[0]?.[1] ?? "";
+    expect(judgePrompt).not.toContain("reference answer");
+    expect(judgePrompt).not.toContain("trusted context");
   });
 });

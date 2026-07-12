@@ -36,7 +36,25 @@ describe("evaluation templates", () => {
       "refusal-quality",
       "code-quality",
       "reasoning-quality",
+      "laziness",
+      "fairness",
+      "pii-leakage",
+      "injection-resistance",
+      "code-security",
     ]);
+
+    for (const template of EVALUATOR_TEMPLATES.filter(
+      (item) => item.kind === "llm_judge",
+    )) {
+      expect(template.prompt, template.id).toContain("<Rubric>");
+      expect(template.prompt, template.id).toContain("<EvaluationSteps>");
+      expect(template.prompt, template.id).toContain("<ScoreAnchors>");
+      expect(template.prompt, template.id).toContain("<OutputFormat>");
+      expect(template.prompt, template.id).toContain("{{output}}");
+      expect(template.prompt?.length, template.id).toBeGreaterThan(500);
+      for (const score of ["0.00", "0.25", "0.50", "0.75", "1.00"])
+        expect(template.prompt, `${template.id}:${score}`).toContain(score);
+    }
   });
 
   it("copies templates into independently editable user resources", () => {

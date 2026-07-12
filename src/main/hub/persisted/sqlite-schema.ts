@@ -6,7 +6,7 @@ export interface SqliteSchemaDatabase {
   };
 }
 
-const SCHEMA_VERSION = 6;
+const SCHEMA_VERSION = 7;
 
 export function createNormalizedSchema(db: SqliteSchemaDatabase): void {
   db.exec(`
@@ -115,7 +115,7 @@ export function createNormalizedSchema(db: SqliteSchemaDatabase): void {
     create table if not exists evaluation_experiment_evaluators (experiment_id text not null references evaluation_experiments(id) on delete cascade, evaluator_id text not null references evaluation_evaluators(id), sequence integer not null, primary key(experiment_id, evaluator_id));
     create table if not exists evaluation_runs (id text primary key, experiment_id text not null references evaluation_experiments(id) on delete cascade, status text not null, agent_revision_id text, started_at integer not null, finished_at integer, average_score real, minimum_score real, pass_rate real, total_duration_ms integer, error text);
     create table if not exists evaluation_case_results (id text primary key, run_id text not null references evaluation_runs(id) on delete cascade, dataset_item_id text not null, repetition integer not null, input text not null, expected_output text, output text not null, error text, duration_ms integer not null);
-    create table if not exists evaluation_scores (case_result_id text not null references evaluation_case_results(id) on delete cascade, evaluator_id text not null, score real not null, passed integer not null, reason text, duration_ms integer not null, token_count integer, estimated_cost real, primary key(case_result_id, evaluator_id));
+    create table if not exists evaluation_scores (case_result_id text not null references evaluation_case_results(id) on delete cascade, evaluator_id text not null, score real not null, passed integer not null, reason text, evidence_json text, failed_criteria_json text, duration_ms integer not null, token_count integer, estimated_cost real, primary key(case_result_id, evaluator_id));
     create table if not exists chats (
       id text primary key,
       title text not null,
@@ -297,6 +297,8 @@ export function createNormalizedSchema(db: SqliteSchemaDatabase): void {
     "integer not null default 0",
   );
   ensureColumn(db, "evaluation_evaluators", "runtime_id", "text");
+  ensureColumn(db, "evaluation_scores", "evidence_json", "text");
+  ensureColumn(db, "evaluation_scores", "failed_criteria_json", "text");
 }
 
 function ensureColumn(

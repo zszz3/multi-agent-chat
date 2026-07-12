@@ -228,14 +228,17 @@ export function EvaluatorWorkspace({
                     </select>
                   </label>
                   <label className="is-wide">
-                    <span>{zh ? "评分标准" : "Rubric"}</span>
+                    <span>
+                      {zh ? "完整评分 Prompt" : "Complete scoring prompt"}
+                    </span>
                     <textarea
-                      rows={7}
+                      className="evaluator-prompt-editor"
+                      rows={24}
                       value={selected.prompt ?? ""}
                       placeholder={
                         zh
-                          ? "描述如何判断结果质量，以及不同分数代表什么。"
-                          : "Describe how to judge quality and what each score means."
+                          ? "填写完整的 Rubric、评估步骤、评分锚点和输出格式。"
+                          : "Define the rubric, evaluation steps, score anchors, and output format."
                       }
                       onChange={(event) =>
                         onChange({ ...selected, prompt: event.target.value })
