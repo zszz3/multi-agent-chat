@@ -143,7 +143,18 @@ export function restoreWorkflowDraft(
   const definitionRecord = asRecord(record.definition);
   if (!definitionRecord) return undefined;
   const definition = structuredClone(definitionRecord) as unknown as WorkflowV2Definition;
-  if (!validateWorkflowV2Definition(definition).valid) return undefined;
+  const workflowId = asOptionalString(record.workflowId) ?? definition.workflowId;
+  const planningDraft = restoreWorkflowDraftStatus(record.status) === "draft"
+    && Array.isArray(definition.nodes)
+    && definition.nodes.length === 0
+    && Array.isArray(definition.edges)
+    && definition.edges.length === 0
+    && typeof definition.workflowId === "string"
+    && definition.workflowId === workflowId
+    && Number.isSafeInteger(definition.graphVersion)
+    && definition.graphVersion > 0
+    && typeof definition.objective === "string";
+  if (!planningDraft && !validateWorkflowV2Definition(definition).valid) return undefined;
   const finalReport = asOptionalString(record.finalReport);
   const restoredRuntimeConversation = record.runtimeConversation === undefined
     ? undefined
@@ -153,7 +164,6 @@ export function restoreWorkflowDraft(
     ? undefined
     : restoreWorkflowV2Plan(record.workflowV2Plan);
   if (record.workflowV2Plan !== undefined && !restoredWorkflowV2Plan) return undefined;
-  const workflowId = asOptionalString(record.workflowId) ?? definition.workflowId;
   if (workflowId !== definition.workflowId) return undefined;
   return deps.cloneWorkflowDraft({
     workflowId,
@@ -343,15 +353,13 @@ export function restoreWorkflowStoreCollections(
   const workflows: WorkflowDraftState[] = [];
   for (const item of asArray(storeRecord.workflows)) {
     const workflow = deps.restoreWorkflowDraft(item);
-    if (!workflow) return undefined;
-    workflows.push(workflow);
+    if (workflow) workflows.push(workflow);
   }
 
   const runs: WorkflowRunState[] = [];
   for (const item of asArray(storeRecord.runs)) {
     const run = deps.restoreWorkflowRun(item);
-    if (!run) return undefined;
-    runs.push(run);
+    if (run && workflows.some((workflow) => workflow.workflowId === run.workflowId)) runs.push(run);
   }
 
   const activeWorkflowId = asOptionalString(storeRecord.activeWorkflowId);

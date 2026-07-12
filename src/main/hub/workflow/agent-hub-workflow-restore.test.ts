@@ -14,7 +14,7 @@ import { buildWorkflowV2Plan } from "../../workflows/v2/workflow-v2-planner";
 import { transitionWorkflowV2NodeState } from "../../workflows/v2/workflow-v2-scheduler";
 import { WorkflowV2FileStore } from "../../workflows/v2/workflow-v2-store";
 import { AgentHub } from "../agent-hub";
-import { reconcileWorkflowV2RunFromDurableState } from "./agent-hub-workflow-restore";
+import { reconcileWorkflowV2RunFromDurableState, restoreWorkflowDraft, restoreWorkflowStoreCollections } from "./agent-hub-workflow-restore";
 
 function definition(workflowId = "workflow-recovery"): WorkflowV2Definition {
   return {
@@ -101,6 +101,60 @@ async function fixture(): Promise<{
 }
 
 describe("Workflow V2 AgentHub durable restore", () => {
+  test("restores an unfinished planning conversation with an empty DAG", () => {
+    const workflowId = "planning-workflow";
+    const restored = restoreWorkflowDraft({
+      workflowId,
+      title: "Untitled workflow",
+      status: "draft",
+      revision: 4,
+      configuredAgentId: "default-agent",
+      modelId: "default",
+      objective: "Plan a workflow",
+      definition: { workflowId, graphVersion: 1, objective: "", nodes: [], edges: [] },
+      messages: [{ id: "message-1", role: "user", content: "Plan a workflow" }],
+      reply: "",
+      runProgress: [],
+      runContextDocument: "",
+      contextDocument: "",
+      runIds: [],
+      createdAt: 1,
+      updatedAt: 2,
+    }, {
+      restoreRuntimeConversation: () => undefined,
+      cloneWorkflowDraft: (draft) => structuredClone(draft),
+    });
+
+    expect(restored).toMatchObject({ workflowId, status: "draft", objective: "Plan a workflow" });
+    expect(restored?.messages).toHaveLength(1);
+  });
+
+  test("skips one invalid workflow without clearing valid workflow history", () => {
+    const valid = {
+      workflowId: "valid-workflow",
+      title: "Valid",
+      status: "draft",
+      revision: 1,
+      configuredAgentId: "agent",
+      modelId: "model",
+      objective: "Valid workflow",
+      definition: definition("valid-workflow"),
+      messages: [], reply: "", runProgress: [], runContextDocument: "", contextDocument: "", runIds: [], createdAt: 1, updatedAt: 2,
+    };
+    const restored = restoreWorkflowStoreCollections({
+      activeWorkflowId: "broken-workflow",
+      workflows: [valid, { workflowId: "broken-workflow", definition: { workflowId: "mismatch", graphVersion: 1, objective: "", nodes: [], edges: [] } }],
+      runs: [{ runId: "orphan-run", workflowId: "broken-workflow" }],
+    }, {
+      restoreWorkflowDraft: (raw) => restoreWorkflowDraft(raw, { restoreRuntimeConversation: () => undefined, cloneWorkflowDraft: (draft) => structuredClone(draft) }),
+      restoreWorkflowRun: () => undefined,
+    });
+
+    expect(restored?.workflows.map((workflow) => workflow.workflowId)).toEqual(["valid-workflow"]);
+    expect(restored?.activeWorkflowId).toBe("valid-workflow");
+    expect(restored?.runs).toEqual([]);
+  });
+
   test("projects a paused durable run as waiting and resumable without losing completed work", async () => {
     const input = await fixture();
     let state = transitionWorkflowV2NodeState(input.persisted.runState, { nodeId: "draft", status: "running", now: 1_100 });
