@@ -153,7 +153,7 @@ export function EvaluationPage({
               {model.view === "evaluators" ? (
                 <EvaluatorTemplateMenu
                   zh={zh}
-                  onSelect={model.createEvaluator}
+                  onSelect={model.createEvaluatorFromTemplate}
                 />
               ) : null}
             </>
