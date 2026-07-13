@@ -74,6 +74,8 @@ import {
 } from "../../../shared/workflow-v2/storage";
 import type { ExecuteWorkflowV2Checkpoint } from "./workflow-v2-executor";
 import { resolveWorkflowV2ScriptInput } from "./workflow-v2-script-input";
+import { analyzeWorkflowV2Script } from "./workflow-v2-script-analysis";
+import { decideWorkflowV2ScriptPermission } from "./workflow-v2-script-permission";
 import {
   buildWorkflowV2FinalReport,
 } from "./workflow-v2-recovery";
@@ -778,12 +780,17 @@ export class WorkflowV2RunExecutor {
         MAX_NODE_TIMER_DELAY_MS,
       );
       const controller = new AbortController();
-      const requiresApproval = request.node.script.managerRisk.level === "write" || request.node.script.managerRisk.level === "dangerous";
-      const approved = !requiresApproval || input.recoveryOverrides?.has(request.node.id) === true;
-      if (!approved) {
+      const analysis = analyzeWorkflowV2Script(request.node.script);
+      const permission = decideWorkflowV2ScriptPermission({
+        managerRisk: request.node.script.managerRisk.level,
+        reviewerRisk: "safe",
+        staticRisk: analysis.minimumRisk,
+        confirmed: input.recoveryOverrides?.has(request.node.id) === true,
+      });
+      if (permission.decision === "require_confirmation") {
         throw new WorkflowV2SupervisionSignal({
-          resolution: { action: "pause", question: `Approve ${request.node.script.managerRisk.level} script node ${request.node.title}?`, reason: request.node.script.managerRisk.rationale },
-          report: { nodeId: request.node.id, attempt: 1, phase: "approval", completedItems: [], remainingItems: ["Human approval"], blockers: ["Script permission is not approved."], evidence: request.node.script.capabilities, safeToInterrupt: true, requestedAction: "need_input", reportedAt: Date.now() },
+          resolution: { action: "pause", question: `Approve ${permission.risk} script node ${request.node.title}?`, reason: analysis.rationale },
+          report: { nodeId: request.node.id, attempt: 1, phase: "approval", completedItems: [], remainingItems: ["Human approval"], blockers: ["Script permission is not approved."], evidence: analysis.detectedCapabilities, safeToInterrupt: true, requestedAction: "need_input", reportedAt: Date.now() },
         });
       }
       this.runRegistry.get(runId)?.abortControllerByNodeId?.set(request.node.id, controller);
@@ -805,14 +812,14 @@ export class WorkflowV2RunExecutor {
           timeoutMs,
           inputs: Object.freeze(structuredClone(resolvedInput.values)),
           authorization: {
-            decision: approved && requiresApproval ? "allow_once" : "auto_allow",
+            decision: permission.decision,
             workflowId: workflow.workflowId,
             graphVersion: workflow.workflowV2Plan?.graphVersion ?? workflow.definition.graphVersion,
             runId,
             nodeId: request.node.id,
-            risk: request.node.script.managerRisk.level,
-            capabilities: [...request.node.script.capabilities],
-            capabilityDigest: JSON.stringify([...request.node.script.capabilities].sort()),
+            risk: permission.risk,
+            capabilities: [...analysis.detectedCapabilities],
+            capabilityDigest: analysis.capabilityDigest,
           },
         });
         output = await Promise.race([execution, deadline]);

@@ -482,6 +482,23 @@ describe("WorkflowRuntime typed script input", () => {
   });
 });
 
+describe("WorkflowRuntime script permissions", () => {
+  test("fails closed when a command script is mislabeled safe", async () => {
+    const definition = workflowV2Definition();
+    definition.nodes = [{ id: "command", kind: "transform", title: "Run command", execModel: "script", executionMode: "script", script: { executable: { kind: "command", command: "tool", args: [] }, parameters: [], capabilities: [], managerRisk: { level: "safe", rationale: "Incorrectly labeled safe." } }, outputFields: [{ key: "stdout", required: true }] }];
+    definition.edges = [];
+    let executeCount = 0;
+    const fixture = await workflowV2RuntimeFixture({ definition, executeScript: async () => { executeCount += 1; throw new Error("must not execute"); } });
+
+    fixture.runtime.runWorkflow({ workflowId: fixture.workflow.workflowId });
+    while (!fixture.updates.some((update) => update.status === "waiting_for_user")) await new Promise((resolve) => setTimeout(resolve, 5));
+
+    expect(executeCount).toBe(0);
+    expect(fixture.updates.flatMap((update) => update.progress ?? []).filter((item) => item.nodeId === "command").at(-1)).toMatchObject({ status: "paused" });
+    expect(JSON.stringify(fixture.updates)).toContain("dangerous");
+  });
+});
+
 describe("WorkflowRuntime Workflow V2 bridge", () => {
   test("keeps an interactive node on the same non-terminal run while awaiting user confirmation", async () => {
     const definition = workflowV2Definition();

@@ -1,10 +1,12 @@
 import { spawn } from "node:child_process";
 import type { WorkflowV2WorkerOutput } from "../../../shared/workflow-v2/packets";
 import type { ExecuteWorkflowV2ScriptRequest } from "../workflow-runtime-ports";
+import { workflowV2ScriptCapabilityDigest } from "./workflow-v2-script-analysis";
 
 function assertAuthorized(input: ExecuteWorkflowV2ScriptRequest): void {
   if (input.authorization.nodeId !== input.node.id) throw new Error("Script authorization does not belong to this node.");
   if (input.authorization.decision !== "auto_allow" && input.authorization.decision !== "allow_once") throw new Error("Script execution is not authorized.");
+  if (input.authorization.capabilityDigest !== workflowV2ScriptCapabilityDigest(input.authorization.capabilities)) throw new Error("Script authorization capability digest does not match its capabilities.");
 }
 
 function validateOutput(input: ExecuteWorkflowV2ScriptRequest, output: Record<string, unknown>): void {
