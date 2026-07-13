@@ -34,7 +34,7 @@ describe("WorkflowPage input ownership", () => {
     value.onReviewWorkflow = () => undefined;
     const unconfirmedHtml = renderToStaticMarkup(<WorkflowPage controller={value} />);
     expect(unconfirmedHtml).toContain("Review Agent");
-    expect(unconfirmedHtml).toContain('<button class="control-btn" disabled="">');
+    expect(unconfirmedHtml).toContain('<button class="control-btn"><span>Confirm workflow</span></button>');
     expect(unconfirmedHtml).toContain("Awaiting confirmation");
     expect(unconfirmedHtml).toContain('<button class="send-btn" disabled="">');
 

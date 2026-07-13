@@ -22,7 +22,7 @@ export function recordWorkflowV2ScriptInputRequest(input: { nodeId: string; node
   const requestedAt = Date.now();
   input.control[input.nodeId] = { ...(input.control[input.nodeId] ?? { extensionCount: 0 }), scriptInput: { requestedParameters: input.missing, submittedValues: {}, auditValues: {}, requestedAt } };
   const labels = input.missing.map((item) => item.label).join(", ");
-  input.updateNode(input.nodeId, { status: "awaiting_input", detail: `Waiting for ${labels}`, scriptInputRequest: { parameters: structuredClone(input.missing) } }, { type: "gate_opened", nodeId: input.nodeId, question: `Provide script inputs: ${labels}` });
+  input.updateNode(input.nodeId, { status: "awaiting_input", detail: `Waiting for ${labels}`, inputRequest: { kind: "script_parameters", parameters: structuredClone(input.missing) } }, { type: "gate_opened", nodeId: input.nodeId, question: `Provide script inputs: ${labels}` });
   return requestedAt;
 }
 

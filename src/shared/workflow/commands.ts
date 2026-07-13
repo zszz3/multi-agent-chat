@@ -149,6 +149,10 @@ export interface ReviewWorkflowRequest {
   expectedRevision: number;
 }
 
+export interface InterruptWorkflowReviewRequest {
+  workflowId: string;
+}
+
 export interface BuildWorkflowV2PlanRequest {
   definition: WorkflowV2Definition;
   objective?: string;

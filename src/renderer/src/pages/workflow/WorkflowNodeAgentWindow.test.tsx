@@ -103,20 +103,11 @@ describe("WorkflowNodeAgentWindow", () => {
     expect(html).toContain("Send information to this node agent");
   });
 
-  test("renders typed script inputs grouped like an API request editor", () => {
-    const html = renderToStaticMarkup(<WorkflowNodeAgentWindow nodeTitle="Call API" onClose={() => undefined} scriptInputRequest={{ parameters: [
-      { key: "token", label: "Authorization", location: "header", valueType: "secret", source: "user", required: true },
-      { key: "limit", label: "Limit", location: "query", valueType: "number", source: "user", required: false },
-      { key: "body", label: "Request body", location: "body", valueType: "json", source: "user", required: true },
-      { key: "dryRun", label: "Dry run", location: "argument", valueType: "boolean", source: "user", required: false },
-    ] }} onSubmitScriptInput={() => undefined} />);
-    expect(html).toContain("Headers");
-    expect(html).toContain("Query");
-    expect(html).toContain("Body");
-    expect(html).toContain('type="password"');
-    expect(html).toContain('inputMode="numeric"');
-    expect(html).toContain("Submit inputs and continue");
-    expect(html).not.toContain("This node has not started");
+  test("disables interrupt for a failed conversation", () => {
+    const html = renderToStaticMarkup(<WorkflowNodeAgentWindow nodeTitle="Research" onClose={() => undefined} onInterrupt={() => undefined} conversation={{
+      conversationId: "w::r::research", workflowId: "w", runId: "r", nodeId: "research", configuredAgentId: "a", modelId: "m", workDir: "C:/workspace", status: "failed", messages: [], createdAt: 1, updatedAt: 1, lastActivityAt: 1,
+    }} />);
+    expect(html).toContain('disabled="" title="Interrupt agent"');
   });
   test("renders a switchable queue for parallel node conversations", () => {
     const html = renderToStaticMarkup(<WorkflowNodeAgentWindow

@@ -48,6 +48,7 @@ export interface RuntimeWorkflowRequestContext extends RuntimeRequest {
   channelId: string;
   workDir: string;
   onEvent?: ((event: WorkflowAgentEvent) => void) | undefined;
+  signal?: AbortSignal | undefined;
 }
 
 export interface RuntimeChannelTestContext {

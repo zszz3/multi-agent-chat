@@ -28,6 +28,7 @@ import type {
   MaterializeWorkflowDraftRequest,
   ConfirmWorkflowRequest,
   ReviewWorkflowRequest,
+  InterruptWorkflowReviewRequest,
   FinishWorkflowRunRequest,
   CompleteWorkflowNodeConversationRequest,
   InterruptWorkflowNodeConversationRequest,
@@ -269,8 +270,7 @@ import {
 } from "./workflow/agent-hub-workflow-draft-replies";
 import { abandonWorkflowDraftReplyState as abandonWorkflowDraftReplyStateValue } from "./workflow/agent-hub-workflow-draft-reply-state";
 import { validateWorkflowV2Definition } from "../../shared/workflow-v2/validation";
-import { isWorkflowV2GenerationReviewValidForRoute } from "../../shared/workflow-v2/generation-review";
-import { runWorkflowGenerationReviewLifecycle } from "./workflow/workflow-generation-review-service";
+import { WorkflowGenerationReviewCoordinator } from "./workflow/workflow-generation-review-service";
 import { WORKFLOW_DEVELOPER_INSTRUCTIONS } from "./runtime/executor/workflow/agent-executor-workflow-shared";
 const DEFAULT_AGENT: AgentId = "codex";
 const CODEX_CHAT_DEVELOPER_INSTRUCTIONS =
@@ -374,6 +374,7 @@ export class AgentHub {
   private readonly workflowNodeConversationService: WorkflowNodeConversationService;
   private readonly workflowRunService: WorkflowRunService;
   private readonly workflowPlanningService = new WorkflowPlanningService();
+  private readonly workflowGenerationReviewCoordinator = new WorkflowGenerationReviewCoordinator();
   private readonly workflowDraftService: WorkflowDraftService;
   private readonly workflowRunStateService: WorkflowRunStateService;
   private readonly workflowContextService: WorkflowContextService;
@@ -1080,16 +1081,11 @@ export class AgentHub {
       return { ok: false, workflowId: workflow.workflowId, revision: workflow.revision, error: "Workflow draft changed before confirmation." };
     }
     if (!workflow.workflowV2Plan) return { ok: false, workflowId: workflow.workflowId, revision: workflow.revision, error: "Workflow V2 plan is required before confirmation." };
-    if (!isWorkflowV2GenerationReviewValidForRoute(workflow.generationReview, { revision: workflow.revision, reviewerConfiguredAgentId: workflow.reviewerConfiguredAgentId, reviewerModelId: workflow.reviewerModelId })) {
-      return { ok: false, workflowId: workflow.workflowId, revision: workflow.revision, error: "Workflow requires an approved adversarial review for the current revision." };
-    }
     const validation = validateWorkflowV2Definition(workflow.definition);
     if (!validation.valid) return { ok: false, workflowId: workflow.workflowId, revision: workflow.revision, error: validation.errors[0] ?? "Workflow V2 definition is invalid." };
-    const reviewResult = workflow.generationReview?.result;
-    if (!reviewResult) return { ok: false, workflowId: workflow.workflowId, revision: workflow.revision, error: "Workflow review result is unavailable." };
     let frozenPlan;
     try {
-      frozenPlan = freezeWorkflowV2ScriptGovernance({ plan: workflow.workflowV2Plan, reviewedRevision: workflow.revision, reviewerRisks: reviewResult.scriptRisks });
+      frozenPlan = freezeWorkflowV2ScriptGovernance({ plan: workflow.workflowV2Plan, reviewedRevision: workflow.revision, ...(workflow.generationReview?.result?.scriptRisks ? { reviewerRisks: workflow.generationReview.result.scriptRisks } : {}) });
     } catch (error) {
       return { ok: false, workflowId: workflow.workflowId, revision: workflow.revision, error: error instanceof Error ? error.message : "Workflow script governance could not be frozen." };
     }
@@ -1109,14 +1105,20 @@ export class AgentHub {
       return this.snapshot();
     }
     const executionMode = this.selectExecutionMode(reviewer.runtimeAgentId, "workflow", "oneshot");
-    await runWorkflowGenerationReviewLifecycle({
-      workflow,
-      askReviewer: (prompt) => this.askWorkflowAgent({ planningWorkflowId: workflow.workflowId, prompt, configuredAgentId: workflow.reviewerConfiguredAgentId, runtimeId: reviewer.runtimeAgentId, executionMode, continuationPolicy: this.defaultContinuationPolicy(reviewer.runtimeAgentId, "workflow", executionMode), runtimeConfig: { model: workflow.reviewerModelId, ...(reviewer.reasoningEffort ? { reasoningEffort: reviewer.reasoningEffort } : {}) }, workDir: workflow.workDir || this.workDir }),
-      publish: (next) => { this.workflowStore.workflows.set(next.workflowId, next); this.emit(); },
-      current: () => this.workflowStore.workflows.get(workflow.workflowId),
-      flush: () => this.flushPersistence(),
-      clone: (next) => this.cloneWorkflowDraft(next),
+    await this.workflowGenerationReviewCoordinator.run({
+        workflow,
+        askReviewer: (prompt, signal) => this.askWorkflowAgent({ planningWorkflowId: workflow.workflowId, prompt, configuredAgentId: workflow.reviewerConfiguredAgentId, runtimeId: reviewer.runtimeAgentId, executionMode, continuationPolicy: this.defaultContinuationPolicy(reviewer.runtimeAgentId, "workflow", executionMode), runtimeConfig: { model: workflow.reviewerModelId, ...(reviewer.reasoningEffort ? { reasoningEffort: reviewer.reasoningEffort } : {}) }, workDir: workflow.workDir || this.workDir }, undefined, signal),
+        publish: (next) => { this.workflowStore.workflows.set(next.workflowId, next); this.emit(); },
+        current: () => this.workflowStore.workflows.get(workflow.workflowId),
+        flush: () => this.flushPersistence(),
+        clone: (next) => this.cloneWorkflowDraft(next),
     });
+    return this.snapshot();
+  }
+
+  async interruptWorkflowReview(input: InterruptWorkflowReviewRequest): Promise<AppSnapshot> {
+    const workflow = this.workflowStore.workflows.get(input.workflowId);
+    if (workflow) await this.workflowGenerationReviewCoordinator.interrupt({ workflow, publish: (next) => { this.workflowStore.workflows.set(next.workflowId, next); this.emit(); }, flush: () => this.flushPersistence(), clone: (next) => this.cloneWorkflowDraft(next) });
     return this.snapshot();
   }
 
@@ -1842,7 +1844,7 @@ export class AgentHub {
     });
   }
 
-  async askWorkflowAgent(input: WorkflowAgentRequest, onEvent?: (event: WorkflowAgentEvent) => void): Promise<WorkflowAgentResponse> {
+  async askWorkflowAgent(input: WorkflowAgentRequest, onEvent?: (event: WorkflowAgentEvent) => void, signal?: AbortSignal): Promise<WorkflowAgentResponse> {
     return this.runtimeRouter.askWorkflow({
       ...buildWorkflowAgentExecutionValue({
         request: input,
@@ -1854,6 +1856,7 @@ export class AgentHub {
         createRequestId: () => randomUUID(),
       }),
       onEvent,
+      signal,
     });
   }
 

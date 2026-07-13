@@ -36,7 +36,11 @@ export async function runOpenClawWorkflow(
       exitCode = code;
     },
   });
-  await runner.start();
+  const abort = () => { void runner.stop(); };
+  if (input.signal?.aborted) abort();
+  else input.signal?.addEventListener("abort", abort, { once: true });
+  try { await runner.start(); } finally { input.signal?.removeEventListener("abort", abort); }
+  if (input.signal?.aborted) throw input.signal.reason instanceof Error ? input.signal.reason : new Error("Workflow agent interrupted.");
   const output = content.trim();
   if (runnerError) throw new Error(runnerError);
   if (exitCode !== 0) throw new Error(`OpenClaw exited with ${exitCode ?? "unknown"}: ${(stderr.trim() || output || "no output").slice(0, 800)}`);

@@ -3,7 +3,6 @@ import { Bot, CheckCircle2, CircleStop, FileInput, GitBranch, Maximize2, Play, R
 import { DEFAULT_MODEL_ID } from "../../../../shared/models";
 import { WORKFLOW_TOTAL_QUESTION_COUNT } from "../../../../shared/workflow-agent";
 import { validateWorkflowV2Definition } from "../../../../shared/workflow-v2/validation";
-import { isWorkflowV2GenerationReviewValidForRoute } from "../../../../shared/workflow-v2/generation-review";
 import type { WorkflowV2Node } from "../../../../shared/workflow-v2/definition";
 import type {
   AgentChannel,
@@ -32,7 +31,7 @@ import { Markdown } from "../../Markdown";
 import { ChatControls } from "../chat/ChatControls";
 import { TaskStatusChip } from "../tasks/task-status";
 import { WorkflowCanvasBoard } from "./WorkflowCanvasBoard";
-import { WorkflowNodeAgentWindow } from "./WorkflowNodeAgentWindow";
+import { WorkflowNodeSurface } from "./WorkflowNodeSurface";
 import { WorkflowOutputPreviewModal } from "./WorkflowOutputPreviewModal";
 import { WorkflowOutputsPanel } from "./WorkflowOutputsPanel";
 import { WorkflowReviewDrawer } from "./WorkflowReviewDrawer";
@@ -108,7 +107,6 @@ export function WorkflowPage({ controller: source }: { controller: WorkflowContr
   const workflowText = WORKFLOW_TEXT[language];
   const validation = validateWorkflowV2Definition(definition);
   const workflowConfirmed = revision !== undefined && confirmedRevision === revision;
-  const workflowReviewApproved = revision !== undefined && isWorkflowV2GenerationReviewValidForRoute(generationReview, { revision, reviewerConfiguredAgentId, reviewerModelId });
   const [reviewDrawerOpen, setReviewDrawerOpen] = useState(false);
 
   useEffect(() => {
@@ -147,21 +145,20 @@ export function WorkflowPage({ controller: source }: { controller: WorkflowContr
   const composerLocked = workflowStarted || running;
   const [graphExpanded, setGraphExpanded] = useState(defaultGraphExpanded);
   const [outputFiles, setOutputFiles] = useState<Array<{ name: string; path: string }>>([]);
-  const [editingWorkflowNodeId, setEditingWorkflowNodeId] = useState<string | undefined>(undefined);
-  const [openNodeAgentNodeId, setOpenNodeAgentNodeId] = useState<string | undefined>(undefined);
-  const dismissedNodeAgentRunIdRef = useRef<string | undefined>(undefined);
+  const [openNodeId, setOpenNodeId] = useState<string | undefined>(undefined);
+  const dismissedNodeSurfaceRunIdRef = useRef<string | undefined>(undefined);
   const [filePreview, setFilePreview] = useState<LocalFilePreview | undefined>(undefined);
   const [filePreviewError, setFilePreviewError] = useState<string | undefined>(undefined);
   const [filePreviewLoadingPath, setFilePreviewLoadingPath] = useState<string | undefined>(undefined);
   const outputDocuments = outputFiles.map((file) => ({ path: file.path, title: file.name }));
   const grillTranscriptRef = useRef<HTMLElement>(null);
   const grillStickRef = useRef(true);
-  const openNodeConversation = nodeConversations.find((conversation) => conversation.nodeId === openNodeAgentNodeId);
-  const openNodeConversationGraphNode = graph.nodes.find((node) => node.id === openNodeAgentNodeId);
-  const openNodeProgress = openNodeAgentNodeId ? runProgressByNodeId.get(openNodeAgentNodeId) : undefined;
-  const openNodeTaskId = openNodeAgentNodeId ? runProgressByNodeId.get(openNodeAgentNodeId)?.taskId : undefined;
+  const openNodeConversation = nodeConversations.find((conversation) => conversation.nodeId === openNodeId);
+  const openNodeGraphNode = graph.nodes.find((node) => node.id === openNodeId);
+  const openNodeProgress = openNodeId ? runProgressByNodeId.get(openNodeId) : undefined;
+  const openNodeTaskId = openNodeId ? runProgressByNodeId.get(openNodeId)?.taskId : undefined;
   const openNodeTask = nodeTasks.find((task) => task.id === openNodeTaskId);
-  const nodeAgentSessions = graph.nodes.map((node) => {
+  const nodeAgentSessions = graph.nodes.filter((node) => node.execModel === "llm").map((node) => {
     const conversation = nodeConversations.find((candidate) => candidate.nodeId === node.id);
     const taskId = runProgressByNodeId.get(node.id)?.taskId;
     const task = taskId ? nodeTasks.find((candidate) => candidate.id === taskId) : undefined;
@@ -170,10 +167,15 @@ export function WorkflowPage({ controller: source }: { controller: WorkflowContr
   const nodePositionProps = {};
 
   useEffect(() => {
-    if (dismissedNodeAgentRunIdRef.current && dismissedNodeAgentRunIdRef.current !== activeRunId) dismissedNodeAgentRunIdRef.current = undefined;
+    if (dismissedNodeSurfaceRunIdRef.current && dismissedNodeSurfaceRunIdRef.current !== activeRunId) dismissedNodeSurfaceRunIdRef.current = undefined;
     const attentionConversation = nodeConversations.find((conversation) => conversation.status === "waiting_for_user" || conversation.status === "completion_proposed");
-    if (attentionConversation && !openNodeAgentNodeId && dismissedNodeAgentRunIdRef.current !== activeRunId) setOpenNodeAgentNodeId(attentionConversation.nodeId);
-  }, [activeRunId, nodeConversations, openNodeAgentNodeId]);
+    if (attentionConversation && !openNodeId && dismissedNodeSurfaceRunIdRef.current !== activeRunId) setOpenNodeId(attentionConversation.nodeId);
+  }, [activeRunId, nodeConversations, openNodeId]);
+
+  useEffect(() => {
+    const nodeInput = runProgress.find((item) => item.inputRequest);
+    if (nodeInput && !openNodeId && dismissedNodeSurfaceRunIdRef.current !== activeRunId) setOpenNodeId(nodeInput.nodeId);
+  }, [activeRunId, openNodeId, runProgress]);
 
   useEffect(() => {
     const transcript = grillTranscriptRef.current;
@@ -204,16 +206,12 @@ export function WorkflowPage({ controller: source }: { controller: WorkflowContr
     if (!graphExpanded) return;
     function handleKeyDown(event: globalThis.KeyboardEvent): void {
       if (event.key === "Escape") {
-        setEditingWorkflowNodeId(undefined);
+        setOpenNodeId(undefined);
         setGraphExpanded(false);
       }
     }
     window.addEventListener("keydown", handleKeyDown);
     return () => window.removeEventListener("keydown", handleKeyDown);
-  }, [graphExpanded]);
-
-  useEffect(() => {
-    if (!graphExpanded) setEditingWorkflowNodeId(undefined);
   }, [graphExpanded]);
 
   useEffect(() => {
@@ -265,11 +263,9 @@ export function WorkflowPage({ controller: source }: { controller: WorkflowContr
     const openNodeEditor = (event: MouseEvent) => {
       event.preventDefault();
       event.stopPropagation();
-      if (workflowNodeOpenTarget(node.execModel) === "conversation") {
-        setOpenNodeAgentNodeId(node.id);
-        return;
-      }
-      setEditingWorkflowNodeId(node.id);
+      const surface = workflowNodeOpenTarget(node.execModel);
+      setOpenNodeId(node.id);
+      if (surface === "script") setGraphExpanded(false);
     };
     const cardHead = (
       <div className="workflow-graph-card-head">
@@ -359,7 +355,7 @@ export function WorkflowPage({ controller: source }: { controller: WorkflowContr
                 </button>
               ) : null}
               {!workflowConfirmed && onConfirmWorkflow ? (
-                <button className="control-btn" onClick={() => void onConfirmWorkflow()} disabled={!validation.valid || !workflowReviewApproved || running}>
+          <button className="control-btn" onClick={() => void onConfirmWorkflow()} disabled={!validation.valid || running}>
                   <span>{workflowText.confirmWorkflow}</span>
                 </button>
               ) : null}
@@ -389,7 +385,9 @@ export function WorkflowPage({ controller: source }: { controller: WorkflowContr
           onChooseWorkDir={onChooseWorkDir}
         />}
         canReview={validation.valid && !running}
+        canInterrupt={generationReview?.status === "reviewing"}
         onReview={() => void onReviewWorkflow()}
+        onInterrupt={() => void source.onInterruptWorkflowReview?.()}
         onClose={() => setReviewDrawerOpen(false)}
       /> : null}
 
@@ -458,10 +456,10 @@ export function WorkflowPage({ controller: source }: { controller: WorkflowContr
                 <button className="workflow-graph-close icon-btn" onClick={() => setGraphExpanded(false)} title="Close graph board" aria-label="Close workflow graph board">
                   <X size={15} />
                 </button>
-                {definition ? <WorkflowCanvasBoard definition={definition} expanded onOpenAgentNode={setOpenNodeAgentNodeId} renderNodeCard={(node) => renderWorkflowNodeCard(node, false)} /> : null}
+                {definition ? <WorkflowCanvasBoard definition={definition} expanded onOpenNode={setOpenNodeId} renderNodeCard={(node) => renderWorkflowNodeCard(node, false)} /> : null}
               </>
             ) : (
-              definition ? <WorkflowCanvasBoard definition={definition} runProgressByNodeId={runProgressByNodeId} onOpenAgentNode={setOpenNodeAgentNodeId} onExpand={() => setGraphExpanded(true)} renderNodeCard={(node) => renderWorkflowNodeCard(node, true)} /> : null
+              definition ? <WorkflowCanvasBoard definition={definition} runProgressByNodeId={runProgressByNodeId} onOpenNode={setOpenNodeId} onExpand={() => setGraphExpanded(true)} renderNodeCard={(node) => renderWorkflowNodeCard(node, true)} /> : null
             )}
             {runProgressVisible ? (
               <section className="workflow-run-progress" aria-label={workflowText.runProgress}>
@@ -535,16 +533,16 @@ export function WorkflowPage({ controller: source }: { controller: WorkflowContr
         onClose={() => setFilePreview(undefined)}
       /> : null}
 
-      {openNodeConversationGraphNode ? <WorkflowNodeAgentWindow
+      {openNodeGraphNode ? <WorkflowNodeSurface
+        node={openNodeGraphNode}
         {...(openNodeConversation ? { conversation: openNodeConversation } : {})}
         {...(openNodeTask ? { task: openNodeTask } : {})}
         sessions={nodeAgentSessions}
-        {...(openNodeAgentNodeId ? { selectedNodeId: openNodeAgentNodeId } : {})}
-        nodeTitle={openNodeConversationGraphNode.title}
-        {...(openNodeProgress?.scriptInputRequest ? { scriptInputRequest: openNodeProgress.scriptInputRequest } : {})}
-        {...(onSubmitScriptInput && openNodeAgentNodeId ? { onSubmitScriptInput: (values: Record<string, unknown>) => onSubmitScriptInput(openNodeAgentNodeId, values) } : {})}
-        onSelectNode={setOpenNodeAgentNodeId}
-        onClose={() => { dismissedNodeAgentRunIdRef.current = activeRunId; setOpenNodeAgentNodeId(undefined); }}
+        {...(openNodeId ? { selectedNodeId: openNodeId } : {})}
+        {...(openNodeProgress ? { progress: openNodeProgress } : {})}
+        {...(onSubmitScriptInput && openNodeId ? { onSubmitScriptInput: (values: Record<string, unknown>) => onSubmitScriptInput(openNodeId, values) } : {})}
+        onSelectNode={setOpenNodeId}
+        onClose={() => { dismissedNodeSurfaceRunIdRef.current = activeRunId; setOpenNodeId(undefined); }}
         {...(onSendNodeMessage && openNodeConversation ? { onSend: (message: string) => onSendNodeMessage(openNodeConversation.conversationId, message) } : {})}
         {...(onCompleteNodeConversation && openNodeConversation ? { onConfirm: () => onCompleteNodeConversation(openNodeConversation.conversationId) } : {})}
         {...(onRejectNodeCompletion && openNodeConversation ? { onReject: (instruction: string) => onRejectNodeCompletion(openNodeConversation.conversationId, instruction) } : {})}

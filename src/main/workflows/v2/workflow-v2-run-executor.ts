@@ -64,6 +64,7 @@ import {
 } from "../../../shared/workflow-v2/storage";
 import type { ExecuteWorkflowV2Checkpoint } from "./workflow-v2-executor";
 import { recordWorkflowV2ScriptInputRequest, resolveWorkflowV2ScriptInput, workflowV2ScriptInputSignal } from "./workflow-v2-script-input";
+import { projectWorkflowV2PausedNodeInteraction } from "./workflow-v2-node-interaction";
 import { authorizeWorkflowV2Script, executeAuthorizedWorkflowV2Script } from "./workflow-v2-script-execution";
 import { buildWorkflowV2FinalReport } from "./workflow-v2-recovery";
 import {
@@ -161,6 +162,8 @@ export class WorkflowV2RunExecutor {
       latestProgress = latestProgress.map((item) => {
         if (item.nodeId !== nodeId) return item;
         const next = { ...item, ...update };
+        if (next.status !== "awaiting_input") delete next.inputRequest;
+        if (next.status !== "paused" && next.status !== "awaiting_input") delete next.intervention;
         if (clearTaskId) delete next.taskId;
         return next;
       });
@@ -953,20 +956,14 @@ export class WorkflowV2RunExecutor {
           } else if (transition.status === "paused") {
             const activeRun = this.runRegistry.get(runId);
             activeRun?.pausedNodeIds.add(transition.nodeId);
-            const scriptInput = durableNodeControl[transition.nodeId]?.scriptInput;
-            const waitingForScriptInput = scriptInput !== undefined && scriptInput.submittedAt === undefined;
-            updateNode(transition.nodeId, {
-              status: waitingForScriptInput ? "awaiting_input" : "paused",
-              detail: waitingForScriptInput
-                ? `Waiting for ${scriptInput.requestedParameters.map((item) => item.label).join(", ")}`
-                : transition.intervention.reason,
-              ...(!waitingForScriptInput ? { intervention: structuredClone(transition.intervention) } : {}),
-            }, {
-              type: waitingForScriptInput ? "gate_opened" : "node_paused",
+            const node = plan.definition.nodes.find((candidate) => candidate.id === transition.nodeId);
+            const interaction = projectWorkflowV2PausedNodeInteraction({
               nodeId: transition.nodeId,
-              detail: transition.intervention.reason,
-              ...(!waitingForScriptInput ? { intervention: transition.intervention } : {}),
-            }, true);
+              interactiveAgent: node?.execModel === "llm" && node.executionMode === "interactive",
+              intervention: transition.intervention,
+              ...(durableNodeControl[transition.nodeId] ? { control: durableNodeControl[transition.nodeId] } : {}),
+            });
+            updateNode(transition.nodeId, interaction.progress, interaction.event, true);
           } else {
             updateNode(transition.nodeId, { status: "failed", detail: transition.error }, {
               type: "node_failed",

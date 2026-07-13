@@ -60,6 +60,7 @@ export type {
   RunWorkflowRequest,
   ConfirmWorkflowRequest,
   ReviewWorkflowRequest,
+  InterruptWorkflowReviewRequest,
   BuildWorkflowV2PlanRequest,
   BuildWorkflowV2PlanResult,
   BuildWorkflowV2GraphRevisionRequest,

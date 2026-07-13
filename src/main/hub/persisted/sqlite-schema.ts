@@ -122,6 +122,8 @@ export function createNormalizedSchema(db: SqliteSchemaDatabase): void {
       status text not null,
       detail text,
       task_id text,
+      input_request_json text,
+      intervention_json text,
       sequence integer not null,
       primary key (workflow_id, node_id)
     );
@@ -149,6 +151,8 @@ export function createNormalizedSchema(db: SqliteSchemaDatabase): void {
       status text not null,
       detail text,
       task_id text,
+      input_request_json text,
+      intervention_json text,
       sequence integer not null,
       primary key (run_id, node_id)
     );
@@ -185,6 +189,10 @@ export function createNormalizedSchema(db: SqliteSchemaDatabase): void {
   ensureColumn(db, "workflows", "definition_json", "text");
   ensureColumn(db, "workflows", "workflow_v2_plan_json", "text");
   ensureColumn(db, "workflow_runs", "workflow_v2_plan_json", "text");
+  ensureColumn(db, "workflow_run_progress", "input_request_json", "text");
+  ensureColumn(db, "workflow_run_progress", "intervention_json", "text");
+  ensureColumn(db, "workflow_run_nodes", "input_request_json", "text");
+  ensureColumn(db, "workflow_run_nodes", "intervention_json", "text");
 }
 
 function ensureColumn(db: SqliteSchemaDatabase, table: string, column: string, definition: string): void {

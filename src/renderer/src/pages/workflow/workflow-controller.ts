@@ -91,6 +91,7 @@ export interface WorkflowController {
   onSelectReviewerConfiguredAgent: (configuredAgentId: string) => void;
   onSelectReviewerModel?: (modelId: string) => void;
   onReviewWorkflow?: () => MaybePromise;
+  onInterruptWorkflowReview?: () => MaybePromise;
   onBuildDefinition: () => void;
   onReplyChange: (value: string) => void;
   onSendReply: () => void;

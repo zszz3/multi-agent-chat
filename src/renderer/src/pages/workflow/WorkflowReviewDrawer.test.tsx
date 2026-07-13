@@ -26,7 +26,9 @@ describe("WorkflowReviewDrawer", () => {
       review={review}
       reviewerControls={<div>Reviewer controls</div>}
       canReview
+      canInterrupt={false}
       onReview={() => undefined}
+      onInterrupt={() => undefined}
       onClose={() => undefined}
     />);
 
@@ -45,8 +47,24 @@ describe("WorkflowReviewDrawer", () => {
       open={false}
       reviewerControls={<div />}
       canReview
+      canInterrupt={false}
       onReview={() => undefined}
+      onInterrupt={() => undefined}
       onClose={() => undefined}
     />)).toBe("");
+  });
+
+  test("offers a real interrupt action while review is running", () => {
+    const html = renderToStaticMarkup(<WorkflowReviewDrawer
+      open
+      review={{ status: "reviewing", reviewerConfiguredAgentId: review.reviewerConfiguredAgentId, reviewerModelId: review.reviewerModelId, reviewedRevision: 4, updatedAt: 1 }}
+      reviewerControls={<div />}
+      canReview={false}
+      canInterrupt
+      onReview={() => undefined}
+      onInterrupt={() => undefined}
+      onClose={() => undefined}
+    />);
+    expect(html).toContain("Interrupt review");
   });
 });

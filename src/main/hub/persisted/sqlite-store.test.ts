@@ -111,7 +111,16 @@ function sampleState() {
           messages: [{ id: "grill-1", role: "user", content: "go" }],
           reply: "ready",
           error: undefined,
-          runProgress: [{ nodeId: "build", title: "Build", status: "running", taskId: "task-1" }],
+          runProgress: [{
+            nodeId: "build",
+            title: "Build",
+            status: "awaiting_input",
+            taskId: "task-1",
+            inputRequest: {
+              kind: "script_parameters",
+              parameters: [{ key: "question", label: "Question", location: "stdin", valueType: "string", source: "user", required: true }],
+            },
+          }],
           runContextDocument: "run context",
           contextDocument: "context",
           finalReport: undefined,
@@ -128,7 +137,16 @@ function sampleState() {
           workflowId: "workflow-1",
           status: "running",
           workflowV2Plan,
-          progress: [{ nodeId: "build", title: "Build", status: "completed", detail: "done" }],
+          progress: [{
+            nodeId: "build",
+            title: "Build",
+            status: "awaiting_input",
+            detail: "Waiting for Question",
+            inputRequest: {
+              kind: "script_parameters",
+              parameters: [{ key: "question", label: "Question", location: "stdin", valueType: "string", source: "user", required: true }],
+            },
+          }],
           events: [
             {
               type: "node_output",

@@ -661,7 +661,7 @@ export class WorkflowRuntime {
     this.deps.updateWorkflowRunState({ workflowId: input.workflowId, runId: input.runId, status: "running", progress: run.progress.map((item) => {
       if (item.nodeId !== input.nodeId) return item;
       const next = { ...item, status: "running" as const, detail: "Script input submitted" };
-      delete next.scriptInputRequest;
+      delete next.inputRequest;
       return next;
     }), appendEvents: [{ type: "gate_answered", nodeId: input.nodeId, at: submittedAt, answer: JSON.stringify(resolved.auditValues) }], contextDocument: run.contextDocument });
     const storagePlan = workflowStoragePlanFor(input.workflowId, input.runId);

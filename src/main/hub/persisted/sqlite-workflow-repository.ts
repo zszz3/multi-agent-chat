@@ -81,7 +81,8 @@ export class SqliteWorkflowRepository {
       asArray(workflow.runProgress).forEach((item, sequence) => {
         db.prepare(
           `insert into workflow_run_progress
-           (workflow_id, node_id, title, status, detail, task_id, sequence) values (?, ?, ?, ?, ?, ?, ?)`,
+           (workflow_id, node_id, title, status, detail, task_id, input_request_json, intervention_json, sequence)
+           values (?, ?, ?, ?, ?, ?, ?, ?, ?)`,
         ).run(
           workflowId,
           asString(item.nodeId),
@@ -89,6 +90,8 @@ export class SqliteWorkflowRepository {
           asString(item.status),
           asOptionalString(item.detail) ?? null,
           asOptionalString(item.taskId) ?? null,
+          json(item.inputRequest),
+          json(item.intervention),
           sequence,
         );
       });
@@ -122,7 +125,8 @@ export class SqliteWorkflowRepository {
     asArray(run.progress).forEach((item, itemSequence) => {
       db.prepare(
         `insert into workflow_run_nodes
-         (run_id, node_id, title, status, detail, task_id, sequence) values (?, ?, ?, ?, ?, ?, ?)`,
+         (run_id, node_id, title, status, detail, task_id, input_request_json, intervention_json, sequence)
+         values (?, ?, ?, ?, ?, ?, ?, ?, ?)`,
       ).run(
         runId,
         asString(item.nodeId),
@@ -130,6 +134,8 @@ export class SqliteWorkflowRepository {
         asString(item.status),
         asOptionalString(item.detail) ?? null,
         asOptionalString(item.taskId) ?? null,
+        json(item.inputRequest),
+        json(item.intervention),
         itemSequence,
       );
     });
@@ -261,6 +267,8 @@ export class SqliteWorkflowRepository {
         const item: RecordValue = { nodeId: row.node_id, title: row.title, status: row.status };
         optional(item, "detail", row.detail);
         optional(item, "taskId", row.task_id);
+        optional(item, "inputRequest", parseJson(row.input_request_json));
+        optional(item, "intervention", parseJson(row.intervention_json));
         return item;
       });
   }

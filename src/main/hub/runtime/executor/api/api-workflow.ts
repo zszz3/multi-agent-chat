@@ -20,6 +20,7 @@ export async function runApiWorkflow(
       ...(channel.httpHeaders ?? {}),
     },
     body: JSON.stringify(apiRequestBody(channel, model, input.prompt, WORKFLOW_DEVELOPER_INSTRUCTIONS)),
+    ...(input.signal ? { signal: input.signal } : {}),
   });
   const text = await response.text();
   if (!response.ok) throw new Error(`API workflow request failed (${response.status}): ${text.slice(0, 800)}`);

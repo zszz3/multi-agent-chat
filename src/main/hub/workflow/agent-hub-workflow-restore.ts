@@ -38,6 +38,7 @@ import { validateWorkflowV2Definition } from "../../../shared/workflow-v2/valida
 import type { WorkflowV2PersistedRunState } from "../../../shared/workflow-v2/storage";
 import type { WorkflowV2RunNodeState } from "../../../shared/workflow-v2/state";
 import { buildWorkflowV2FinalReport } from "../../workflows/v2/workflow-v2-recovery";
+import { projectWorkflowV2PausedNodeInteraction } from "../../workflows/v2/workflow-v2-node-interaction";
 
 function restoreWorkflowV2Plan(raw: unknown): WorkflowV2Plan | undefined {
   const record = asRecord(raw);
@@ -250,13 +251,21 @@ export function reconcileWorkflowV2RunFromDurableState(input: {
   const outputByNodeId = new Map(input.persisted.workerOutputs.map((output) => [output.nodeId, output]));
   const progress = input.persisted.runState.nodeOrder.map((nodeId): WorkflowRunProgressItem => {
     const node = input.persisted.runState.nodes[nodeId]!;
+    const definitionNode = input.persisted.plan.definition.nodes.find((candidate) => candidate.id === nodeId);
     const progressItem: WorkflowRunProgressItem = {
       nodeId,
       title: node.title,
       status: publicWorkflowV2NodeStatus(node),
       detail: publicWorkflowV2NodeDetail(node, outputByNodeId.get(nodeId)?.summary),
     };
-    if (node.intervention) progressItem.intervention = structuredClone(node.intervention);
+    if (node.intervention) {
+      Object.assign(progressItem, projectWorkflowV2PausedNodeInteraction({
+        nodeId,
+        interactiveAgent: definitionNode?.execModel === "llm" && definitionNode.executionMode === "interactive",
+        intervention: node.intervention,
+        ...(input.persisted.nodeControl[nodeId] ? { control: input.persisted.nodeControl[nodeId] } : {}),
+      }).progress);
+    }
     return progressItem;
   });
   const events = [...input.run.events];

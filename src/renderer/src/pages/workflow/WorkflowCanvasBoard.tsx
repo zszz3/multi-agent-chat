@@ -77,7 +77,7 @@ export function WorkflowCanvasBoard({
   expanded = false,
   runProgressByNodeId = new Map<string, WorkflowRunProgressItem>(),
   onExpand,
-  onOpenAgentNode,
+  onOpenNode,
   renderNodeCard,
   className = "",
 }: {
@@ -85,7 +85,7 @@ export function WorkflowCanvasBoard({
   expanded?: boolean;
   runProgressByNodeId?: Map<string, WorkflowRunProgressItem>;
   onExpand?: () => void;
-  onOpenAgentNode?: (nodeId: string) => void;
+  onOpenNode?: (nodeId: string) => void;
   renderNodeCard: (node: WorkflowV2Node) => ReactElement;
   className?: string;
 }) {
@@ -105,7 +105,7 @@ export function WorkflowCanvasBoard({
             className="workflow-react-flow-board" nodes={nodes} edges={edges} onNodesChange={onNodesChange} nodeTypes={workflowFlowNodeTypes}
             fitView fitViewOptions={fitViewOptions} minZoom={expanded ? 0.18 : 0.32} maxZoom={expanded ? 1.35 : 1.28}
             panOnDrag panOnScroll zoomOnScroll={expanded} zoomOnPinch zoomOnDoubleClick={false}
-            onNodeClick={(_event, node) => { if (node.data.node.execModel === "llm") onOpenAgentNode?.(node.id); }}
+            onNodeClick={(_event, node) => onOpenNode?.(node.id)}
             nodesConnectable={false} nodesDraggable={false} nodesFocusable={false} edgesFocusable={false} elementsSelectable={false}
             preventScrolling={expanded} proOptions={{ hideAttribution: true }} defaultEdgeOptions={{ type: "smoothstep", markerEnd: { type: MarkerType.ArrowClosed, width: 16, height: 16 } }}
           >

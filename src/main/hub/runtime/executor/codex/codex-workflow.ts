@@ -33,13 +33,19 @@ export async function runCodexWorkflow(
   let client: CodexRpcClient | undefined;
 
   return new Promise<WorkflowAgentResponse>((resolve, reject) => {
+    let abort: () => void;
     const settle = (callback: () => void): void => {
       if (settled) return;
       settled = true;
       timeout?.clear();
+      input.signal?.removeEventListener("abort", abort);
       void client?.shutdown();
       callback();
     };
+    abort = () => settle(() => reject(input.signal?.reason instanceof Error ? input.signal.reason : new Error("Workflow agent interrupted.")));
+
+    if (input.signal?.aborted) { abort(); return; }
+    input.signal?.addEventListener("abort", abort, { once: true });
 
     timeout = createWorkflowAgentTimeout({
       timeoutMs: WORKFLOW_AGENT_IDLE_TIMEOUT_MS,

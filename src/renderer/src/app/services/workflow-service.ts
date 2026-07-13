@@ -14,6 +14,7 @@ import type {
   ConfirmWorkflowRequest,
   ReviewWorkflowRequest,
   InterruptWorkflowNodeConversationRequest,
+  InterruptWorkflowReviewRequest,
   RejectWorkflowNodeCompletionRequest,
   SendWorkflowNodeMessageRequest,
 } from "../../../../shared/types";
@@ -30,6 +31,7 @@ export interface WorkflowService {
   deleteWorkflow: (workflowId: string) => Promise<AppSnapshot>;
   confirmWorkflow: (request: ConfirmWorkflowRequest) => Promise<WorkflowOperationResult>;
   reviewWorkflow: (request: ReviewWorkflowRequest) => Promise<AppSnapshot>;
+  interruptWorkflowReview: (request: InterruptWorkflowReviewRequest) => Promise<AppSnapshot>;
   runWorkflow: (request: RunWorkflowRequest) => Promise<WorkflowOperationResult>;
   pauseNode: (request: PauseWorkflowNodeRequest) => Promise<WorkflowOperationResult>;
   stopRun: (request: StopWorkflowRunRequest) => Promise<WorkflowOperationResult>;
@@ -55,6 +57,7 @@ export function workflowService(): WorkflowService {
     deleteWorkflow: (workflowId) => api.deleteWorkflow(workflowId),
     confirmWorkflow: (request) => api.confirmWorkflow(request),
     reviewWorkflow: (request) => api.reviewWorkflow(request),
+    interruptWorkflowReview: (request) => api.interruptWorkflowReview(request),
     runWorkflow: (request) => api.runWorkflow(request),
     pauseNode: (request) => api.pauseWorkflowNode(request),
     stopRun: (request) => api.stopWorkflowRun(request),

@@ -25,6 +25,10 @@ export async function runClaudeWorkflow(
   let completedContent: string | undefined;
   let runtimeConversation = input.runtimeConversation ? cloneClaudeRuntimeConversation(input.runtimeConversation) : undefined;
   let errorMessage: string | undefined;
+  const abortController = new AbortController();
+  const abort = () => abortController.abort(input.signal?.reason);
+  if (input.signal?.aborted) abort();
+  else input.signal?.addEventListener("abort", abort, { once: true });
 
   try {
     await runClaudeOneShot({
@@ -32,6 +36,7 @@ export async function runClaudeWorkflow(
       cwd: input.workDir,
       ...(sdkModel ? { modelId: sdkModel } : {}),
       developerInstructions: WORKFLOW_DEVELOPER_INSTRUCTIONS,
+      abortController,
       ...(resumeSessionId ? { resumeSessionId } : {}),
       onEvent: (event) => {
         if (event.type === "delta") {
@@ -60,7 +65,7 @@ export async function runClaudeWorkflow(
       : error instanceof Error
         ? error
         : new Error(String(error));
-  }
+  } finally { input.signal?.removeEventListener("abort", abort); }
 
   const finalContent = completedContent?.trim() || content.trim();
   if (!finalContent) {

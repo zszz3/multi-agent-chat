@@ -452,7 +452,8 @@ describe("WorkflowRuntime typed script input", () => {
     expect(fixture.updates.flatMap((update) => update.progress ?? []).filter((item) => item.nodeId === "submit").at(-1)).toMatchObject({
       status: "awaiting_input",
       detail: "Waiting for Request body",
-      scriptInputRequest: {
+      inputRequest: {
+        kind: "script_parameters",
         parameters: [{ key: "body", label: "Request body", location: "body", valueType: "json", source: "user", required: true }],
       },
     });
@@ -485,7 +486,7 @@ describe("WorkflowRuntime typed script input", () => {
     expect(observedInputs).toEqual([{ body: { question: "hello" } }]);
     expect(finished.status).toBe("completed");
     expect(persistedState.nodeControl.submit?.scriptInput).toMatchObject({ auditValues: { body: { question: "hello" } }, submittedAt: expect.any(Number) });
-    expect(fixture.updates.flatMap((update) => update.progress ?? []).filter((item) => item.nodeId === "submit").at(-1)?.scriptInputRequest).toBeUndefined();
+    expect(fixture.updates.flatMap((update) => update.progress ?? []).filter((item) => item.nodeId === "submit").at(-1)?.inputRequest).toBeUndefined();
   });
 });
 

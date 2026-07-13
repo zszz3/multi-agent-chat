@@ -203,6 +203,58 @@ describe("Workflow V2 AgentHub durable restore", () => {
     expect(restored?.run.finalReport).toBeUndefined();
   });
 
+  test("restores a paused script input request as typed awaiting input", async () => {
+    const input = await fixture();
+    const textParameter = {
+      key: "text",
+      label: "Text",
+      location: "stdin" as const,
+      valueType: "string" as const,
+      source: "user" as const,
+      required: true,
+    };
+    const verifyNode = input.persisted.plan.definition.nodes.find((node) => node.id === "verify");
+    if (!verifyNode || verifyNode.execModel !== "script") throw new Error("Script fixture node is missing.");
+    verifyNode.script.parameters = [textParameter];
+    input.persisted.nodeControl.verify = {
+      extensionCount: 0,
+      scriptInput: {
+        requestedParameters: [textParameter],
+        submittedValues: {},
+        auditValues: {},
+        requestedAt: 1_400,
+      },
+    };
+    let state = transitionWorkflowV2NodeState(input.persisted.runState, { nodeId: "draft", status: "running", now: 1_100 });
+    state = transitionWorkflowV2NodeState(state, { nodeId: "draft", status: "completed", now: 1_200 });
+    state = transitionWorkflowV2NodeState(state, { nodeId: "verify", status: "running", now: 1_300 });
+    state = transitionWorkflowV2NodeState(state, {
+      nodeId: "verify",
+      status: "paused",
+      now: 1_400,
+      intervention: {
+        nodeId: "verify",
+        source: "supervision_pause",
+        reason: "Script node is waiting for required typed input.",
+        allowedActions: ["continue"],
+        requestedAt: 1_400,
+      },
+    });
+    input.persisted.runState = state;
+
+    const restored = reconcileWorkflowV2RunFromDurableState({ ...input, updateWorkflowProjection: true });
+
+    expect(restored?.run.progress.find((item) => item.nodeId === "verify")).toMatchObject({
+      status: "awaiting_input",
+      detail: "Waiting for Text",
+      inputRequest: { kind: "script_parameters", parameters: [textParameter] },
+    });
+    expect(restored?.workflow.runProgress.find((item) => item.nodeId === "verify")?.inputRequest).toEqual({
+      kind: "script_parameters",
+      parameters: [textParameter],
+    });
+  });
+
   test("repairs a missed public completion from the authoritative durable checkpoint", async () => {
     const input = await fixture();
     let state = transitionWorkflowV2NodeState(input.persisted.runState, { nodeId: "draft", status: "running", now: 1_100 });

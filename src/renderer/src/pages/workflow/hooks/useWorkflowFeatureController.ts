@@ -126,10 +126,14 @@ export function useWorkflowFeatureController({
       onSelectReviewerModel: (modelId: string) => {
         void draft.selectReviewerModel(modelId);
       },
-      onReviewWorkflow: async () => {
+    onReviewWorkflow: async () => {
         if (!draft.workflowId || !activeWorkflow) return;
         setSnapshot(await workflows.reviewWorkflow({ workflowId: draft.workflowId, expectedRevision: activeWorkflow.revision }));
-      },
+    },
+    onInterruptWorkflowReview: async () => {
+      if (!draft.workflowId) return;
+      setSnapshot(await workflows.interruptWorkflowReview({ workflowId: draft.workflowId }));
+    },
       onBuildDefinition: () => {
         void draft.buildWorkflowDefinition();
       },

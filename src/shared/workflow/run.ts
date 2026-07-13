@@ -4,6 +4,14 @@ import type { WorkflowV2ScriptParameterDef } from "../workflow-v2/definition";
 
 export type WorkflowRunNodeStatus = "queued" | "running" | "paused" | "awaiting_input" | "completed" | "failed";
 
+export type WorkflowNodeInputRequest = {
+  kind: "script_parameters";
+  parameters: WorkflowV2ScriptParameterDef[];
+} | {
+  kind: "agent_message";
+  prompt: string;
+};
+
 export interface WorkflowRunProgressItem {
   nodeId: string;
   title: string;
@@ -11,9 +19,7 @@ export interface WorkflowRunProgressItem {
   detail?: string;
   taskId?: string;
   intervention?: WorkflowV2HumanIntervention;
-  scriptInputRequest?: {
-    parameters: WorkflowV2ScriptParameterDef[];
-  };
+  inputRequest?: WorkflowNodeInputRequest;
 }
 
 export type WorkflowEventType =
