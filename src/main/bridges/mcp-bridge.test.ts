@@ -242,11 +242,11 @@ describe("MCP bridge", () => {
 
     const planningWorkflow = hub.createWorkflowDraft().workflowDraft!;
     const create = await bridgeRequest("/mcp/workflow/create", bridge.token, {
-      __workflowContextId: planningWorkflow.workflowId,
+      workflowId: planningWorkflow.workflowId,
       title: "Review workflow",
       objective: "Review example service",
       definition: {
-        workflowId: "mcp-review-placeholder",
+        workflowId: planningWorkflow.workflowId,
         graphVersion: 1,
         objective: "Review example service",
         nodes: [{ id: "review", kind: "agent", title: "Review", execModel: "llm",
@@ -258,8 +258,31 @@ describe("MCP bridge", () => {
     const created = (await create.json()) as any;
     expect(created).toMatchObject({ ok: true, workflowId: planningWorkflow.workflowId });
 
+    const secondPlanningWorkflow = hub.createWorkflowDraft().workflowDraft!;
+    const secondCreate = await bridgeRequest("/mcp/workflow/create", bridge.token, {
+      workflowId: secondPlanningWorkflow.workflowId,
+      title: "Second workflow",
+      objective: "Route a second planning session",
+      definition: {
+        workflowId: secondPlanningWorkflow.workflowId,
+        graphVersion: 1,
+        objective: "Route a second planning session",
+        nodes: [{ id: "route", kind: "agent", title: "Route", execModel: "llm", executionMode: "one-shot", prompt: "Route it.", outputFields: [{ key: "result", required: true }] }],
+        edges: [],
+      },
+    });
+    expect(await secondCreate.json()).toMatchObject({ ok: true, workflowId: secondPlanningWorkflow.workflowId });
+
+    const mismatchedCreate = await bridgeRequest("/mcp/workflow/create", bridge.token, {
+      workflowId: planningWorkflow.workflowId,
+      title: "Wrong route",
+      objective: "Must fail",
+      definition: { workflowId: secondPlanningWorkflow.workflowId, graphVersion: 1, objective: "Must fail", nodes: [], edges: [] },
+    });
+    expect(await mismatchedCreate.json()).toMatchObject({ ok: false, error: "workflow_create workflowId must match definition.workflowId." });
+
     const list = (await (await bridgeRequest("/mcp/workflow/list", bridge.token, {})).json()) as any;
-    expect(list.workflows).toEqual([
+    expect(list.workflows).toEqual(expect.arrayContaining([
       expect.objectContaining({
         workflowId: created.workflowId,
         title: "Review workflow",
@@ -267,7 +290,8 @@ describe("MCP bridge", () => {
         revision: created.revision,
         nodeCount: 1,
       }),
-    ]);
+      expect.objectContaining({ workflowId: secondPlanningWorkflow.workflowId, title: "Second workflow" }),
+    ]));
 
     const context = await bridgeRequest("/mcp/workflow/context/append", bridge.token, {
       workflowId: created.workflowId,

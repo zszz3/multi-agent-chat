@@ -11,7 +11,6 @@ import {
   type RuntimeWorkflowExecutionOptions,
   WORKFLOW_DEVELOPER_INSTRUCTIONS,
 } from "../workflow/agent-executor-workflow-shared";
-import { claudeWorkflowMcpServers } from "./claude-workflow-mcp";
 
 export async function runClaudeWorkflow(
   input: RuntimeWorkflowRequestContext,
@@ -26,9 +25,6 @@ export async function runClaudeWorkflow(
   let completedContent: string | undefined;
   let runtimeConversation = input.runtimeConversation ? cloneClaudeRuntimeConversation(input.runtimeConversation) : undefined;
   let errorMessage: string | undefined;
-  const mcpServers = input.planningWorkflowId
-    ? claudeWorkflowMcpServers(options.workflowHost?.mcpBridgeDiscoveryPath(), input.planningWorkflowId)
-    : undefined;
 
   try {
     await runClaudeOneShot({
@@ -37,7 +33,6 @@ export async function runClaudeWorkflow(
       ...(sdkModel ? { modelId: sdkModel } : {}),
       developerInstructions: WORKFLOW_DEVELOPER_INSTRUCTIONS,
       ...(resumeSessionId ? { resumeSessionId } : {}),
-      ...(mcpServers ? { mcpServers } : {}),
       onEvent: (event) => {
         if (event.type === "delta") {
           content += event.content;

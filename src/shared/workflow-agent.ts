@@ -1,9 +1,10 @@
 export interface WorkflowAgentPromptInput {
+  workflowId: string;
   objective: string;
 }
 
 export const WORKFLOW_FOLLOW_UP_QUESTIONS = [
-  "Which inputs are already available, and which must be requested from the user? Recommended answer: mark every node that may need any user-provided information as interactive.",
+  "Which inputs are already available, and which must be requested from the user? Recommended answer: use source=user typed parameters for structured script inputs; use interactive only when an LLM must clarify or reason about the input.",
   "Which steps can be deterministic scripts instead of agents? Recommended answer: use script nodes for parsing, formatting, validation, file conversion, and other deterministic transformations.",
   "Where must execution pause for approval or confirmation? Recommended answer: add explicit interactive or gate-style nodes before irreversible or user-visible decisions.",
 ];
@@ -16,19 +17,6 @@ export const WORKFLOW_V2_DEFINITION_TEMPLATE = `{
   "objective": "<original user objective>",
   "nodes": [
     {
-      "id": "collect-input",
-      "kind": "agent",
-      "title": "Collect required user input",
-      "execModel": "llm",
-      "role": "executor",
-      "executionMode": "interactive",
-      "executionModeRationale": "This node requires information from the user.",
-      "executionModeConfidence": 1,
-      "modelProfile": "balanced",
-      "prompt": "Collect all required information from the user before completing.",
-      "outputFields": [{ "key": "result", "required": true }]
-    },
-    {
       "id": "echo-input",
       "kind": "transform",
       "title": "Echo user input",
@@ -38,15 +26,15 @@ export const WORKFLOW_V2_DEFINITION_TEMPLATE = `{
       "executionModeConfidence": 1,
       "script": {
         "executable": { "kind": "inline", "language": "typescript", "code": "const input = JSON.parse(process.env.WORKFLOW_INPUT ?? '{}'); process.stdout.write(JSON.stringify({ echoed: input.text }));" },
-        "parameters": [{ "key": "text", "label": "Text", "location": "environment", "valueType": "string", "source": "upstream", "required": true, "upstreamNodeId": "collect-input", "upstreamOutputKey": "result" }],
-        "capabilities": ["environment_read"],
-        "managerRisk": { "level": "safe", "rationale": "Reads declared workflow input and returns it unchanged without external side effects." },
+        "parameters": [{ "key": "text", "label": "Text", "location": "stdin", "valueType": "string", "source": "user", "required": true, "description": "Text to return unchanged." }],
+        "capabilities": [],
+        "managerRisk": { "level": "safe", "rationale": "Returns the declared user parameter unchanged without external side effects." },
         "outputSchema": { "type": "object", "required": ["echoed"] }
       },
       "outputFields": [{ "key": "echoed", "required": true }]
     }
   ],
-  "edges": [{ "from": "collect-input", "to": "echo-input" }]
+  "edges": []
 }`;
 
 function workflowTaskSnippet(objective: string): string {
@@ -55,17 +43,17 @@ function workflowTaskSnippet(objective: string): string {
   return text.length > 72 ? `${text.slice(0, 72)}...` : text;
 }
 
-export function buildWorkflowAgentPrompt({ objective }: WorkflowAgentPromptInput): string {
+export function buildWorkflowAgentPrompt({ workflowId, objective }: WorkflowAgentPromptInput): string {
   const task = objective.trim() || "The user has not provided a task yet.";
   return [
     "You are the Workflow V2 Manager inside Multi Agent Chat.",
     "",
-    "Interview the user and write a mutable WorkflowV2Definition draft into the current planning Workflow through the MCP workflow_create tool (it may be displayed by Codex as mcp__multi_agent_chat__workflow_create).",
+    `Interview the user and write a mutable WorkflowV2Definition draft into Workflow ${workflowId} through the MCP workflow_create tool (it may be displayed by Codex as mcp__multi_agent_chat__workflow_create).`,
     "",
     "Conversation protocol:",
     "- Ask exactly one question at a time and include a recommended answer.",
     "- Stop asking when the available information is sufficient to build the workflow.",
-    "- Do not send a definition as ordinary prose. Call workflow_create (or mcp__multi_agent_chat__workflow_create when namespaced) with title, objective, and definition to update the current planning Workflow draft.",
+    "- Do not send a definition as ordinary prose. Call workflow_create (or mcp__multi_agent_chat__workflow_create when namespaced) with workflowId, title, objective, and definition to update the target planning draft.",
     "- workflow_create only updates the current mutable draft. It does not publish, confirm, run, or create another top-level Workflow. User confirmation in the UI freezes the executable revision.",
     "- If workflow_create is unavailable or fails, explain the failure; do not emit an alternative code payload.",
     "",
@@ -74,10 +62,13 @@ export function buildWorkflowAgentPrompt({ objective }: WorkflowAgentPromptInput
     "- The definition must be a valid DAG using WorkflowV2Definition nodes and edges.",
     "- Do not create start/end placeholder nodes. Only create executable LLM or script nodes.",
     "- Use executionMode one-shot only when the node needs no user input and all required inputs are already available from workflow context or upstream outputs.",
-    "- If a node needs any user input, clarification, choice, confirmation, iteration, or supplemental information, it must use executionMode interactive.",
+    "- LLM nodes that need user clarification, natural-language reasoning, iteration, choice, confirmation, or supplemental information must use executionMode interactive.",
+    "- Script nodes that need structured user parameters remain executionMode script and declare those parameters with source=user. The runtime pauses the script node, renders typed inputs, and resumes the same node after submission.",
+    "- Only add an interactive LLM node when collecting the input itself requires natural-language reasoning, clarification, iteration, choice, or confirmation.",
     "- Never classify an input-dependent node as one-shot because the expected question seems simple.",
     "- Use execModel script for deterministic parsing, formatting, validation, conversion, filtering, merging, echoing or passing through input unchanged, and file operations that do not need agent reasoning.",
-    "- When a workflow both collects user input and performs a deterministic transformation, separate the interactive input collection from the deterministic script transformation instead of assigning the transformation to an LLM node.",
+    "- Do not add an interactive LLM node merely to collect typed parameters for a script. A deterministic user-input transformation should normally be one script node with source=user parameters.",
+    "- Do not invent a choice between strict script behavior and immediate executability when the runtime already supports typed script input. Build the directly executable script workflow.",
     "- Do not use an LLM node for copying, echoing, renaming, mapping, selecting, or serializing already available values unless reasoning is genuinely required.",
     "- Each LLM node requires prompt and outputFields; each script node requires executable source, typed parameters, declared capabilities, Manager risk with rationale, and outputFields.",
     "- Every script input must be declared exactly once in parameters with its location, valueType, source, required flag, and source binding. Never hide required inputs inside prompts, code literals, or ambient state.",
@@ -86,12 +77,13 @@ export function buildWorkflowAgentPrompt({ objective }: WorkflowAgentPromptInput
     "- Node prompts must state required inputs, completion criteria, output fields, and downstream handoff expectations.",
     "",
     "workflow_create payload:",
+    `- workflowId: must be exactly ${workflowId}`,
     "- title: concise workflow title",
     "- objective: original user objective",
     "- definition: complete WorkflowV2Definition",
     "",
     "WorkflowV2Definition example:",
-    WORKFLOW_V2_DEFINITION_TEMPLATE,
+    WORKFLOW_V2_DEFINITION_TEMPLATE.replace("<temporary-id>", workflowId),
     "",
     "User task:",
     task,
@@ -99,7 +91,7 @@ export function buildWorkflowAgentPrompt({ objective }: WorkflowAgentPromptInput
 }
 
 export function firstWorkflowQuestionForObjective(objective: string): string {
-  return `For ${workflowTaskSnippet(objective)}, which information must be supplied by the user during execution? Recommended answer: list every missing input and make each node that collects it interactive.`;
+  return `For ${workflowTaskSnippet(objective)}, which information must be supplied by the user during execution? Recommended answer: declare structured script parameters as source=user; use interactive LLM nodes only for inputs that require clarification or reasoning.`;
 }
 
 export function nextWorkflowQuestion(answerCount: number): string {

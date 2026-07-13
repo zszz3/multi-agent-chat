@@ -362,7 +362,6 @@ export class AgentHub {
   private storagePath: string | undefined = undefined;
   private sqliteStore: SqliteAppStore | undefined = undefined;
   private modelConfigPath: string | undefined = undefined;
-  private mcpBridgeDiscoveryPath: string | undefined = undefined;
   private persistTimer: ReturnType<typeof setTimeout> | undefined = undefined;
   private idleSweepTimer: ReturnType<typeof setInterval> | undefined = undefined;
   private persistInFlight: Promise<void> | undefined = undefined;
@@ -396,14 +395,6 @@ export class AgentHub {
       createRuntimeDriverRegistry({
         executables: this.executables,
         channelById: (channelId) => this.channelById(channelId),
-        workflowHost: {
-          mcpBridgeDiscoveryPath: () => this.mcpBridgeDiscoveryPath,
-          tools: {
-            materializeWorkflowDraft: (workflowId, request) => this.materializeWorkflowDraft(workflowId, request),
-            getWorkflow: (workflowId) => this.workflowStore.getWorkflow(workflowId),
-            appendWorkflowContext: (request) => this.appendWorkflowContext(request),
-          },
-        },
       });
     this.runtimeRouter = new RuntimeRouter(this.runtimeDrivers);
     this.workflowStore = new WorkflowStore({
@@ -565,10 +556,6 @@ export class AgentHub {
     this.normalizeRunSelections();
     this.installRestoredConfiguredAgents(this.listConfiguredAgents());
     this.emit();
-  }
-
-  setMcpBridgeDiscoveryPath(discoveryPath: string | undefined): void {
-    this.mcpBridgeDiscoveryPath = discoveryPath;
   }
 
   async saveModelChannels(channels: AgentChannel[]): Promise<AppSnapshot> {

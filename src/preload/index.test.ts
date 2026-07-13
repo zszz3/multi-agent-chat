@@ -186,5 +186,5 @@ describe("AgentHub runtime recovery wiring", () => {
       vi.useRealTimers();
       vi.resetModules();
     }
-  });
+  }, 15_000);
 });

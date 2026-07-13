@@ -91,7 +91,7 @@ export function createWorkflowDraftInteractiveRequest(input: {
   return {
     workflowId: input.started.next.workflowId,
     requestId: input.started.request.requestId,
-    prompt: input.started.starting ? buildWorkflowAgentPrompt({ objective: input.reply }) : input.reply,
+    prompt: input.started.starting ? buildWorkflowAgentPrompt({ workflowId: input.started.next.workflowId, objective: input.reply }) : input.reply,
     configuredAgentId: input.started.next.configuredAgentId,
     modelId: input.started.next.modelId,
     workDir: input.started.next.workDir || input.defaultWorkDir,

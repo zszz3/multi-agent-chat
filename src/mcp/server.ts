@@ -169,9 +169,10 @@ export function mcpToolDefinitions(): McpToolDefinition[] {
     },
     {
       name: "workflow_create",
-      description: "Write an editable workflow DAG into the current Workflow planning session. This never creates another top-level Workflow and does not confirm or publish the draft. Invalid graphs are rejected. Use interactive LLM nodes only to collect or clarify user input, and use script nodes for deterministic work such as echoing, copying, formatting, mapping, or passing values through unchanged.",
+      description: "Write an editable workflow DAG into the planning draft identified by workflowId. This never creates another top-level Workflow and does not confirm or publish the draft. Invalid graphs are rejected. Use interactive LLM nodes only to collect or clarify user input, and use script nodes for deterministic work such as echoing, copying, formatting, mapping, or passing values through unchanged.",
       inputSchema: objectSchema(
         {
+          workflowId: { type: "string" },
           title: { type: "string" },
           objective: { type: "string" },
           definition: workflowV2DefinitionSchema,
@@ -179,7 +180,7 @@ export function mcpToolDefinitions(): McpToolDefinition[] {
           channelId: { type: "string" },
           modelId: { type: "string" },
         },
-        ["title", "objective", "definition"],
+        ["workflowId", "title", "objective", "definition"],
       ),
     },
     {
@@ -194,13 +195,14 @@ export function mcpToolDefinitions(): McpToolDefinition[] {
     },
     {
       name: "workflow_update",
-      description: "Update the editable draft in the current Workflow planning session. This does not confirm or publish the draft.",
+      description: "Update the editable planning draft identified by workflowId. This does not confirm or publish the draft.",
       inputSchema: objectSchema({
+        workflowId: { type: "string" },
         expectedRevision: { type: "number" },
         title: { type: "string" },
         objective: { type: "string" },
         definition: workflowV2DefinitionSchema,
-      }),
+      }, ["workflowId"]),
     },
     {
       name: "workflow_validate",
@@ -275,7 +277,6 @@ export async function callMcpTool(name: string, args: unknown): Promise<unknown>
     },
     body: JSON.stringify({
       ...(args && typeof args === "object" && !Array.isArray(args) ? args as Record<string, unknown> : {}),
-      ...(process.env.MULTI_AGENT_CHAT_WORKFLOW_ID ? { __workflowContextId: process.env.MULTI_AGENT_CHAT_WORKFLOW_ID } : {}),
     }),
   });
   const payload = (await response.json()) as unknown;
@@ -303,7 +304,11 @@ async function handleJsonRpc(request: JsonRpcRequest): Promise<void> {
       return;
     }
     if (request.method === "tools/list") {
-      writeJsonRpc({ jsonrpc: "2.0", id: request.id, result: { tools: mcpToolDefinitions() } });
+      writeJsonRpc({
+        jsonrpc: "2.0",
+        id: request.id,
+        result: { tools: mcpToolDefinitions() },
+      });
       return;
     }
     if (request.method === "tools/call") {

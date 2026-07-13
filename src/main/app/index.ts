@@ -293,7 +293,6 @@ async function bootstrap(): Promise<void> {
     discoveryPath: process.env.MULTI_AGENT_CHAT_MCP_BRIDGE || path.join(app.getPath("appData"), "multi-agent-chat", MCP_BRIDGE_FILE),
     bundledSkillsRoot: path.join(app.getPath("userData"), "bundled-skills"),
   });
-  hub.setMcpBridgeDiscoveryPath(mcpBridge.discoveryPath);
 
   registerIpcHandlers();
   hub.onChange((snapshot) => mainWindow?.webContents.send("snapshot:changed", snapshot));

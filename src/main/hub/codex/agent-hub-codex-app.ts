@@ -1,13 +1,6 @@
 import type { CodexPluginCatalogItem } from "../../../shared/types";
 import { CodexRpcClient } from "../../agents/codex/codex-rpc";
 import { asArray, asBoolean, asOptionalString, asRecord } from "../persisted/agent-hub-persistence";
-import type { CodexWorkflowToolCallResult } from "./agent-hub-codex-workflow-tools";
-
-export interface CodexServerRequestOptions {
-  handleWorkflowToolCall?: (params: Record<string, unknown>) => CodexWorkflowToolCallResult;
-  workflowId?: string;
-}
-
 export function codexSlashHelpText(): string {
   return [
     "Slash commands",
@@ -146,7 +139,6 @@ export function respondToCodexServerRequest(
   id: number,
   method: string,
   params: Record<string, unknown>,
-  options: CodexServerRequestOptions = {},
 ): void {
   const isWorkflowMcpRequest = ["workflow_create", "workflow_validate", "workflow_context_append"].some((toolName) =>
     JSON.stringify(params).toLowerCase().includes(toolName),
@@ -174,14 +166,6 @@ export function respondToCodexServerRequest(
     return;
   }
   if (method === "item/tool/call" || method === "mcp/dynamicToolCall") {
-    const toolResult = options.handleWorkflowToolCall?.(params);
-    if (toolResult?.handled) {
-      client.respond(id, {
-        contentItems: [{ type: "inputText", text: JSON.stringify(toolResult.payload ?? { ok: toolResult.success !== false }) }],
-        success: toolResult.success !== false,
-      });
-      return;
-    }
     client.respond(id, {
       contentItems: [{ type: "inputText", text: "Multi Agent Chat does not handle Codex tool calls in the demo." }],
       success: false,

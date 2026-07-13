@@ -7,14 +7,13 @@ import { RUNTIME_IDS } from "../shared/runtime-catalog";
 import { callMcpTool, mcpToolDefinitions, resolveBridgeDiscoveryPath } from "./server";
 
 const originalEnv = process.env.MULTI_AGENT_CHAT_MCP_BRIDGE;
-
 describe("MCP server tools", () => {
   afterEach(() => {
     process.env.MULTI_AGENT_CHAT_MCP_BRIDGE = originalEnv;
     vi.restoreAllMocks();
   });
 
-  test("exposes the first-version workflow tool set", () => {
+  test("exposes workflow tools from the agent-level MCP service", () => {
     expect(mcpToolDefinitions().map((tool) => tool.name)).toEqual([
       "agent_templates_list",
       "skill_templates_list",
@@ -47,6 +46,7 @@ describe("MCP server tools", () => {
 
   test("requires workflow_create to submit an explicit Workflow V2 definition with execution modes", () => {
     const tool = mcpToolDefinitions().find((item) => item.name === "workflow_create")!;
+    expect(tool.inputSchema.required).toContain("workflowId");
     expect(tool.inputSchema.required).toContain("definition");
     const definition = (tool.inputSchema.properties as any).definition;
     expect(definition.required).toEqual(["workflowId", "graphVersion", "objective", "nodes", "edges"]);
@@ -61,7 +61,7 @@ describe("MCP server tools", () => {
   });
 
 
-  test("serves tools/list over newline-delimited stdio JSON-RPC", async () => {
+  test("serves workflow tools from the long-lived agent stdio server", async () => {
     const serverPath = path.resolve("out/main/mcp-server.js");
     const child = spawn(process.execPath, [serverPath], {
       cwd: process.cwd(),
@@ -108,4 +108,28 @@ describe("MCP server tools", () => {
       }),
     );
   });
+
+  test("forwards workflowId as an explicit workflow tool argument", async () => {
+    const dir = await mkdtemp(path.join(os.tmpdir(), "multi-agent-chat-mcp-workflow-id-"));
+    const discoveryPath = path.join(dir, "bridge.json");
+    process.env.MULTI_AGENT_CHAT_MCP_BRIDGE = discoveryPath;
+    await writeFile(discoveryPath, JSON.stringify({ host: "127.0.0.1", port: 48124, token: "secret" }), "utf8");
+    const fetchMock = vi.spyOn(globalThis, "fetch").mockResolvedValue({
+      ok: true,
+      status: 200,
+      json: async () => ({ ok: true, workflowId: "wf-explicit" }),
+    } as Response);
+
+    await callMcpTool("workflow_create", {
+      workflowId: "wf-explicit",
+      title: "Explicit route",
+      objective: "Route by id",
+      definition: { workflowId: "wf-explicit", graphVersion: 1, objective: "Route by id", nodes: [], edges: [] },
+    });
+
+    const request = fetchMock.mock.calls[0]?.[1] as RequestInit;
+    expect(JSON.parse(String(request.body))).toMatchObject({ workflowId: "wf-explicit" });
+    expect(String(request.body)).not.toContain("__workflowContextId");
+  });
+
 });
