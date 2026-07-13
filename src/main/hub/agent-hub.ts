@@ -125,6 +125,7 @@ import {
   buildWorkflowV2PlanSync,
 } from "../workflows/v2/workflow-v2-planner";
 import { executeWorkflowV2Script } from "../workflows/v2/workflow-v2-script-executor";
+import { freezeWorkflowV2ScriptGovernance } from "../workflows/v2/workflow-v2-script-governance";
 import { WorkflowStore } from "../workflow-store";
 import { ChatState, TaskState, AgentTeamState, TeamRunState } from "./state/agent-hub-state";
 import {
@@ -1125,7 +1126,15 @@ export class AgentHub {
     }
     const validation = validateWorkflowV2Definition(workflow.definition);
     if (!validation.valid) return { ok: false, workflowId: workflow.workflowId, revision: workflow.revision, error: validation.errors[0] ?? "Workflow V2 definition is invalid." };
-    this.workflowStore.workflows.set(workflow.workflowId, this.cloneWorkflowDraft({ ...workflow, confirmedRevision: workflow.revision, error: undefined, updatedAt: Date.now() }));
+    const reviewResult = workflow.generationReview?.result;
+    if (!reviewResult) return { ok: false, workflowId: workflow.workflowId, revision: workflow.revision, error: "Workflow review result is unavailable." };
+    let frozenPlan;
+    try {
+      frozenPlan = freezeWorkflowV2ScriptGovernance({ plan: workflow.workflowV2Plan, reviewedRevision: workflow.revision, reviewerRisks: reviewResult.scriptRisks });
+    } catch (error) {
+      return { ok: false, workflowId: workflow.workflowId, revision: workflow.revision, error: error instanceof Error ? error.message : "Workflow script governance could not be frozen." };
+    }
+    this.workflowStore.workflows.set(workflow.workflowId, this.cloneWorkflowDraft({ ...workflow, workflowV2Plan: frozenPlan, confirmedRevision: workflow.revision, error: undefined, updatedAt: Date.now() }));
     this.emit();
     return { ok: true, workflowId: workflow.workflowId, revision: workflow.revision };
   }

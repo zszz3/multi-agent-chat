@@ -8,6 +8,8 @@ import type {
   WorkflowV2Node,
   WorkflowV2NodeRole,
   WorkflowV2OutputFieldDef,
+  WorkflowV2ScriptCapability,
+  WorkflowV2ScriptRiskLevel,
 } from "./definition";
 import { isWorkflowV2ModelProfile, isWorkflowV2NodeRole } from "./validation";
 
@@ -80,6 +82,15 @@ export interface WorkflowV2PlanNode {
   acceptanceCriteria: WorkflowV2AcceptanceCriterion[];
   budget: WorkflowV2BudgetEnvelope;
   taskPacket: WorkflowV2TaskPacket;
+  scriptGovernance?: {
+    managerRisk: WorkflowV2ScriptRiskLevel;
+    reviewerRisk: WorkflowV2ScriptRiskLevel;
+    staticRisk: WorkflowV2ScriptRiskLevel;
+    effectiveRisk: WorkflowV2ScriptRiskLevel;
+    capabilities: WorkflowV2ScriptCapability[];
+    capabilityDigest: string;
+    reviewedRevision: number;
+  };
 }
 
 export interface WorkflowV2Plan {

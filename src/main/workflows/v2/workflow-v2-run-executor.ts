@@ -781,10 +781,13 @@ export class WorkflowV2RunExecutor {
       );
       const controller = new AbortController();
       const analysis = analyzeWorkflowV2Script(request.node.script);
+      const governance = request.planNode.scriptGovernance;
+      if (!governance) throw new Error(`Workflow V2 script node ${request.node.id} has no frozen governance profile.`);
+      if (governance.capabilityDigest !== analysis.capabilityDigest || JSON.stringify(governance.capabilities) !== JSON.stringify(analysis.detectedCapabilities)) throw new Error(`Workflow V2 script node ${request.node.id} governance no longer matches its executable.`);
       const permission = decideWorkflowV2ScriptPermission({
-        managerRisk: request.node.script.managerRisk.level,
-        reviewerRisk: "safe",
-        staticRisk: analysis.minimumRisk,
+        managerRisk: governance.managerRisk,
+        reviewerRisk: governance.reviewerRisk,
+        staticRisk: governance.staticRisk,
         confirmed: input.recoveryOverrides?.has(request.node.id) === true,
       });
       if (permission.decision === "require_confirmation") {
@@ -818,8 +821,8 @@ export class WorkflowV2RunExecutor {
             runId,
             nodeId: request.node.id,
             risk: permission.risk,
-            capabilities: [...analysis.detectedCapabilities],
-            capabilityDigest: analysis.capabilityDigest,
+            capabilities: [...governance.capabilities],
+            capabilityDigest: governance.capabilityDigest,
           },
         });
         output = await Promise.race([execution, deadline]);

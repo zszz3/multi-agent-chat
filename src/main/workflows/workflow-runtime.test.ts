@@ -21,6 +21,7 @@ import { createWorkflowV2RunState } from "../../shared/workflow-v2/state";
 import { WORKFLOW_V2_STORAGE_SCHEMA_VERSION, type WorkflowV2PersistedRunState } from "../../shared/workflow-v2/storage";
 import type { WorkflowV2CostBudget, WorkflowV2Plan, WorkflowV2ResultPacket } from "../../shared/workflow-v2/planning";
 import { buildWorkflowV2Plan } from "./v2/workflow-v2-planner";
+import { freezeWorkflowV2ScriptGovernance } from "./v2/workflow-v2-script-governance";
 import { transitionWorkflowV2NodeState } from "./v2/workflow-v2-scheduler";
 import {
   type ExecuteWorkflowV2ScriptRequest,
@@ -269,12 +270,17 @@ async function workflowV2RuntimeFixture(input: {
   finished: Promise<FinishWorkflowRunRequest>;
 }> {
   const definition = input.definition ?? workflowV2Definition();
-  const plan = await buildWorkflowV2Plan({
+  const basePlan = await buildWorkflowV2Plan({
     definition,
     approvedBy: "runtime-test",
     now: 1_000,
     ...(input.contextBudget ? { contextBudget: input.contextBudget } : {}),
     ...(input.costBudget ? { costBudget: input.costBudget } : {}),
+  });
+  const plan = freezeWorkflowV2ScriptGovernance({
+    plan: basePlan,
+    reviewedRevision: 1,
+    reviewerRisks: Object.fromEntries(definition.nodes.filter((node): node is WorkflowV2ScriptNode => node.execModel === "script").map((node) => [node.id, { level: node.script.managerRisk.level, rationale: "Runtime fixture reviewer assessment." }])),
   });
   const workflow = {
     workflowId: definition.workflowId,
@@ -452,7 +458,6 @@ describe("WorkflowRuntime typed script input", () => {
     });
     expect(persisted.at(-1)?.nodeControl.submit?.scriptInput).toMatchObject({ requestedParameters: [{ key: "body", location: "body", valueType: "json" }], submittedValues: {} });
   });
-
   test("validates submitted values, persists them, and resumes with frozen inputs", async () => {
     const definition = workflowV2Definition();
     definition.nodes = [{ id: "submit", kind: "request", title: "Submit request", execModel: "script", executionMode: "script", script: { ...createWorkflowV2InlineScriptSpec({ language: "typescript", code: "return { ok: true };" }), parameters: [{ key: "body", label: "Request body", location: "body", valueType: "json", source: "user", required: true }] }, outputFields: [{ key: "ok", required: true }] }];
@@ -485,6 +490,19 @@ describe("WorkflowRuntime typed script input", () => {
 });
 
 describe("WorkflowRuntime script permissions", () => {
+  test("pauses when the frozen reviewer risk upgrades a safe script to write", async () => {
+    const definition = workflowV2Definition();
+    definition.nodes = [{ id: "reviewed", kind: "transform", title: "Reviewed", execModel: "script", executionMode: "script", script: createWorkflowV2InlineScriptSpec({ language: "typescript", code: "return { ok: true };", risk: "safe" }), outputFields: [{ key: "ok", required: true }] }];
+    definition.edges = [];
+    const fixture = await workflowV2RuntimeFixture({ definition, executeScript: async () => { throw new Error("must not execute"); } });
+    fixture.workflow.workflowV2Plan = freezeWorkflowV2ScriptGovernance({ plan: fixture.workflow.workflowV2Plan!, reviewedRevision: 1, reviewerRisks: { reviewed: { level: "write", rationale: "Reviewer identified mutation risk." } } });
+
+    fixture.runtime.runWorkflow({ workflowId: fixture.workflow.workflowId });
+    while (!fixture.updates.some((update) => update.status === "waiting_for_user")) await new Promise((resolve) => setTimeout(resolve, 5));
+
+    expect(JSON.stringify(fixture.updates)).toContain("Approve write script node Reviewed?");
+  });
+
   test("fails closed when a command script is mislabeled safe", async () => {
     const definition = workflowV2Definition();
     definition.nodes = [{ id: "command", kind: "transform", title: "Run command", execModel: "script", executionMode: "script", script: { executable: { kind: "command", command: "tool", args: [] }, parameters: [], capabilities: [], managerRisk: { level: "safe", rationale: "Incorrectly labeled safe." } }, outputFields: [{ key: "stdout", required: true }] }];
@@ -1941,8 +1959,6 @@ describe("WorkflowRuntime Workflow V2 bridge", () => {
     expect(fixture.taskRequests[0]).toMatchObject({
     configuredAgentId: "agent-a",
     modelId: "model-a",
-    reviewerConfiguredAgentId: "agent-a",
-    reviewerModelId: "model-a",
       workDir: "/tmp/workflow-v2-runtime",
     });
     expect(fixture.taskRequests[0]?.prompt).toBe("Produce the implementation draft from the approved packet.");
