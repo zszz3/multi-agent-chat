@@ -33,6 +33,7 @@ import type {
   ModelCatalogRefreshResult,
   RuntimeLocalConfigImportResult,
   AnswerWorkflowGateRequest,
+  SubmitWorkflowScriptInputRequest,
   PauseWorkflowNodeRequest,
   ResolveWorkflowV2InterventionRequest,
   ProviderBalanceResult,
@@ -166,6 +167,7 @@ const api = {
   interruptWorkflowNodeConversation: (request: InterruptWorkflowNodeConversationRequest): Promise<AppSnapshot> => ipcRenderer.invoke("workflow-node-conversation:interrupt", request),
   startWorkflowNode: (request: StartWorkflowNodeRequest): Promise<WorkflowOperationResult> => ipcRenderer.invoke("workflow-run:start-node", request),
   answerWorkflowGate: (request: AnswerWorkflowGateRequest): Promise<WorkflowOperationResult> => ipcRenderer.invoke("workflow-run:answer-gate", request),
+  submitWorkflowScriptInput: (request: SubmitWorkflowScriptInputRequest): Promise<WorkflowOperationResult> => ipcRenderer.invoke("workflow-run:submit-script-input", request),
   finishWorkflowRun: (request: FinishWorkflowRunRequest): Promise<AppSnapshot> => ipcRenderer.invoke("workflow-run:finish", request),
   saveScheduledWorkflowRunnerConfig: (config: ScheduledWorkflowRunnerConfig): Promise<AppSnapshot> =>
     ipcRenderer.invoke("scheduled-workflows:runner-config:save", config),

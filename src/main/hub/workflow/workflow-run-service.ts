@@ -5,6 +5,7 @@ import type {
   RunWorkflowRequest,
   StartWorkflowNodeRequest,
   StopWorkflowRunRequest,
+  SubmitWorkflowScriptInputRequest,
   WorkflowOperationResult,
 } from "../../../shared/workflow/commands";
 import type { WorkflowDraftState } from "../../../shared/workflow/draft";
@@ -52,5 +53,9 @@ export class WorkflowRunService {
 
   answerGate(input: AnswerWorkflowGateRequest): Promise<WorkflowOperationResult> {
     return this.deps.runtime.answerWorkflowGate(input);
+  }
+
+  submitScriptInput(input: SubmitWorkflowScriptInputRequest): Promise<WorkflowOperationResult> {
+    return this.deps.runtime.submitWorkflowScriptInput(input);
   }
 }

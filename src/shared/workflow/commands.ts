@@ -190,6 +190,13 @@ export interface AnswerWorkflowGateRequest {
   answer: string;
 }
 
+export interface SubmitWorkflowScriptInputRequest {
+  workflowId: string;
+  runId: string;
+  nodeId: string;
+  values: Record<string, unknown>;
+}
+
 export interface FinishWorkflowRunRequest {
   workflowId: string;
   runId: string;

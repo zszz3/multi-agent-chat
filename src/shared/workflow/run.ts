@@ -1,5 +1,6 @@
 import type { WorkflowV2Plan } from "../workflow-v2/planning";
 import type { WorkflowV2HumanIntervention } from "../workflow-v2/review";
+import type { WorkflowV2ScriptParameterDef } from "../workflow-v2/definition";
 
 export type WorkflowRunNodeStatus = "queued" | "running" | "paused" | "awaiting_input" | "completed" | "failed";
 
@@ -10,6 +11,9 @@ export interface WorkflowRunProgressItem {
   detail?: string;
   taskId?: string;
   intervention?: WorkflowV2HumanIntervention;
+  scriptInputRequest?: {
+    parameters: WorkflowV2ScriptParameterDef[];
+  };
 }
 
 export type WorkflowEventType =

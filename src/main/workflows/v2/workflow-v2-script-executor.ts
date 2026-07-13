@@ -33,7 +33,7 @@ export async function executeWorkflowV2Script(input: ExecuteWorkflowV2ScriptRequ
   const outputs = executable.kind === "command"
     ? await executeCommand(input)
     : executable.language === "typescript"
-      ? await Promise.resolve(new Function("inputs", executable.code)({})) as Record<string, unknown>
+      ? await Promise.resolve(new Function("inputs", executable.code)(structuredClone(input.inputs))) as Record<string, unknown>
       : (() => { throw new Error(`Inline ${executable.language} execution is not available.`); })();
   validateOutput(input, outputs);
   return { nodeId: input.node.id, summary: `${input.node.title} completed.`, outputs, evidence: [], proposals: [] };

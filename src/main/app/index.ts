@@ -47,6 +47,7 @@ import type {
   InstallSkillRequest,
   PatchWorkflowDraftRequest,
   AnswerWorkflowGateRequest,
+  SubmitWorkflowScriptInputRequest,
   PauseWorkflowNodeRequest,
   ResolveWorkflowV2InterventionRequest,
   RunAgentTeamRequest,
@@ -456,6 +457,7 @@ ipcMain.handle("workflow-run:start", (_event, request: RunWorkflowRequest) => hu
   ipcMain.handle("workflow-node-conversation:interrupt", (_event, request: InterruptWorkflowNodeConversationRequest) => hub.interruptWorkflowNodeConversation(request));
   ipcMain.handle("workflow-run:start-node", (_event, request: StartWorkflowNodeRequest) => hub.startWorkflowNode(request));
   ipcMain.handle("workflow-run:answer-gate", (_event, request: AnswerWorkflowGateRequest) => hub.answerWorkflowGate(request));
+  ipcMain.handle("workflow-run:submit-script-input", (_event, request: SubmitWorkflowScriptInputRequest) => hub.submitWorkflowScriptInput(request));
   ipcMain.handle("workflow-run:finish", (_event, request: FinishWorkflowRunRequest) => {
     hub.finishWorkflowRun(request);
     return hub.snapshot();

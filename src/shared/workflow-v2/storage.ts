@@ -1,5 +1,6 @@
 import type { WorkflowV2WorkerOutput } from "./packets";
 import type { WorkflowV2Plan } from "./planning";
+import type { WorkflowV2ScriptParameterDef } from "./definition";
 import type { WorkflowV2ReviewVerdict } from "./review";
 import type { WorkflowV2InterventionAction } from "./review";
 import { isWorkflowV2InterventionAction, isWorkflowV2ReviewVerdict } from "./review";
@@ -50,6 +51,13 @@ export interface WorkflowV2DurableNodeControlState {
   stopReason?: string;
   interventionResolution?: WorkflowV2InterventionResolutionRecord;
   hookVariables?: Record<string, unknown>;
+  scriptInput?: {
+    requestedParameters: WorkflowV2ScriptParameterDef[];
+    submittedValues: Record<string, unknown>;
+    auditValues: Record<string, unknown>;
+    requestedAt: number;
+    submittedAt?: number;
+  };
 }
 
 export interface WorkflowV2InterventionResolutionRecord {
@@ -207,7 +215,14 @@ function isDurableNodeControlState(value: unknown): value is WorkflowV2DurableNo
   if (value.lease !== undefined && !isExecutionLeaseState(value.lease)) return false;
   if (value.interventionResolution !== undefined && !isInterventionResolutionRecord(value.interventionResolution)) return false;
   if (value.hookVariables !== undefined && (!isRecord(value.hookVariables) || !isWorkflowV2HookJsonValue(value.hookVariables))) return false;
+  if (value.scriptInput !== undefined && !isScriptInputState(value.scriptInput)) return false;
   return true;
+}
+
+function isScriptInputState(value: unknown): boolean {
+  if (!isRecord(value) || !Array.isArray(value.requestedParameters) || !isRecord(value.submittedValues) || !isRecord(value.auditValues)) return false;
+  if (!isNonNegativeFinite(value.requestedAt)) return false;
+  return value.submittedAt === undefined || isNonNegativeFinite(value.submittedAt);
 }
 
 function isInterventionResolutionRecord(value: unknown): value is WorkflowV2InterventionResolutionRecord {

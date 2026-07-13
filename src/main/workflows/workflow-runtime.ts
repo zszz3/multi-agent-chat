@@ -5,6 +5,7 @@ import type {
   RunWorkflowRequest,
   StartWorkflowNodeRequest,
   StopWorkflowRunRequest,
+  SubmitWorkflowScriptInputRequest,
   WorkflowOperationResult,
 } from "../../shared/workflow/commands";
 import type { WorkflowV2InterventionAction } from "../../shared/workflow-v2/review";
@@ -37,6 +38,7 @@ export type {
 } from "./workflow-runtime-ports";
 import { isWorkflowV2InterventionAction } from "../../shared/workflow-v2/review";
 import { workflowV2PlanValidationError } from "./v2/workflow-v2-plan-validation";
+import { resolveWorkflowV2ScriptInput } from "./v2/workflow-v2-script-input";
 import {
   configuredAgentModelId,
   resolveWorkflowNodeAgent,
@@ -696,6 +698,40 @@ export class WorkflowRuntime {
       runId: input.runId,
       error: "Workflow V2 plan is required. Legacy workflow execution is no longer supported.",
     };
+  }
+
+  async submitWorkflowScriptInput(input: SubmitWorkflowScriptInputRequest): Promise<WorkflowOperationResult> {
+    const snapshot = this.deps.snapshot();
+    const workflow = snapshot.workflowStore.workflows.find((item) => item.workflowId === input.workflowId);
+    const run = snapshot.workflowStore.runs.find((item) => item.workflowId === input.workflowId && item.runId === input.runId);
+    const store = this.deps.createWorkflowV2Store?.();
+    if (!workflow?.workflowV2Plan || !run || !store?.readRunState) return { ok: false, workflowId: input.workflowId, runId: input.runId, error: "Workflow V2 script input state is unavailable." };
+    if (run.status !== "waiting_for_user") return { ok: false, workflowId: input.workflowId, runId: input.runId, error: "Workflow run is not waiting for script input." };
+    if (this.runRegistry.has(input.runId)) return { ok: false, workflowId: input.workflowId, runId: input.runId, error: "Workflow run is already active." };
+    const persisted = await store.readRunState(input.workflowId, input.runId);
+    const node = workflow.workflowV2Plan.definition.nodes.find((item) => item.id === input.nodeId);
+    const request = persisted?.nodeControl[input.nodeId]?.scriptInput;
+    if (!persisted || node?.execModel !== "script" || !request || request.submittedAt !== undefined) return { ok: false, workflowId: input.workflowId, runId: input.runId, error: `Workflow V2 node ${input.nodeId} is not awaiting script input.` };
+    const resolved = resolveWorkflowV2ScriptInput({ parameters: node.script.parameters, workflowContext: { objective: workflow.objective, contextDocument: run.contextDocument }, upstreamOutputs: persisted.workerOutputs, submittedValues: input.values });
+    if (!resolved.complete) return { ok: false, workflowId: input.workflowId, runId: input.runId, error: `Missing required script inputs: ${resolved.missing.map((item) => item.key).join(", ")}.` };
+    const submittedAt = Date.now();
+    const nodeControl = structuredClone(persisted.nodeControl);
+    nodeControl[input.nodeId] = { ...nodeControl[input.nodeId]!, scriptInput: { ...request, submittedValues: structuredClone(input.values), auditValues: resolved.auditValues, submittedAt } };
+    let runState = structuredClone(persisted.runState);
+    if (runState.nodes[input.nodeId]?.status !== "paused") return { ok: false, workflowId: input.workflowId, runId: input.runId, error: `Workflow V2 node ${input.nodeId} is not paused for script input.` };
+    runState = transitionWorkflowV2NodeState(runState, { nodeId: input.nodeId, status: "ready", now: submittedAt });
+    runState = { ...runState, status: "running" };
+    await store.persistRunState({ ...persisted, savedAt: submittedAt, runState, nodeControl });
+    this.runRegistry.register({ workflowId: input.workflowId, runId: input.runId, pausedNodeIds: new Set(), pausedTaskIds: new Set(), gatedNodeIds: new Set(), taskIdByNodeId: new Map(), manualPauseReasonByNodeId: new Map(), abortControllerByNodeId: new Map() });
+    this.deps.updateWorkflowRunState({ workflowId: input.workflowId, runId: input.runId, status: "running", progress: run.progress.map((item) => {
+      if (item.nodeId !== input.nodeId) return item;
+      const next = { ...item, status: "running" as const, detail: "Script input submitted" };
+      delete next.scriptInputRequest;
+      return next;
+    }), appendEvents: [{ type: "gate_answered", nodeId: input.nodeId, at: submittedAt, answer: JSON.stringify(resolved.auditValues) }], contextDocument: run.contextDocument });
+    const storagePlan = workflowStoragePlanFor(input.workflowId, input.runId);
+    void this.runExecutor.execute({ workflow, plan: workflow.workflowV2Plan, runId: input.runId, baseWorkflowContextDocument: run.contextDocument, storagePlanDocument: workflowStoragePlanDocument(storagePlan), initialCheckpoint: { runState, workerOutputs: persisted.workerOutputs }, initialNodeControl: nodeControl, initialDurableEventCount: persisted.eventCount }).finally(() => this.runRegistry.release(input.runId));
+    return { ok: true, workflowId: input.workflowId, runId: input.runId };
   }
 
 

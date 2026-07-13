@@ -17,6 +17,10 @@ export type WorkflowV2ScriptLanguage = "python" | "typescript" | "bash";
 export type WorkflowV2ScriptRiskLevel = "safe" | "read" | "write" | "dangerous";
 export type WorkflowV2ScriptCapability = "workspace_read" | "workspace_write" | "workspace_delete" | "external_read" | "external_write" | "external_delete" | "network_read" | "network_write" | "process_spawn" | "shell_execute" | "environment_read" | "credential_read" | "system_config_write";
 export type WorkflowV2ScriptPermissionDecision = "auto_allow" | "allow_once" | "require_confirmation" | "deny";
+export type WorkflowV2ScriptParameterLocation = "argument" | "environment" | "header" | "query" | "body" | "stdin";
+export type WorkflowV2ScriptParameterValueType = "string" | "number" | "boolean" | "json" | "secret" | "file" | "directory";
+export type WorkflowV2ScriptParameterSource = "user" | "workflow" | "upstream" | "literal";
+export type WorkflowV2ScriptParameterValue = string | number | boolean | Record<string, unknown> | unknown[];
 export interface WorkflowV2ScriptAuthorization {
   decision: WorkflowV2ScriptPermissionDecision;
   workflowId: string;
@@ -26,6 +30,20 @@ export interface WorkflowV2ScriptAuthorization {
   risk: WorkflowV2ScriptRiskLevel;
   capabilities: WorkflowV2ScriptCapability[];
   capabilityDigest: string;
+}
+export interface WorkflowV2ScriptParameterDef {
+  key: string;
+  label: string;
+  location: WorkflowV2ScriptParameterLocation;
+  valueType: WorkflowV2ScriptParameterValueType;
+  source: WorkflowV2ScriptParameterSource;
+  required: boolean;
+  description?: string;
+  defaultValue?: WorkflowV2ScriptParameterValue;
+  workflowPath?: string;
+  upstreamNodeId?: string;
+  upstreamOutputKey?: string;
+  literalValue?: WorkflowV2ScriptParameterValue;
 }
 export type WorkflowV2ExhaustedPolicy = "fail" | "skip" | "ask_human";
 export type WorkflowV2PassThreshold = "must" | "should" | "nice_to_have";
@@ -91,7 +109,7 @@ export interface WorkflowV2LLMNode extends WorkflowV2BaseNode {
 
 export interface WorkflowV2ScriptSpec {
   executable: { kind: "inline"; language: WorkflowV2ScriptLanguage; code: string } | { kind: "command"; command: string; args?: string[] };
-  parameters: Array<{ key: string; label: string; location: "argument" | "environment" | "header" | "query" | "body" | "stdin"; valueType: "string" | "number" | "boolean" | "json" | "secret" | "file" | "directory"; source: "user" | "workflow" | "upstream" | "literal"; required: boolean }>;
+  parameters: WorkflowV2ScriptParameterDef[];
   capabilities: WorkflowV2ScriptCapability[];
   managerRisk: { level: WorkflowV2ScriptRiskLevel; rationale: string };
   timeoutMs?: number;

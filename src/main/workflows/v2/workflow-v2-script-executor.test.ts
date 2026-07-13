@@ -23,6 +23,7 @@ describe("workflow-v2 script executor", () => {
       upstreamOutputs: [],
       signal: new AbortController().signal,
       timeoutMs: 2_000,
+      inputs: {},
       authorization: { decision: "auto_allow", workflowId: "wf", graphVersion: 1, runId: "run", nodeId: "echo", risk: "safe", capabilities: [], capabilityDigest: "[]" },
     });
 

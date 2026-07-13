@@ -18,8 +18,8 @@ import {
 import type { WorkflowV2WorkerOutput } from "../../shared/workflow-v2/packets";
 import type { WorkflowNodeConversation } from "../../shared/workflow-v2/conversation";
 import { createWorkflowV2RunState } from "../../shared/workflow-v2/state";
-import { WORKFLOW_V2_STORAGE_SCHEMA_VERSION } from "../../shared/workflow-v2/storage";
-import type { WorkflowV2CostBudget, WorkflowV2ResultPacket } from "../../shared/workflow-v2/planning";
+import { WORKFLOW_V2_STORAGE_SCHEMA_VERSION, type WorkflowV2PersistedRunState } from "../../shared/workflow-v2/storage";
+import type { WorkflowV2CostBudget, WorkflowV2Plan, WorkflowV2ResultPacket } from "../../shared/workflow-v2/planning";
 import { buildWorkflowV2Plan } from "./v2/workflow-v2-planner";
 import { transitionWorkflowV2NodeState } from "./v2/workflow-v2-scheduler";
 import {
@@ -409,6 +409,78 @@ function workflowV2InterventionRun(
     lastError: undefined,
   };
 }
+
+describe("WorkflowRuntime typed script input", () => {
+  test("persists a typed input request and pauses before executing the script", async () => {
+    const definition = workflowV2Definition();
+    definition.nodes = [{
+      id: "submit",
+      kind: "request",
+      title: "Submit request",
+      execModel: "script",
+      executionMode: "script",
+      script: {
+        ...createWorkflowV2InlineScriptSpec({ language: "typescript", code: "return { ok: true };" }),
+        parameters: [{ key: "body", label: "Request body", location: "body", valueType: "json", source: "user", required: true }],
+      },
+      outputFields: [{ key: "ok", required: true }],
+    }];
+    definition.edges = [];
+    const persisted: WorkflowV2PersistedRunState[] = [];
+    let executeCount = 0;
+    const fixture = await workflowV2RuntimeFixture({
+      definition,
+      store: {
+        persistRunState: async (state) => { persisted.push(structuredClone(state)); },
+        appendEvents: async () => undefined,
+      },
+      executeScript: async () => { executeCount += 1; throw new Error("must not execute"); },
+    });
+
+    fixture.runtime.runWorkflow({ workflowId: fixture.workflow.workflowId });
+    while (!fixture.updates.some((update) => update.status === "waiting_for_user")) await new Promise((resolve) => setTimeout(resolve, 5));
+
+    expect(executeCount).toBe(0);
+    expect(fixture.updates.flatMap((update) => update.progress ?? []).filter((item) => item.nodeId === "submit").at(-1)).toMatchObject({
+      status: "awaiting_input",
+      detail: "Waiting for Request body",
+      scriptInputRequest: {
+        parameters: [{ key: "body", label: "Request body", location: "body", valueType: "json", source: "user", required: true }],
+      },
+    });
+    expect(persisted.at(-1)?.nodeControl.submit?.scriptInput).toMatchObject({ requestedParameters: [{ key: "body", location: "body", valueType: "json" }], submittedValues: {} });
+  });
+
+  test("validates submitted values, persists them, and resumes with frozen inputs", async () => {
+    const definition = workflowV2Definition();
+    definition.nodes = [{ id: "submit", kind: "request", title: "Submit request", execModel: "script", executionMode: "script", script: { ...createWorkflowV2InlineScriptSpec({ language: "typescript", code: "return { ok: true };" }), parameters: [{ key: "body", label: "Request body", location: "body", valueType: "json", source: "user", required: true }] }, outputFields: [{ key: "ok", required: true }] }];
+    definition.edges = [];
+    let persistedPlan!: WorkflowV2Plan;
+    let persistedState!: WorkflowV2PersistedRunState;
+    const observedInputs: Array<Readonly<Record<string, unknown>>> = [];
+    const store: WorkflowV2StorePort = {
+      persistRunState: async (state) => { persistedState = structuredClone(state); },
+      appendEvents: async () => undefined,
+      readRunState: async () => persistedState,
+    };
+    const fixture = await workflowV2RuntimeFixture({ definition, store, executeScript: async (request) => { observedInputs.push(request.inputs); return { nodeId: request.node.id, summary: "Submitted", outputs: { ok: true }, proposals: [] }; } });
+    persistedPlan = fixture.workflow.workflowV2Plan!;
+    let pausedRunState = createWorkflowV2RunState({ definition });
+    pausedRunState = transitionWorkflowV2NodeState(pausedRunState, { nodeId: "submit", status: "running", now: 1 });
+    pausedRunState = transitionWorkflowV2NodeState(pausedRunState, { nodeId: "submit", status: "paused", now: 2, intervention: { nodeId: "submit", source: "supervision_pause", reason: "Script node is waiting for required typed input.", allowedActions: ["continue"], requestedAt: 2 } });
+    persistedState = { schemaVersion: WORKFLOW_V2_STORAGE_SCHEMA_VERSION, workflowId: definition.workflowId, runId: "run-v2-runtime", graphVersion: definition.graphVersion, savedAt: 2, eventCount: 0, plan: persistedPlan, runState: pausedRunState, workerOutputs: [], nodeControl: { submit: { extensionCount: 0, scriptInput: { requestedParameters: definition.nodes[0]!.execModel === "script" ? definition.nodes[0]!.script.parameters : [], submittedValues: {}, auditValues: {}, requestedAt: 1 } } } };
+    fixture.setRuns([{ runId: "run-v2-runtime", workflowId: definition.workflowId, status: "waiting_for_user", workflowV2Plan: persistedPlan, progress: [{ nodeId: "submit", title: "Submit request", status: "awaiting_input" }], events: [], contextDocument: "", startedAt: 1, finishedAt: undefined, lastError: undefined }]);
+
+    const result = await fixture.runtime.submitWorkflowScriptInput({ workflowId: definition.workflowId, runId: "run-v2-runtime", nodeId: "submit", values: { body: { question: "hello" } } });
+    const finished = await fixture.finished;
+
+    expect(result.ok).toBe(true);
+    expect(observedInputs).toEqual([{ body: { question: "hello" } }]);
+    expect(finished.status).toBe("completed");
+    expect(persistedState.nodeControl.submit?.scriptInput).toMatchObject({ auditValues: { body: { question: "hello" } }, submittedAt: expect.any(Number) });
+    expect(fixture.updates.flatMap((update) => update.progress ?? []).filter((item) => item.nodeId === "submit").at(-1)?.scriptInputRequest).toBeUndefined();
+  });
+});
 
 describe("WorkflowRuntime Workflow V2 bridge", () => {
   test("keeps an interactive node on the same non-terminal run while awaiting user confirmation", async () => {

@@ -31,6 +31,7 @@ export interface ExecuteWorkflowV2ScriptRequest {
   upstreamOutputs: readonly WorkflowV2ResultPacket[];
   signal: AbortSignal;
   timeoutMs: number;
+  inputs: Readonly<Record<string, unknown>>;
   authorization: WorkflowV2ScriptAuthorization;
 }
 

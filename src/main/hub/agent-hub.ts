@@ -35,6 +35,7 @@ import {
   SendWorkflowNodeMessageRequest,
   CreateAgentTeamRequest,
   AnswerWorkflowGateRequest,
+  SubmitWorkflowScriptInputRequest,
   RegisteredArtifact,
   RegisterArtifactRequest,
   GeneratedConfigFile,
@@ -1289,6 +1290,10 @@ export class AgentHub {
 
   answerWorkflowGate(input: AnswerWorkflowGateRequest): Promise<WorkflowOperationResult> {
     return this.workflowRunService.answerGate(input);
+  }
+
+  submitWorkflowScriptInput(input: SubmitWorkflowScriptInputRequest): Promise<WorkflowOperationResult> {
+    return this.workflowRunService.submitScriptInput(input);
   }
 
   async runScheduledWorkflowEvent(

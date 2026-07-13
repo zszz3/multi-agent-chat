@@ -73,6 +73,7 @@ import {
   type WorkflowV2DurableNodeControlState,
 } from "../../../shared/workflow-v2/storage";
 import type { ExecuteWorkflowV2Checkpoint } from "./workflow-v2-executor";
+import { resolveWorkflowV2ScriptInput } from "./workflow-v2-script-input";
 import {
   buildWorkflowV2FinalReport,
 } from "./workflow-v2-recovery";
@@ -742,6 +743,34 @@ export class WorkflowV2RunExecutor {
       planNode: WorkflowV2Plan["nodes"][number];
       upstreamOutputs: readonly WorkflowV2ResultPacket[];
     }): Promise<WorkflowV2WorkerOutput> => {
+      const submittedValues = durableNodeControl[request.node.id]?.scriptInput?.submittedValues ?? {};
+      const resolvedInput = resolveWorkflowV2ScriptInput({
+        parameters: request.node.script.parameters,
+        workflowContext: { objective: workflow.objective, contextDocument: baseWorkflowContextDocument },
+        upstreamOutputs: request.upstreamOutputs,
+        submittedValues,
+      });
+      if (!resolvedInput.complete) {
+        const requestedAt = Date.now();
+        durableNodeControl[request.node.id] = {
+          ...(durableNodeControl[request.node.id] ?? { extensionCount: 0 }),
+          scriptInput: { requestedParameters: resolvedInput.missing, submittedValues: {}, auditValues: {}, requestedAt },
+        };
+        updateNode(request.node.id, {
+          status: "awaiting_input",
+          detail: `Waiting for ${resolvedInput.missing.map((item) => item.label).join(", ")}`,
+          scriptInputRequest: { parameters: structuredClone(resolvedInput.missing) },
+        }, {
+          type: "gate_opened",
+          nodeId: request.node.id,
+          question: `Provide script inputs: ${resolvedInput.missing.map((item) => item.label).join(", ")}`,
+        });
+        await persistence.persistControlState(request.node.id, "script_input_requested", resolvedInput.missing.map((item) => item.key).join(","));
+        throw new WorkflowV2SupervisionSignal({
+          resolution: { action: "pause", question: `Provide inputs for ${request.node.title}.`, reason: "Script node is waiting for required typed input." },
+          report: { nodeId: request.node.id, attempt: 1, phase: "input", completedItems: [], remainingItems: resolvedInput.missing.map((item) => item.label), blockers: ["Required script input is missing."], evidence: [], safeToInterrupt: true, requestedAction: "need_input", reportedAt: requestedAt },
+        });
+      }
       const remainingScriptMs = assertWallClockBudget(request.node.id);
       const timeoutMs = Math.min(
         request.node.script.timeoutMs ?? WORKFLOW_TASK_TIMEOUT_MS,
@@ -774,6 +803,7 @@ export class WorkflowV2RunExecutor {
           upstreamOutputs: request.upstreamOutputs,
           signal: controller.signal,
           timeoutMs,
+          inputs: Object.freeze(structuredClone(resolvedInput.values)),
           authorization: {
             decision: approved && requiresApproval ? "allow_once" : "auto_allow",
             workflowId: workflow.workflowId,
@@ -967,15 +997,19 @@ export class WorkflowV2RunExecutor {
           } else if (transition.status === "paused") {
             const activeRun = this.runRegistry.get(runId);
             activeRun?.pausedNodeIds.add(transition.nodeId);
+            const scriptInput = durableNodeControl[transition.nodeId]?.scriptInput;
+            const waitingForScriptInput = scriptInput !== undefined && scriptInput.submittedAt === undefined;
             updateNode(transition.nodeId, {
-              status: "paused",
-              detail: transition.intervention.reason,
-              intervention: structuredClone(transition.intervention),
+              status: waitingForScriptInput ? "awaiting_input" : "paused",
+              detail: waitingForScriptInput
+                ? `Waiting for ${scriptInput.requestedParameters.map((item) => item.label).join(", ")}`
+                : transition.intervention.reason,
+              ...(!waitingForScriptInput ? { intervention: structuredClone(transition.intervention) } : {}),
             }, {
-              type: "node_paused",
+              type: waitingForScriptInput ? "gate_opened" : "node_paused",
               nodeId: transition.nodeId,
               detail: transition.intervention.reason,
-              intervention: transition.intervention,
+              ...(!waitingForScriptInput ? { intervention: transition.intervention } : {}),
             }, true);
           } else {
             updateNode(transition.nodeId, { status: "failed", detail: transition.error }, {
