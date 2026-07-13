@@ -65,9 +65,11 @@ export class WorkflowV2ConversationManager {
     this.changed(conversation);
     void session.sendPrompt(input.initialPrompt)
       .then(() => this.syncRuntimeConversation(conversationId))
-      .catch((error) => {
+      .catch(async (error) => {
         const mutable = this.conversations.get(conversationId);
         if (!mutable || mutable.status === "closed") return;
+        this.sessions.delete(conversationId);
+        await session.close().catch(() => undefined);
         const message = error instanceof Error ? error.message : String(error);
         this.appendMessage(mutable, "system", message, this.deps.now(), "error");
         mutable.status = "failed";
@@ -149,7 +151,11 @@ export class WorkflowV2ConversationManager {
   }
 
   async interrupt(conversationId: string): Promise<void> {
-    await this.sessionRequired(conversationId).interrupt();
+    const conversation = this.mutableRequired(conversationId);
+    if (conversation.status === "closed" || conversation.status === "failed") return;
+    const session = this.sessions.get(conversationId);
+    if (!session) return;
+    await session.interrupt();
   }
 
   async stopRun(workflowId: string, runId: string): Promise<void> {

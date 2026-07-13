@@ -153,6 +153,32 @@ describe("CodexInteractiveSession", () => {
     expect(session.snapshot().runtimeState.attachmentState).toBe("detached");
   });
 
+  test("rejects a Codex attachment that does not return a thread id", async () => {
+    const dir = await mkdtemp(path.join(os.tmpdir(), "multi-agent-chat-codex-missing-thread-"));
+    const shutdown = vi.fn(async () => undefined);
+    const session = new CodexInteractiveSession(
+      {
+        chatId: "chat-1",
+        configuredAgentId: "default-agent",
+        runtimeId: "codex",
+        executionMode: "interactive",
+        continuationPolicy: "resume-preferred",
+        runtime: codexRuntime("codex"),
+        channelId: "codex-openai",
+        workDir: dir,
+        runtimeConfig: { model: "default" },
+        developerInstructions: "test",
+        emit: () => undefined,
+        syncState: () => undefined,
+      },
+      codexSessionOptions({ request: async () => ({}), shutdown }),
+    );
+
+    await expect(session.sendPrompt("First")).rejects.toThrow("without a thread id");
+    expect(shutdown).toHaveBeenCalledTimes(1);
+    expect(session.snapshot().runtimeState.attachmentState).toBe("detached");
+    await expect(session.interrupt()).resolves.toBeUndefined();
+  });
   test("detaches an idle Codex attachment and resumes the same thread on the next prompt", async () => {
     const dir = await mkdtemp(path.join(os.tmpdir(), "multi-agent-chat-codex-session-"));
     const seen: AgentEvent[] = [];

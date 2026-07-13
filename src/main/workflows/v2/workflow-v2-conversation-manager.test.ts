@@ -1,4 +1,4 @@
-import { describe, expect, test } from "vitest";
+import { describe, expect, test, vi } from "vitest";
 import type { AgentEvent, RuntimeConversation } from "../../../shared/types";
 import { workflowNodeConversationId } from "../../../shared/workflow-v2/conversation";
 import { WorkflowV2ConversationManager } from "./workflow-v2-conversation-manager";
@@ -183,6 +183,38 @@ describe("WorkflowV2ConversationManager", () => {
     expect(manager.get(first.conversationId)?.messages.at(-1)?.content).toBe("Workflow run stopped by user.");
   });
 
+  test("releases a runtime session when the initial prompt fails", async () => {
+    const close = vi.fn(async () => undefined);
+    const manager = new WorkflowV2ConversationManager({
+      now: () => 40,
+      createSession: () => ({
+        sendPrompt: async () => { throw new Error("missing thread"); },
+        interrupt: async () => undefined,
+        close,
+        runtimeConversation: () => undefined,
+      }),
+    });
+    const started = await manager.start({ workflowId: "w", runId: "r", nodeId: "n", configuredAgentId: "a", modelId: "m", workDir: "C:/workspace", initialPrompt: "Start" });
+    await vi.waitFor(() => expect(manager.get(started.conversationId)?.status).toBe("failed"));
+    expect(close).toHaveBeenCalledTimes(1);
+    await expect(manager.interrupt(started.conversationId)).resolves.toBeUndefined();
+  });
+
+  test("does not create a new runtime session only to interrupt a restored conversation", async () => {
+    const createSession = vi.fn(() => ({
+      sendPrompt: async () => undefined,
+      interrupt: async () => undefined,
+      close: async () => undefined,
+      runtimeConversation: () => undefined,
+    }));
+    const manager = new WorkflowV2ConversationManager({ now: () => 45, createSession });
+    manager.restore([{
+      conversationId: "w::r::n", workflowId: "w", runId: "r", nodeId: "n", configuredAgentId: "a", modelId: "m", workDir: "C:/workspace", status: "waiting_for_user",
+      messages: [], createdAt: 1, updatedAt: 1, lastActivityAt: 1,
+    }]);
+    await expect(manager.interrupt("w::r::n")).resolves.toBeUndefined();
+    expect(createSession).not.toHaveBeenCalled();
+  });
   test("restores a conversation snapshot and lazily recreates its runtime session", async () => {
     const prompts: string[] = [];
     const manager = new WorkflowV2ConversationManager({

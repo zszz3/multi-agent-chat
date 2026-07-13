@@ -116,20 +116,19 @@ export class CodexInteractiveSession implements InteractiveSession {
           });
 
       const threadId = (threadResult as { thread?: { id?: string } }).thread?.id;
-      if (threadId) {
-        this.runtimeConversation = codexRuntimeStateCodec.encodeConversation({
-          native: { threadId },
-          appContext: {
-            cwd: this.context.workDir,
-            modelId,
-            approvalPolicy,
-          },
-        });
-        this.context.emit({
-          type: "runtime_conversation",
-          runtimeConversation: this.runtimeConversation,
-        });
-      }
+      if (!threadId) throw new Error("Codex thread attach completed without a thread id.");
+      this.runtimeConversation = codexRuntimeStateCodec.encodeConversation({
+        native: { threadId },
+        appContext: {
+          cwd: this.context.workDir,
+          modelId,
+          approvalPolicy,
+        },
+      });
+      this.context.emit({
+        type: "runtime_conversation",
+        runtimeConversation: this.runtimeConversation,
+      });
 
       this.attachmentState = "idle";
       this.activeTurnId = undefined;
