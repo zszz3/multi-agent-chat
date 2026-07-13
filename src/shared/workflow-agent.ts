@@ -35,7 +35,7 @@ export const WORKFLOW_V2_DEFINITION_TEMPLATE = `{
       "executionModeRationale": "This is a deterministic pass-through with no reasoning.",
       "executionModeConfidence": 1,
       "script": {
-        "executable": { "kind": "inline", "language": "typescript", "code": "const input = JSON.parse(process.env.WORKFLOW_INPUT ?? '{}'); process.stdout.write(JSON.stringify({ echoed: input.text }));" },
+        "executable": { "kind": "inline", "language": "typescript", "code": "return { echoed: inputs.text };" },
         "parameters": [{ "key": "text", "label": "Text", "location": "stdin", "valueType": "string", "source": "user", "required": true, "description": "Text to return unchanged." }],
         "capabilities": [],
         "managerRisk": { "level": "safe", "rationale": "Returns the declared user parameter unchanged without external side effects." },
@@ -81,6 +81,7 @@ export function buildWorkflowAgentPrompt({ workflowId, objective }: WorkflowAgen
     "- Do not use an LLM node for copying, echoing, renaming, mapping, selecting, or serializing already available values unless reasoning is genuinely required.",
     "- Each LLM node requires prompt and outputFields; each script node requires executable source, typed parameters, declared capabilities, Manager risk with rationale, and outputFields.",
     "- Every script input must be declared exactly once in parameters with its location, valueType, source, required flag, and source binding. Never hide required inputs inside prompts, code literals, or ambient state.",
+    "- Inline TypeScript receives the resolved parameter object as the function argument inputs. Read values through inputs.<key> and return an object. Do not read WORKFLOW_INPUT or write the result through process.stdout.",
     "- Declare only capabilities the script actually needs. Classify pure in-memory transformations as safe, external or workspace reads as read, mutations as write, and deletion, credentials, shell execution, process spawning, or system changes as dangerous unless a stricter level is warranted.",
     "- Edges express all topology dependencies. Downstream nodes must not run before every upstream dependency completes.",
     "- Node prompts must state required inputs, completion criteria, output fields, and downstream handoff expectations.",
