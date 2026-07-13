@@ -283,6 +283,8 @@ async function workflowV2RuntimeFixture(input: {
     revision: 1,
     configuredAgentId: "agent-a",
     modelId: "model-a",
+    reviewerConfiguredAgentId: "agent-a",
+    reviewerModelId: "model-a",
     objective: definition.objective,
     workDir: "/tmp/workflow-v2-runtime",
     definition,
@@ -1937,8 +1939,10 @@ describe("WorkflowRuntime Workflow V2 bridge", () => {
     expect(started).toEqual({ ok: true, workflowId: fixture.workflow.workflowId, runId: "run-v2-runtime" });
     expect(fixture.taskRequests).toHaveLength(1);
     expect(fixture.taskRequests[0]).toMatchObject({
-      configuredAgentId: "agent-a",
-      modelId: "model-a",
+    configuredAgentId: "agent-a",
+    modelId: "model-a",
+    reviewerConfiguredAgentId: "agent-a",
+    reviewerModelId: "model-a",
       workDir: "/tmp/workflow-v2-runtime",
     });
     expect(fixture.taskRequests[0]?.prompt).toBe("Produce the implementation draft from the approved packet.");

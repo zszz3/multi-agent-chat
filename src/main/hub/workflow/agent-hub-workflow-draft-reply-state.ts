@@ -26,7 +26,7 @@ export function beginWorkflowDraftReply(input: {
       ...(starting ? workflowWithoutFinalReport : input.workflow),
       title: input.workflow.title || input.workflow.definition.objective || "Untitled workflow",
       status: input.workflow.status === "running" ? input.workflow.status : "draft",
-      revision: input.workflow.revision + 1,
+      revision: starting && !input.workflow.objective.trim() ? input.workflow.revision + 1 : input.workflow.revision,
       objective: starting ? input.reply : input.workflow.objective,
       messages: [
         ...input.workflow.messages,
@@ -62,7 +62,6 @@ export function abandonWorkflowDraftReplyState(input: {
   const stoppedContent = input.activeRequest.content.trim() || "Stopped: workflow agent did not return a complete response yet.";
   return input.cloneDraft({
     ...input.workflow,
-    revision: input.workflow.revision + 1,
     messages: replaceWorkflowDraftMessage(input.workflow.messages, input.activeRequest.assistantMessageId, stoppedContent),
     error: undefined,
     updatedAt: input.now ?? Date.now(),

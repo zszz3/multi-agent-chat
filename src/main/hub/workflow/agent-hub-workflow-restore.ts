@@ -172,6 +172,8 @@ export function restoreWorkflowDraft(
     revision: Math.max(1, Math.floor(asNumber(record.revision, 1))),
     configuredAgentId: asOptionalString(record.configuredAgentId) ?? "",
     modelId: asOptionalString(record.modelId) ?? "",
+    reviewerConfiguredAgentId: asOptionalString(record.reviewerConfiguredAgentId) ?? asOptionalString(record.configuredAgentId) ?? "",
+    reviewerModelId: asOptionalString(record.reviewerModelId) ?? asOptionalString(record.modelId) ?? "",
     objective: asOptionalString(record.objective) ?? definition.objective,
     definition,
     ...(asOptionalString(record.workDir) ? { workDir: asOptionalString(record.workDir) as string } : {}),

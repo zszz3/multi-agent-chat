@@ -60,6 +60,8 @@ async function fixture(): Promise<{
     revision: 1,
     configuredAgentId: "agent-a",
     modelId: "model-a",
+    reviewerConfiguredAgentId: "agent-a",
+    reviewerModelId: "model-a",
     objective: workflowDefinition.objective,
     definition: workflowDefinition,
     messages: [],
@@ -241,6 +243,8 @@ describe("Workflow V2 AgentHub durable restore", () => {
       definition: workflowDefinition,
     });
     expect(created).toMatchObject({ ok: true, workflowId: expect.any(String) });
+    const reviewRoute = hub.snapshot().workflowDraft!;
+    hub.patchWorkflowDraft({ workflowId, generationReview: { status: "approved", reviewerConfiguredAgentId: reviewRoute.reviewerConfiguredAgentId, reviewerModelId: reviewRoute.reviewerModelId, reviewedRevision: created.revision!, result: { verdict: "approve", reviewedRevision: created.revision!, summary: "Approved for restore test", findings: [], scriptRisks: {}, suggestions: [] }, updatedAt: 1 } });
     hub.confirmWorkflow({ workflowId, ...(created.revision !== undefined ? { expectedRevision: created.revision } : {}) });
     const createdWorkflow = hub.snapshot().workflowStore.workflows.find((item) => item.workflowId === workflowId)!;
     const frozenDefinition = createdWorkflow.workflowV2Plan!.definition;

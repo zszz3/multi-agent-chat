@@ -3,7 +3,7 @@ import { dispatchWorkflowDraftReply } from "./agent-hub-workflow-draft-replies";
 import type { WorkflowDraftState } from "../../../shared/types";
 
 const workflow: WorkflowDraftState = {
-  workflowId: "wf-1", title: "Draft", status: "draft", revision: 1, configuredAgentId: "agent", modelId: "model", objective: "",
+  workflowId: "wf-1", title: "Draft", status: "draft", revision: 1, configuredAgentId: "agent", modelId: "model", reviewerConfiguredAgentId: "agent", reviewerModelId: "model", objective: "",
   definition: { workflowId: "wf-1", graphVersion: 1, objective: "", nodes: [], edges: [] }, messages: [], reply: "", error: undefined,
   runProgress: [], runContextDocument: "", contextDocument: "", runIds: [], createdAt: 1, updatedAt: 1,
 };

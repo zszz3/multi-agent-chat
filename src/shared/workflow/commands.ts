@@ -2,6 +2,7 @@ import type { RuntimeConversation } from "../runtime/conversation";
 import type { WorkflowV2ContextBudget, WorkflowV2Definition, WorkflowV2ModelProfile, WorkflowV2NodeRole, WorkflowV2ValidationResult } from "../workflow-v2/definition";
 import type { WorkflowV2AcceptanceCriterion, WorkflowV2CostBudget, WorkflowV2GraphRevision, WorkflowV2Plan } from "../workflow-v2/planning";
 import type { WorkflowV2InterventionAction } from "../workflow-v2/review";
+import type { WorkflowV2GenerationReviewState } from "../workflow-v2/generation-review";
 import type { WorkflowGrillMessage } from "./draft";
 import type { WorkflowArtifactReference, WorkflowEvent, WorkflowRunProgressItem, WorkflowStatus } from "./run";
 
@@ -36,6 +37,8 @@ export interface MaterializeWorkflowDraftRequest {
   definition: WorkflowV2Definition;
   configuredAgentId?: string;
   modelId?: string;
+  reviewerConfiguredAgentId?: string;
+  reviewerModelId?: string;
   workDir?: string;
   messages?: WorkflowGrillMessage[];
   reply?: string;
@@ -55,6 +58,8 @@ export interface CreateWorkflowDraftRequest {
   title?: string;
   configuredAgentId?: string;
   modelId?: string;
+  reviewerConfiguredAgentId?: string;
+  reviewerModelId?: string;
 }
 
 export interface PatchWorkflowDraftRequest {
@@ -63,6 +68,8 @@ export interface PatchWorkflowDraftRequest {
   status?: WorkflowStatus;
   configuredAgentId?: string;
   modelId?: string;
+  reviewerConfiguredAgentId?: string;
+  reviewerModelId?: string;
   objective?: string;
   workDir?: string | null;
   definition?: WorkflowV2Definition;
@@ -73,6 +80,7 @@ export interface PatchWorkflowDraftRequest {
   runContextDocument?: string;
   contextDocument?: string;
   workflowV2Plan?: WorkflowV2Plan | null;
+  generationReview?: WorkflowV2GenerationReviewState | null;
   finalReport?: string | null;
   runtimeConversation?: RuntimeConversation | null;
   resetRunState?: boolean;
@@ -91,6 +99,8 @@ export interface UpdateWorkflowRequest {
   definition?: WorkflowV2Definition;
   configuredAgentId?: string;
   modelId?: string;
+  reviewerConfiguredAgentId?: string;
+  reviewerModelId?: string;
   messages?: WorkflowGrillMessage[];
   reply?: string;
   error?: string;
@@ -98,6 +108,7 @@ export interface UpdateWorkflowRequest {
   runContextDocument?: string;
   contextDocument?: string;
   workflowV2Plan?: WorkflowV2Plan | null;
+  generationReview?: WorkflowV2GenerationReviewState | null;
   finalReport?: string;
   runtimeConversation?: RuntimeConversation;
 }
@@ -131,6 +142,11 @@ export interface RunWorkflowRequest {
 export interface ConfirmWorkflowRequest {
   workflowId: string;
   expectedRevision?: number;
+}
+
+export interface ReviewWorkflowRequest {
+  workflowId: string;
+  expectedRevision: number;
 }
 
 export interface BuildWorkflowV2PlanRequest {

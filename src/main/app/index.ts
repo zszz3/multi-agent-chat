@@ -35,6 +35,7 @@ import type {
   ClaudeDefaultConfig,
   ConfiguredAgent,
   ConfirmWorkflowRequest,
+  ReviewWorkflowRequest,
   CreateWorkflowDraftRequest,
   CreateScheduledWorkflowScheduleRequest,
   CreateAgentTeamRequest,
@@ -445,6 +446,7 @@ function registerIpcHandlers(): void {
   ipcMain.handle("workflow:rename", (_event, workflowId: string, title: string) => hub.renameWorkflow(workflowId, title));
 ipcMain.handle("workflow:delete", (_event, workflowId: string) => hub.deleteWorkflow(workflowId));
 ipcMain.handle("workflow:confirm", (_event, request: ConfirmWorkflowRequest) => hub.confirmWorkflow(request));
+ipcMain.handle("workflow:review", (_event, request: ReviewWorkflowRequest) => hub.reviewWorkflow(request));
 ipcMain.handle("workflow-run:start", (_event, request: RunWorkflowRequest) => hub.runWorkflow(request));
   ipcMain.handle("workflow-run:pause-node", (_event, request: PauseWorkflowNodeRequest) => hub.pauseWorkflowNode(request));
   ipcMain.handle("workflow-run:stop", (_event, request: StopWorkflowRunRequest) => hub.stopWorkflowRun(request));

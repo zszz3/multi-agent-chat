@@ -2,6 +2,7 @@ import type { ResourceSourceType } from "../resource";
 import type { RuntimeConversation } from "../runtime/conversation";
 import type { WorkflowV2Definition } from "../workflow-v2/definition";
 import type { WorkflowV2Plan } from "../workflow-v2/planning";
+import type { WorkflowV2GenerationReviewState } from "../workflow-v2/generation-review";
 import type { WorkflowRunProgressItem, WorkflowRunState, WorkflowStatus } from "./run";
 
 export interface WorkflowGrillMessage {
@@ -20,6 +21,8 @@ export interface WorkflowDraftState {
   confirmedRevision?: number;
   configuredAgentId: string;
   modelId: string;
+  reviewerConfiguredAgentId: string;
+  reviewerModelId: string;
   objective: string;
   definition: WorkflowV2Definition;
   workDir?: string;
@@ -30,6 +33,7 @@ export interface WorkflowDraftState {
   runContextDocument: string;
   contextDocument: string;
   workflowV2Plan?: WorkflowV2Plan;
+  generationReview?: WorkflowV2GenerationReviewState;
   finalReport?: string;
   runIds: string[];
   runtimeConversation?: RuntimeConversation;

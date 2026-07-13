@@ -28,6 +28,7 @@ import {
   CreateWorkflowDraftRequest,
   MaterializeWorkflowDraftRequest,
   ConfirmWorkflowRequest,
+  ReviewWorkflowRequest,
   FinishWorkflowRunRequest,
   CompleteWorkflowNodeConversationRequest,
   InterruptWorkflowNodeConversationRequest,
@@ -295,6 +296,8 @@ import {
   abandonWorkflowDraftReplyState as abandonWorkflowDraftReplyStateValue,
 } from "./workflow/agent-hub-workflow-draft-reply-state";
 import { validateWorkflowV2Definition } from "../../shared/workflow-v2/validation";
+import { isWorkflowV2GenerationReviewValidForRoute } from "../../shared/workflow-v2/generation-review";
+import { executeWorkflowGenerationReview } from "./workflow/workflow-generation-review-service";
 import { WORKFLOW_DEVELOPER_INSTRUCTIONS } from "./runtime/executor/workflow/agent-executor-workflow-shared";
 const DEFAULT_AGENT: AgentId = "codex";
 const CODEX_CHAT_DEVELOPER_INSTRUCTIONS =
@@ -1097,6 +1100,12 @@ export class AgentHub {
       modelId: input.configuredAgentId !== undefined || input.modelId !== undefined
         ? this.normalizeModelIdForConfiguredAgent(input.configuredAgentId ?? current.configuredAgentId, input.modelId ?? current.modelId)
         : current.modelId,
+      reviewerConfiguredAgentId: input.reviewerConfiguredAgentId !== undefined
+        ? this.normalizeWorkflowConfiguredAgentId(input.reviewerConfiguredAgentId)
+        : current.reviewerConfiguredAgentId,
+      reviewerModelId: input.reviewerConfiguredAgentId !== undefined || input.reviewerModelId !== undefined
+        ? this.normalizeModelIdForConfiguredAgent(input.reviewerConfiguredAgentId ?? current.reviewerConfiguredAgentId, input.reviewerModelId ?? current.reviewerModelId)
+        : current.reviewerModelId,
       cloneDraft: (draft) => this.cloneWorkflowDraft(draft),
     });
     this.workflowStore.workflows.set(workflow.workflowId, workflow);
@@ -1111,11 +1120,43 @@ export class AgentHub {
       return { ok: false, workflowId: workflow.workflowId, revision: workflow.revision, error: "Workflow draft changed before confirmation." };
     }
     if (!workflow.workflowV2Plan) return { ok: false, workflowId: workflow.workflowId, revision: workflow.revision, error: "Workflow V2 plan is required before confirmation." };
+    if (!isWorkflowV2GenerationReviewValidForRoute(workflow.generationReview, { revision: workflow.revision, reviewerConfiguredAgentId: workflow.reviewerConfiguredAgentId, reviewerModelId: workflow.reviewerModelId })) {
+      return { ok: false, workflowId: workflow.workflowId, revision: workflow.revision, error: "Workflow requires an approved adversarial review for the current revision." };
+    }
     const validation = validateWorkflowV2Definition(workflow.definition);
     if (!validation.valid) return { ok: false, workflowId: workflow.workflowId, revision: workflow.revision, error: validation.errors[0] ?? "Workflow V2 definition is invalid." };
     this.workflowStore.workflows.set(workflow.workflowId, this.cloneWorkflowDraft({ ...workflow, confirmedRevision: workflow.revision, error: undefined, updatedAt: Date.now() }));
     this.emit();
     return { ok: true, workflowId: workflow.workflowId, revision: workflow.revision };
+  }
+
+  async reviewWorkflow(input: ReviewWorkflowRequest): Promise<AppSnapshot> {
+    const workflow = this.workflowStore.workflows.get(input.workflowId);
+    if (!workflow) return this.snapshot();
+    if (workflow.revision !== input.expectedRevision) return this.snapshot();
+    const reviewer = this.resolveConfiguredAgent(workflow.reviewerConfiguredAgentId, workflow.reviewerModelId);
+    if (!reviewer?.runtime?.available) {
+      this.workflowStore.workflows.set(workflow.workflowId, this.cloneWorkflowDraft({ ...workflow, generationReview: { status: "failed", reviewerConfiguredAgentId: workflow.reviewerConfiguredAgentId, reviewerModelId: workflow.reviewerModelId, reviewedRevision: workflow.revision, error: "The selected Workflow Reviewer Agent is unavailable.", updatedAt: Date.now() }, updatedAt: Date.now() }));
+      this.emit();
+      return this.snapshot();
+    }
+    const reviewingRevision = workflow.revision;
+    const reviewerConfiguredAgentId = workflow.reviewerConfiguredAgentId;
+    const reviewerModelId = workflow.reviewerModelId;
+    this.workflowStore.workflows.set(workflow.workflowId, this.cloneWorkflowDraft({ ...workflow, generationReview: { status: "reviewing", reviewerConfiguredAgentId, reviewerModelId, reviewedRevision: reviewingRevision, updatedAt: Date.now() }, updatedAt: Date.now() }));
+    this.emit();
+    await this.flushPersistence();
+    const executionMode = this.selectExecutionMode(reviewer.runtimeAgentId, "workflow", "oneshot");
+    const review = await executeWorkflowGenerationReview({
+      workflow,
+      askReviewer: (prompt) => this.askWorkflowAgent({ planningWorkflowId: workflow.workflowId, prompt, configuredAgentId: reviewerConfiguredAgentId, runtimeId: reviewer.runtimeAgentId, executionMode, continuationPolicy: this.defaultContinuationPolicy(reviewer.runtimeAgentId, "workflow", executionMode), runtimeConfig: { model: reviewerModelId, ...(reviewer.reasoningEffort ? { reasoningEffort: reviewer.reasoningEffort } : {}) }, workDir: workflow.workDir || this.workDir }),
+    });
+    const current = this.workflowStore.workflows.get(workflow.workflowId);
+    if (!current || current.revision !== reviewingRevision || current.reviewerConfiguredAgentId !== reviewerConfiguredAgentId || current.reviewerModelId !== reviewerModelId) return this.snapshot();
+    this.workflowStore.workflows.set(current.workflowId, this.cloneWorkflowDraft({ ...current, generationReview: review, updatedAt: Date.now() }));
+    this.emit();
+    await this.flushPersistence();
+    return this.snapshot();
   }
 
   /**
@@ -1134,6 +1175,8 @@ export class AgentHub {
         revision: 1,
         configuredAgentId: "",
         modelId: "",
+        reviewerConfiguredAgentId: "",
+        reviewerModelId: "",
         objective: def.objective,
         definition: structuredClone(def.definition),
         messages: [],
@@ -1220,6 +1263,12 @@ export class AgentHub {
         input.configuredAgentId !== undefined || input.modelId !== undefined
           ? this.normalizeModelIdForConfiguredAgent(input.configuredAgentId ?? current.configuredAgentId, input.modelId ?? current.modelId)
           : current.modelId,
+      reviewerConfiguredAgentId:
+        input.reviewerConfiguredAgentId !== undefined ? this.normalizeWorkflowConfiguredAgentId(input.reviewerConfiguredAgentId) : current.reviewerConfiguredAgentId,
+      reviewerModelId:
+        input.reviewerConfiguredAgentId !== undefined || input.reviewerModelId !== undefined
+          ? this.normalizeModelIdForConfiguredAgent(input.reviewerConfiguredAgentId ?? current.reviewerConfiguredAgentId, input.reviewerModelId ?? current.reviewerModelId)
+          : current.reviewerModelId,
       cloneDraft: (draft) => this.cloneWorkflowDraft(draft),
     });
     this.workflowStore.workflows.set(next.workflowId, next);

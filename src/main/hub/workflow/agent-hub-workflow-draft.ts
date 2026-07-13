@@ -35,8 +35,16 @@ export function applyWorkflowDraftPatch(input: {
   const nextModelId = patch.configuredAgentId !== undefined || patch.modelId !== undefined
     ? input.normalizeModelId(nextConfiguredAgentId, patch.modelId ?? current.modelId)
     : current.modelId;
+  const nextReviewerConfiguredAgentId = patch.reviewerConfiguredAgentId !== undefined
+    ? input.normalizeConfiguredAgentId(patch.reviewerConfiguredAgentId)
+    : current.reviewerConfiguredAgentId;
+  const nextReviewerModelId = patch.reviewerConfiguredAgentId !== undefined || patch.reviewerModelId !== undefined
+    ? input.normalizeModelId(nextReviewerConfiguredAgentId, patch.reviewerModelId ?? current.reviewerModelId)
+    : current.reviewerModelId;
   const routeChanged = nextConfiguredAgentId !== current.configuredAgentId || nextModelId !== current.modelId;
+  const reviewerRouteChanged = nextReviewerConfiguredAgentId !== current.reviewerConfiguredAgentId || nextReviewerModelId !== current.reviewerModelId;
   const definitionChanged = patch.definition !== undefined || patch.objective !== undefined;
+  const executableChanged = definitionChanged || routeChanged || reviewerRouteChanged || patch.workDir !== undefined;
   const definition = patch.definition
     ? structuredClone(patch.definition)
     : patch.objective !== undefined
@@ -57,6 +65,7 @@ export function applyWorkflowDraftPatch(input: {
     finalReport: _finalReport,
     runtimeConversation: _runtimeConversation,
     confirmedRevision: _confirmedRevision,
+    generationReview: _generationReview,
     ...base
   } = current;
   const workDir = patch.workDir === null ? undefined : patch.workDir ?? current.workDir;
@@ -72,12 +81,14 @@ export function applyWorkflowDraftPatch(input: {
     ...base,
     title: patch.title ?? current.title,
     status: current.status === "running" ? "running" : patch.status ?? current.status,
-    revision: current.revision + 1,
-    ...(!definitionChanged && !routeChanged && current.confirmedRevision === current.revision
-      ? { confirmedRevision: current.revision + 1 }
+    revision: executableChanged ? current.revision + 1 : current.revision,
+    ...(!executableChanged && current.confirmedRevision === current.revision
+      ? { confirmedRevision: current.revision }
       : {}),
     configuredAgentId: nextConfiguredAgentId,
     modelId: nextModelId,
+    reviewerConfiguredAgentId: nextReviewerConfiguredAgentId,
+    reviewerModelId: nextReviewerModelId,
     objective: patch.objective ?? definition.objective,
     definition,
     ...(workDir ? { workDir } : {}),
@@ -88,6 +99,11 @@ export function applyWorkflowDraftPatch(input: {
     runContextDocument: resetRunState ? "" : patch.runContextDocument ?? current.runContextDocument,
     contextDocument: patch.contextDocument ?? current.contextDocument,
     ...(nextWorkflowV2Plan ? { workflowV2Plan: nextWorkflowV2Plan } : {}),
+    ...(!executableChanged && patch.generationReview === undefined && current.generationReview
+      ? { generationReview: structuredClone(current.generationReview) }
+      : patch.generationReview && !executableChanged
+        ? { generationReview: structuredClone(patch.generationReview) }
+        : {}),
     ...(finalReport !== undefined ? { finalReport } : {}),
     runIds: resetRunState ? [] : [...current.runIds],
     ...(runtimeConversation ? { runtimeConversation } : {}),
@@ -102,6 +118,8 @@ export function createWorkflowDraftState(input: {
   request: MaterializeWorkflowDraftRequest;
   configuredAgentId: string;
   modelId: string;
+  reviewerConfiguredAgentId: string;
+  reviewerModelId: string;
   cloneDraft: (draft: WorkflowDraftState) => WorkflowDraftState;
   now?: number;
 }): WorkflowDraftState {
@@ -116,6 +134,8 @@ export function createWorkflowDraftState(input: {
     revision: 1,
     configuredAgentId: input.configuredAgentId,
     modelId: input.modelId,
+    reviewerConfiguredAgentId: input.reviewerConfiguredAgentId,
+    reviewerModelId: input.reviewerModelId,
     objective,
     definition,
     ...(input.request.workDir?.trim() ? { workDir: input.request.workDir.trim() } : {}),
@@ -140,11 +160,15 @@ export function updateWorkflowDraftState(input: {
   definition: WorkflowV2Definition;
   configuredAgentId: string;
   modelId: string;
+  reviewerConfiguredAgentId: string;
+  reviewerModelId: string;
   cloneDraft: (draft: WorkflowDraftState) => WorkflowDraftState;
   now?: number;
 }): WorkflowDraftState {
   const routeChanged = input.configuredAgentId !== input.current.configuredAgentId || input.modelId !== input.current.modelId;
+  const reviewerRouteChanged = input.reviewerConfiguredAgentId !== input.current.reviewerConfiguredAgentId || input.reviewerModelId !== input.current.reviewerModelId;
   const definitionChanged = input.request.definition !== undefined || input.request.objective !== undefined;
+  const executableChanged = definitionChanged || routeChanged || reviewerRouteChanged;
   const nextWorkflowV2Plan = input.request.workflowV2Plan === null
     ? undefined
     : input.request.workflowV2Plan !== undefined
@@ -154,7 +178,7 @@ export function updateWorkflowDraftState(input: {
         : input.current.workflowV2Plan
           ? cloneWorkflowV2Plan(input.current.workflowV2Plan)
           : undefined;
-  const { workflowV2Plan: _plan, confirmedRevision: _confirmedRevision, ...base } = input.current;
+  const { workflowV2Plan: _plan, confirmedRevision: _confirmedRevision, generationReview: _generationReview, ...base } = input.current;
   return input.cloneDraft({
     ...base,
     title: input.request.title ?? input.current.title,
@@ -162,6 +186,8 @@ export function updateWorkflowDraftState(input: {
     definition: structuredClone(input.definition),
     configuredAgentId: input.configuredAgentId,
     modelId: input.modelId,
+    reviewerConfiguredAgentId: input.reviewerConfiguredAgentId,
+    reviewerModelId: input.reviewerModelId,
     messages: input.request.messages ?? input.current.messages,
     reply: input.request.reply ?? input.current.reply,
     error: input.request.error ?? input.current.error,
@@ -175,10 +201,15 @@ export function updateWorkflowDraftState(input: {
     ...(input.request.runtimeConversation !== undefined
       ? { runtimeConversation: input.request.runtimeConversation }
       : {}),
-    revision: input.current.revision + 1,
-    ...(!definitionChanged && !routeChanged && input.current.confirmedRevision === input.current.revision
-      ? { confirmedRevision: input.current.revision + 1 }
+    revision: executableChanged ? input.current.revision + 1 : input.current.revision,
+    ...(!executableChanged && input.current.confirmedRevision === input.current.revision
+      ? { confirmedRevision: input.current.revision }
       : {}),
+    ...(!executableChanged && input.request.generationReview === undefined && input.current.generationReview
+      ? { generationReview: structuredClone(input.current.generationReview) }
+      : input.request.generationReview && !executableChanged
+        ? { generationReview: structuredClone(input.request.generationReview) }
+        : {}),
     updatedAt: input.now ?? Date.now(),
   });
 }
@@ -205,7 +236,6 @@ export function completeWorkflowDraftRequest(input: {
   return input.cloneDraft({
     ...input.workflow,
     status: input.workflow.status === "running" ? input.workflow.status : "draft",
-    revision: input.workflow.revision + 1,
     messages: replaceWorkflowDraftMessage(input.workflow.messages, input.activeRequest.assistantMessageId, finalContent),
     reply: "",
     error: undefined,
@@ -225,7 +255,6 @@ export function failWorkflowDraftRequest(input: {
 }): WorkflowDraftState {
   return input.cloneDraft({
     ...input.workflow,
-    revision: input.workflow.revision + 1,
     messages: replaceWorkflowDraftMessage(
       input.workflow.messages,
       input.activeRequest.assistantMessageId,

@@ -959,6 +959,8 @@ describe("Sidebar history panels", () => {
             runIds: [],
             configuredAgentId: "repo-reviewer",
             modelId: "gpt-5.5",
+            reviewerConfiguredAgentId: "repo-reviewer",
+            reviewerModelId: "gpt-5.5",
             createdAt: 1710000000000,
             updatedAt: 1710000000000,
           },
@@ -1000,6 +1002,8 @@ describe("Sidebar history panels", () => {
       runIds: [],
       configuredAgentId: "repo-reviewer",
       modelId: "gpt-5.5",
+      reviewerConfiguredAgentId: "repo-reviewer",
+      reviewerModelId: "gpt-5.5",
       createdAt: 1,
       updatedAt: 1,
     };
@@ -1960,6 +1964,8 @@ describe("AgentPage", () => {
       revision: 1,
       configuredAgentId: "repo-reviewer",
       modelId: "gpt-5.5",
+      reviewerConfiguredAgentId: "repo-reviewer",
+      reviewerModelId: "gpt-5.5",
       objective: "每天总结代码变化",
       definition: {
         workflowId: "wf_daily_review",
@@ -2113,6 +2119,8 @@ describe("AgentPage", () => {
       runIds: [],
       configuredAgentId: "repo-reviewer",
       modelId: "gpt-5.5",
+      reviewerConfiguredAgentId: "repo-reviewer",
+      reviewerModelId: "gpt-5.5",
       createdAt: 1710000000000,
       updatedAt: 1710000000000,
     };

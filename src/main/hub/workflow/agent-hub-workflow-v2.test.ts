@@ -5,7 +5,7 @@ import { finishWorkflowRunState, startWorkflowRunState, updateWorkflowRunState }
 
 const workflowForRunState = (): WorkflowDraftState => ({
   workflowId: "workflow-run-state", sourceType: "user" as const, topologyLocked: false, title: "Workflow",
-  status: "draft" as const, revision: 1, confirmedRevision: 1, configuredAgentId: "agent", modelId: "model", objective: "Test",
+  status: "draft" as const, revision: 1, confirmedRevision: 1, configuredAgentId: "agent", modelId: "model", reviewerConfiguredAgentId: "agent", reviewerModelId: "model", objective: "Test",
   definition: { workflowId: "workflow-run-state", graphVersion: 1, objective: "Test", nodes: [], edges: [] },
   messages: [], reply: "", error: undefined, runProgress: [], runContextDocument: "", contextDocument: "", runIds: [],
   workflowV2Plan: { workflowId: "workflow-run-state", graphVersion: 1, objective: "Test", approvedBy: "test", frozenAt: 1, definition: { workflowId: "workflow-run-state", graphVersion: 1, objective: "Test", nodes: [], edges: [] }, nodes: [], acceptanceCriteria: [], roleDefaults: { orchestrator: { role: "orchestrator" as const, modelProfile: "expert" as const }, executor: { role: "executor" as const, modelProfile: "fast" as const }, reviewer: { role: "reviewer" as const, modelProfile: "expert" as const } }, budget: { context: { maxContextTokens: 1000, maxEvidenceItems: 10 } } },
