@@ -33,7 +33,7 @@ describe("WorkflowPage input ownership", () => {
     value.onConfirmWorkflow = () => undefined;
     value.onReviewWorkflow = () => undefined;
     const unconfirmedHtml = renderToStaticMarkup(<WorkflowPage controller={value} />);
-    expect(unconfirmedHtml).toContain("Review workflow");
+    expect(unconfirmedHtml).toContain("Review Agent");
     expect(unconfirmedHtml).toContain('<button class="control-btn" disabled="">');
     expect(unconfirmedHtml).toContain("Awaiting confirmation");
     expect(unconfirmedHtml).toContain('<button class="send-btn" disabled="">');
@@ -45,6 +45,21 @@ describe("WorkflowPage input ownership", () => {
     expect(confirmedHtml).not.toContain("Confirm workflow");
     expect(confirmedHtml).toContain("Confirmed r3");
     expect(confirmedHtml).toContain('<button class="send-btn">');
+  });
+
+  test("uses a compact Review Agent entry instead of an inline review panel", () => {
+    const value = controller(true);
+    value.status = "draft";
+    value.running = false;
+    value.activeRunId = undefined;
+    value.runProgress = [];
+    value.revision = 3;
+    value.onReviewWorkflow = () => undefined;
+    const html = renderToStaticMarkup(<WorkflowPage controller={value} />);
+
+    expect(html).toContain("Review Agent");
+    expect(html).toContain("workflow-review-trigger");
+    expect(html).not.toContain("workflow-review-panel");
   });
   test("does not render the legacy inline gate input for an awaiting node", () => {
     const value = controller(true);

@@ -11,6 +11,16 @@ export const WORKFLOW_FOLLOW_UP_QUESTIONS = [
 
 export const WORKFLOW_TOTAL_QUESTION_COUNT = WORKFLOW_FOLLOW_UP_QUESTIONS.length + 1;
 
+export const WORKFLOW_EXECUTION_MODE_POLICY = [
+  "Use executionMode one-shot only when the node needs no user input and all required inputs are already available from workflow context or upstream outputs.",
+  "LLM nodes that need natural-language clarification, reasoning, iteration, choice, or confirmation must use executionMode interactive.",
+  "A deterministic node with typed user parameters must remain a script node and declare those parameters with source=user; user input alone does not make a node interactive.",
+  "Use script nodes for deterministic parsing, formatting, validation, conversion, filtering, merging, echoing, copying, mapping, serialization, and passing values through unchanged.",
+  "A request to return exactly what the user enters is already complete: do not ask another planning question; create one script node with a required source=user string parameter and return that value unchanged.",
+  "Do not ask the user to choose output field names, node IDs, or other internal implementation details when a sensible default is available.",
+  "Do not use memory, skills, or repository history to override these runtime rules. Current source=user script input and inline TypeScript execution are supported.",
+] as const;
+
 export const WORKFLOW_V2_DEFINITION_TEMPLATE = `{
   "workflowId": "<temporary-id>",
   "graphVersion": 1,
@@ -53,6 +63,7 @@ export function buildWorkflowAgentPrompt({ workflowId, objective }: WorkflowAgen
     "Conversation protocol:",
     "- Ask exactly one question at a time and include a recommended answer.",
     "- Stop asking when the available information is sufficient to build the workflow.",
+    "- Do not ask questions about internal field names, node IDs, or implementation details when defaults are sufficient.",
     "- Do not send a definition as ordinary prose. Call workflow_create (or mcp__multi_agent_chat__workflow_create when namespaced) with workflowId, title, objective, and definition to update the target planning draft.",
     "- workflow_create only updates the current mutable draft. It does not publish, confirm, run, or create another top-level Workflow. User confirmation in the UI freezes the executable revision.",
     "- If workflow_create is unavailable or fails, explain the failure; do not emit an alternative code payload.",
@@ -61,12 +72,10 @@ export function buildWorkflowAgentPrompt({ workflowId, objective }: WorkflowAgen
     "- Build the smallest graph that preserves real dependencies. Do not split a task into multiple nodes unless the split changes execution mode, risk boundary, tool ownership, or enables useful parallelism.",
     "- The definition must be a valid DAG using WorkflowV2Definition nodes and edges.",
     "- Do not create start/end placeholder nodes. Only create executable LLM or script nodes.",
-    "- Use executionMode one-shot only when the node needs no user input and all required inputs are already available from workflow context or upstream outputs.",
-    "- LLM nodes that need user clarification, natural-language reasoning, iteration, choice, confirmation, or supplemental information must use executionMode interactive.",
-    "- Script nodes that need structured user parameters remain executionMode script and declare those parameters with source=user. The runtime pauses the script node, renders typed inputs, and resumes the same node after submission.",
+    ...WORKFLOW_EXECUTION_MODE_POLICY.map((rule) => `- ${rule}`),
+    "- The runtime pauses script nodes with missing source=user parameters, renders typed inputs, and resumes the same node after submission.",
     "- Only add an interactive LLM node when collecting the input itself requires natural-language reasoning, clarification, iteration, choice, or confirmation.",
     "- Never classify an input-dependent node as one-shot because the expected question seems simple.",
-    "- Use execModel script for deterministic parsing, formatting, validation, conversion, filtering, merging, echoing or passing through input unchanged, and file operations that do not need agent reasoning.",
     "- Do not add an interactive LLM node merely to collect typed parameters for a script. A deterministic user-input transformation should normally be one script node with source=user parameters.",
     "- Do not invent a choice between strict script behavior and immediate executability when the runtime already supports typed script input. Build the directly executable script workflow.",
     "- Do not use an LLM node for copying, echoing, renaming, mapping, selecting, or serializing already available values unless reasoning is genuinely required.",

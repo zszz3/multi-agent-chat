@@ -1,5 +1,5 @@
 import { useEffect, useRef, useState, type MouseEvent, type ReactElement } from "react";
-import { Bot, CircleStop, FileInput, GitBranch, Maximize2, Play, Send, Wand2, X } from "lucide-react";
+import { Bot, CheckCircle2, CircleStop, FileInput, GitBranch, Maximize2, Play, RefreshCw, Send, ShieldAlert, Wand2, X } from "lucide-react";
 import { DEFAULT_MODEL_ID } from "../../../../shared/models";
 import { WORKFLOW_TOTAL_QUESTION_COUNT } from "../../../../shared/workflow-agent";
 import { validateWorkflowV2Definition } from "../../../../shared/workflow-v2/validation";
@@ -35,6 +35,7 @@ import { WorkflowCanvasBoard } from "./WorkflowCanvasBoard";
 import { WorkflowNodeAgentWindow } from "./WorkflowNodeAgentWindow";
 import { WorkflowOutputPreviewModal } from "./WorkflowOutputPreviewModal";
 import { WorkflowOutputsPanel } from "./WorkflowOutputsPanel";
+import { WorkflowReviewDrawer } from "./WorkflowReviewDrawer";
 import { WORKFLOW_TEXT } from "./workflow-text";
 import type { WorkflowController } from "./workflow-controller";
 import { workflowNodeOpenTarget } from "./workflow-node-open-policy";
@@ -108,6 +109,11 @@ export function WorkflowPage({ controller: source }: { controller: WorkflowContr
   const validation = validateWorkflowV2Definition(definition);
   const workflowConfirmed = revision !== undefined && confirmedRevision === revision;
   const workflowReviewApproved = revision !== undefined && isWorkflowV2GenerationReviewValidForRoute(generationReview, { revision, reviewerConfiguredAgentId, reviewerModelId });
+  const [reviewDrawerOpen, setReviewDrawerOpen] = useState(false);
+
+  useEffect(() => {
+    if (generationReview?.status === "reviewing") setReviewDrawerOpen(true);
+  }, [generationReview?.status]);
   const workflowStarted = messages.length > 0;
   const grillComplete = Math.max(0, messages.filter((message) => message.role === "user").length - 1) >= WORKFLOW_TOTAL_QUESTION_COUNT;
   const runtimeMap = new Map(runtimes.map((runtime) => [runtime.id, runtime]));
@@ -342,8 +348,14 @@ export function WorkflowPage({ controller: source }: { controller: WorkflowContr
               </button>
             ) : <>
               {onReviewWorkflow ? (
-                <button className="control-btn" onClick={() => void onReviewWorkflow()} disabled={!validation.valid || running || generationReview?.status === "reviewing"}>
-                  <span>{generationReview?.status === "reviewing" ? "Reviewing..." : "Review workflow"}</span>
+                <button
+                  className={`control-btn workflow-review-trigger is-${generationReview?.status ?? "not_reviewed"}`}
+                  onClick={() => setReviewDrawerOpen(true)}
+                  aria-haspopup="dialog"
+                  aria-expanded={reviewDrawerOpen}
+                >
+                  {generationReview?.status === "approved" ? <CheckCircle2 size={14} /> : generationReview?.status === "changes_requested" || generationReview?.status === "failed" ? <ShieldAlert size={14} /> : <RefreshCw size={14} className={generationReview?.status === "reviewing" ? "is-spinning" : ""} />}
+                  <span>{generationReview?.status === "reviewing" ? "Review running" : "Review Agent"}</span>
                 </button>
               ) : null}
               {!workflowConfirmed && onConfirmWorkflow ? (
@@ -360,29 +372,26 @@ export function WorkflowPage({ controller: source }: { controller: WorkflowContr
         </div>
       </header>
 
-      {graphVisible ? <section className="workflow-review-panel" aria-label="Workflow review">
-        <div className="workflow-review-controls">
-          <div><strong>Adversarial reviewer</strong><span>Independent agent that challenges topology, inputs, script risk, and failure paths before confirmation.</span></div>
-          <ChatControls
-            configuredAgentId={reviewerConfiguredAgentId}
-            modelId={reviewerModelId}
-            configuredAgents={configuredAgents}
-            channels={channels}
-            locked={running || generationReview?.status === "reviewing"}
-            running={running}
-            workDir={workDir}
-            runtimes={runtimes}
-            onSelectConfiguredAgent={onSelectReviewerConfiguredAgent}
-            onSelectModel={onSelectReviewerModel}
-            onChooseWorkDir={onChooseWorkDir}
-          />
-        </div>
-        <div className={`workflow-review-result ${generationReview?.status ?? "not_reviewed"}`}>
-          <strong>{generationReview?.status === "approved" ? "Approved" : generationReview?.status === "changes_requested" ? "Changes requested" : generationReview?.status === "failed" ? "Review failed" : generationReview?.status === "reviewing" ? "Reviewing" : "Not reviewed"}</strong>
-          <span>{generationReview?.result?.summary ?? generationReview?.error ?? "Run an independent review before confirming this revision."}</span>
-          {generationReview?.result?.findings.length ? <ul>{generationReview.result.findings.map((finding, index) => <li key={`${finding.nodeId ?? "workflow"}-${index}`}><b>{finding.severity}</b> {finding.nodeId ? `${finding.nodeId}: ` : ""}{finding.summary} ? {finding.failurePath}</li>)}</ul> : null}
-        </div>
-      </section> : null}
+      {graphVisible && onReviewWorkflow ? <WorkflowReviewDrawer
+        open={reviewDrawerOpen}
+        {...(generationReview ? { review: generationReview } : {})}
+        reviewerControls={<ChatControls
+          configuredAgentId={reviewerConfiguredAgentId}
+          modelId={reviewerModelId}
+          configuredAgents={configuredAgents}
+          channels={channels}
+          locked={running || generationReview?.status === "reviewing"}
+          running={running}
+          workDir={workDir}
+          runtimes={runtimes}
+          onSelectConfiguredAgent={onSelectReviewerConfiguredAgent}
+          onSelectModel={onSelectReviewerModel}
+          onChooseWorkDir={onChooseWorkDir}
+        />}
+        canReview={validation.valid && !running}
+        onReview={() => void onReviewWorkflow()}
+        onClose={() => setReviewDrawerOpen(false)}
+      /> : null}
 
       <section className="cli-transcript workflow-transcript" aria-label="Workflow transcript" ref={grillTranscriptRef} onScroll={handleGrillTranscriptScroll}>
         {!workflowStarted && !graphVisible ? (
