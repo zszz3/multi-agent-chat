@@ -7,9 +7,9 @@ function controller(definitionReady: boolean): WorkflowController {
   return {
     workflowId: "workflow", title: "Workflow", status: definitionReady ? "running" : "draft", definitionReady,
     definition: { workflowId: "workflow", graphVersion: 1, objective: "Answer a question", nodes: [{ id: "answer", kind: "answer", title: "Answer", execModel: "llm", executionMode: "interactive", prompt: "Answer the question.", outputFields: [{ key: "answer_markdown", required: true }] }], edges: [] },
-    objective: "Answer a question", messages: [], reply: "", error: undefined, configuredAgentId: "default-agent", runtimes: [], channels: [], workDir: "C:/workspace", running: definitionReady,
+    objective: "Answer a question", messages: [], reply: "", error: undefined, configuredAgentId: "default-agent", reviewerConfiguredAgentId: "reviewer-agent", runtimes: [], channels: [], workDir: "C:/workspace", running: definitionReady,
     activeRunId: definitionReady ? "run" : undefined, runProgress: definitionReady ? [{ nodeId: "answer", title: "Answer", status: "running" }] : [],
-    onObjectiveChange: () => undefined, onSelectConfiguredAgent: () => undefined, onBuildDefinition: () => undefined, onReplyChange: () => undefined, onSendReply: () => undefined, onUpdateNode: () => undefined, onRunWorkflow: () => undefined, onResetSession: () => undefined,
+    onObjectiveChange: () => undefined, onSelectConfiguredAgent: () => undefined, onSelectReviewerConfiguredAgent: () => undefined, onBuildDefinition: () => undefined, onReplyChange: () => undefined, onSendReply: () => undefined, onUpdateNode: () => undefined, onRunWorkflow: () => undefined, onResetSession: () => undefined,
   };
 }
 
@@ -31,11 +31,15 @@ describe("WorkflowPage input ownership", () => {
     value.revision = 3;
     delete value.confirmedRevision;
     value.onConfirmWorkflow = () => undefined;
+    value.onReviewWorkflow = () => undefined;
     const unconfirmedHtml = renderToStaticMarkup(<WorkflowPage controller={value} />);
-    expect(unconfirmedHtml).toContain("Confirm workflow");
+    expect(unconfirmedHtml).toContain("Review workflow");
+    expect(unconfirmedHtml).toContain('<button class="control-btn" disabled="">');
     expect(unconfirmedHtml).toContain("Awaiting confirmation");
     expect(unconfirmedHtml).toContain('<button class="send-btn" disabled="">');
 
+    value.generationReview = { status: "approved", reviewerConfiguredAgentId: "reviewer-agent", reviewerModelId: "reviewer-model", reviewedRevision: 3, updatedAt: 1, result: { verdict: "approve", reviewedRevision: 3, summary: "Ready", findings: [], scriptRisks: {}, suggestions: [] } };
+    value.reviewerModelId = "reviewer-model";
     value.confirmedRevision = 3;
     const confirmedHtml = renderToStaticMarkup(<WorkflowPage controller={value} />);
     expect(confirmedHtml).not.toContain("Confirm workflow");

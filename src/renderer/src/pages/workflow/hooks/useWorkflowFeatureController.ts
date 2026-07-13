@@ -55,6 +55,9 @@ export function useWorkflowFeatureController({
       error: draft.workflowError,
       configuredAgentId: draft.workflowConfiguredAgentId || defaultConfiguredAgentId(snapshot.configuredAgents),
       modelId: draft.workflowModelId,
+      reviewerConfiguredAgentId: draft.workflowReviewerConfiguredAgentId,
+      reviewerModelId: draft.workflowReviewerModelId,
+      generationReview: activeWorkflow?.generationReview,
       runtimes: snapshot.runtimes,
       channels: snapshot.channels,
       configuredAgents: snapshot.configuredAgents,
@@ -99,6 +102,16 @@ export function useWorkflowFeatureController({
           throw new Error(error);
         }
       },
+      onSubmitScriptInput: async (nodeId, values) => {
+        if (!draft.workflowId || !activeRunId) return;
+        const result = await workflows.submitScriptInput({ workflowId: draft.workflowId, runId: activeRunId, nodeId, values });
+        if (!result.ok) {
+          const error = result.error ?? "Workflow script input could not be submitted.";
+          setSnapshot(await workflows.patchDraft({ workflowId: draft.workflowId, error }));
+          throw new Error(error);
+        }
+        await onRefresh();
+      },
       onRejectNodeCompletion: async (conversationId, instruction) => setSnapshot(await workflows.rejectNodeCompletion({ conversationId, instruction })),
       onInterruptNodeConversation: async (conversationId) => setSnapshot(await workflows.interruptNodeConversation({ conversationId })),
       onSelectConfiguredAgent: (configuredAgentId: string) => {
@@ -106,6 +119,16 @@ export function useWorkflowFeatureController({
       },
       onSelectModel: (modelId: string) => {
         void draft.selectModel(modelId);
+      },
+      onSelectReviewerConfiguredAgent: (configuredAgentId: string) => {
+        void draft.selectReviewerConfiguredAgent(configuredAgentId);
+      },
+      onSelectReviewerModel: (modelId: string) => {
+        void draft.selectReviewerModel(modelId);
+      },
+      onReviewWorkflow: async () => {
+        if (!draft.workflowId || !activeWorkflow) return;
+        setSnapshot(await workflows.reviewWorkflow({ workflowId: draft.workflowId, expectedRevision: activeWorkflow.revision }));
       },
       onBuildDefinition: () => {
         void draft.buildWorkflowDefinition();

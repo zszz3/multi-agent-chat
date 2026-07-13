@@ -3,6 +3,7 @@ import { Bot, CircleStop, FileInput, GitBranch, Maximize2, Play, Send, Wand2, X 
 import { DEFAULT_MODEL_ID } from "../../../../shared/models";
 import { WORKFLOW_TOTAL_QUESTION_COUNT } from "../../../../shared/workflow-agent";
 import { validateWorkflowV2Definition } from "../../../../shared/workflow-v2/validation";
+import { isWorkflowV2GenerationReviewValidForRoute } from "../../../../shared/workflow-v2/generation-review";
 import type { WorkflowV2Node } from "../../../../shared/workflow-v2/definition";
 import type {
   AgentChannel,
@@ -61,6 +62,9 @@ export function WorkflowPage({ controller: source }: { controller: WorkflowContr
   const error = source.error;
   const configuredAgentId = source.configuredAgentId;
   const modelId = source.modelId ?? DEFAULT_MODEL_ID;
+  const reviewerConfiguredAgentId = source.reviewerConfiguredAgentId;
+  const reviewerModelId = source.reviewerModelId ?? DEFAULT_MODEL_ID;
+  const generationReview = source.generationReview;
   const runtimes = source.runtimes;
   const channels = source.channels;
   const configuredAgents = source.configuredAgents ?? [];
@@ -78,12 +82,16 @@ export function WorkflowPage({ controller: source }: { controller: WorkflowContr
   const onPauseNode = source.onPauseNode;
   const onStopRun = source.onStopRun;
   const onStartNode = source.onStartNode;
+  const onSubmitScriptInput = source.onSubmitScriptInput;
   const onSendNodeMessage = source.onSendNodeMessage;
   const onCompleteNodeConversation = source.onCompleteNodeConversation;
   const onRejectNodeCompletion = source.onRejectNodeCompletion;
   const onInterruptNodeConversation = source.onInterruptNodeConversation;
   const onSelectConfiguredAgent = source.onSelectConfiguredAgent;
   const onSelectModel = source.onSelectModel ?? (() => undefined);
+  const onSelectReviewerConfiguredAgent = source.onSelectReviewerConfiguredAgent;
+  const onSelectReviewerModel = source.onSelectReviewerModel ?? (() => undefined);
+  const onReviewWorkflow = source.onReviewWorkflow;
   const onBuildDefinition = source.onBuildDefinition;
   const onReplyChange = source.onReplyChange;
   const onSendReply = source.onSendReply;
@@ -99,6 +107,7 @@ export function WorkflowPage({ controller: source }: { controller: WorkflowContr
   const workflowText = WORKFLOW_TEXT[language];
   const validation = validateWorkflowV2Definition(definition);
   const workflowConfirmed = revision !== undefined && confirmedRevision === revision;
+  const workflowReviewApproved = revision !== undefined && isWorkflowV2GenerationReviewValidForRoute(generationReview, { revision, reviewerConfiguredAgentId, reviewerModelId });
   const workflowStarted = messages.length > 0;
   const grillComplete = Math.max(0, messages.filter((message) => message.role === "user").length - 1) >= WORKFLOW_TOTAL_QUESTION_COUNT;
   const runtimeMap = new Map(runtimes.map((runtime) => [runtime.id, runtime]));
@@ -143,9 +152,10 @@ export function WorkflowPage({ controller: source }: { controller: WorkflowContr
   const grillStickRef = useRef(true);
   const openNodeConversation = nodeConversations.find((conversation) => conversation.nodeId === openNodeAgentNodeId);
   const openNodeConversationGraphNode = graph.nodes.find((node) => node.id === openNodeAgentNodeId);
+  const openNodeProgress = openNodeAgentNodeId ? runProgressByNodeId.get(openNodeAgentNodeId) : undefined;
   const openNodeTaskId = openNodeAgentNodeId ? runProgressByNodeId.get(openNodeAgentNodeId)?.taskId : undefined;
   const openNodeTask = nodeTasks.find((task) => task.id === openNodeTaskId);
-  const nodeAgentSessions = graph.nodes.filter((node) => node.execModel === "llm").map((node) => {
+  const nodeAgentSessions = graph.nodes.map((node) => {
     const conversation = nodeConversations.find((candidate) => candidate.nodeId === node.id);
     const taskId = runProgressByNodeId.get(node.id)?.taskId;
     const task = taskId ? nodeTasks.find((candidate) => candidate.id === taskId) : undefined;
@@ -331,8 +341,13 @@ export function WorkflowPage({ controller: source }: { controller: WorkflowContr
                 <span>Stop workflow</span>
               </button>
             ) : <>
+              {onReviewWorkflow ? (
+                <button className="control-btn" onClick={() => void onReviewWorkflow()} disabled={!validation.valid || running || generationReview?.status === "reviewing"}>
+                  <span>{generationReview?.status === "reviewing" ? "Reviewing..." : "Review workflow"}</span>
+                </button>
+              ) : null}
               {!workflowConfirmed && onConfirmWorkflow ? (
-                <button className="control-btn" onClick={() => void onConfirmWorkflow()} disabled={!validation.valid || running}>
+                <button className="control-btn" onClick={() => void onConfirmWorkflow()} disabled={!validation.valid || !workflowReviewApproved || running}>
                   <span>{workflowText.confirmWorkflow}</span>
                 </button>
               ) : null}
@@ -344,6 +359,30 @@ export function WorkflowPage({ controller: source }: { controller: WorkflowContr
           ) : null}
         </div>
       </header>
+
+      {graphVisible ? <section className="workflow-review-panel" aria-label="Workflow review">
+        <div className="workflow-review-controls">
+          <div><strong>Adversarial reviewer</strong><span>Independent agent that challenges topology, inputs, script risk, and failure paths before confirmation.</span></div>
+          <ChatControls
+            configuredAgentId={reviewerConfiguredAgentId}
+            modelId={reviewerModelId}
+            configuredAgents={configuredAgents}
+            channels={channels}
+            locked={running || generationReview?.status === "reviewing"}
+            running={running}
+            workDir={workDir}
+            runtimes={runtimes}
+            onSelectConfiguredAgent={onSelectReviewerConfiguredAgent}
+            onSelectModel={onSelectReviewerModel}
+            onChooseWorkDir={onChooseWorkDir}
+          />
+        </div>
+        <div className={`workflow-review-result ${generationReview?.status ?? "not_reviewed"}`}>
+          <strong>{generationReview?.status === "approved" ? "Approved" : generationReview?.status === "changes_requested" ? "Changes requested" : generationReview?.status === "failed" ? "Review failed" : generationReview?.status === "reviewing" ? "Reviewing" : "Not reviewed"}</strong>
+          <span>{generationReview?.result?.summary ?? generationReview?.error ?? "Run an independent review before confirming this revision."}</span>
+          {generationReview?.result?.findings.length ? <ul>{generationReview.result.findings.map((finding, index) => <li key={`${finding.nodeId ?? "workflow"}-${index}`}><b>{finding.severity}</b> {finding.nodeId ? `${finding.nodeId}: ` : ""}{finding.summary} ? {finding.failurePath}</li>)}</ul> : null}
+        </div>
+      </section> : null}
 
       <section className="cli-transcript workflow-transcript" aria-label="Workflow transcript" ref={grillTranscriptRef} onScroll={handleGrillTranscriptScroll}>
         {!workflowStarted && !graphVisible ? (
@@ -493,6 +532,8 @@ export function WorkflowPage({ controller: source }: { controller: WorkflowContr
         sessions={nodeAgentSessions}
         {...(openNodeAgentNodeId ? { selectedNodeId: openNodeAgentNodeId } : {})}
         nodeTitle={openNodeConversationGraphNode.title}
+        {...(openNodeProgress?.scriptInputRequest ? { scriptInputRequest: openNodeProgress.scriptInputRequest } : {})}
+        {...(onSubmitScriptInput && openNodeAgentNodeId ? { onSubmitScriptInput: (values: Record<string, unknown>) => onSubmitScriptInput(openNodeAgentNodeId, values) } : {})}
         onSelectNode={setOpenNodeAgentNodeId}
         onClose={() => { dismissedNodeAgentRunIdRef.current = activeRunId; setOpenNodeAgentNodeId(undefined); }}
         {...(onSendNodeMessage && openNodeConversation ? { onSend: (message: string) => onSendNodeMessage(openNodeConversation.conversationId, message) } : {})}

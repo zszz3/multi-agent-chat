@@ -27,9 +27,26 @@ export const WORKFLOW_V2_DEFINITION_TEMPLATE = `{
       "modelProfile": "balanced",
       "prompt": "Collect all required information from the user before completing.",
       "outputFields": [{ "key": "result", "required": true }]
+    },
+    {
+      "id": "echo-input",
+      "kind": "transform",
+      "title": "Echo user input",
+      "execModel": "script",
+      "executionMode": "script",
+      "executionModeRationale": "This is a deterministic pass-through with no reasoning.",
+      "executionModeConfidence": 1,
+      "script": {
+        "executable": { "kind": "inline", "language": "typescript", "code": "const input = JSON.parse(process.env.WORKFLOW_INPUT ?? '{}'); process.stdout.write(JSON.stringify({ echoed: input.text }));" },
+        "parameters": [{ "key": "text", "label": "Text", "location": "environment", "valueType": "string", "source": "upstream", "required": true, "upstreamNodeId": "collect-input", "upstreamOutputKey": "result" }],
+        "capabilities": ["environment_read"],
+        "managerRisk": { "level": "safe", "rationale": "Reads declared workflow input and returns it unchanged without external side effects." },
+        "outputSchema": { "type": "object", "required": ["echoed"] }
+      },
+      "outputFields": [{ "key": "echoed", "required": true }]
     }
   ],
-  "edges": []
+  "edges": [{ "from": "collect-input", "to": "echo-input" }]
 }`;
 
 function workflowTaskSnippet(objective: string): string {
@@ -53,6 +70,7 @@ export function buildWorkflowAgentPrompt({ objective }: WorkflowAgentPromptInput
     "- If workflow_create is unavailable or fails, explain the failure; do not emit an alternative code payload.",
     "",
     "Workflow V2 rules:",
+    "- Build the smallest graph that preserves real dependencies. Do not split a task into multiple nodes unless the split changes execution mode, risk boundary, tool ownership, or enables useful parallelism.",
     "- The definition must be a valid DAG using WorkflowV2Definition nodes and edges.",
     "- Do not create start/end placeholder nodes. Only create executable LLM or script nodes.",
     "- Use executionMode one-shot only when the node needs no user input and all required inputs are already available from workflow context or upstream outputs.",
@@ -62,6 +80,8 @@ export function buildWorkflowAgentPrompt({ objective }: WorkflowAgentPromptInput
     "- When a workflow both collects user input and performs a deterministic transformation, separate the interactive input collection from the deterministic script transformation instead of assigning the transformation to an LLM node.",
     "- Do not use an LLM node for copying, echoing, renaming, mapping, selecting, or serializing already available values unless reasoning is genuinely required.",
     "- Each LLM node requires prompt and outputFields; each script node requires executable source, typed parameters, declared capabilities, Manager risk with rationale, and outputFields.",
+    "- Every script input must be declared exactly once in parameters with its location, valueType, source, required flag, and source binding. Never hide required inputs inside prompts, code literals, or ambient state.",
+    "- Declare only capabilities the script actually needs. Classify pure in-memory transformations as safe, external or workspace reads as read, mutations as write, and deletion, credentials, shell execution, process spawning, or system changes as dangerous unless a stricter level is warranted.",
     "- Edges express all topology dependencies. Downstream nodes must not run before every upstream dependency completes.",
     "- Node prompts must state required inputs, completion criteria, output fields, and downstream handoff expectations.",
     "",

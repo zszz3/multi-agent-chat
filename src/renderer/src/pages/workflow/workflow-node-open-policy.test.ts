@@ -6,7 +6,7 @@ describe("workflow node open policy", () => {
     expect(workflowNodeOpenTarget("llm")).toBe("conversation");
   });
 
-  test("keeps script nodes in the node details editor", () => {
-    expect(workflowNodeOpenTarget("script")).toBe("editor");
+  test("opens script nodes in the runtime activity window", () => {
+    expect(workflowNodeOpenTarget("script")).toBe("conversation");
   });
 });

@@ -61,6 +61,9 @@ export interface WorkflowController {
   error: string | undefined;
   configuredAgentId: string;
   modelId?: string;
+  reviewerConfiguredAgentId: string;
+  reviewerModelId?: string;
+  generationReview?: WorkflowDraftState["generationReview"];
   runtimes: AgentRuntime[];
   channels: AgentChannel[];
   configuredAgents?: ConfiguredAgent[];
@@ -78,12 +81,16 @@ export interface WorkflowController {
   onPauseNode?: (nodeId: string) => MaybePromise;
   onStopRun?: () => MaybePromise;
   onStartNode?: (nodeId: string) => MaybePromise;
+  onSubmitScriptInput?: (nodeId: string, values: Record<string, unknown>) => MaybePromise;
   onSendNodeMessage?: (conversationId: string, message: string) => MaybePromise;
   onCompleteNodeConversation?: (conversationId: string) => MaybePromise;
   onRejectNodeCompletion?: (conversationId: string, instruction: string) => MaybePromise;
   onInterruptNodeConversation?: (conversationId: string) => MaybePromise;
   onSelectConfiguredAgent: (configuredAgentId: string) => void;
   onSelectModel?: (modelId: string) => void;
+  onSelectReviewerConfiguredAgent: (configuredAgentId: string) => void;
+  onSelectReviewerModel?: (modelId: string) => void;
+  onReviewWorkflow?: () => MaybePromise;
   onBuildDefinition: () => void;
   onReplyChange: (value: string) => void;
   onSendReply: () => void;

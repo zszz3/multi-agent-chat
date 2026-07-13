@@ -18,12 +18,16 @@ describe("workflow V2 manager prompt", () => {
     expect(prompt).toContain("execModel script");
     expect(prompt).toContain("echoing or passing through input unchanged");
     expect(prompt).toContain("separate the interactive input collection from the deterministic script transformation");
+    expect(prompt).toContain("Build the smallest graph");
+    expect(prompt).toContain("Every script input must be declared exactly once");
+    expect(prompt).toContain("Classify pure in-memory transformations as safe");
   });
 
   test("provides a valid-shape V2 definition example", () => {
     const definition = JSON.parse(WORKFLOW_V2_DEFINITION_TEMPLATE);
     expect(definition).toMatchObject({ graphVersion: 1, nodes: [{ execModel: "llm",
-        executionMode: "interactive" }] });
+        executionMode: "interactive" }, { execModel: "script", executionMode: "script", script: { managerRisk: { level: "safe" } } }] });
+    expect(definition.edges).toEqual([{ from: "collect-input", to: "echo-input" }]);
     expect(definition.nodes.some((node: { kind: string }) => node.kind === "start" || node.kind === "end")).toBe(false);
   });
 

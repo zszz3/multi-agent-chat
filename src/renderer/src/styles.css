@@ -9810,6 +9810,72 @@ textarea:focus-visible {
   grid-template-columns: 76px minmax(0, 1fr);
 }
 
+.workflow-review-panel {
+  margin: 12px 16px 0;
+  padding: 14px;
+  border: 1px solid var(--border);
+  border-radius: 12px;
+  background: color-mix(in srgb, var(--panel) 92%, transparent);
+  display: grid;
+  gap: 12px;
+}
+
+.workflow-review-controls {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 16px;
+}
+
+.workflow-review-controls > div:first-child {
+  display: grid;
+  gap: 4px;
+}
+
+.workflow-review-controls span,
+.workflow-review-result span {
+  color: var(--muted);
+  font-size: 12px;
+}
+
+.workflow-review-result {
+  display: grid;
+  gap: 6px;
+  padding: 10px 12px;
+  border-radius: 9px;
+  background: color-mix(in srgb, var(--bg) 78%, transparent);
+}
+
+.workflow-review-result.approved { border-left: 3px solid var(--success); }
+.workflow-review-result.changes_requested,
+.workflow-review-result.failed { border-left: 3px solid var(--danger); }
+.workflow-review-result ul { margin: 4px 0 0; padding-left: 18px; }
+.workflow-review-result li { margin: 4px 0; font-size: 12px; }
+
+.workflow-script-input-editor {
+  display: grid;
+  gap: 16px;
+  padding: 18px;
+}
+
+.workflow-script-input-intro { display: grid; gap: 4px; }
+.workflow-script-input-intro p { margin: 0; color: var(--muted); font-size: 12px; }
+.workflow-script-input-group { display: grid; gap: 0; border: 1px solid var(--border); border-radius: 10px; overflow: hidden; }
+.workflow-script-input-group h4 { margin: 0; padding: 9px 12px; background: color-mix(in srgb, var(--panel) 88%, var(--accent) 12%); font-size: 12px; text-transform: uppercase; letter-spacing: .06em; }
+.workflow-script-input-field { display: grid; grid-template-columns: minmax(150px, .8fr) minmax(220px, 1.5fr); align-items: center; gap: 14px; padding: 11px 12px; border-top: 1px solid var(--border); }
+.workflow-script-input-field > span { display: grid; gap: 2px; font-size: 12px; font-weight: 600; }
+.workflow-script-input-field small { color: var(--muted); font-family: var(--mono); font-weight: 400; }
+.workflow-script-input-field input,
+.workflow-script-input-field select,
+.workflow-script-input-field textarea { width: 100%; box-sizing: border-box; border: 1px solid var(--border); border-radius: 7px; background: var(--bg); color: var(--text); padding: 8px 10px; font: inherit; }
+.workflow-script-input-field textarea { resize: vertical; font-family: var(--mono); }
+.workflow-script-input-submit { justify-self: end; }
+
+@media (max-width: 760px) {
+  .workflow-review-controls { align-items: stretch; flex-direction: column; }
+  .workflow-script-input-field { grid-template-columns: 1fr; }
+}
+
 .shell.mcp-shell .resource-sidebar,
 .shell.evaluation-shell .resource-sidebar {
   display: none;
