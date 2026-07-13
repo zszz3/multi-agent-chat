@@ -1,7 +1,6 @@
 import { randomUUID } from "node:crypto";
 import path from "node:path";
-import {
-  type
+import type {
   AgentChannel,
   ConfiguredAgent,
   AgentEvent,
@@ -96,12 +95,7 @@ import type { InteractiveSessionContext, InteractiveSessionSnapshot, RuntimeDriv
 import { RuntimeRouter } from "../agents/runtime/runtime-router";
 import { createRuntimeDriverRegistry, RuntimeAgentExecutorFactory, type AgentExecutorFactory } from "./runtime/executor/agent-executor";
 import { queryProviderBalance, type ProviderBalanceQueryOptions } from "../channels/provider-balance";
-import {
-  discoverChannelModels,
-  mergeModelCatalog,
-  ModelCatalogUnsupportedError,
-  type ModelCatalogDiscoverer,
-} from "../channels/model-catalog";
+import { discoverChannelModels, mergeModelCatalog, ModelCatalogUnsupportedError, type ModelCatalogDiscoverer } from "../channels/model-catalog";
 import {
   createDefaultChannels,
   generateCodexConfigs as writeCodexConfigs,
@@ -121,20 +115,13 @@ import { WorkflowPlanningService } from "./workflow/workflow-planning-service";
 import { WorkflowDraftService } from "./workflow/workflow-draft-service";
 import { WorkflowRunStateService } from "./workflow/workflow-run-state-service";
 import { WorkflowContextService } from "./workflow/workflow-context-service";
-import {
-  buildWorkflowV2PlanSync,
-} from "../workflows/v2/workflow-v2-planner";
+import { buildWorkflowV2PlanSync } from "../workflows/v2/workflow-v2-planner";
 import { executeWorkflowV2Script } from "../workflows/v2/workflow-v2-script-executor";
 import { freezeWorkflowV2ScriptGovernance } from "../workflows/v2/workflow-v2-script-governance";
 import { WorkflowStore } from "../workflow-store";
 import { ChatState, TaskState, AgentTeamState, TeamRunState } from "./state/agent-hub-state";
-import {
-  switchChatConfiguredAgent as switchChatConfiguredAgentValue,
-} from "./chat/agent-hub-chat-config";
-import {
-  dispatchChatPromptExecution as dispatchChatPromptExecutionValue,
-  dispatchSlashChatPrompt as dispatchSlashChatPromptValue,
-} from "./chat/agent-hub-chat-dispatch";
+import { switchChatConfiguredAgent as switchChatConfiguredAgentValue } from "./chat/agent-hub-chat-config";
+import { dispatchChatPromptExecution as dispatchChatPromptExecutionValue, dispatchSlashChatPrompt as dispatchSlashChatPromptValue } from "./chat/agent-hub-chat-dispatch";
 import {
   buildInteractiveChatContext as buildInteractiveChatContextValue,
   dispatchInteractiveChatPrompt as dispatchInteractiveChatPromptValue,
@@ -160,15 +147,8 @@ import type { PersistedAppStateV5 } from "./persisted/agent-hub-persistence";
 import { runAgentExecution as runAgentExecutionValue } from "./runtime/run/agent-hub-runner";
 import { runRuntimeChannelTest as runRuntimeChannelTestValue } from "./runtime/testing/agent-hub-runtime-test";
 import { RUNTIME_CHANNEL_TEST_PROMPT } from "./runtime/executor/runtime-test-constants";
-import {
-  dispatchTaskPromptExecution as dispatchTaskPromptExecutionValue,
-  resolveTaskPromptExecution as resolveTaskPromptExecutionValue,
-} from "./runtime/run/agent-hub-task-run";
-import {
-  cloneConversationForPolicy as cloneConversationForPolicyValue,
-  defaultContinuationPolicy as defaultContinuationPolicyValue,
-  selectExecutionMode as selectExecutionModeValue,
-} from "./runtime/run/agent-hub-runtime-policy";
+import { dispatchTaskPromptExecution as dispatchTaskPromptExecutionValue, resolveTaskPromptExecution as resolveTaskPromptExecutionValue } from "./runtime/run/agent-hub-task-run";
+import { cloneConversationForPolicy as cloneConversationForPolicyValue, defaultContinuationPolicy as defaultContinuationPolicyValue, selectExecutionMode as selectExecutionModeValue } from "./runtime/run/agent-hub-runtime-policy";
 import { codexPluginSummaries } from "./codex/agent-hub-codex-app";
 import {
   agentLabel,
@@ -250,11 +230,7 @@ import {
   restoreWorkflowDraft as restoreWorkflowDraftValue,
   restoreWorkflowRun as restoreWorkflowRunValue,
 } from "./workflow/agent-hub-workflow-restore";
-import {
-  runScheduledWorkflowEvent as runScheduledWorkflowEventValue,
-  waitForWorkflowRunToSettle as waitForWorkflowRunToSettleValue,
-  scheduledWorkflowEventTarget as scheduledWorkflowEventTargetValue,
-} from "./workflow/agent-hub-workflow-execution";
+import { runScheduledWorkflowEvent as runScheduledWorkflowEventValue, waitForWorkflowRunToSettle as waitForWorkflowRunToSettleValue, scheduledWorkflowEventTarget as scheduledWorkflowEventTargetValue } from "./workflow/agent-hub-workflow-execution";
 import {
   cloneScheduledWorkflowRun as cloneScheduledWorkflowRunValue,
   cloneScheduledWorkflowRunnerConfig as cloneScheduledWorkflowRunnerConfigValue,
@@ -284,21 +260,17 @@ import {
   replaceWorkflowDraftMessage as replaceWorkflowDraftMessageValue,
   updateWorkflowDraftState as updateWorkflowDraftStateValue,
 } from "./workflow/agent-hub-workflow-draft";
-import {
-  buildWorkflowAgentExecution as buildWorkflowAgentExecutionValue,
-} from "./workflow/agent-hub-workflow-agent";
+import { buildWorkflowAgentExecution as buildWorkflowAgentExecutionValue } from "./workflow/agent-hub-workflow-agent";
 import type { WorkflowDraftInteractiveRequest } from "./workflow/agent-hub-workflow-draft-reply-state";
 import {
   dispatchWorkflowDraftReply as dispatchWorkflowDraftReplyValue,
   reduceWorkflowDraftReplyEvent as reduceWorkflowDraftReplyEventValue,
   type ActiveWorkflowDraftRequest,
 } from "./workflow/agent-hub-workflow-draft-replies";
-import {
-  abandonWorkflowDraftReplyState as abandonWorkflowDraftReplyStateValue,
-} from "./workflow/agent-hub-workflow-draft-reply-state";
+import { abandonWorkflowDraftReplyState as abandonWorkflowDraftReplyStateValue } from "./workflow/agent-hub-workflow-draft-reply-state";
 import { validateWorkflowV2Definition } from "../../shared/workflow-v2/validation";
 import { isWorkflowV2GenerationReviewValidForRoute } from "../../shared/workflow-v2/generation-review";
-import { executeWorkflowGenerationReview } from "./workflow/workflow-generation-review-service";
+import { runWorkflowGenerationReviewLifecycle } from "./workflow/workflow-generation-review-service";
 import { WORKFLOW_DEVELOPER_INSTRUCTIONS } from "./runtime/executor/workflow/agent-executor-workflow-shared";
 const DEFAULT_AGENT: AgentId = "codex";
 const CODEX_CHAT_DEVELOPER_INSTRUCTIONS =
@@ -1149,22 +1121,15 @@ export class AgentHub {
       this.emit();
       return this.snapshot();
     }
-    const reviewingRevision = workflow.revision;
-    const reviewerConfiguredAgentId = workflow.reviewerConfiguredAgentId;
-    const reviewerModelId = workflow.reviewerModelId;
-    this.workflowStore.workflows.set(workflow.workflowId, this.cloneWorkflowDraft({ ...workflow, generationReview: { status: "reviewing", reviewerConfiguredAgentId, reviewerModelId, reviewedRevision: reviewingRevision, updatedAt: Date.now() }, updatedAt: Date.now() }));
-    this.emit();
-    await this.flushPersistence();
     const executionMode = this.selectExecutionMode(reviewer.runtimeAgentId, "workflow", "oneshot");
-    const review = await executeWorkflowGenerationReview({
+    await runWorkflowGenerationReviewLifecycle({
       workflow,
-      askReviewer: (prompt) => this.askWorkflowAgent({ planningWorkflowId: workflow.workflowId, prompt, configuredAgentId: reviewerConfiguredAgentId, runtimeId: reviewer.runtimeAgentId, executionMode, continuationPolicy: this.defaultContinuationPolicy(reviewer.runtimeAgentId, "workflow", executionMode), runtimeConfig: { model: reviewerModelId, ...(reviewer.reasoningEffort ? { reasoningEffort: reviewer.reasoningEffort } : {}) }, workDir: workflow.workDir || this.workDir }),
+      askReviewer: (prompt) => this.askWorkflowAgent({ planningWorkflowId: workflow.workflowId, prompt, configuredAgentId: workflow.reviewerConfiguredAgentId, runtimeId: reviewer.runtimeAgentId, executionMode, continuationPolicy: this.defaultContinuationPolicy(reviewer.runtimeAgentId, "workflow", executionMode), runtimeConfig: { model: workflow.reviewerModelId, ...(reviewer.reasoningEffort ? { reasoningEffort: reviewer.reasoningEffort } : {}) }, workDir: workflow.workDir || this.workDir }),
+      publish: (next) => { this.workflowStore.workflows.set(next.workflowId, next); this.emit(); },
+      current: () => this.workflowStore.workflows.get(workflow.workflowId),
+      flush: () => this.flushPersistence(),
+      clone: (next) => this.cloneWorkflowDraft(next),
     });
-    const current = this.workflowStore.workflows.get(workflow.workflowId);
-    if (!current || current.revision !== reviewingRevision || current.reviewerConfiguredAgentId !== reviewerConfiguredAgentId || current.reviewerModelId !== reviewerModelId) return this.snapshot();
-    this.workflowStore.workflows.set(current.workflowId, this.cloneWorkflowDraft({ ...current, generationReview: review, updatedAt: Date.now() }));
-    this.emit();
-    await this.flushPersistence();
     return this.snapshot();
   }
 

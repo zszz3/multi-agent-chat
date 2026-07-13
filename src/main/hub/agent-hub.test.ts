@@ -80,7 +80,12 @@ function createV2Workflow(hub: AgentHub, input: any): any {
         .map((edge: any) => ({ fromNodeId: edge.fromNodeId, toNodeId: edge.toNodeId })),
     },
   });
-  if (result.ok) hub.confirmWorkflow({ workflowId, ...(result.revision !== undefined ? { expectedRevision: result.revision } : {}) });
+  if (result.ok) {
+    const route = hub.snapshot().workflowDraft!;
+    const scriptRisks = Object.fromEntries(route.workflowV2Plan?.definition.nodes.filter((node) => node.execModel === "script").map((node) => [node.id, { level: node.script.managerRisk.level, rationale: "Matches the Manager classification in this test fixture." }]) ?? []);
+    hub.patchWorkflowDraft({ workflowId, generationReview: { status: "approved", reviewerConfiguredAgentId: route.reviewerConfiguredAgentId, reviewerModelId: route.reviewerModelId, reviewedRevision: route.revision, result: { verdict: "approve", reviewedRevision: route.revision, summary: "Approved by test reviewer", findings: [], scriptRisks, suggestions: [] }, updatedAt: 1 } });
+    hub.confirmWorkflow({ workflowId, expectedRevision: route.revision });
+  }
   return result;
 }
 
@@ -2711,7 +2716,7 @@ fs.writeFileSync(${JSON.stringify(argsPath)}, process.argv.slice(2).join("\\n") 
     const chat = (hub as any).chats.get(chatId);
 
     (hub as any).handleAgentEvent(chat, { type: "delta", content: "I will inspect files." });
-    (hub as any).handleAgentEvent(chat, { type: "meta", content: "â†?shell_command\nls" });
+    (hub as any).handleAgentEvent(chat, { type: "meta", content: "éˆ«?shell_command\nls" });
     (hub as any).handleAgentEvent(chat, { type: "delta", content: "Found the files." });
 
     const activeChat = hub.snapshot().chats.find((item) => item.id === chatId);
@@ -2719,7 +2724,7 @@ fs.writeFileSync(${JSON.stringify(argsPath)}, process.argv.slice(2).join("\\n") 
     expect(activeChat?.messages[0]).toMatchObject({
       role: "assistant",
       content: "I will inspect files.Found the files.",
-      events: [expect.objectContaining({ type: "meta", content: "â†?shell_command\nls" })],
+      events: [expect.objectContaining({ type: "meta", content: "éˆ«?shell_command\nls" })],
     });
   });
 
@@ -3377,7 +3382,7 @@ fs.writeFileSync(${JSON.stringify(argsPath)}, process.argv.slice(2).join("\\n") 
     addConfiguredAgents(hub, [configuredAgent("claude-agent", { runtimeAgentId: "claude", name: "Claude Agent" })]);
     const chat = hub.createChat("claude-agent");
     const chatState = (hub as any).chats.get(chat.id);
-    (hub as any).handleAgentEvent(chatState, { type: "meta", content: "â†?shell_command\npwd" });
+    (hub as any).handleAgentEvent(chatState, { type: "meta", content: "éˆ«?shell_command\npwd" });
     (hub as any).handleAgentEvent(chatState, { type: "delta", content: "Saved response" });
     (hub as any).handleAgentEvent(chatState, { type: "completed" });
     await hub.flushPersistence();
@@ -3386,7 +3391,7 @@ fs.writeFileSync(${JSON.stringify(argsPath)}, process.argv.slice(2).join("\\n") 
     expect(persisted.version).toBe(5);
     expect(persisted.sessions).toEqual([expect.objectContaining({ id: expect.any(String) }), expect.objectContaining({ id: chat.id })]);
     expect(persisted.messages).toEqual(expect.arrayContaining([expect.objectContaining({ chatId: chat.id, role: "assistant" })]));
-    expect(persisted.events).toEqual(expect.arrayContaining([expect.objectContaining({ chatId: chat.id, type: "meta", content: "â†?shell_command\npwd" })]));
+    expect(persisted.events).toEqual(expect.arrayContaining([expect.objectContaining({ chatId: chat.id, type: "meta", content: "éˆ«?shell_command\npwd" })]));
 
     const restored = new AgentHub();
     await restored.loadPersistedState(storagePath);
@@ -3401,7 +3406,7 @@ fs.writeFileSync(${JSON.stringify(argsPath)}, process.argv.slice(2).join("\\n") 
       expect.objectContaining({
         role: "assistant",
         content: "Saved response",
-        events: [expect.objectContaining({ type: "meta", content: "â†?shell_command\npwd" })],
+        events: [expect.objectContaining({ type: "meta", content: "éˆ«?shell_command\npwd" })],
       }),
     ]);
   });
@@ -4127,7 +4132,7 @@ fs.writeFileSync(${JSON.stringify(argsPath)}, process.argv.slice(2).join("\\n") 
     expect(persisted.workflowStore.workflows[1]).toMatchObject({
       title: "sample repo review",
       objective: "Review sample repo",
-      revision: 4,
+      revision: 3,
       contextDocument: expect.stringContaining("Added architecture note."),
       runProgress: [{ nodeId: "inventory", status: "completed" }],
       workflowV2Plan: {
@@ -4151,7 +4156,7 @@ fs.writeFileSync(${JSON.stringify(argsPath)}, process.argv.slice(2).join("\\n") 
       workflowId: first.workflowId,
       title: "sample repo review",
       objective: "Review sample repo",
-      revision: 4,
+      revision: 3,
       status: "draft",
       definition: { objective: "Review sample repo" },
       messages: [{ id: "m-1", role: "user" }, { id: "m-2", role: "assistant" }],
@@ -4577,7 +4582,7 @@ fs.writeFileSync(${JSON.stringify(argsPath)}, process.argv.slice(2).join("\\n") 
       workflowId: created.workflowId,
       status: "completed",
       runIds: [started.runId],
-      revision: 3,
+      revision: 2,
       finalReport: "## Final User Report\nThe workflow completed successfully.",
     });
     expect(snapshot.workflowStore.runs[0]).toMatchObject({
@@ -4765,6 +4770,9 @@ fs.writeFileSync(${JSON.stringify(argsPath)}, process.argv.slice(2).join("\\n") 
       },
     });
     hub.patchWorkflowDraft({ workflowId: created.workflowId, workflowV2Plan: planned.plan! });
+    const route = hub.snapshot().workflowDraft!;
+    hub.patchWorkflowDraft({ workflowId: created.workflowId, generationReview: { status: "approved", reviewerConfiguredAgentId: route.reviewerConfiguredAgentId, reviewerModelId: route.reviewerModelId, reviewedRevision: route.revision, result: { verdict: "approve", reviewedRevision: route.revision, summary: "Approved safe script", findings: [], scriptRisks: { script: { level: "safe", rationale: "Pure in-memory transformation." } }, suggestions: [] }, updatedAt: 1 } });
+    hub.confirmWorkflow({ workflowId: created.workflowId, expectedRevision: route.revision });
 
     const started = await (hub as any).runWorkflow({ workflowId: created.workflowId });
     const snapshot = await waitFor(
@@ -5473,7 +5481,7 @@ describe("AgentHub task runs", () => {
     });
     (hub as any).tasks.set(task.id, task);
     (hub as any).handleAgentEvent(task, { type: "delta", content: "Working" });
-    (hub as any).handleAgentEvent(task, { type: "meta", content: "â†?shell_command\npwd" });
+    (hub as any).handleAgentEvent(task, { type: "meta", content: "éˆ«?shell_command\npwd" });
     (hub as any).handleAgentEvent(task, { type: "completed" });
 
     const snapshot = hub.snapshot();
@@ -5482,7 +5490,7 @@ describe("AgentHub task runs", () => {
       expect.objectContaining({
         role: "assistant",
         content: "Working",
-        events: [expect.objectContaining({ type: "meta", content: "â†?shell_command\npwd" })],
+        events: [expect.objectContaining({ type: "meta", content: "éˆ«?shell_command\npwd" })],
       }),
     ]);
     expect(snapshot.chats[0]?.messages).toEqual([]);

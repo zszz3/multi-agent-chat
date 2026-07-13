@@ -244,8 +244,8 @@ describe("Workflow V2 AgentHub durable restore", () => {
     });
     expect(created).toMatchObject({ ok: true, workflowId: expect.any(String) });
     const reviewRoute = hub.snapshot().workflowDraft!;
-    hub.patchWorkflowDraft({ workflowId, generationReview: { status: "approved", reviewerConfiguredAgentId: reviewRoute.reviewerConfiguredAgentId, reviewerModelId: reviewRoute.reviewerModelId, reviewedRevision: created.revision!, result: { verdict: "approve", reviewedRevision: created.revision!, summary: "Approved for restore test", findings: [], scriptRisks: {}, suggestions: [] }, updatedAt: 1 } });
-    hub.confirmWorkflow({ workflowId, ...(created.revision !== undefined ? { expectedRevision: created.revision } : {}) });
+    hub.patchWorkflowDraft({ workflowId, generationReview: { status: "approved", reviewerConfiguredAgentId: reviewRoute.reviewerConfiguredAgentId, reviewerModelId: reviewRoute.reviewerModelId, reviewedRevision: reviewRoute.revision, result: { verdict: "approve", reviewedRevision: reviewRoute.revision, summary: "Approved for restore test", findings: [], scriptRisks: { verify: { level: "safe", rationale: "No external side effects." } }, suggestions: [] }, updatedAt: 1 } });
+    hub.confirmWorkflow({ workflowId, expectedRevision: reviewRoute.revision });
     const createdWorkflow = hub.snapshot().workflowStore.workflows.find((item) => item.workflowId === workflowId)!;
     const frozenDefinition = createdWorkflow.workflowV2Plan!.definition;
     const started = hub.startWorkflowRun({ workflowId });

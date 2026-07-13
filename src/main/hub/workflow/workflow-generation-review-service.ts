@@ -16,3 +16,21 @@ export async function executeWorkflowGenerationReview(input: {
     return { status: "failed", reviewerConfiguredAgentId: input.workflow.reviewerConfiguredAgentId, reviewerModelId: input.workflow.reviewerModelId, reviewedRevision: input.workflow.revision, error: error instanceof Error ? error.message : String(error), updatedAt: now() };
   }
 }
+
+export async function runWorkflowGenerationReviewLifecycle(input: {
+  workflow: WorkflowDraftState;
+  askReviewer: (prompt: string) => Promise<WorkflowAgentResponse>;
+  publish: (workflow: WorkflowDraftState) => void;
+  current: () => WorkflowDraftState | undefined;
+  flush: () => Promise<void>;
+  clone: (workflow: WorkflowDraftState) => WorkflowDraftState;
+}): Promise<void> {
+  const { workflow } = input;
+  input.publish(input.clone({ ...workflow, generationReview: { status: "reviewing", reviewerConfiguredAgentId: workflow.reviewerConfiguredAgentId, reviewerModelId: workflow.reviewerModelId, reviewedRevision: workflow.revision, updatedAt: Date.now() }, updatedAt: Date.now() }));
+  await input.flush();
+  const review = await executeWorkflowGenerationReview({ workflow, askReviewer: input.askReviewer });
+  const current = input.current();
+  if (!current || current.revision !== workflow.revision || current.reviewerConfiguredAgentId !== workflow.reviewerConfiguredAgentId || current.reviewerModelId !== workflow.reviewerModelId) return;
+  input.publish(input.clone({ ...current, generationReview: review, updatedAt: Date.now() }));
+  await input.flush();
+}

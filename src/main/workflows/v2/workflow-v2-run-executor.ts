@@ -1,17 +1,7 @@
-import {
-  type
-  RunTaskRequest,
-  TaskRun,
-} from "../../../shared/types";
+import type { RunTaskRequest, TaskRun } from "../../../shared/types";
 import type { RuntimeConversation } from "../../../shared/runtime/conversation";
-import {
-  type WorkflowEvent,
-  type WorkflowRunProgressItem,
-} from "../../../shared/workflow/run";
-import type {
-  WorkflowV2LLMNode,
-  WorkflowV2ScriptNode,
-} from "../../../shared/workflow-v2/definition";
+import type { WorkflowEvent, WorkflowRunProgressItem } from "../../../shared/workflow/run";
+import type { WorkflowV2LLMNode, WorkflowV2ScriptNode } from "../../../shared/workflow-v2/definition";
 import type { WorkflowV2WorkerOutput } from "../../../shared/workflow-v2/packets";
 import type {
   WorkflowV2Plan,
@@ -73,12 +63,9 @@ import {
   type WorkflowV2DurableNodeControlState,
 } from "../../../shared/workflow-v2/storage";
 import type { ExecuteWorkflowV2Checkpoint } from "./workflow-v2-executor";
-import { resolveWorkflowV2ScriptInput } from "./workflow-v2-script-input";
-import { analyzeWorkflowV2Script } from "./workflow-v2-script-analysis";
-import { decideWorkflowV2ScriptPermission } from "./workflow-v2-script-permission";
-import {
-  buildWorkflowV2FinalReport,
-} from "./workflow-v2-recovery";
+import { recordWorkflowV2ScriptInputRequest, resolveWorkflowV2ScriptInput, workflowV2ScriptInputSignal } from "./workflow-v2-script-input";
+import { authorizeWorkflowV2Script, executeAuthorizedWorkflowV2Script } from "./workflow-v2-script-execution";
+import { buildWorkflowV2FinalReport } from "./workflow-v2-recovery";
 import {
   createWorkflowV2HookRegistry,
   runWorkflowV2HookChain,
@@ -753,25 +740,9 @@ export class WorkflowV2RunExecutor {
         submittedValues,
       });
       if (!resolvedInput.complete) {
-        const requestedAt = Date.now();
-        durableNodeControl[request.node.id] = {
-          ...(durableNodeControl[request.node.id] ?? { extensionCount: 0 }),
-          scriptInput: { requestedParameters: resolvedInput.missing, submittedValues: {}, auditValues: {}, requestedAt },
-        };
-        updateNode(request.node.id, {
-          status: "awaiting_input",
-          detail: `Waiting for ${resolvedInput.missing.map((item) => item.label).join(", ")}`,
-          scriptInputRequest: { parameters: structuredClone(resolvedInput.missing) },
-        }, {
-          type: "gate_opened",
-          nodeId: request.node.id,
-          question: `Provide script inputs: ${resolvedInput.missing.map((item) => item.label).join(", ")}`,
-        });
+        const requestedAt = recordWorkflowV2ScriptInputRequest({ nodeId: request.node.id, nodeTitle: request.node.title, missing: resolvedInput.missing, control: durableNodeControl, updateNode });
         await persistence.persistControlState(request.node.id, "script_input_requested", resolvedInput.missing.map((item) => item.key).join(","));
-        throw new WorkflowV2SupervisionSignal({
-          resolution: { action: "pause", question: `Provide inputs for ${request.node.title}.`, reason: "Script node is waiting for required typed input." },
-          report: { nodeId: request.node.id, attempt: 1, phase: "input", completedItems: [], remainingItems: resolvedInput.missing.map((item) => item.label), blockers: ["Required script input is missing."], evidence: [], safeToInterrupt: true, requestedAction: "need_input", reportedAt: requestedAt },
-        });
+        throw workflowV2ScriptInputSignal({ nodeId: request.node.id, nodeTitle: request.node.title, missing: resolvedInput.missing, requestedAt });
       }
       const remainingScriptMs = assertWallClockBudget(request.node.id);
       const timeoutMs = Math.min(
@@ -780,16 +751,7 @@ export class WorkflowV2RunExecutor {
         MAX_NODE_TIMER_DELAY_MS,
       );
       const controller = new AbortController();
-      const analysis = analyzeWorkflowV2Script(request.node.script);
-      const governance = request.planNode.scriptGovernance;
-      if (!governance) throw new Error(`Workflow V2 script node ${request.node.id} has no frozen governance profile.`);
-      if (governance.capabilityDigest !== analysis.capabilityDigest || JSON.stringify(governance.capabilities) !== JSON.stringify(analysis.detectedCapabilities)) throw new Error(`Workflow V2 script node ${request.node.id} governance no longer matches its executable.`);
-      const permission = decideWorkflowV2ScriptPermission({
-        managerRisk: governance.managerRisk,
-        reviewerRisk: governance.reviewerRisk,
-        staticRisk: governance.staticRisk,
-        confirmed: input.recoveryOverrides?.has(request.node.id) === true,
-      });
+      const { analysis, governance, permission } = authorizeWorkflowV2Script({ node: request.node, planNode: request.planNode, confirmed: input.recoveryOverrides?.has(request.node.id) === true });
       if (permission.decision === "require_confirmation") {
         throw new WorkflowV2SupervisionSignal({
           resolution: { action: "pause", question: `Approve ${permission.risk} script node ${request.node.title}?`, reason: analysis.rationale },
@@ -797,23 +759,9 @@ export class WorkflowV2RunExecutor {
         });
       }
       this.runRegistry.get(runId)?.abortControllerByNodeId?.set(request.node.id, controller);
-      let timeoutHandle: ReturnType<typeof setTimeout> | undefined;
-      const deadline = new Promise<never>((_resolve, reject) => {
-        timeoutHandle = setTimeout(() => {
-          const timeoutError = new Error(`Workflow V2 script node ${request.node.id} timed out after ${timeoutMs}ms.`);
-          reject(timeoutError);
-          controller.abort(timeoutError);
-        }, timeoutMs);
-      });
       let output: WorkflowV2WorkerOutput;
       try {
-        const execution = this.deps.executeWorkflowV2Script({
-          node: request.node,
-          workDir: workflowWorkDir,
-          upstreamOutputs: request.upstreamOutputs,
-          signal: controller.signal,
-          timeoutMs,
-          inputs: Object.freeze(structuredClone(resolvedInput.values)),
+        output = await executeAuthorizedWorkflowV2Script({ deps: this.deps, node: request.node, workDir: workflowWorkDir, upstreamOutputs: request.upstreamOutputs, timeoutMs, inputs: resolvedInput.values, controller,
           authorization: {
             decision: permission.decision,
             workflowId: workflow.workflowId,
@@ -825,12 +773,10 @@ export class WorkflowV2RunExecutor {
             capabilityDigest: governance.capabilityDigest,
           },
         });
-        output = await Promise.race([execution, deadline]);
       } catch (error) {
         await throwIfWorkflowV2ManuallyPaused(request.node.id);
         throw error;
       } finally {
-        if (timeoutHandle !== undefined) clearTimeout(timeoutHandle);
         this.runRegistry.get(runId)?.abortControllerByNodeId?.delete(request.node.id);
       }
       updateNode(request.node.id, { status: "running", detail: output.summary }, {

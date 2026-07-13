@@ -11,17 +11,11 @@ import type {
 import type { WorkflowV2InterventionAction } from "../../shared/workflow-v2/review";
 import type { RuntimeConversation } from "../../shared/runtime/conversation";
 import type { WorkflowDraftState } from "../../shared/workflow/draft";
-import {
-  isWorkflowRunTerminalStatus,
-  type WorkflowRunState,
-} from "../../shared/workflow/run";
+import { isWorkflowRunTerminalStatus, type WorkflowRunState } from "../../shared/workflow/run";
 import type { WorkflowV2WorkerOutput } from "../../shared/workflow-v2/packets";
 import type { WorkflowV2Plan } from "../../shared/workflow-v2/planning";
 import path from "node:path";
-import {
-  workflowStoragePlanDocument,
-  workflowStoragePlanFor,
-} from "../../shared/workflow-v2/runtime-utils";
+import { workflowStoragePlanDocument, workflowStoragePlanFor } from "../../shared/workflow-v2/runtime-utils";
 import { WorkflowRunRegistry, type ActiveWorkflowRun } from "./workflow-run-registry";
 import { WorkflowV2RunExecutor } from "./v2/workflow-v2-run-executor";
 import type { WorkflowV2RecoveryOverride } from "./v2/workflow-v2-execution-contract";
@@ -37,7 +31,7 @@ export type {
   WorkflowV2StorePort,
 } from "./workflow-runtime-ports";
 import { isWorkflowV2InterventionAction } from "../../shared/workflow-v2/review";
-import { workflowV2PlanValidationError } from "./v2/workflow-v2-plan-validation";
+import { startWorkflowRun } from "./workflow-run-starter";
 import { resolveWorkflowV2ScriptInput } from "./v2/workflow-v2-script-input";
 import {
   configuredAgentModelId,
@@ -75,66 +69,7 @@ export class WorkflowRuntime {
   }
 
   runWorkflow(input: RunWorkflowRequest): WorkflowOperationResult {
-    const snapshot = this.deps.snapshot();
-    const workflow = snapshot.workflowStore.workflows.find((item) => item.workflowId === input.workflowId);
-    if (!workflow) return { ok: false, error: `Workflow ${input.workflowId} was not found.` };
-    const hasRunningRun = snapshot.workflowStore.runs.some(
-      (run) => run.workflowId === workflow.workflowId && !isWorkflowRunTerminalStatus(run.status),
-    );
-    if (!isWorkflowRunTerminalStatus(workflow.status) && workflow.status !== "draft" || hasRunningRun) {
-      return { ok: false, workflowId: workflow.workflowId, error: "Workflow is already running." };
-    }
-
-    if (workflow.workflowV2Plan) {
-      const planError = workflowV2PlanValidationError(workflow, workflow.workflowV2Plan);
-      if (planError) return { ok: false, workflowId: workflow.workflowId, error: planError };
-
-      const initialContextDocument = input.contextDocument ?? workflow.contextDocument;
-      const started = this.deps.startWorkflowRun({
-        workflowId: workflow.workflowId,
-        contextDocument: initialContextDocument,
-      });
-      if (!started.ok || !started.runId) return started;
-      const storagePlan = workflowStoragePlanFor(workflow.workflowId, started.runId);
-      const baseWorkflowContextDocument = [initialContextDocument, workflowStoragePlanDocument(storagePlan)]
-        .map((item) => item.trim())
-        .filter(Boolean)
-        .join("\n\n");
-      this.deps.updateWorkflowRunState({
-        workflowId: workflow.workflowId,
-        runId: started.runId,
-        status: "running",
-        contextDocument: baseWorkflowContextDocument,
-      });
-
-      this.runRegistry.register({
-        workflowId: workflow.workflowId,
-        runId: started.runId,
-        pausedNodeIds: new Set(),
-        pausedTaskIds: new Set(),
-        gatedNodeIds: new Set(),
-        taskIdByNodeId: new Map(),
-        manualPauseReasonByNodeId: new Map(),
-        abortControllerByNodeId: new Map(),
-      });
-      void this.runExecutor.execute({
-        workflow,
-        plan: workflow.workflowV2Plan,
-        runId: started.runId,
-        baseWorkflowContextDocument,
-        storagePlanDocument: workflowStoragePlanDocument(storagePlan),
-      }).finally(() => {
-        this.runRegistry.release(started.runId!);
-      });
-      return started;
-    }
-
-    return {
-      ok: false,
-      workflowId: workflow.workflowId,
-      error: "Workflow V2 plan is required. Legacy workflow execution is no longer supported.",
-    };
-
+    return startWorkflowRun({ request: input, deps: this.deps, registry: this.runRegistry, executor: this.runExecutor });
   }
 
   async stopWorkflowRun(input: StopWorkflowRunRequest): Promise<WorkflowOperationResult> {

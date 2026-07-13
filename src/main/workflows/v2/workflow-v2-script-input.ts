@@ -1,11 +1,29 @@
 import type { WorkflowV2ScriptParameterDef } from "../../../shared/workflow-v2/definition";
 import type { WorkflowV2ResultPacket } from "../../../shared/workflow-v2/planning";
+import { WorkflowV2SupervisionSignal } from "./workflow-v2-supervision-signal";
+import type { WorkflowRunProgressItem } from "../../../shared/workflow/run";
+import type { WorkflowV2DurableNodeControlState } from "../../../shared/workflow-v2/storage";
 
 export interface ResolveWorkflowV2ScriptInputResult {
   complete: boolean;
   values: Record<string, unknown>;
   auditValues: Record<string, unknown>;
   missing: WorkflowV2ScriptParameterDef[];
+}
+
+export function workflowV2ScriptInputSignal(input: { nodeId: string; nodeTitle: string; missing: WorkflowV2ScriptParameterDef[]; requestedAt: number }): WorkflowV2SupervisionSignal {
+  return new WorkflowV2SupervisionSignal({
+    resolution: { action: "pause", question: `Provide inputs for ${input.nodeTitle}.`, reason: "Script node is waiting for required typed input." },
+    report: { nodeId: input.nodeId, attempt: 1, phase: "input", completedItems: [], remainingItems: input.missing.map((item) => item.label), blockers: ["Required script input is missing."], evidence: [], safeToInterrupt: true, requestedAction: "need_input", reportedAt: input.requestedAt },
+  });
+}
+
+export function recordWorkflowV2ScriptInputRequest(input: { nodeId: string; nodeTitle: string; missing: WorkflowV2ScriptParameterDef[]; control: Record<string, WorkflowV2DurableNodeControlState>; updateNode: (nodeId: string, patch: Partial<WorkflowRunProgressItem>, event: { type: "gate_opened"; nodeId: string; question: string }) => void }): number {
+  const requestedAt = Date.now();
+  input.control[input.nodeId] = { ...(input.control[input.nodeId] ?? { extensionCount: 0 }), scriptInput: { requestedParameters: input.missing, submittedValues: {}, auditValues: {}, requestedAt } };
+  const labels = input.missing.map((item) => item.label).join(", ");
+  input.updateNode(input.nodeId, { status: "awaiting_input", detail: `Waiting for ${labels}`, scriptInputRequest: { parameters: structuredClone(input.missing) } }, { type: "gate_opened", nodeId: input.nodeId, question: `Provide script inputs: ${labels}` });
+  return requestedAt;
 }
 
 function valueAtPath(value: unknown, path: string): unknown {
