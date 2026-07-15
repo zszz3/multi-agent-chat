@@ -18,6 +18,7 @@ import {
 } from "../workflow/agent-executor-workflow-shared";
 import { reasoningEffortFromRuntimeConfig } from "../agent-executor-types";
 import { respondToCodexRuntimeServerRequest } from "./codex-server-request";
+import { codexWorkflowMcpArgs } from "./codex-workflow-mcp";
 
 export async function runCodexWorkflow(
   input: RuntimeWorkflowRequestContext,
@@ -61,6 +62,7 @@ export async function runCodexWorkflow(
           modelFromRuntimeConfig(input.runtimeConfig),
           reasoningEffortFromRuntimeConfig(input.runtimeConfig),
         ),
+        ...codexWorkflowMcpArgs(options.workflowMcpDiscoveryPath?.(), input.planningWorkflowId),
       ],
       env: codexEnvironmentForChannel(channel),
       onEvent: (event) => {

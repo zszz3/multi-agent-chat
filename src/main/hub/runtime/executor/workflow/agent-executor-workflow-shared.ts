@@ -15,6 +15,7 @@ export const WORKFLOW_DEVELOPER_INSTRUCTIONS =
 export interface RuntimeWorkflowExecutionOptions {
   executables: Record<AgentId, string>;
   channelById: (channelId: string) => AgentChannel | undefined;
+  workflowMcpDiscoveryPath?: () => string | undefined;
 }
 
 export function modelFromRuntimeConfig(runtimeConfig: RuntimeRequest["runtimeConfig"]): string {

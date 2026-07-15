@@ -15,6 +15,7 @@ import { deleteClaudeSessionArtifacts } from "./claude-cleanup";
 import { ClaudeAgentExecutor } from "./claude-executor";
 import { runClaudeChannelTest } from "./claude-test";
 import { runClaudeWorkflow } from "./claude-workflow";
+import { claudeWorkflowMcpServers } from "./claude-workflow-mcp";
 
 export interface ClaudeDriverDependencies {
   runOneShot?: (input: ClaudeAgentSdkRunInput) => Promise<void>;
@@ -52,6 +53,8 @@ export function createClaudeDriver(
               options.channelById(interactiveContext.channelId),
               modelFromRuntimeConfig(interactiveContext.runtimeConfig),
             ) ?? modelFromRuntimeConfig(interactiveContext.runtimeConfig),
+          resolveMcpServers: (interactiveContext) =>
+            claudeWorkflowMcpServers(options.workflowMcpDiscoveryPath?.(), interactiveContext.planningWorkflowId),
           sdkInteractive: new ClaudeAgentSdkInteractive(),
         },
       ),

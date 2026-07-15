@@ -12,6 +12,7 @@ interface ClaudeAgentSdkInteractiveAttachInput {
   modelId?: string;
   developerInstructions?: string;
   resumeSessionId?: string;
+  mcpServers?: Parameters<typeof createClaudeSdkQueryOptions>[0]["mcpServers"];
   onEvent: (event: AgentEvent) => void;
   env?: NodeJS.ProcessEnv;
 }
@@ -46,6 +47,7 @@ export class ClaudeAgentSdkInteractive {
         ...(input.modelId ? { modelId: input.modelId } : {}),
         ...(input.developerInstructions ? { developerInstructions: input.developerInstructions } : {}),
         ...(input.resumeSessionId ? { resumeSessionId: input.resumeSessionId } : {}),
+        ...(input.mcpServers ? { mcpServers: input.mcpServers } : {}),
         ...(input.env ? { env: input.env } : {}),
       }),
     });

@@ -295,6 +295,8 @@ async function bootstrap(): Promise<void> {
     bundledSkillsRoot: path.join(app.getPath("userData"), "bundled-skills"),
   });
 
+  hub.setWorkflowMcpDiscoveryPath(mcpBridge.discoveryPath);
+
   registerIpcHandlers();
   hub.onChange((snapshot) => mainWindow?.webContents.send("snapshot:changed", snapshot));
 

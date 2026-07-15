@@ -20,6 +20,7 @@ import { CodexAgentExecutor } from "./codex-executor";
 import { respondToCodexRuntimeServerRequest } from "./codex-server-request";
 import { runCodexChannelTest } from "./codex-test";
 import { runCodexWorkflow } from "./codex-workflow";
+import { codexWorkflowMcpArgs } from "./codex-workflow-mcp";
 
 export function createCodexDriver(options: RuntimeAgentExecutorFactoryOptions): RuntimeDriver {
   const askWorkflowByRuntime = options.askWorkflowByRuntime ?? {};
@@ -47,6 +48,7 @@ export function createCodexDriver(options: RuntimeAgentExecutorFactoryOptions): 
                 modelFromRuntimeConfig(sessionContext.runtimeConfig),
                 reasoningEffortFromRuntimeConfig(sessionContext.runtimeConfig),
               ),
+              ...codexWorkflowMcpArgs(options.workflowMcpDiscoveryPath?.(), sessionContext.planningWorkflowId),
             ],
             env: codexEnvironmentForChannel(channel),
             onEvent,

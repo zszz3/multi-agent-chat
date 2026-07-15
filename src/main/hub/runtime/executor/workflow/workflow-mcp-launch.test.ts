@@ -1,0 +1,34 @@
+import { mkdtemp, writeFile } from "node:fs/promises";
+import os from "node:os";
+import path from "node:path";
+import { describe, expect, test } from "vitest";
+import { workflowMcpLaunchConfig } from "./workflow-mcp-launch";
+
+describe("workflowMcpLaunchConfig", () => {
+  test("builds a development stdio server scoped to one workflow", () => {
+    const config = workflowMcpLaunchConfig("C:/app/mcp-bridge.json", "wf-1", { cwd: process.cwd(), mainBundlePath: path.join(process.cwd(), "missing", "index.js") });
+    expect(config).toMatchObject({
+      command: process.execPath,
+      env: {
+        MULTI_AGENT_CHAT_MCP_BRIDGE: "C:/app/mcp-bridge.json",
+        MULTI_AGENT_CHAT_WORKFLOW_ID: "wf-1",
+        ELECTRON_RUN_AS_NODE: "1",
+      },
+    });
+    expect(config?.args.join(" ")).toContain("src");
+    expect(config?.args.join(" ")).toContain("server.ts");
+  });
+
+  test("prefers the bundled server beside the main bundle", async () => {
+    const dir = await mkdtemp(path.join(os.tmpdir(), "workflow-mcp-launch-"));
+    const mainBundlePath = path.join(dir, "index.js");
+    const serverPath = path.join(dir, "mcp-server.js");
+    await writeFile(serverPath, "", "utf8");
+    const config = workflowMcpLaunchConfig("C:/app/mcp-bridge.json", "wf-2", { mainBundlePath });
+    expect(config?.args).toEqual([serverPath]);
+  });
+
+  test("does not expose workflow tools outside a planning workflow", () => {
+    expect(workflowMcpLaunchConfig("C:/app/mcp-bridge.json", undefined)).toBeUndefined();
+  });
+});

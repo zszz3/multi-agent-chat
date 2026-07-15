@@ -11,6 +11,7 @@ import {
   type RuntimeWorkflowExecutionOptions,
   WORKFLOW_DEVELOPER_INSTRUCTIONS,
 } from "../workflow/agent-executor-workflow-shared";
+import { claudeWorkflowMcpServers } from "./claude-workflow-mcp";
 
 export async function runClaudeWorkflow(
   input: RuntimeWorkflowRequestContext,
@@ -25,6 +26,7 @@ export async function runClaudeWorkflow(
   let completedContent: string | undefined;
   let runtimeConversation = input.runtimeConversation ? cloneClaudeRuntimeConversation(input.runtimeConversation) : undefined;
   let errorMessage: string | undefined;
+  const workflowMcpServers = claudeWorkflowMcpServers(options.workflowMcpDiscoveryPath?.(), input.planningWorkflowId);
   const abortController = new AbortController();
   const abort = () => abortController.abort(input.signal?.reason);
   if (input.signal?.aborted) abort();
@@ -36,6 +38,7 @@ export async function runClaudeWorkflow(
       cwd: input.workDir,
       ...(sdkModel ? { modelId: sdkModel } : {}),
       developerInstructions: WORKFLOW_DEVELOPER_INSTRUCTIONS,
+      ...(workflowMcpServers ? { mcpServers: workflowMcpServers } : {}),
       abortController,
       ...(resumeSessionId ? { resumeSessionId } : {}),
       onEvent: (event) => {

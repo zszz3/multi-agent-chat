@@ -15,6 +15,7 @@ interface ClaudeInteractiveSessionOptions {
   capabilities: ChatRuntimeSessionState["capabilities"];
   resolveModelId?: (context: InteractiveSessionContext) => string | undefined;
   resolveEnvironment?: (context: InteractiveSessionContext) => NodeJS.ProcessEnv;
+  resolveMcpServers?: (context: InteractiveSessionContext) => Parameters<ClaudeAgentSdkInteractive["attach"]>[0]["mcpServers"];
   now?: () => number;
 }
 
@@ -92,12 +93,14 @@ export class ClaudeInteractiveSession implements InteractiveSession {
 
     const modelId = this.options.resolveModelId?.(this.context) ?? modelFromContext(this.context);
     const resumeSessionId = claudeRuntimeStateCodec.decodeConversation(this.runtimeConversation)?.native.sessionId;
+    const mcpServers = this.options.resolveMcpServers?.(this.context);
 
     await this.sdkInteractive.attach({
       cwd: this.context.workDir,
       modelId,
       developerInstructions: this.context.developerInstructions,
       ...(this.options.resolveEnvironment ? { env: this.options.resolveEnvironment(this.context) } : {}),
+      ...(mcpServers ? { mcpServers } : {}),
       ...(resumeSessionId ? { resumeSessionId } : {}),
       onEvent: (event) => {
         if (!this.lease.matchesAttachment(generation)) return;
