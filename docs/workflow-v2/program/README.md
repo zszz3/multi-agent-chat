@@ -8,6 +8,7 @@
 2. [实施 Agent 指南](02-evolution-execution-guide.md)
 3. [契约注册表](03-evolution-contract-registry.md)
 4. [需求追踪矩阵](04-evolution-requirement-matrix.md)
+5. [当前实现差距清单](05-current-implementation-gap-checklist.md)
 
 实施入口：
 

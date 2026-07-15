@@ -11,6 +11,7 @@
 | 查 Phase 07–14 的目标行为 | [Evolution specs](../superpowers/specs/workflow/evolution/README.md) | 权威提案、尚未实现 |
 | 执行某个阶段的开发任务 | [Workflow plans](../superpowers/plans/workflow/README.md) | 任务顺序；行为仍以 spec 为准 |
 | 理解 Phase 07–14 的治理、依赖和验收 | [演进程序材料](program/README.md) | program 辅助材料，不替代 spec |
+| 对照当前代码查看尚未闭环的能力 | [当前实现差距清单](program/05-current-implementation-gap-checklist.md) | 当前工作树审计；不替代 spec |
 | 阅读尚未批准的备选架构和行业调研 | [候选方案与研究](proposals/README.md) | 非规范、不可据此声称已实现 |
 | 查旧 UI 项目的来历 | [历史 specs](../superpowers/specs/workflow/history/README.md) | 仅追溯，不作为新实现入口 |
 
