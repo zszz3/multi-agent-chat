@@ -1088,12 +1088,12 @@ export class AgentHub {
     if (input.expectedRevision !== undefined && input.expectedRevision !== workflow.revision) {
       return { ok: false, workflowId: workflow.workflowId, revision: workflow.revision, error: "Workflow draft changed before confirmation." };
     }
-    if (!workflow.workflowV2Plan) return { ok: false, workflowId: workflow.workflowId, revision: workflow.revision, error: "Workflow V2 plan is required before confirmation." };
     const validation = validateWorkflowV2Definition(workflow.definition);
     if (!validation.valid) return { ok: false, workflowId: workflow.workflowId, revision: workflow.revision, error: validation.errors[0] ?? "Workflow V2 definition is invalid." };
     let frozenPlan;
     try {
-      frozenPlan = freezeWorkflowV2ScriptGovernance({ plan: workflow.workflowV2Plan, reviewedRevision: workflow.revision, ...(workflow.generationReview?.result?.scriptRisks ? { reviewerRisks: workflow.generationReview.result.scriptRisks } : {}) });
+      const plan = workflow.workflowV2Plan ?? buildWorkflowV2PlanSync({ definition: workflow.definition, approvedBy: "workflow-confirmation" });
+      frozenPlan = freezeWorkflowV2ScriptGovernance({ plan, reviewedRevision: workflow.revision, ...(workflow.generationReview?.result?.scriptRisks ? { reviewerRisks: workflow.generationReview.result.scriptRisks } : {}) });
     } catch (error) {
       return { ok: false, workflowId: workflow.workflowId, revision: workflow.revision, error: error instanceof Error ? error.message : "Workflow script governance could not be frozen." };
     }

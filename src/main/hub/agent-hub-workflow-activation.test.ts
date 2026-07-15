@@ -18,9 +18,30 @@ describe("AgentHub workflow materialization", () => {
       },
     }]);
 
-    expect(hub.snapshot().workflowStore.workflows.find((workflow) => workflow.workflowId === "bundled-test")).toMatchObject({
+    const bundledWorkflow = hub.snapshot().workflowStore.workflows.find((workflow) => workflow.workflowId === "bundled-test")!;
+    expect(bundledWorkflow).toMatchObject({
       sourceType: "official",
       topologyLocked: true,
+    });
+    expect(bundledWorkflow.workflowV2Plan).toBeUndefined();
+
+    expect(hub.confirmWorkflow({ workflowId: "bundled-test", expectedRevision: bundledWorkflow.revision })).toMatchObject({ ok: true });
+    expect(hub.snapshot().workflowStore.workflows.find((workflow) => workflow.workflowId === "bundled-test")).toMatchObject({
+      confirmedRevision: bundledWorkflow.revision,
+      workflowV2Plan: {
+        approvedBy: "workflow-confirmation",
+        definition: { workflowId: "bundled-test" },
+      },
+    });
+  });
+
+  test("reports definition validation errors when confirming a planning draft without a plan", () => {
+    const hub = new AgentHub();
+    const workflow = hub.createWorkflowDraft().workflowDraft!;
+
+    expect(hub.confirmWorkflow({ workflowId: workflow.workflowId, expectedRevision: workflow.revision })).toMatchObject({
+      ok: false,
+      error: "Workflow V2 definition must have an objective.",
     });
   });
 
