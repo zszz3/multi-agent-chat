@@ -1140,7 +1140,7 @@ export class AgentHub {
       if (!def.workflowId || this.workflowStore.workflows.has(def.workflowId)) continue;
       const now = Date.now();
       const workflow = this.cloneWorkflowDraft({
-        workflowId: def.workflowId,
+        workflowId: def.workflowId, sourceType: "official", topologyLocked: true,
         title: def.title,
         status: "draft",
         revision: 1,

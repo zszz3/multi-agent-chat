@@ -118,6 +118,8 @@ export function cloneWorkflowDraft(input: {
   const { draft, normalizeConfiguredAgentId, normalizeModelId, cloneConversation, now = Date.now() } = input;
   return {
     workflowId: draft.workflowId || `wf_${randomUUID()}`,
+    ...(draft.sourceType ? { sourceType: draft.sourceType } : {}),
+    ...(draft.topologyLocked !== undefined ? { topologyLocked: draft.topologyLocked } : {}),
     title: draft.title || draft.definition.objective || draft.objective || "Untitled workflow",
     status: normalizeWorkflowStatus(draft.status),
     revision: Number.isFinite(draft.revision) && draft.revision > 0 ? Math.floor(draft.revision) : 1,

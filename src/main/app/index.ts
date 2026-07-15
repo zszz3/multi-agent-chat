@@ -16,7 +16,7 @@ import { UserSkillStore } from "../user-skill-store";
 import { SkillCategoryStore } from "../skill-category-store";
 import { PlatformServices } from "../platform/platform-services";
 import { centeredWindowBounds } from "../platform/window-bounds";
-import { resolvePreloadBundlePath } from "./app-paths";
+import { resolveBundledWorkflowsPath, resolvePreloadBundlePath } from "./app-paths";
 import { fetchOnlineSkills, ONLINE_SKILL_SOURCES } from "../../shared/online-skills";
 import { SKILL_TEMPLATES } from "../../shared/skill-templates";
 import { DEFAULT_SCHEDULED_WORKFLOW_CLOUD_BASE_URL } from "../../shared/types";
@@ -285,7 +285,7 @@ async function bootstrap(): Promise<void> {
   await app.whenReady();
   await hub.loadModelChannels(path.join(app.getPath("userData"), MODEL_CHANNELS_FILE));
   await hub.loadPersistedState(path.join(app.getPath("userData"), APP_DATABASE_FILE));
-  const bundledWorkflows = await loadBundledWorkflows(path.join(__dirname, "../../shared/bundled-workflows"));
+  const bundledWorkflows = await loadBundledWorkflows(resolveBundledWorkflowsPath(__dirname));
   await officialCatalog.rebuild(bundledWorkflows, SKILL_TEMPLATES);
   hub.ensureBundledWorkflows(await officialCatalog.listWorkflows());
   codexChatRouter = await startCodexChatRouter({ channels: () => hub.snapshot().channels });

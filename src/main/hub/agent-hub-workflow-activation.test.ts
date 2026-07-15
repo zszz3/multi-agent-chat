@@ -3,6 +3,27 @@ import { AgentHub } from "./agent-hub";
 import { createWorkflowV2InlineScriptSpec } from "../../shared/workflow-v2/definition";
 
 describe("AgentHub workflow materialization", () => {
+  test("seeds bundled workflows as locked official workflows", () => {
+    const hub = new AgentHub();
+    hub.ensureBundledWorkflows([{
+      workflowId: "bundled-test",
+      title: "Bundled test",
+      objective: "Test bundled workflow",
+      definition: {
+        workflowId: "bundled-test",
+        graphVersion: 1,
+        objective: "Test bundled workflow",
+        nodes: [{ id: "answer", kind: "answer", title: "Answer", execModel: "llm", executionMode: "one-shot", prompt: "Answer.", outputFields: [{ key: "answer_markdown", required: true }] }],
+        edges: [],
+      },
+    }]);
+
+    expect(hub.snapshot().workflowStore.workflows.find((workflow) => workflow.workflowId === "bundled-test")).toMatchObject({
+      sourceType: "official",
+      topologyLocked: true,
+    });
+  });
+
   test("materializes into the originating Workflow without allocating another record", () => {
     const hub = new AgentHub();
     const source = hub.createWorkflowDraft({ configuredAgentId: "default-agent" }).workflowDraft!;

@@ -105,13 +105,6 @@ export class OfficialCatalogStore {
         key text primary key,
         value text not null
       );
-      create table if not exists workflow_templates (
-        id text primary key,
-        title text not null,
-        objective text not null,
-        definition_json text not null,
-        sequence integer not null
-      );
       create table if not exists skill_templates (
         id text primary key,
         name text not null,
@@ -123,6 +116,19 @@ export class OfficialCatalogStore {
         source_url text,
         translation_zh text,
         category_id text,
+        sequence integer not null
+      );
+    `);
+    const workflowColumns = db.prepare("pragma table_info(workflow_templates)").all().map(row);
+    if (workflowColumns.length > 0 && !workflowColumns.some((column) => column.name === "definition_json")) {
+      db.exec("drop table if exists workflow_template_edges; drop table if exists workflow_template_nodes; drop table workflow_templates;");
+    }
+    db.exec(`
+      create table if not exists workflow_templates (
+        id text primary key,
+        title text not null,
+        objective text not null,
+        definition_json text not null,
         sequence integer not null
       );
     `);
