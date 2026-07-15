@@ -1021,6 +1021,11 @@ describe("Sidebar history panels", () => {
 
     expect(html).toContain("Official workflows");
     expect(html).toContain("My workflows");
+    expect(html).toContain("Built-in, read-only workflow templates");
+    expect(html).toContain("Workflows created and managed by you");
+    expect(html).toContain("workflow-history-group is-official");
+    expect(html).toContain("workflow-history-card is-official is-active");
+    expect(html).toContain("workflow-official-badge");
     expect(html.indexOf("Official release")).toBeLessThan(html.indexOf("My release"));
   });
 });

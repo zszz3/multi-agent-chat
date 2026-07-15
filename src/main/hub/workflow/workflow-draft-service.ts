@@ -43,6 +43,8 @@ export class WorkflowDraftService {
     const reviewerModelId = this.deps.normalizeModelId(reviewerConfiguredAgentId, input.reviewerModelId ?? (reviewerConfiguredAgentId === configuredAgentId ? modelId : undefined));
     const workflow = this.deps.cloneDraft({
       workflowId,
+      sourceType: "user",
+      topologyLocked: false,
       title: input.title?.trim() || "Untitled workflow",
       status: "draft",
       revision: 1,

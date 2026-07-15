@@ -168,6 +168,8 @@ export function restoreWorkflowDraft(
   if (workflowId !== definition.workflowId) return undefined;
   return deps.cloneWorkflowDraft({
     workflowId,
+    sourceType: record.sourceType === "official" ? "official" : "user",
+    topologyLocked: record.sourceType === "official" || record.topologyLocked === true,
     title: asOptionalString(record.title) ?? definition.objective ?? "Untitled workflow",
     status: restoreWorkflowDraftStatus(record.status),
     revision: Math.max(1, Math.floor(asNumber(record.revision, 1))),

@@ -107,6 +107,8 @@ describe("Workflow V2 AgentHub durable restore", () => {
     const workflowId = "planning-workflow";
     const restored = restoreWorkflowDraft({
       workflowId,
+      sourceType: "official",
+      topologyLocked: true,
       title: "Untitled workflow",
       status: "draft",
       revision: 4,
@@ -127,7 +129,13 @@ describe("Workflow V2 AgentHub durable restore", () => {
       cloneWorkflowDraft: (draft) => structuredClone(draft),
     });
 
-    expect(restored).toMatchObject({ workflowId, status: "draft", objective: "Plan a workflow" });
+    expect(restored).toMatchObject({
+      workflowId,
+      sourceType: "official",
+      topologyLocked: true,
+      status: "draft",
+      objective: "Plan a workflow",
+    });
     expect(restored?.messages).toHaveLength(1);
   });
 

@@ -129,6 +129,8 @@ export function createWorkflowDraftState(input: {
   definition.objective = objective;
   return input.cloneDraft({
     workflowId: input.workflowId,
+    sourceType: "user",
+    topologyLocked: false,
     title: input.request.title.trim() || objective || "Untitled workflow",
     status: "draft",
     revision: 1,

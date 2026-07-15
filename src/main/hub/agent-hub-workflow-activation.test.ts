@@ -48,6 +48,7 @@ describe("AgentHub workflow materialization", () => {
   test("materializes into the originating Workflow without allocating another record", () => {
     const hub = new AgentHub();
     const source = hub.createWorkflowDraft({ configuredAgentId: "default-agent" }).workflowDraft!;
+    expect(source).toMatchObject({ sourceType: "user", topologyLocked: false });
     const beforeCount = hub.snapshot().workflowStore.workflows.length;
     const result = hub.materializeWorkflowDraft(source.workflowId, {
       title: "Echo workflow",
@@ -56,7 +57,12 @@ describe("AgentHub workflow materialization", () => {
     });
     expect(result).toMatchObject({ ok: true, workflowId: source.workflowId });
     expect(hub.snapshot().workflowStore.workflows).toHaveLength(beforeCount);
-    expect(hub.snapshot().workflowDraft?.definition.workflowId).toBe(source.workflowId);
+    expect(hub.snapshot().workflowDraft).toMatchObject({
+      workflowId: source.workflowId,
+      sourceType: "user",
+      topologyLocked: false,
+      definition: { workflowId: source.workflowId },
+    });
   });
 
   test("materializes parallel terminal nodes with one generated summary node", () => {
