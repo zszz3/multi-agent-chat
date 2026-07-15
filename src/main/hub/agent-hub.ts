@@ -270,6 +270,7 @@ import {
 } from "./workflow/agent-hub-workflow-draft-replies";
 import { abandonWorkflowDraftReplyState as abandonWorkflowDraftReplyStateValue } from "./workflow/agent-hub-workflow-draft-reply-state";
 import { validateWorkflowV2Definition } from "../../shared/workflow-v2/validation";
+import { normalizeWorkflowV2TerminalNode } from "../../shared/workflow-v2/topology";
 import { WorkflowGenerationReviewCoordinator } from "./workflow/workflow-generation-review-service";
 import { WORKFLOW_DEVELOPER_INSTRUCTIONS } from "./runtime/executor/workflow/agent-executor-workflow-shared";
 const DEFAULT_AGENT: AgentId = "codex";
@@ -1040,16 +1041,17 @@ export class AgentHub {
     const current = this.workflowStore.workflows.get(workflowId);
     if (!current) return { ok: false, workflowId, error: `Workflow ${workflowId} was not found.` };
     if (!input.definition) return { ok: false, error: "Workflow V2 definition is required." };
-    if (input.definition.nodes.length > MAX_WORKFLOW_NODE_COUNT) {
+    const normalized = normalizeWorkflowV2TerminalNode({ ...structuredClone(input.definition), workflowId, objective: input.objective.trim() || input.definition.objective });
+    const definition = normalized.definition;
+    if (definition.nodes.length > MAX_WORKFLOW_NODE_COUNT) {
       return { ok: false, error: `Workflow V2 definition exceeds ${MAX_WORKFLOW_NODE_COUNT} nodes.` };
     }
-    if (input.definition.edges.length > MAX_WORKFLOW_EDGE_COUNT) {
+    if (definition.edges.length > MAX_WORKFLOW_EDGE_COUNT) {
       return { ok: false, error: `Workflow V2 definition exceeds ${MAX_WORKFLOW_EDGE_COUNT} edges.` };
     }
-    const definition = { ...structuredClone(input.definition), workflowId, objective: input.objective.trim() || input.definition.objective };
     const validation = validateWorkflowV2Definition(definition);
     if (!validation.valid) return { ok: false, error: validation.errors[0] ?? "Workflow V2 definition is invalid." };
-    let workflowV2Plan = input.workflowV2Plan;
+    let workflowV2Plan = normalized.addedSummaryNodeId ? undefined : input.workflowV2Plan;
     if (!workflowV2Plan) {
       try {
         workflowV2Plan = buildWorkflowV2PlanSync({ definition, approvedBy: "workflow-manager" });
@@ -1147,7 +1149,7 @@ export class AgentHub {
         reviewerConfiguredAgentId: "",
         reviewerModelId: "",
         objective: def.objective,
-        definition: structuredClone(def.definition),
+        definition: normalizeWorkflowV2TerminalNode(def.definition).definition,
         messages: [],
         reply: "",
         error: undefined,
@@ -1212,8 +1214,9 @@ export class AgentHub {
     if (input.expectedRevision !== undefined && input.expectedRevision !== current.revision) {
       return { ok: false, workflowId: current.workflowId, revision: current.revision, error: "Workflow changed since you read it. Call workflow_get and retry." };
     }
-    const definition = input.definition ? structuredClone(input.definition) : structuredClone(current.definition);
-    if (input.objective !== undefined) definition.objective = input.objective;
+    const sourceDefinition = input.definition ? structuredClone(input.definition) : structuredClone(current.definition);
+    if (input.objective !== undefined) sourceDefinition.objective = input.objective;
+    const definition = normalizeWorkflowV2TerminalNode(sourceDefinition).definition;
     if (definition.nodes.length > MAX_WORKFLOW_NODE_COUNT) {
       return { ok: false, workflowId: current.workflowId, revision: current.revision, error: `Workflow V2 definition exceeds ${MAX_WORKFLOW_NODE_COUNT} nodes.` };
     }

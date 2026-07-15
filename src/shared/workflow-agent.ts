@@ -84,6 +84,8 @@ export function buildWorkflowAgentPrompt({ workflowId, objective }: WorkflowAgen
     "- Inline TypeScript receives the resolved parameter object as the function argument inputs. Read values through inputs.<key> and return an object. Do not read WORKFLOW_INPUT or write the result through process.stdout.",
     "- Declare only capabilities the script actually needs. Classify pure in-memory transformations as safe, external or workspace reads as read, mutations as write, and deletion, credentials, shell execution, process spawning, or system changes as dangerous unless a stricter level is warranted.",
     "- Edges express all topology dependencies. Downstream nodes must not run before every upstream dependency completes.",
+    "- The graph must have exactly one terminal node (out-degree 0). If useful parallel branches would otherwise create multiple terminal nodes, add one final LLM summary node and connect every branch terminal to it.",
+    "- A final summary node must consume the standard upstreamOutputs JSON result packets and produce answer_markdown as the complete user-facing result.",
     "- Node prompts must state required inputs, completion criteria, output fields, and downstream handoff expectations.",
     "",
     "workflow_create payload:",

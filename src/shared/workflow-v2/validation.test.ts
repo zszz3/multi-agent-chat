@@ -69,6 +69,16 @@ describe("workflow-v2 validation", () => {
     expect(result.topologicalNodeIds).toEqual(["plan", "apply"]);
   });
 
+  test("rejects definitions with multiple terminal nodes", () => {
+    const invalid = validDefinition();
+    invalid.edges = [];
+
+    const result = validateWorkflowV2Definition(invalid);
+
+    expect(result.valid).toBe(false);
+    expect(result.errors).toContain("Workflow V2 definition must have exactly one terminal node, found 2.");
+  });
+
   test("rejects nodes that omit execution mode", () => {
     const invalid = validDefinition();
     delete invalid.nodes[0]!.executionMode;

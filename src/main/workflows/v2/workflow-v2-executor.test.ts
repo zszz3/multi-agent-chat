@@ -214,7 +214,7 @@ describe("workflow-v2 executor", () => {
     await execution;
 
     expect(startedBeforeFirstResolved).toEqual(["first"]);
-    expect(startedNodeIds).toEqual(["first", "second"]);
+    expect(startedNodeIds).toEqual(["first", "second", "workflow-summary"]);
   });
 
   test("settles every started node in a failed batch without scheduling another batch", async () => {

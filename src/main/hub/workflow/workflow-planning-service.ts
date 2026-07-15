@@ -5,6 +5,7 @@ import type {
   BuildWorkflowV2PlanResult,
 } from "../../../shared/workflow/commands";
 import { validateWorkflowV2Definition } from "../../../shared/workflow-v2/validation";
+import { normalizeWorkflowV2TerminalNode } from "../../../shared/workflow-v2/topology";
 import {
   buildWorkflowV2GraphRevision,
   buildWorkflowV2Plan,
@@ -15,12 +16,13 @@ export class WorkflowPlanningService {
   async buildPlan(input: BuildWorkflowV2PlanRequest): Promise<BuildWorkflowV2PlanResult> {
     let validation: ReturnType<typeof validateWorkflowV2Definition> | undefined;
     try {
-      validation = validateWorkflowV2Definition(input.definition);
+      const definition = normalizeWorkflowV2TerminalNode(input.definition).definition;
+      validation = validateWorkflowV2Definition(definition);
       if (!validation.valid) return { ok: false, error: validation.errors.join(" "), validation };
       const approvedBy = typeof input.approvedBy === "string" ? input.approvedBy.trim() : "";
       if (!approvedBy) return { ok: false, error: "Workflow V2 plan requires approvedBy.", validation };
       const plan = await buildWorkflowV2Plan({
-        definition: input.definition,
+        definition,
         approvedBy,
         ...(input.objective?.trim() ? { objective: input.objective.trim() } : {}),
         ...(input.acceptanceCriteria ? { acceptanceCriteria: input.acceptanceCriteria } : {}),

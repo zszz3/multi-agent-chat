@@ -15,6 +15,7 @@ import { isWorkflowV2ExecutionLeasePolicy } from "./supervision";
 import type { WorkflowV2TemplateRegistry } from "./templates";
 import { compileWorkflowV2Definition, WorkflowV2TemplateCompileError } from "./templates";
 import { workflowV2NodeHookValidationErrors } from "./hooks";
+import { listWorkflowV2TerminalNodeIds, normalizeWorkflowV2TerminalNode } from "./topology";
 
 const VALID_SCRIPT_LANGUAGES = new Set(["python", "typescript", "bash"]);
 const VALID_SCRIPT_RISKS = new Set(["safe", "read", "write", "dangerous"]);
@@ -248,6 +249,10 @@ export function validateWorkflowV2Definition(definition: WorkflowV2Definition): 
   }
 
   const topologicalNodeIds = topologicalOrder(definition, errors);
+  const terminalNodeIds = listWorkflowV2TerminalNodeIds(definition);
+  if (terminalNodeIds.length !== 1) {
+    errors.push(`Workflow V2 definition must have exactly one terminal node, found ${terminalNodeIds.length}.`);
+  }
 
   return {
     valid: errors.length === 0,
@@ -262,7 +267,7 @@ export function compileAndValidateWorkflowV2Definition(
   registry: WorkflowV2TemplateRegistry,
 ): WorkflowV2ValidationResult & { definition?: WorkflowV2Definition } {
   try {
-    const compiledDefinition = compileWorkflowV2Definition(definition, registry);
+    const compiledDefinition = normalizeWorkflowV2TerminalNode(compileWorkflowV2Definition(definition, registry)).definition;
     const validation = validateWorkflowV2Definition(compiledDefinition);
     return {
       ...validation,

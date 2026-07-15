@@ -11,6 +11,7 @@ import { importOnlineSkillToLibrary, listImportedSkillTemplates } from "../skill
 import { fetchOnlineSkills, ONLINE_SKILL_SOURCES } from "../../shared/online-skills";
 import type { WorkflowV2Definition } from "../../shared/workflow-v2/definition";
 import { validateWorkflowV2Definition } from "../../shared/workflow-v2/validation";
+import { normalizeWorkflowV2TerminalNode } from "../../shared/workflow-v2/topology";
 import { DEFAULT_MODEL_ID, defaultChannelForAgent, defaultModelForAgent, isModelForChannel } from "../../shared/models";
 
 export interface McpBridgeServer {
@@ -293,8 +294,9 @@ async function routeWorkflowRequest(hub: AgentHub, route: string, body: unknown,
     if (!hub.snapshot().workflowStore.workflows.some((workflow) => workflow.workflowId === workflowId)) {
       return { ok: false, error: `Workflow planning draft ${workflowId} was not found.` };
     }
-    const definition = record.definition as WorkflowV2Definition;
-    if (definition?.workflowId !== workflowId) return { ok: false, error: "workflow_create workflowId must match definition.workflowId." };
+    const sourceDefinition = record.definition as WorkflowV2Definition;
+    if (sourceDefinition?.workflowId !== workflowId) return { ok: false, error: "workflow_create workflowId must match definition.workflowId." };
+    const definition = normalizeWorkflowV2TerminalNode(sourceDefinition).definition;
     const validation = validateWorkflowV2Definition(definition);
     if (!validation.valid) return { ok: false, error: validation.errors[0] ?? "Invalid Workflow V2 definition." };
     const request: MaterializeWorkflowDraftRequest = {

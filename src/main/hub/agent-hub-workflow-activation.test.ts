@@ -17,6 +17,38 @@ describe("AgentHub workflow materialization", () => {
     expect(hub.snapshot().workflowDraft?.definition.workflowId).toBe(source.workflowId);
   });
 
+  test("materializes parallel terminal nodes with one generated summary node", () => {
+    const hub = new AgentHub();
+    const workflowId = hub.createWorkflowDraft().workflowDraft!.workflowId;
+
+    const result = hub.materializeWorkflowDraft(workflowId, {
+      title: "Parallel workflow",
+      objective: "Combine parallel results",
+      definition: {
+        workflowId,
+        graphVersion: 1,
+        objective: "Combine parallel results",
+        nodes: [
+          { id: "left", kind: "analysis", title: "Left", execModel: "llm", executionMode: "one-shot", prompt: "Analyze left.", outputFields: [{ key: "left", required: true }] },
+          { id: "right", kind: "analysis", title: "Right", execModel: "llm", executionMode: "one-shot", prompt: "Analyze right.", outputFields: [{ key: "right", required: true }] },
+        ],
+        edges: [],
+      },
+    });
+
+    expect(result.ok).toBe(true);
+    const workflow = hub.snapshot().workflowStore.workflows.find((item) => item.workflowId === workflowId)!;
+    expect(workflow.definition.nodes.at(-1)).toMatchObject({
+      id: "workflow-summary",
+      outputFields: [{ key: "answer_markdown", required: true }],
+    });
+    expect(workflow.definition.edges).toEqual([
+      { fromNodeId: "left", toNodeId: "workflow-summary" },
+      { fromNodeId: "right", toNodeId: "workflow-summary" },
+    ]);
+    expect(workflow.workflowV2Plan?.definition).toEqual(workflow.definition);
+  });
+
   test("requires confirmation and invalidates it after a draft definition change", () => {
     const hub = new AgentHub();
     const workflowId = hub.createWorkflowDraft().workflowDraft!.workflowId;

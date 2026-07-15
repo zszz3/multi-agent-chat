@@ -84,6 +84,33 @@ describe("workflow-v2 planner", () => {
     ]);
   });
 
+  test("normalizes parallel terminal branches into one final summary node", async () => {
+    const source = definition();
+    source.edges = [{ fromNodeId: "orchestrate", toNodeId: "implement" }];
+
+    const plan = await buildWorkflowV2Plan({
+      definition: source,
+      approvedBy: "planner-agent",
+      now: 1,
+    });
+
+    expect(plan.nodes.at(-1)?.nodeId).toBe("workflow-summary");
+    expect(plan.nodes.slice(0, -1).map((node) => node.nodeId)).toEqual(expect.arrayContaining([
+      "orchestrate",
+      "implement",
+      "review",
+    ]));
+    expect(plan.definition.edges).toEqual([
+      { fromNodeId: "orchestrate", toNodeId: "implement" },
+      { fromNodeId: "implement", toNodeId: "workflow-summary" },
+      { fromNodeId: "review", toNodeId: "workflow-summary" },
+    ]);
+    expect(plan.definition.nodes.at(-1)).toMatchObject({
+      id: "workflow-summary",
+      outputFields: [{ key: "answer_markdown", required: true }],
+    });
+  });
+
   test("freezes explicit and compatibility execution modes with rationale", async () => {
     const source = definition();
     const implement = source.nodes.find((node) => node.id === "implement");

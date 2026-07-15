@@ -25,6 +25,7 @@ import {
   validateWorkflowV2Definition,
   workflowV2AcceptanceCriteriaValidationErrors,
 } from "../../../shared/workflow-v2/validation";
+import { normalizeWorkflowV2TerminalNode } from "../../../shared/workflow-v2/topology";
 
 export class WorkflowV2PlanBuildError extends Error {
   constructor(
@@ -60,7 +61,8 @@ export interface BuildWorkflowV2GraphRevisionRequest {
 }
 
 export function buildWorkflowV2PlanSync(input: BuildWorkflowV2PlanRequest): WorkflowV2Plan {
-  const validation = validateWorkflowV2Definition(input.definition);
+  const normalizedDefinition = normalizeWorkflowV2TerminalNode(input.definition).definition;
+  const validation = validateWorkflowV2Definition(normalizedDefinition);
   if (!validation.valid) {
     throw new WorkflowV2PlanBuildError("Workflow V2 definition is not plannable.", {
       errors: validation.errors,
@@ -85,7 +87,7 @@ export function buildWorkflowV2PlanSync(input: BuildWorkflowV2PlanRequest): Work
     inputErrors.push("Workflow V2 planner requires now to be a non-negative safe integer.");
   }
 
-  let objective = input.definition.objective.trim();
+  let objective = normalizedDefinition.objective.trim();
   if (input.objective !== undefined) {
     if (typeof input.objective !== "string") {
       inputErrors.push("Workflow V2 planner objective override must be a string when provided.");
@@ -131,7 +133,7 @@ export function buildWorkflowV2PlanSync(input: BuildWorkflowV2PlanRequest): Work
     throw new WorkflowV2PlanBuildError("Workflow V2 plan input is not plannable.", { errors: inputErrors });
   }
 
-  const frozenDefinition = structuredClone(input.definition);
+  const frozenDefinition = structuredClone(normalizedDefinition);
   const roleDefaults = mergeWorkflowV2RoleRoutes(input.roleModelProfiles);
   const acceptanceCriteria = customAcceptanceCriteria ?? deriveWorkflowV2AcceptanceCriteria(frozenDefinition);
   const acceptanceCriteriaErrors = workflowV2AcceptanceCriteriaValidationErrors(acceptanceCriteria);
