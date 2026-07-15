@@ -82,6 +82,16 @@ describe("workflow-v2 recovery", () => {
     expect(report).not.toContain("Node outputs");
   });
 
+  test("uses a terminal script output field as the completed user report", async () => {
+    const workflow = definition();
+    const plan = await buildWorkflowV2Plan({ definition: workflow, approvedBy: "tester", now: 1_000 });
+    const report = buildWorkflowV2FinalReport(plan, [
+      { nodeId: "first", summary: "Prepared", outputs: { value: "context" }, proposals: [] },
+      { nodeId: "second", summary: "Echoed", outputs: { output: "原样内容" }, proposals: [] },
+    ], "completed");
+    expect(report).toBe("原样内容");
+  });
+
   test("reuses completed work and resumes a checkpoint under the same graph version", async () => {
     const state = await persisted();
     const recovery = buildWorkflowV2RecoveryPlan({

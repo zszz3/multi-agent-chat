@@ -486,7 +486,9 @@ describe("WorkflowRuntime typed script input", () => {
     expect(observedInputs).toEqual([{ body: { question: "hello" } }]);
     expect(finished.status).toBe("completed");
     expect(persistedState.nodeControl.submit?.scriptInput).toMatchObject({ auditValues: { body: { question: "hello" } }, submittedAt: expect.any(Number) });
-    expect(fixture.updates.flatMap((update) => update.progress ?? []).filter((item) => item.nodeId === "submit").at(-1)?.inputRequest).toBeUndefined();
+    const completedProgress = fixture.updates.flatMap((update) => update.progress ?? []).filter((item) => item.nodeId === "submit").at(-1);
+    expect(completedProgress?.inputRequest).toBeUndefined();
+    expect(completedProgress?.outputs).toEqual({ ok: true });
   });
 });
 

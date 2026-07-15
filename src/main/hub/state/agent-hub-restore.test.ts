@@ -1,5 +1,5 @@
 import { describe, expect, test } from "vitest";
-import { restoreWorkflowEvent } from "./agent-hub-restore";
+import { restoreWorkflowEvent, restoreWorkflowRunProgressItem } from "./agent-hub-restore";
 
 function intervention() {
   return {
@@ -54,5 +54,46 @@ describe("agent hub workflow event restore", () => {
 
     expect(event).toMatchObject({ type: "node_paused", nodeId: "implement" });
     expect(event?.intervention).toBeUndefined();
+  });
+});
+
+describe("agent hub workflow progress restore", () => {
+  test("preserves typed script input requests for waiting nodes", () => {
+    const rawParameter = {
+      key: "text",
+      label: "输入内容",
+      location: "stdin",
+      valueType: "string",
+      source: "user",
+      required: true,
+    };
+
+    const progress = restoreWorkflowRunProgressItem({
+      nodeId: "echo",
+      title: "原样输出用户输入",
+      status: "awaiting_input",
+      detail: "Waiting for 输入内容",
+      inputRequest: { kind: "script_parameters", parameters: [rawParameter] },
+      outputs: { preview: "restored" },
+    });
+
+    expect(progress?.inputRequest).toEqual({ kind: "script_parameters", parameters: [rawParameter] });
+    expect(progress?.inputRequest?.kind === "script_parameters" ? progress.inputRequest.parameters[0] : undefined).not.toBe(rawParameter);
+    expect(progress?.outputs).toEqual({ preview: "restored" });
+  });
+
+  test("drops malformed input requests without dropping node progress", () => {
+    const progress = restoreWorkflowRunProgressItem({
+      nodeId: "echo",
+      title: "Echo",
+      status: "awaiting_input",
+      inputRequest: {
+        kind: "script_parameters",
+        parameters: [{ key: "text", label: "Text", location: "invalid", valueType: "string", source: "user", required: true }],
+      },
+    });
+
+    expect(progress).toMatchObject({ nodeId: "echo", status: "awaiting_input" });
+    expect(progress?.inputRequest).toBeUndefined();
   });
 });

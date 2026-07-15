@@ -7,6 +7,8 @@ import type {
   WorkflowRunProgressItem,
   WorkflowStatus,
 } from "../../../shared/types";
+import type { WorkflowNodeInputRequest } from "../../../shared/workflow/run";
+import type { WorkflowV2ScriptParameterDef } from "../../../shared/workflow-v2/definition";
 import { isWorkflowV2HumanIntervention } from "../../../shared/workflow-v2/review";
 import {
   asArray,
@@ -36,6 +38,49 @@ export function restoreWorkflowRunStatus(value: unknown): WorkflowStatus {
   return status === "running" ? "failed" : status;
 }
 
+function restoreWorkflowV2ScriptParameter(raw: unknown): WorkflowV2ScriptParameterDef | undefined {
+  const record = asRecord(raw);
+  if (!record) return undefined;
+  const key = asOptionalString(record.key);
+  const label = asOptionalString(record.label);
+  const location = record.location;
+  const valueType = record.valueType;
+  const source = record.source;
+  if (!key || !label
+    || (location !== "argument" && location !== "environment" && location !== "header" && location !== "query" && location !== "body" && location !== "stdin")
+    || (valueType !== "string" && valueType !== "number" && valueType !== "boolean" && valueType !== "json" && valueType !== "secret" && valueType !== "file" && valueType !== "directory")
+    || (source !== "user" && source !== "workflow" && source !== "upstream" && source !== "literal")
+    || typeof record.required !== "boolean") {
+    return undefined;
+  }
+  const parameter: WorkflowV2ScriptParameterDef = { key, label, location, valueType, source, required: record.required };
+  const description = asOptionalString(record.description);
+  const upstreamNodeId = asOptionalString(record.upstreamNodeId);
+  const upstreamOutputKey = asOptionalString(record.upstreamOutputKey);
+  const workflowPath = asOptionalString(record.workflowPath);
+  if (description) parameter.description = description;
+  if (record.defaultValue !== undefined) parameter.defaultValue = structuredClone(record.defaultValue) as NonNullable<WorkflowV2ScriptParameterDef["defaultValue"]>;
+  if (record.literalValue !== undefined) parameter.literalValue = structuredClone(record.literalValue) as NonNullable<WorkflowV2ScriptParameterDef["literalValue"]>;
+  if (upstreamNodeId) parameter.upstreamNodeId = upstreamNodeId;
+  if (upstreamOutputKey) parameter.upstreamOutputKey = upstreamOutputKey;
+  if (workflowPath) parameter.workflowPath = workflowPath;
+  return parameter;
+}
+
+function restoreWorkflowNodeInputRequest(raw: unknown): WorkflowNodeInputRequest | undefined {
+  const record = asRecord(raw);
+  if (!record) return undefined;
+  if (record.kind === "agent_message") {
+    const prompt = asOptionalString(record.prompt);
+    return prompt ? { kind: "agent_message", prompt } : undefined;
+  }
+  if (record.kind !== "script_parameters") return undefined;
+  const rawParameters = asArray(record.parameters);
+  const parameters = rawParameters.map(restoreWorkflowV2ScriptParameter);
+  if (parameters.some((parameter) => !parameter)) return undefined;
+  return { kind: "script_parameters", parameters: parameters as WorkflowV2ScriptParameterDef[] };
+}
+
 export function restoreWorkflowRunProgressItem(raw: unknown): WorkflowRunProgressItem | undefined {
   const record = asRecord(raw);
   if (!record) return undefined;
@@ -55,6 +100,12 @@ export function restoreWorkflowRunProgressItem(raw: unknown): WorkflowRunProgres
   if (record.intervention !== undefined && isWorkflowV2HumanIntervention(record.intervention)) {
     item.intervention = structuredClone(record.intervention);
   }
+  if (status === "awaiting_input") {
+    const inputRequest = restoreWorkflowNodeInputRequest(record.inputRequest);
+    if (inputRequest) item.inputRequest = inputRequest;
+  }
+  const outputs = asRecord(record.outputs);
+  if (outputs) item.outputs = structuredClone(outputs);
   return item;
 }
 

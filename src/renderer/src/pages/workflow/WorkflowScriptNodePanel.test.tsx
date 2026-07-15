@@ -46,4 +46,15 @@ describe("WorkflowScriptNodePanel", () => {
     expect(html).toContain("Run script");
     expect(html).toContain('name="text"');
   });
+
+  test("renders completed script output as structured JSON", () => {
+    const html = renderToStaticMarkup(<WorkflowScriptNodePanel
+      node={node}
+      progress={{ nodeId: "echo", title: "Echo input", status: "completed", outputs: { echoed: "hello", count: 1 } }}
+      onClose={() => undefined}
+    />);
+    expect(html).toContain("The values returned by this script node.");
+    expect(html).toContain('&quot;echoed&quot;: &quot;hello&quot;');
+    expect(html).toContain('&quot;count&quot;: 1');
+  });
 });

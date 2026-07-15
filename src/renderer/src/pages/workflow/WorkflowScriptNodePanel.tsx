@@ -62,6 +62,7 @@ export function WorkflowScriptNodePanel({ node, progress, onSubmitInput, onClose
   const executable = node.script.executable;
   const code = executable.kind === "inline" ? executable.code : [executable.command, ...(executable.args ?? [])].join(" ");
   const language = executable.kind === "inline" ? executable.language : "command";
+  const renderedOutput = progress?.outputs ? JSON.stringify(progress.outputs, null, 2) : undefined;
 
   const renderInput = (parameter: WorkflowV2ScriptParameterDef) => {
     const value = input.values[parameter.key] ?? "";
@@ -108,6 +109,11 @@ export function WorkflowScriptNodePanel({ node, progress, onSubmitInput, onClose
           </div>
           {input.error ? <div className="workflow-script-node-error" role="alert">{input.error}</div> : null}
           <button className="send-btn workflow-script-run-button" onClick={() => void input.submit()}><Play size={14} /><span>Run script</span></button>
+        </section> : null}
+
+        {renderedOutput ? <section className="workflow-script-node-section is-output">
+          <div className="workflow-script-node-section-title"><CheckCircle2 size={15} /><div><strong>Output</strong><span>The values returned by this script node.</span></div></div>
+          <pre className="workflow-script-output"><code>{renderedOutput}</code></pre>
         </section> : null}
 
         <section className="workflow-script-node-section">

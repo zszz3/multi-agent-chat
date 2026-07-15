@@ -20,6 +20,7 @@ export interface WorkflowRunProgressItem {
   taskId?: string;
   intervention?: WorkflowV2HumanIntervention;
   inputRequest?: WorkflowNodeInputRequest;
+  outputs?: Record<string, unknown>;
 }
 
 export type WorkflowEventType =

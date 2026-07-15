@@ -942,13 +942,13 @@ export class WorkflowV2RunExecutor {
               detail: "Starting",
             });
           } else if (transition.status === "completed") {
-            updateNode(transition.nodeId, { status: "completed", detail: transition.output.summary }, {
+            updateNode(transition.nodeId, { status: "completed", detail: transition.output.summary, outputs: structuredClone(transition.output.outputs) }, {
               type: "node_completed",
               nodeId: transition.nodeId,
               detail: transition.output.summary,
             }, true);
           } else if (transition.status === "skipped") {
-            updateNode(transition.nodeId, { status: "completed", detail: transition.output.summary }, {
+            updateNode(transition.nodeId, { status: "completed", detail: transition.output.summary, outputs: structuredClone(transition.output.outputs) }, {
               type: "node_completed",
               nodeId: transition.nodeId,
               detail: transition.output.summary,

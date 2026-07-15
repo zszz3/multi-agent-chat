@@ -258,6 +258,8 @@ export function reconcileWorkflowV2RunFromDurableState(input: {
       status: publicWorkflowV2NodeStatus(node),
       detail: publicWorkflowV2NodeDetail(node, outputByNodeId.get(nodeId)?.summary),
     };
+    const output = outputByNodeId.get(nodeId);
+    if (output) progressItem.outputs = structuredClone(output.outputs);
     if (node.intervention) {
       Object.assign(progressItem, projectWorkflowV2PausedNodeInteraction({
         nodeId,

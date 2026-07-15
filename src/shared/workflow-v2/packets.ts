@@ -44,7 +44,7 @@ export function isWorkflowV2WorkerOutput(value: unknown): value is WorkflowV2Wor
 }
 
 export function workflowV2ExplicitUserFacingOutput(output: WorkflowV2ResultPacket): string | undefined {
-  const preferredKeys = ["answer_markdown", "final_answer", "answer", "report_markdown", "content_markdown"];
+  const preferredKeys = ["answer_markdown", "final_answer", "answer", "report_markdown", "content_markdown", "output"];
   for (const key of preferredKeys) {
     const value = output.outputs[key];
     if (typeof value === "string" && value.trim()) return value;

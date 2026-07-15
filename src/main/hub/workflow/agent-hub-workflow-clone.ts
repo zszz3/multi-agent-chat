@@ -9,7 +9,7 @@ import type {
 } from "../../../shared/types";
 import type { RuntimeConversation } from "../../../shared/runtime/conversation";
 import type { WorkflowDraftState, WorkflowStoreState } from "../../../shared/workflow/draft";
-import type { WorkflowRunState, WorkflowStatus } from "../../../shared/workflow/run";
+import type { WorkflowRunProgressItem, WorkflowRunState, WorkflowStatus } from "../../../shared/workflow/run";
 import {
   isScheduledWorkflowRunStatus,
   normalizeScheduledWorkflowDayOfMonth,
@@ -18,6 +18,19 @@ import {
   normalizeScheduledWorkflowWeekdays,
 } from "../persisted/agent-hub-persistence";
 import { cloneWorkflowV2Plan } from "../../../shared/workflow-v2/planning";
+
+export function cloneWorkflowRunProgressItem(item: WorkflowRunProgressItem): WorkflowRunProgressItem {
+  return {
+    nodeId: item.nodeId,
+    title: item.title,
+    status: item.status,
+    ...(item.detail !== undefined ? { detail: item.detail } : {}),
+    ...(item.taskId !== undefined ? { taskId: item.taskId } : {}),
+    ...(item.intervention !== undefined ? { intervention: structuredClone(item.intervention) } : {}),
+    ...(item.inputRequest !== undefined ? { inputRequest: structuredClone(item.inputRequest) } : {}),
+    ...(item.outputs !== undefined ? { outputs: structuredClone(item.outputs) } : {}),
+  };
+}
 
 export function normalizeWorkflowStatus(status: WorkflowStatus): WorkflowStatus {
   return status === "running" || status === "waiting_for_user" || status === "completed" || status === "failed" || status === "stopped" ? status : "draft";
@@ -29,14 +42,7 @@ export function cloneWorkflowRun(run: WorkflowRunState): WorkflowRunState {
     workflowId: run.workflowId,
     status: run.status,
     workflowV2Plan: cloneWorkflowV2Plan(run.workflowV2Plan),
-    progress: run.progress.map((item) => ({
-      nodeId: item.nodeId,
-      title: item.title,
-      status: item.status,
-      ...(item.detail !== undefined ? { detail: item.detail } : {}),
-      ...(item.taskId !== undefined ? { taskId: item.taskId } : {}),
-      ...(item.intervention !== undefined ? { intervention: structuredClone(item.intervention) } : {}),
-    })),
+    progress: run.progress.map(cloneWorkflowRunProgressItem),
     events: run.events.map((event) => structuredClone(event)),
     contextDocument: run.contextDocument,
     ...(run.finalReport !== undefined ? { finalReport: run.finalReport } : {}),
@@ -132,14 +138,7 @@ export function cloneWorkflowDraft(input: {
     })),
     reply: draft.reply,
     error: draft.error,
-    runProgress: draft.runProgress.map((item) => ({
-      nodeId: item.nodeId,
-      title: item.title,
-      status: item.status,
-      ...(item.detail !== undefined ? { detail: item.detail } : {}),
-      ...(item.taskId !== undefined ? { taskId: item.taskId } : {}),
-      ...(item.intervention !== undefined ? { intervention: structuredClone(item.intervention) } : {}),
-    })),
+    runProgress: draft.runProgress.map(cloneWorkflowRunProgressItem),
     runContextDocument: draft.runContextDocument,
     contextDocument: draft.contextDocument,
     ...(draft.workflowV2Plan ? { workflowV2Plan: cloneWorkflowV2Plan(draft.workflowV2Plan) } : {}),
