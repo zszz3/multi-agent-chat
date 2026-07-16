@@ -39,6 +39,31 @@ describe("workflow-v2 script input", () => {
     expect(result.missing).toEqual([expect.objectContaining({ key: "body", location: "body", valueType: "json" })]);
   });
 
+  test("requests every unresolved user field together, including optional fields", () => {
+    const result = resolveWorkflowV2ScriptInput({
+      parameters: [
+        parameter({ key: "query", source: "user", location: "query" }),
+        parameter({ key: "authorization", source: "user", location: "header", required: false }),
+        parameter({ key: "body", source: "user", location: "body", valueType: "json" }),
+      ],
+      workflowContext: {},
+      upstreamOutputs: [],
+      submittedValues: {},
+    });
+
+    expect(result).toMatchObject({ complete: false, missing: [{ key: "query" }, { key: "body" }] });
+    expect(result.requested.map((item) => item.key)).toEqual(["query", "authorization", "body"]);
+  });
+
+  test("rejects a submitted enum value outside the declared request contract", () => {
+    expect(() => resolveWorkflowV2ScriptInput({
+      parameters: [parameter({ key: "format", source: "user", enum: ["json", "text"] })],
+      workflowContext: {},
+      upstreamOutputs: [],
+      submittedValues: { format: "xml" },
+    })).toThrow("Script parameter format must be one of: json, text.");
+  });
+
   test("redacts secret values from audit output", () => {
     const result = resolveWorkflowV2ScriptInput({
       parameters: [parameter({ key: "token", source: "user", location: "environment", valueType: "secret" })],

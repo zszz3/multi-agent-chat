@@ -59,6 +59,9 @@ function restoreWorkflowV2ScriptParameter(raw: unknown): WorkflowV2ScriptParamet
   const upstreamOutputKey = asOptionalString(record.upstreamOutputKey);
   const workflowPath = asOptionalString(record.workflowPath);
   if (description) parameter.description = description;
+  if (Array.isArray(record.enum) && record.enum.every((item) => typeof item === "string" || typeof item === "number" || typeof item === "boolean")) {
+    parameter.enum = structuredClone(record.enum) as NonNullable<WorkflowV2ScriptParameterDef["enum"]>;
+  }
   if (record.defaultValue !== undefined) parameter.defaultValue = structuredClone(record.defaultValue) as NonNullable<WorkflowV2ScriptParameterDef["defaultValue"]>;
   if (record.literalValue !== undefined) parameter.literalValue = structuredClone(record.literalValue) as NonNullable<WorkflowV2ScriptParameterDef["literalValue"]>;
   if (upstreamNodeId) parameter.upstreamNodeId = upstreamNodeId;

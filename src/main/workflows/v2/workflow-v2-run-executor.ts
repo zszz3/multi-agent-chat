@@ -743,8 +743,8 @@ export class WorkflowV2RunExecutor {
         submittedValues,
       });
       if (!resolvedInput.complete) {
-        const requestedAt = recordWorkflowV2ScriptInputRequest({ nodeId: request.node.id, nodeTitle: request.node.title, missing: resolvedInput.missing, control: durableNodeControl, updateNode });
-        await persistence.persistControlState(request.node.id, "script_input_requested", resolvedInput.missing.map((item) => item.key).join(","));
+        const requestedAt = recordWorkflowV2ScriptInputRequest({ nodeId: request.node.id, nodeTitle: request.node.title, requested: resolvedInput.requested, control: durableNodeControl, updateNode });
+        await persistence.persistControlState(request.node.id, "script_input_requested", resolvedInput.requested.map((item) => item.key).join(","));
         throw workflowV2ScriptInputSignal({ nodeId: request.node.id, nodeTitle: request.node.title, missing: resolvedInput.missing, requestedAt });
       }
       const remainingScriptMs = assertWallClockBudget(request.node.id);

@@ -121,6 +121,17 @@ describe("workflow-v2 validation", () => {
     expect(validateWorkflowV2Definition(definition).valid).toBe(true);
   });
 
+  test("validates enum request parameters as typed, non-empty, and unique", () => {
+    const definition = validDefinition();
+    const node = definition.nodes[1]!;
+    if (node.execModel !== "script") throw new Error("expected script node");
+    node.script.parameters = [{ key: "format", label: "Format", location: "query", valueType: "string", source: "user", required: true, enum: ["json", "text"] }];
+    expect(validateWorkflowV2Definition(definition).valid).toBe(true);
+
+    node.script.parameters[0]!.enum = ["json", "json"];
+    expect(validateWorkflowV2Definition(definition).errors).toContain("Workflow V2 script node apply parameter format has duplicate enum values.");
+  });
+
   test("returns structured errors for an unsupported execution model instead of throwing", () => {
     const invalid = validDefinition();
     invalid.nodes[0]!.execModel = "tool" as unknown as typeof invalid.nodes[0]["execModel"];

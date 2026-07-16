@@ -429,7 +429,10 @@ describe("WorkflowRuntime typed script input", () => {
       executionMode: "script",
       script: {
         ...createWorkflowV2InlineScriptSpec({ language: "typescript", code: "return { ok: true };" }),
-        parameters: [{ key: "body", label: "Request body", location: "body", valueType: "json", source: "user", required: true }],
+        parameters: [
+          { key: "body", label: "Request body", location: "body", valueType: "json", source: "user", required: true },
+          { key: "authorization", label: "Authorization", location: "header", valueType: "string", source: "user", required: false },
+        ],
       },
       outputFields: [{ key: "ok", required: true }],
     }];
@@ -451,13 +454,16 @@ describe("WorkflowRuntime typed script input", () => {
     expect(executeCount).toBe(0);
     expect(fixture.updates.flatMap((update) => update.progress ?? []).filter((item) => item.nodeId === "submit").at(-1)).toMatchObject({
       status: "awaiting_input",
-      detail: "Waiting for Request body",
+      detail: "Waiting for Request body, Authorization",
       inputRequest: {
         kind: "script_parameters",
-        parameters: [{ key: "body", label: "Request body", location: "body", valueType: "json", source: "user", required: true }],
+        parameters: [
+          { key: "body", label: "Request body", location: "body", valueType: "json", source: "user", required: true },
+          { key: "authorization", label: "Authorization", location: "header", valueType: "string", source: "user", required: false },
+        ],
       },
     });
-    expect(persisted.at(-1)?.nodeControl.submit?.scriptInput).toMatchObject({ requestedParameters: [{ key: "body", location: "body", valueType: "json" }], submittedValues: {} });
+    expect(persisted.at(-1)?.nodeControl.submit?.scriptInput).toMatchObject({ requestedParameters: [{ key: "body", location: "body", valueType: "json" }, { key: "authorization", location: "header", valueType: "string" }], submittedValues: {} });
   });
   test("validates submitted values, persists them, and resumes with frozen inputs", async () => {
     const definition = workflowV2Definition();

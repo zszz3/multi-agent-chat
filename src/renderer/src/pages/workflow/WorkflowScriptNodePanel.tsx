@@ -1,4 +1,4 @@
-import { useMemo } from "react";
+import { useMemo, useState } from "react";
 import { Braces, CheckCircle2, Code2, FileCode2, Play, ShieldCheck, X } from "lucide-react";
 import type { WorkflowRunProgressItem } from "../../../../shared/types";
 import type { WorkflowV2ScriptNode, WorkflowV2ScriptParameterDef } from "../../../../shared/workflow-v2/definition";
@@ -10,6 +10,14 @@ const sourceLabels: Record<WorkflowV2ScriptParameterDef["source"], string> = {
   upstream: "Upstream output",
   literal: "Literal",
 };
+
+const inputTabDefinitions: Array<{ id: string; label: string; locations: WorkflowV2ScriptParameterDef["location"][] }> = [
+  { id: "params", label: "Params", locations: ["argument", "query"] },
+  { id: "headers", label: "Headers", locations: ["header"] },
+  { id: "body", label: "Body", locations: ["body"] },
+  { id: "environment", label: "Environment", locations: ["environment"] },
+  { id: "stdin", label: "Standard input", locations: ["stdin"] },
+];
 
 function parameterBinding(parameter: WorkflowV2ScriptParameterDef): string {
   if (parameter.source === "upstream") return `${parameter.upstreamNodeId ?? "node"}.${parameter.upstreamOutputKey ?? "output"}`;
@@ -36,12 +44,15 @@ export function WorkflowScriptNodePanel({ node, progress, onSubmitInput, onClose
   onClose: () => void;
 }) {
   const requestedParameters = progress?.inputRequest?.kind === "script_parameters" ? progress.inputRequest.parameters : [];
-  const inputGroups = useMemo(() => {
+  const [activeInputTab, setActiveInputTab] = useState("params");
+  const inputTabs = useMemo(() => {
     const groups = new Map<WorkflowV2ScriptParameterDef["location"], WorkflowV2ScriptParameterDef[]>();
     for (const parameter of requestedParameters) {
       groups.set(parameter.location, [...(groups.get(parameter.location) ?? []), parameter]);
     }
-    return [...groups.entries()];
+    return inputTabDefinitions
+      .map((tab) => ({ ...tab, groups: tab.locations.map((location) => [location, groups.get(location) ?? []] as const).filter(([, parameters]) => parameters.length > 0) }))
+      .filter((tab) => tab.groups.length > 0);
   }, [requestedParameters]);
   const inputAdapter = useMemo(() => ({
     prepare: (values: Record<string, string>) => {
@@ -59,6 +70,7 @@ export function WorkflowScriptNodePanel({ node, progress, onSubmitInput, onClose
     },
   }), [onSubmitInput, requestedParameters]);
   const input = useWorkflowNodeInputController({ scope: `script:${node.id}`, adapter: inputAdapter });
+  const visibleInputTab = inputTabs.find((tab) => tab.id === activeInputTab) ?? inputTabs[0];
   const executable = node.script.executable;
   const code = executable.kind === "inline" ? executable.code : [executable.command, ...(executable.args ?? [])].join(" ");
   const language = executable.kind === "inline" ? executable.language : "command";
@@ -67,6 +79,12 @@ export function WorkflowScriptNodePanel({ node, progress, onSubmitInput, onClose
   const renderInput = (parameter: WorkflowV2ScriptParameterDef) => {
     const value = input.values[parameter.key] ?? "";
     const setValue = (next: string) => input.setValue(parameter.key, next);
+    if (parameter.enum?.length) {
+      return <select name={parameter.key} value={value} onChange={(event) => setValue(event.currentTarget.value)}>
+        <option value="">Select...</option>
+        {parameter.enum.map((option) => <option key={`${typeof option}:${String(option)}`} value={String(option)}>{String(option)}</option>)}
+      </select>;
+    }
     if (parameter.valueType === "json") {
       return <textarea name={parameter.key} rows={4} value={value} onChange={(event) => setValue(event.currentTarget.value)} />;
     }
@@ -98,8 +116,11 @@ export function WorkflowScriptNodePanel({ node, progress, onSubmitInput, onClose
 
         {requestedParameters.length ? <section className="workflow-script-node-section is-runtime-input">
           <div className="workflow-script-node-section-title"><Play size={15} /><div><strong>Required run inputs</strong><span>Provide only the values declared as user input. No agent is started.</span></div></div>
+          <div className="workflow-script-input-tabs" role="tablist" aria-label="Script request inputs">
+            {inputTabs.map((tab) => <button key={tab.id} type="button" role="tab" aria-selected={tab.id === visibleInputTab?.id} className={tab.id === visibleInputTab?.id ? "is-active" : ""} onClick={() => setActiveInputTab(tab.id)}>{tab.label}</button>)}
+          </div>
           <div className="workflow-script-runtime-inputs">
-            {inputGroups.map(([location, parameters]) => <div className="workflow-script-runtime-group" key={location}>
+            {visibleInputTab?.groups.map(([location, parameters]) => <div className="workflow-script-runtime-group" key={location}>
               <h4>{location}</h4>
               {parameters.map((parameter) => <label key={parameter.key}>
                 <span><b>{parameter.label}{parameter.required ? " *" : ""}</b><small>{parameter.key} · {parameter.valueType}</small></span>

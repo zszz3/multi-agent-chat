@@ -11,6 +11,13 @@ describe("workflow node input drafts", () => {
     });
   });
 
+  test("keeps every field entered in the same request form", () => {
+    const first = updateWorkflowNodeInputDrafts({}, "script:request", "query", "openai");
+    const second = updateWorkflowNodeInputDrafts(first, "script:request", "authorization", "Bearer token");
+    const third = updateWorkflowNodeInputDrafts(second, "script:request", "body", "{\"limit\":10}");
+    expect(third["script:request"]).toEqual({ query: "openai", authorization: "Bearer token", body: "{\"limit\":10}" });
+  });
+
   test("clears only the successfully submitted node draft", () => {
     const drafts = {
       "agent:research": { message: "hello" },

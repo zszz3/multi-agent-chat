@@ -173,6 +173,20 @@ function appendNodeValidationErrors(node: WorkflowV2Node, errors: string[]): voi
     if (node.script.executable.kind === "inline" && !node.script.executable.code.trim()) errors.push(`Workflow V2 script node ${node.id} must have executable code.`);
     if (node.script.executable.kind === "command" && !node.script.executable.command.trim()) errors.push(`Workflow V2 script node ${node.id} must have an executable command.`);
     if (!Array.isArray(node.script.parameters)) errors.push(`Workflow V2 script node ${node.id} must declare parameters.`);
+    else for (const parameter of node.script.parameters) {
+      if (!parameter.enum) continue;
+      if (parameter.enum.length === 0) errors.push(`Workflow V2 script node ${node.id} parameter ${parameter.key} must not declare an empty enum.`);
+      if (parameter.valueType !== "string" && parameter.valueType !== "number" && parameter.valueType !== "boolean") {
+        errors.push(`Workflow V2 script node ${node.id} parameter ${parameter.key} may use enum only with string, number, or boolean values.`);
+        continue;
+      }
+      if (parameter.enum.some((value) => typeof value !== parameter.valueType)) {
+        errors.push(`Workflow V2 script node ${node.id} parameter ${parameter.key} enum values must match ${parameter.valueType}.`);
+      }
+      if (new Set(parameter.enum.map((value) => `${typeof value}:${String(value)}`)).size !== parameter.enum.length) {
+        errors.push(`Workflow V2 script node ${node.id} parameter ${parameter.key} has duplicate enum values.`);
+      }
+    }
     if (!Array.isArray(node.script.capabilities)) errors.push(`Workflow V2 script node ${node.id} must declare capabilities.`);
     if (!VALID_SCRIPT_RISKS.has(node.script.managerRisk.level) || !node.script.managerRisk.rationale.trim()) errors.push(`Workflow V2 script node ${node.id} must declare Manager risk and rationale.`);
     if (node.script.timeoutMs !== undefined && !isPositiveSafeInteger(node.script.timeoutMs)) {

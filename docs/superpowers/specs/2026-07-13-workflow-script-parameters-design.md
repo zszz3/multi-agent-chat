@@ -6,19 +6,19 @@ Make script inputs first-class, typed, inspectable, and editable through the nod
 
 ## Parameter Contract
 
-Each parameter declares a stable key and label, binding location (`argument`, `environment`, `header`, `query`, `body`, or `stdin`), value type (`string`, `number`, `boolean`, `json`, `secret`, `file`, or `directory`), source (`user`, `workflow`, `upstream`, or `literal`), required state, description, default value, and any source selector.
+Each parameter declares a stable key and label, binding location (`argument`, `environment`, `header`, `query`, `body`, or `stdin`), value type (`string`, `number`, `boolean`, `json`, `secret`, `file`, or `directory`), source (`user`, `workflow`, `upstream`, or `literal`), required state, description, default value, optional scalar `enum`, and any source selector.
 
 Parameters replace `script.input` and ad-hoc argument interpolation.
 
 ## Resolution
 
-At node readiness time the runtime resolves non-user sources from frozen workflow context and direct upstream result packets. Missing required user parameters move the node to `awaiting_input` and use the same node conversation surface as interactive Agent nodes.
+At node readiness time the runtime resolves non-user sources from frozen workflow context and direct upstream result packets. Missing required user parameters move the node to `awaiting_input`. The request includes every unresolved user parameter for that node, including optional Header, Query, Body, Environment, and stdin fields, so the user can complete the request once instead of being prompted field by field.
 
 Submitted values are type-validated, stored as run-scoped node input, and shown in node history. Secrets use the secret facility and persist only redacted metadata.
 
 ## UI
 
-The script node window uses Apifox-style sections for Parameters, Headers, Query, Body, Environment, Standard input, Permissions, Script source, and Output schema. Controls are selected by value type.
+The script node window uses Apifox-style request tabs for Params, Headers, Body, Environment, and Standard input, alongside Permissions, Script source, and Output schema. JSON bodies use a JSON text editor; other fields use typed row controls; scalar `enum` fields use a select. All visible request fields share one draft and are submitted together.
 
 ## Invariants
 

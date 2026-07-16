@@ -21,6 +21,7 @@ export type WorkflowV2ScriptParameterLocation = "argument" | "environment" | "he
 export type WorkflowV2ScriptParameterValueType = "string" | "number" | "boolean" | "json" | "secret" | "file" | "directory";
 export type WorkflowV2ScriptParameterSource = "user" | "workflow" | "upstream" | "literal";
 export type WorkflowV2ScriptParameterValue = string | number | boolean | Record<string, unknown> | unknown[];
+export type WorkflowV2ScriptParameterEnumValue = string | number | boolean;
 export interface WorkflowV2ScriptAuthorization {
   decision: WorkflowV2ScriptPermissionDecision;
   workflowId: string;
@@ -39,6 +40,7 @@ export interface WorkflowV2ScriptParameterDef {
   source: WorkflowV2ScriptParameterSource;
   required: boolean;
   description?: string;
+  enum?: WorkflowV2ScriptParameterEnumValue[];
   defaultValue?: WorkflowV2ScriptParameterValue;
   workflowPath?: string;
   upstreamNodeId?: string;

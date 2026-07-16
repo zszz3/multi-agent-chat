@@ -47,6 +47,26 @@ describe("WorkflowScriptNodePanel", () => {
     expect(html).toContain('name="text"');
   });
 
+  test("organizes multiple request inputs into Apifox-style tabs and renders enums as selects", () => {
+    const html = renderToStaticMarkup(<WorkflowScriptNodePanel
+      node={node}
+      progress={{ nodeId: "echo", title: "Echo input", status: "awaiting_input", inputRequest: { kind: "script_parameters", parameters: [
+        { key: "q", label: "Query", location: "query", valueType: "string", source: "user", required: true },
+        { key: "mode", label: "Mode", location: "query", valueType: "string", source: "user", required: true, enum: ["fast", "safe"] },
+        { key: "authorization", label: "Authorization", location: "header", valueType: "string", source: "user", required: false },
+        { key: "format", label: "Format", location: "body", valueType: "string", source: "user", required: true, enum: ["json", "text"] },
+      ] } }}
+      onSubmitInput={() => undefined}
+      onClose={() => undefined}
+    />);
+    expect(html).toContain('role="tablist"');
+    expect(html).toContain(">Params<");
+    expect(html).toContain(">Headers<");
+    expect(html).toContain(">Body<");
+    expect(html).toContain('name="mode"');
+    expect(html).toContain('<option value="fast">fast</option>');
+  });
+
   test("renders completed script output as structured JSON", () => {
     const html = renderToStaticMarkup(<WorkflowScriptNodePanel
       node={node}

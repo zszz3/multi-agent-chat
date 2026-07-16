@@ -48,7 +48,7 @@ function renderScriptSpec(
     executable: script.executable.kind === "inline"
       ? { ...script.executable, code: renderTemplateValue(script.executable.code, params) }
       : { ...script.executable, ...(script.executable.args ? { args: script.executable.args.map((argument) => renderTemplateValue(argument, params)) } : {}) },
-    parameters: script.parameters.map((parameter) => ({ ...parameter })),
+    parameters: script.parameters.map((parameter) => ({ ...parameter, ...(parameter.enum ? { enum: [...parameter.enum] } : {}) })),
     capabilities: [...script.capabilities],
     managerRisk: { ...script.managerRisk },
   };

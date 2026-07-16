@@ -9,6 +9,7 @@ export interface ResolveWorkflowV2ScriptInputResult {
   values: Record<string, unknown>;
   auditValues: Record<string, unknown>;
   missing: WorkflowV2ScriptParameterDef[];
+  requested: WorkflowV2ScriptParameterDef[];
 }
 
 export function workflowV2ScriptInputSignal(input: { nodeId: string; nodeTitle: string; missing: WorkflowV2ScriptParameterDef[]; requestedAt: number }): WorkflowV2SupervisionSignal {
@@ -18,11 +19,11 @@ export function workflowV2ScriptInputSignal(input: { nodeId: string; nodeTitle: 
   });
 }
 
-export function recordWorkflowV2ScriptInputRequest(input: { nodeId: string; nodeTitle: string; missing: WorkflowV2ScriptParameterDef[]; control: Record<string, WorkflowV2DurableNodeControlState>; updateNode: (nodeId: string, patch: Partial<WorkflowRunProgressItem>, event: { type: "gate_opened"; nodeId: string; question: string }) => void }): number {
+export function recordWorkflowV2ScriptInputRequest(input: { nodeId: string; nodeTitle: string; requested: WorkflowV2ScriptParameterDef[]; control: Record<string, WorkflowV2DurableNodeControlState>; updateNode: (nodeId: string, patch: Partial<WorkflowRunProgressItem>, event: { type: "gate_opened"; nodeId: string; question: string }) => void }): number {
   const requestedAt = Date.now();
-  input.control[input.nodeId] = { ...(input.control[input.nodeId] ?? { extensionCount: 0 }), scriptInput: { requestedParameters: input.missing, submittedValues: {}, auditValues: {}, requestedAt } };
-  const labels = input.missing.map((item) => item.label).join(", ");
-  input.updateNode(input.nodeId, { status: "awaiting_input", detail: `Waiting for ${labels}`, inputRequest: { kind: "script_parameters", parameters: structuredClone(input.missing) } }, { type: "gate_opened", nodeId: input.nodeId, question: `Provide script inputs: ${labels}` });
+  input.control[input.nodeId] = { ...(input.control[input.nodeId] ?? { extensionCount: 0 }), scriptInput: { requestedParameters: input.requested, submittedValues: {}, auditValues: {}, requestedAt } };
+  const labels = input.requested.map((item) => item.label).join(", ");
+  input.updateNode(input.nodeId, { status: "awaiting_input", detail: "Waiting for script inputs", inputRequest: { kind: "script_parameters", parameters: structuredClone(input.requested) } }, { type: "gate_opened", nodeId: input.nodeId, question: `Provide script inputs: ${labels}` });
   return requestedAt;
 }
 
@@ -39,6 +40,7 @@ function assertParameterType(parameter: WorkflowV2ScriptParameterDef, value: unk
   if (parameter.valueType === "boolean" && typeof value !== "boolean") throw new Error(`Script parameter ${parameter.key} must be a boolean.`);
   if ((parameter.valueType === "string" || parameter.valueType === "secret" || parameter.valueType === "file" || parameter.valueType === "directory") && typeof value !== "string") throw new Error(`Script parameter ${parameter.key} must be a string.`);
   if (parameter.valueType === "json" && (typeof value !== "object" || value === null)) throw new Error(`Script parameter ${parameter.key} must be JSON.`);
+  if (parameter.enum && !parameter.enum.some((item) => Object.is(item, value))) throw new Error(`Script parameter ${parameter.key} must be one of: ${parameter.enum.join(", ")}.`);
 }
 
 function resolveParameter(input: {
@@ -66,10 +68,14 @@ export function resolveWorkflowV2ScriptInput(input: {
   const values: Record<string, unknown> = {};
   const auditValues: Record<string, unknown> = {};
   const missing: WorkflowV2ScriptParameterDef[] = [];
+  const requested: WorkflowV2ScriptParameterDef[] = [];
   for (const parameter of input.parameters) {
     const value = resolveParameter({ ...input, parameter });
     if (value === undefined) {
-      if (parameter.required && parameter.source === "user") missing.push(structuredClone(parameter));
+      if (parameter.source === "user") {
+        requested.push(structuredClone(parameter));
+        if (parameter.required) missing.push(structuredClone(parameter));
+      }
       else if (parameter.required) throw new Error(`Script parameter ${parameter.key} could not be resolved from ${parameter.source}.`);
       continue;
     }
@@ -77,5 +83,5 @@ export function resolveWorkflowV2ScriptInput(input: {
     values[parameter.key] = structuredClone(value);
     auditValues[parameter.key] = parameter.valueType === "secret" ? "[REDACTED]" : structuredClone(value);
   }
-  return { complete: missing.length === 0, values, auditValues, missing };
+  return { complete: missing.length === 0, values, auditValues, missing, requested };
 }
