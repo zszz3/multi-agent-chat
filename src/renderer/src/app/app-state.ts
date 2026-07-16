@@ -44,6 +44,7 @@ export const DEFAULT_SNAPSHOT: AppSnapshot = {
     schedules: [],
     runs: [],
   },
+  workflowNodeConversations: [],
   workflowDraft: undefined,
   artifacts: [],
 };
@@ -127,17 +128,13 @@ export function applyProviderModelIdToAgentConfig(
 }
 
 export function createConfiguredAgent(channels: AgentChannel[], existingIds: string[]): ConfiguredAgent {
-  const baseAgent = channels[0];
-  const runtimeAgentId: AgentId = baseAgent?.agentId ?? "codex";
+  const runtimeAgentId: AgentId = "codex";
   const id = uniqueId("agent", existingIds);
-  const channelId = baseAgent?.id ?? defaultChannelForAgent(runtimeAgentId, channels);
+  const channelId = defaultChannelForAgent(runtimeAgentId, channels);
   return {
     id,
-    agentType: "composed",
     name: "New Agent",
     description: "",
-    instructions: "",
-    ...(baseAgent ? { baseAgentId: baseAgent.id === "codex-openai" ? "default-agent" : `runtime-agent:${baseAgent.id}` } : {}),
     runtimeAgentId,
     channelId,
     modelId: DEFAULT_MODEL_ID,
@@ -227,7 +224,7 @@ export interface WorkflowDraftPersistInput {
   workflowIds: string[];
   objective: string;
   messages: WorkflowGrillMessage[];
-  graphReady: boolean;
+  definitionReady: boolean;
   reply: string;
   error: string | undefined;
   runProgress: WorkflowRunProgressItem[];
@@ -241,7 +238,7 @@ export function workflowDraftShouldPersist(input: WorkflowDraftPersistInput): bo
   const hasContent = Boolean(
     input.objective.trim() ||
       input.messages.length > 0 ||
-      input.graphReady ||
+      input.definitionReady ||
       input.reply.trim() ||
       input.error ||
       input.runProgress.length > 0 ||

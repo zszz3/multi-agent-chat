@@ -31,7 +31,6 @@ export { ChatHistoryPanel } from "./pages/chat/ChatHistoryPanel";
 export { RuntimePage } from "./pages/runtime/RuntimePage";
 export {
   applyCodexDefaultConfigToChannel,
-  applyClaudeDefaultConfigToChannel,
   applyProviderPresetToChannel,
   rememberProviderKeyFromChannel,
   resolveProviderPresetId,
@@ -55,13 +54,6 @@ export {
 export { WorkflowHistoryPanel } from "./pages/workflow/WorkflowHistoryPanel";
 export { WorkflowPage } from "./pages/workflow/WorkflowPage";
 export { workflowCanvasLayout } from "./pages/workflow/workflow-canvas-layout";
-export {
-  parseWorkflowJudgeResult,
-  workflowFinalReviewPrompt,
-  workflowJudgePrompt,
-  workflowNodeRunPrompt,
-  workflowProgressAfterFailure,
-} from "./pages/workflow/workflow-domain";
 export {
   extractWorkflowOutputDocuments,
   extractWorkflowOutputDocumentsForPlan,

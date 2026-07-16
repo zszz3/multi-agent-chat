@@ -5,7 +5,7 @@ import type {
   EvaluationExperiment,
   EvaluationRun,
   EvaluationScore,
-} from "../shared/types";
+} from "../shared/evaluation/types";
 
 type ExecutionResult = { output: string; durationMs: number };
 

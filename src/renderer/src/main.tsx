@@ -4,6 +4,7 @@ import { StrictMode } from "react";
 import { createRoot } from "react-dom/client";
 import { App, loadStoredTheme } from "./App";
 import "./styles.css";
+import "./ui/workbench/workbench.css";
 
 document.documentElement.dataset.theme = loadStoredTheme(window.localStorage);
 

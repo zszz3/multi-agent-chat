@@ -1,6 +1,6 @@
 import { useCallback, useEffect, useRef, useState, type MouseEvent } from "react";
 import type { MultiAgentChatApi } from "../../../../../preload";
-import { selectConfigChannelsForDisplay } from "../../../../../shared/config-channels";
+import { configChannelForSelection, selectConfigChannelsForDisplay } from "../../../../../shared/config-channels";
 import { DEFAULT_MODEL_ID } from "../../../../../shared/models";
 import type {
   AgentChannel,
@@ -47,13 +47,6 @@ export function codexRuntimeAvailability(runtimes: AppSnapshot["runtimes"]): {
     available: false,
     message: detail ? `Codex CLI unavailable: ${detail}` : "Codex CLI unavailable on this machine.",
   };
-}
-
-export function configuredAgentBlockingChannelDelete(
-  agents: AppSnapshot["configuredAgents"],
-  channelId: string,
-): AppSnapshot["configuredAgents"][number] | undefined {
-  return agents.find((agent) => agent.channelId === channelId && !agent.managed);
 }
 
 interface UseRuntimeConfigManagerOptions {
@@ -213,7 +206,7 @@ export function useRuntimeConfigManager({
 
   const deleteConfigChannel = useCallback((channelId: string) => {
     setConfigContextMenu(undefined);
-    const referencedAgent = configuredAgentBlockingChannelDelete(snapshot.configuredAgents, channelId);
+    const referencedAgent = snapshot.configuredAgents.find((agent) => agent.channelId === channelId);
     if (referencedAgent) {
       setConfigStatus(`Config is used by ${referencedAgent.name || referencedAgent.id}`);
       return;

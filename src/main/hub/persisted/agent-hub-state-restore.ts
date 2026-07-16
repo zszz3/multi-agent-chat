@@ -24,7 +24,6 @@ import {
 import { normalizeRestoredMessages, restoreMessage } from "../state/agent-hub-restore";
 import { titleFromPrompt } from "../chat/agent-hub-ui";
 import { ChatState, TaskState } from "../state/agent-hub-state";
-import { restoreRuntimeBindingSnapshot } from "../runtime/runtime-binding";
 export {
   restoreTeamRunState,
   restoreTeamRunStep,
@@ -86,29 +85,15 @@ export function restoreConfiguredAgentState(
     : defaultModelForAgent(runtimeAgentId);
   const model = deps.channelById(normalizedChannelId)?.models.find((item) => item.id === normalizedModelId);
   const reasoningEffort = asOptionalString(record.reasoningEffort);
-  const baseAgentId = asOptionalString(record.baseAgentId);
-  const currentRevisionId = asOptionalString(record.currentRevisionId);
   return {
     id,
-    agentType: record.agentType === "execution" || record.managed === true ? "execution" : "composed",
     name,
     description: asOptionalString(record.description) ?? "",
-    instructions: asOptionalString(record.instructions) ?? "",
-    mcpBindings: asArray(record.mcpBindings).map((binding) => {
-      const item = asRecord(binding);
-      return {
-        serverId: asOptionalString(item?.serverId) ?? "",
-        toolAllowlist: asArray(item?.toolAllowlist).map((tool) => asOptionalString(tool) ?? "").filter(Boolean),
-      };
-    }).filter((binding) => Boolean(binding.serverId)),
-    ...(baseAgentId ? { baseAgentId } : {}),
     runtimeAgentId,
     channelId: normalizedChannelId,
     modelId: normalizedModelId,
     ...(reasoningEffort && model?.reasoningEfforts?.includes(reasoningEffort) ? { reasoningEffort } : {}),
     tags: asArray(record.tags).map((tag) => asOptionalString(tag)).filter((tag): tag is string => Boolean(tag)),
-    ...(currentRevisionId ? { currentRevisionId } : {}),
-    ...(typeof record.revision === "number" ? { revision: asNumber(record.revision, 1) } : {}),
     ...(record.managed === true ? { managed: true } : {}),
     createdAt: asNumber(record.createdAt, now),
     updatedAt: asNumber(record.updatedAt, now),
@@ -191,7 +176,6 @@ export function restoreChatState(raw: unknown, deps: RestoreChatStateDeps): Chat
     delete chat.runtimeState.activeTurnId;
   }
   chat.runtimeConversation = restoredRuntimeConversation ? deps.cloneRuntimeConversation(restoredRuntimeConversation) : undefined;
-  chat.runtimeBinding = restoreRuntimeBindingSnapshot(record.runtimeBinding);
   return chat;
 }
 
@@ -209,6 +193,8 @@ export function restoreTaskState(raw: unknown, deps: RestoreTaskStateDeps): Task
     asOptionalString(record.workDir) ?? deps.workDir,
   );
   task.id = asOptionalString(record.id) ?? task.id;
+  task.developerInstructions = asOptionalString(record.developerInstructions);
+  task.contextDocument = asOptionalString(record.contextDocument);
   task.title = asOptionalString(record.title) ?? titleFromPrompt(record.prompt);
   task.progress = isTaskProgress(record.progress) ? record.progress : "todo";
   const status = isTaskRunStatus(record.status) ? record.status : "completed";

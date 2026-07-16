@@ -15,7 +15,7 @@ export class ApiAgentExecutor implements AgentExecutor {
   ) {}
 
   async start(): Promise<void> {
-    const channel = this.context.channel ?? this.options.channelById(this.context.channelId);
+    const channel = this.options.channelById(this.context.channelId);
     if (!channel?.baseUrl) {
       this.context.emit({ type: "error", error: "API agent requires a provider base URL." });
       this.context.onExit(1);

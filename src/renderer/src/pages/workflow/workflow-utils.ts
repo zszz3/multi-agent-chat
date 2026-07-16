@@ -1,18 +1,17 @@
 import type { WorkflowRunNodeStatus, WorkflowRunProgressItem } from "../../../../shared/types";
-import { parseWorkflowGraphUpsert } from "../../../../shared/workflow-graph";
 import {
   truncateWorkflowContext,
   workflowStoragePlanDocument,
   workflowStoragePlanFor,
   type WorkflowStoragePlan,
-} from "../../../../shared/workflow-run";
+} from "../../../../shared/workflow-v2/runtime-utils";
 
 export {
   truncateWorkflowContext,
   workflowStoragePlanDocument,
   workflowStoragePlanFor,
   type WorkflowStoragePlan,
-} from "../../../../shared/workflow-run";
+} from "../../../../shared/workflow-v2/runtime-utils";
 
 export const WORKFLOW_THINKING_MESSAGE = "Agent is thinking...";
 const WORKFLOW_OUTPUT_DOCUMENT_EXTENSIONS = "md|markdown|txt|json|yaml|yml|html|htm";
@@ -22,8 +21,7 @@ export function isMarkdownFilePath(path: string): boolean {
 }
 
 export function workflowAssistantDisplayContent(content: string): string {
-  const graph = parseWorkflowGraphUpsert(content);
-  return graph ? `Workflow graph ready: ${graph.title}` : content;
+  return content;
 }
 
 export interface WorkflowOutputDocument {

@@ -1,11 +1,7 @@
 import { describe, expect, test } from "vitest";
 import { DEFAULT_CONFIG_CHANNEL_IDS } from "./config-channels";
 import { FALLBACK_MODEL_OPTIONS } from "./models";
-import {
-  AGENT_PROVIDER_PRESETS,
-  CLAUDE_LOCAL_DEFAULT_PRESET_ID,
-  CODEX_LOCAL_DEFAULT_PRESET_ID,
-} from "./provider-presets";
+import { AGENT_PROVIDER_PRESETS } from "./provider-presets";
 import { isRuntimeId, RUNTIME_DEFINITIONS, RUNTIME_IDS, runtimeDefinition } from "./runtime-catalog";
 
 describe("runtime catalog", () => {
@@ -61,13 +57,11 @@ describe("runtime catalog", () => {
     expect(codex).toHaveLength(29);
     expect(claude).toHaveLength(27);
     expect(codex.map((preset) => preset.label)).toEqual(expect.arrayContaining([
-      "OpenAI Official", "Default", "火山Agentplan", "DeepSeek", "Zhipu GLM", "Bailian", "Kimi", "MiniMax", "OpenRouter",
+      "OpenAI Official", "火山Agentplan", "DeepSeek", "Zhipu GLM", "Bailian", "Kimi", "MiniMax", "OpenRouter",
     ]));
     expect(claude.map((preset) => preset.label)).toEqual(expect.arrayContaining([
-      "Claude Official", "Default", "DeepSeek", "Zhipu GLM", "Bailian For Coding", "Kimi", "AWS Bedrock (API Key)",
+      "Claude Official", "DeepSeek", "Zhipu GLM", "Bailian For Coding", "Kimi", "AWS Bedrock (API Key)",
     ]));
-    expect(codex.find((preset) => preset.id === CODEX_LOCAL_DEFAULT_PRESET_ID)).toMatchObject({ label: "Default", category: "local" });
-    expect(claude.find((preset) => preset.id === CLAUDE_LOCAL_DEFAULT_PRESET_ID)).toMatchObject({ label: "Default", category: "local" });
     expect(claude.every((preset) => preset.apiFormat === "anthropic")).toBe(true);
   });
 
@@ -87,5 +81,25 @@ describe("runtime catalog", () => {
     ]));
     expect(codexOfficial).toMatchObject({ usesApiKey: false, requiresOAuth: true, modelProvider: "openai" });
     expect(claude.every((preset) => preset.models.length <= 2)).toBe(true);
+  });
+
+  test("separates local CLI defaults from official providers", () => {
+    expect(AGENT_PROVIDER_PRESETS.find((preset) => preset.id === "codex-local-default")).toMatchObject({
+      runtimeAgentId: "codex",
+      category: "local",
+      label: "Default",
+      usesApiKey: true,
+    });
+    expect(AGENT_PROVIDER_PRESETS.find((preset) => preset.id === "claude-local-default")).toMatchObject({
+      runtimeAgentId: "claude",
+      category: "local",
+      label: "Default",
+      usesApiKey: true,
+    });
+    expect(AGENT_PROVIDER_PRESETS.find((preset) => preset.id === "codex-default")).toMatchObject({
+      runtimeAgentId: "codex",
+      category: "official",
+      requiresOAuth: true,
+    });
   });
 });

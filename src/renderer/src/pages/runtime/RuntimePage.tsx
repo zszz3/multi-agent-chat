@@ -1,4 +1,4 @@
-import { useEffect, useMemo, useState, type MouseEvent } from "react";
+import { useMemo, useState, type MouseEvent } from "react";
 import { CheckCircle2, Cpu, Eye, EyeOff, Plus, RefreshCw, Save, Trash2 } from "lucide-react";
 import { selectConfigChannelsForDisplay } from "../../../../shared/config-channels";
 import { DEFAULT_MODEL_ID } from "../../../../shared/models";
@@ -23,7 +23,6 @@ import type {
 import { agentAccent, agentLabel } from "../../app/agents";
 import { formatDuration } from "../../app/format";
 import type { Language } from "../../app/language";
-import { APP_SAVE_REQUEST_EVENT } from "../../app/save-shortcut";
 import type { AgentTestUiState } from "./runtime-types";
 import {
   addPluginToChannel,
@@ -177,11 +176,6 @@ export function RuntimePage({
 }: RuntimePageProps) {
   const configText = CONFIG_TEXT[language];
   const [showProviderKey, setShowProviderKey] = useState(false);
-  useEffect(() => {
-    const save = () => void onSave();
-    window.addEventListener(APP_SAVE_REQUEST_EVENT, save);
-    return () => window.removeEventListener(APP_SAVE_REQUEST_EVENT, save);
-  }, [onSave]);
   const runtimeTitle = language === "zh" ? "配置" : "Config";
   const runtimeDescription =
     language === "zh"
@@ -259,11 +253,8 @@ export function RuntimePage({
           : await loadCodexDefaultConfigFromRuntimeApi(window.multiAgentChat);
         onUpdateProviderKey(CODEX_LOCAL_DEFAULT_PRESET_ID, config.apiKey ?? "");
         const nextChannel = applyCodexDefaultConfigToChannel(selectedRuntimeChannelRecord, config);
-        if (onReplaceChannelAndPersist) {
-          await onReplaceChannelAndPersist(selectedRuntimeChannelRecord.id, nextChannel);
-        } else {
-          updateSelectedRuntimeChannel(() => nextChannel);
-        }
+        if (onReplaceChannelAndPersist) await onReplaceChannelAndPersist(selectedRuntimeChannelRecord.id, nextChannel);
+        else updateSelectedRuntimeChannel(() => nextChannel);
       } catch (error) {
         onStatusChange?.(error instanceof Error ? error.message : String(error));
       }

@@ -1,10 +1,8 @@
-import { useEffect, useState } from "react";
-import { LockKeyhole, Plus, Save, Server } from "lucide-react";
-import { configuredAgentType } from "../../../../shared/agent-revisions";
-import type { AgentChannel, AgentRevision, ConfiguredAgent, McpServerDefinition } from "../../../../shared/types";
+import { Plus, Save } from "lucide-react";
 import { agentAccent, agentLabel, resolveConfiguredAgentChannel } from "../../app/agents";
 import type { Language } from "../../app/language";
-import { APP_SAVE_REQUEST_EVENT } from "../../app/save-shortcut";
+import { DEFAULT_MODEL_ID } from "../../../../shared/models";
+import type { AgentChannel, ConfiguredAgent } from "../../../../shared/types";
 
 type MaybePromise = void | Promise<void>;
 
@@ -12,7 +10,6 @@ interface AgentPageProps {
   language?: Language;
   channels: AgentChannel[];
   configuredAgents: ConfiguredAgent[];
-  agentRevisions: AgentRevision[];
   selectedConfiguredAgentId: string;
   status: string;
   onSave: () => Promise<void>;
@@ -21,59 +18,49 @@ interface AgentPageProps {
   onUpdateConfiguredAgent: (agentId: string, updater: (agent: ConfiguredAgent) => ConfiguredAgent) => void;
 }
 
-function textFor(language: Language) {
+function configTextFor(language: Language) {
   return language === "zh"
     ? {
         title: "Agent 组装",
-        description: "执行型 Agent 与 Runtime 一对一同步；复杂型 Agent 在此组装指令和能力。",
-        composed: "复杂型",
-        execution: "执行型 · 只读",
-        newAgent: "新建复杂 Agent",
-        save: "保存新版本",
+        description: "组装 Agent 的名称、描述、执行配置和标签。",
+        save: "保存",
         name: "名称",
-        descriptionField: "描述",
-        instructions: "Instructions",
-        base: "基础执行 Agent",
-        runtime: "Runtime",
         config: "配置",
+        runtime: "Runtime",
         model: "模型",
         reasoning: "推理强度",
         tags: "标签",
-        revisions: "版本历史",
-        capabilities: "MCP 能力",
-        noMcp: "请先在 MCP 页面添加 Server。",
-        runtimeHint: "该 Agent 由 Runtime 配置自动生成。请在 Runtime 页面修改执行配置。",
-        empty: "新建复杂 Agent 后，可以组装 Instructions、Skills 和 MCP。",
+        descriptionField: "描述",
+        emptyAgent: "新建 Agent 后可编辑名称、描述、执行配置和标签。",
+        newAgent: "新建 Agent",
       }
     : {
         title: "Agent Assembly",
-        description: "Execution agents mirror Runtime configs; composed agents assemble instructions and capabilities here.",
-        composed: "Composed",
-        execution: "Execution · Read only",
-        newAgent: "New composed agent",
-        save: "Save new version",
+        description: "Assemble agent profiles, execution config, and tags.",
+        save: "Save",
         name: "Name",
-        descriptionField: "Description",
-        instructions: "Instructions",
-        base: "Base execution agent",
-        runtime: "Runtime",
         config: "Config",
+        runtime: "Runtime",
         model: "Model",
         reasoning: "Reasoning",
         tags: "Tags",
-        revisions: "Revision history",
-        capabilities: "MCP capabilities",
-        noMcp: "Add a server on the MCP page first.",
-        runtimeHint: "This agent is generated from a Runtime config. Edit execution settings on the Runtime page.",
-        empty: "Create a composed agent to assemble Instructions, Skills, and MCP.",
+        descriptionField: "Description",
+        emptyAgent: "Create an agent to edit its profile, execution config, and tags.",
+        newAgent: "New agent",
       };
+}
+
+function withReasoningEffort(agent: ConfiguredAgent, reasoningEffort: string | undefined): ConfiguredAgent {
+  const next = { ...agent };
+  if (reasoningEffort) next.reasoningEffort = reasoningEffort;
+  else delete next.reasoningEffort;
+  return next;
 }
 
 export function AgentPage({
   language = "en",
   channels,
   configuredAgents,
-  agentRevisions,
   selectedConfiguredAgentId,
   status,
   onSave,
@@ -81,47 +68,28 @@ export function AgentPage({
   onSelectConfiguredAgent,
   onUpdateConfiguredAgent,
 }: AgentPageProps) {
-  const copy = textFor(language);
-  const [mcpServers, setMcpServers] = useState<McpServerDefinition[]>([]);
-  useEffect(() => { void window.multiAgentChat.listMcpServers().then(setMcpServers); }, []);
-  const selected = configuredAgents.find((agent) => agent.id === selectedConfiguredAgentId) ?? configuredAgents[0];
-  const executionAgents = configuredAgents.filter((agent) => configuredAgentType(agent) === "execution");
-  const composedAgents = configuredAgents.filter((agent) => configuredAgentType(agent) === "composed");
-  const selectedType = selected ? configuredAgentType(selected) : undefined;
-  useEffect(() => {
-    if (selectedType !== "composed") return;
-    const save = () => void onSave();
-    window.addEventListener(APP_SAVE_REQUEST_EVENT, save);
-    return () => window.removeEventListener(APP_SAVE_REQUEST_EVENT, save);
-  }, [onSave, selectedType]);
-  const selectedChannel = selected ? resolveConfiguredAgentChannel(selected, channels) : undefined;
-  const selectedModelLabel = selectedChannel?.models.find((model) => model.id === selected?.modelId)?.label ?? selected?.modelId ?? "";
-  const selectedRevisions = selected
-    ? agentRevisions.filter((revision) => revision.agentId === selected.id).sort((left, right) => right.revision - left.revision)
+  const configText = configTextFor(language);
+  const selectedConfiguredAgent =
+    configuredAgents.find((agent) => agent.id === selectedConfiguredAgentId) ?? configuredAgents[0];
+  const selectedAgentChannel = selectedConfiguredAgent ? resolveConfiguredAgentChannel(selectedConfiguredAgent, channels) : undefined;
+  const selectedAgentModels =
+    selectedAgentChannel && selectedAgentChannel.models.length > 0 ? selectedAgentChannel.models : [{ id: DEFAULT_MODEL_ID, label: "Default" }];
+  const selectedAgentModelId = selectedConfiguredAgent && selectedAgentModels.some((model) => model.id === selectedConfiguredAgent.modelId)
+    ? selectedConfiguredAgent.modelId
+    : DEFAULT_MODEL_ID;
+  const selectedAgentModel = selectedAgentModels.find((model) => model.id === selectedAgentModelId);
+  const reasoningEfforts = selectedAgentModel?.reasoningEfforts ?? [];
+  const runtimes = [...new Set(channels.map((channel) => channel.agentId))];
+  const runtimeChannels = selectedConfiguredAgent
+    ? channels.filter((channel) => channel.agentId === selectedConfiguredAgent.runtimeAgentId)
     : [];
-
-  const renderAgent = (agent: ConfiguredAgent) => {
-    const channel = resolveConfiguredAgentChannel(agent, channels);
-    return (
-      <button
-        key={agent.id}
-        type="button"
-        className={`configured-agent-pick ${agent.id === selected?.id ? "is-active" : ""}`}
-        onClick={() => onSelectConfiguredAgent(agent.id)}
-      >
-        <span className={`agent-badge mini ${agentAccent(agent.runtimeAgentId)}`}>{agentLabel(agent.runtimeAgentId)}</span>
-        <strong>{agent.name || agent.id}</strong>
-        <span>{channel?.label ?? agent.channelId}{agent.revision ? ` · v${agent.revision}` : ""}</span>
-      </button>
-    );
-  };
 
   return (
     <section className="agent-page">
       <header className="config-header">
         <div>
-          <h2>{copy.title}</h2>
-          <p>{copy.description}</p>
+          <h2>{configText.title}</h2>
+          <p>{configText.description}</p>
         </div>
       </header>
 
@@ -130,141 +98,187 @@ export function AgentPage({
           <section className="configured-agent-panel">
             <section className="configured-agent-browser">
               <div className="configured-agent-toolbar">
-                <h3>Agents</h3>
-                <button className="icon-btn" type="button" onClick={() => void onAddConfiguredAgent()} aria-label={copy.newAgent} title={copy.newAgent}>
+                <div>
+                  <h3>Agents</h3>
+                </div>
+                <button className="icon-btn" type="button" onClick={() => void onAddConfiguredAgent()} aria-label={configText.newAgent}>
                   <Plus size={14} />
                 </button>
               </div>
               <div className="configured-agent-list">
-                {composedAgents.length > 0 ? <div className="configured-agent-group-label">{copy.composed}</div> : null}
-                {composedAgents.map(renderAgent)}
-                <div className="configured-agent-group-label">{copy.execution}</div>
-                {executionAgents.map(renderAgent)}
+                {configuredAgents.map((agent) => (
+                  <button
+                    key={agent.id}
+                    type="button"
+                    className={`configured-agent-pick ${agent.id === selectedConfiguredAgent?.id ? "is-active" : ""}`}
+                    onClick={() => onSelectConfiguredAgent(agent.id)}
+                  >
+                    <span className={`agent-badge mini ${agentAccent(agent.runtimeAgentId)}`}>{agentLabel(agent.runtimeAgentId)}</span>
+                    <strong>{agent.name || agent.id}</strong>
+                    <span>{channels.find((channel) => channel.id === agent.channelId)?.label ?? agent.channelId}</span>
+                  </button>
+                ))}
               </div>
             </section>
-
             <section className="configured-agent-editor">
-              {selected ? (
+              {selectedConfiguredAgent ? (
                 <>
                   <div className="configured-agent-editor-head">
                     <div>
-                      <h3>{selected.name || "Untitled Agent"}</h3>
-                      <span>{selected.id}{selected.revision ? ` · v${selected.revision}` : ""}</span>
+                      <h3>{selectedConfiguredAgent.name || "Untitled Agent"}</h3>
+                      <span>{selectedConfiguredAgent.id}</span>
                     </div>
-                    {selectedType === "composed" ? (
-                      <button className="control-btn compact" type="button" onClick={() => void onSave()}>
+                    <div className="configured-agent-editor-actions">
+                      <button className="control-btn compact" onClick={() => void onSave()}>
                         <Save size={13} />
-                        <span>{copy.save}</span>
+                        <span>{configText.save}</span>
                       </button>
-                    ) : (
-                      <span className="configured-agent-readonly-badge"><LockKeyhole size={12} />{copy.execution}</span>
-                    )}
+                    </div>
                   </div>
                   {status ? <div className="config-status">{status}</div> : null}
 
-                  {selectedType === "execution" ? (
-                    <>
-                      <div className="configured-agent-runtime-notice"><LockKeyhole size={14} /><span>{copy.runtimeHint}</span></div>
-                      <div className="config-field-grid">
-                        <ReadOnlyField label={copy.name} value={selected.name} />
-                        <ReadOnlyField label="ID" value={selected.id} />
-                        <ReadOnlyField label={copy.runtime} value={agentLabel(selected.runtimeAgentId)} />
-                        <ReadOnlyField label={copy.config} value={selectedChannel?.label ?? selected.channelId} />
-                        <ReadOnlyField label={copy.model} value={selectedModelLabel} />
-                        <ReadOnlyField label={copy.reasoning} value={selected.reasoningEffort ?? "Default"} />
-                      </div>
-                    </>
-                  ) : (
-                    <div className="config-field-grid">
+                  <div className="config-field-grid">
+                    <label className="config-field">
+                      <span>{configText.name}</span>
+                      <input
+                        aria-label="Agent name"
+                        value={selectedConfiguredAgent.name}
+                        onChange={(event) => {
+                          const nextName = event.currentTarget.value;
+                          onUpdateConfiguredAgent(selectedConfiguredAgent.id, (item) => ({ ...item, name: nextName }));
+                        }}
+                      />
+                    </label>
+                    <label className="config-field">
+                      <span>ID</span>
+                      <div className="configured-agent-runtime-readonly"><strong>{selectedConfiguredAgent.id}</strong></div>
+                    </label>
+                    <label className="config-field">
+                      <span>{configText.runtime}</span>
+                      <select
+                        aria-label="Agent runtime"
+                        value={selectedConfiguredAgent.runtimeAgentId}
+                        onChange={(event) => {
+                          const runtimeAgentId = event.currentTarget.value as AgentChannel["agentId"];
+                          const channel = channels.find((item) => item.agentId === runtimeAgentId);
+                          if (!channel) return;
+                          onUpdateConfiguredAgent(selectedConfiguredAgent.id, (item) => withReasoningEffort({
+                            ...item,
+                            runtimeAgentId,
+                            channelId: channel.id,
+                            modelId: DEFAULT_MODEL_ID,
+                          }, undefined));
+                        }}
+                      >
+                        {runtimes.map((runtime) => (
+                          <option key={runtime} value={runtime}>{agentLabel(runtime)}</option>
+                        ))}
+                      </select>
+                    </label>
+                    <label className="config-field">
+                      <span>{configText.config}</span>
+                      <select
+                        aria-label="Agent execution config"
+                        value={selectedAgentChannel?.id ?? ""}
+                        onChange={(event) => {
+                          const channel = channels.find((item) => item.id === event.currentTarget.value);
+                          if (!channel) return;
+                          onUpdateConfiguredAgent(selectedConfiguredAgent.id, (item) => withReasoningEffort({
+                            ...item,
+                            runtimeAgentId: channel.agentId,
+                            channelId: channel.id,
+                            modelId: DEFAULT_MODEL_ID,
+                          }, undefined));
+                        }}
+                      >
+                        {runtimeChannels.map((channel) => (
+                          <option key={channel.id} value={channel.id}>
+                            {`${channel.label || channel.id} · ${agentLabel(channel.agentId)}`}
+                          </option>
+                        ))}
+                      </select>
+                    </label>
+                    <label className="config-field">
+                      <span>{configText.model}</span>
+                      <select
+                        aria-label="Agent model"
+                        value={selectedAgentModelId}
+                        disabled={!selectedConfiguredAgent || !selectedAgentChannel}
+                        onChange={(event) => {
+                          const modelId = event.currentTarget.value;
+                          const model = selectedAgentModels.find((candidate) => candidate.id === modelId);
+                          onUpdateConfiguredAgent(selectedConfiguredAgent.id, (item) => withReasoningEffort({
+                            ...item,
+                            modelId,
+                          }, model?.reasoningEfforts?.includes(item.reasoningEffort ?? "") ? item.reasoningEffort : undefined));
+                        }}
+                      >
+                        {selectedAgentModels.map((model) => (
+                          <option key={model.id} value={model.id}>
+                            {model.label || model.id}
+                          </option>
+                        ))}
+                      </select>
+                    </label>
+                    {selectedConfiguredAgent.runtimeAgentId === "codex" && reasoningEfforts.length > 0 ? (
                       <label className="config-field">
-                        <span>{copy.name}</span>
-                        <input aria-label="Agent name" value={selected.name} onChange={(event) => onUpdateConfiguredAgent(selected.id, (agent) => ({ ...agent, name: event.currentTarget.value }))} />
-                      </label>
-                      <label className="config-field">
-                        <span>{copy.base}</span>
+                        <span>{configText.reasoning}</span>
                         <select
-                          aria-label="Base execution agent"
-                          value={selected.baseAgentId ?? executionAgents[0]?.id ?? ""}
+                          aria-label="Agent reasoning effort"
+                          value={selectedConfiguredAgent.reasoningEffort ?? ""}
                           onChange={(event) => {
-                            const base = executionAgents.find((agent) => agent.id === event.currentTarget.value);
-                            if (!base) return;
-                            onUpdateConfiguredAgent(selected.id, (agent) => ({
-                              ...agent,
-                              baseAgentId: base.id,
-                              runtimeAgentId: base.runtimeAgentId,
-                              channelId: base.channelId,
-                              modelId: base.modelId,
-                              ...(base.reasoningEffort ? { reasoningEffort: base.reasoningEffort } : {}),
-                            }));
+                            const reasoningEffort = event.currentTarget.value || undefined;
+                            onUpdateConfiguredAgent(selectedConfiguredAgent.id, (item) => withReasoningEffort(item, reasoningEffort));
                           }}
                         >
-                          {executionAgents.map((agent) => <option key={agent.id} value={agent.id}>{agent.name}</option>)}
+                          <option value="">{`Default${selectedAgentModel?.defaultReasoningEffort ? ` (${selectedAgentModel.defaultReasoningEffort})` : ""}`}</option>
+                          {reasoningEfforts.map((effort) => (
+                            <option key={effort} value={effort}>{effort === "xhigh" ? "XHigh" : `${effort.charAt(0).toUpperCase()}${effort.slice(1)}`}</option>
+                          ))}
                         </select>
                       </label>
-                      <label className="config-field config-field-wide">
-                        <span>{copy.descriptionField}</span>
-                        <input aria-label="Agent description" value={selected.description} onChange={(event) => onUpdateConfiguredAgent(selected.id, (agent) => ({ ...agent, description: event.currentTarget.value }))} />
-                      </label>
-                      <label className="config-field config-field-wide">
-                        <span>{copy.instructions}</span>
-                        <textarea aria-label="Agent instructions" rows={8} value={selected.instructions ?? ""} onChange={(event) => onUpdateConfiguredAgent(selected.id, (agent) => ({ ...agent, instructions: event.currentTarget.value }))} />
-                      </label>
-                      <label className="config-field config-field-wide">
-                        <span>{copy.tags}</span>
-                        <input
-                          aria-label="Agent tags"
-                          value={selected.tags.join(", ")}
-                          onChange={(event) => onUpdateConfiguredAgent(selected.id, (agent) => ({
-                            ...agent,
-                            tags: event.currentTarget.value.split(",").map((tag) => tag.trim()).filter(Boolean),
-                          }))}
-                        />
-                      </label>
-                      <section className="config-field config-field-wide agent-mcp-bindings">
-                        <span>{copy.capabilities}</span>
-                        {mcpServers.length ? mcpServers.map((server) => {
-                          const binding = selected.mcpBindings?.find((item) => item.serverId === server.id);
-                          return <div key={server.id} className="agent-mcp-server">
-                            <label><input type="checkbox" checked={Boolean(binding)} onChange={(event) => onUpdateConfiguredAgent(selected.id, (agent) => ({
-                              ...agent,
-                              mcpBindings: event.currentTarget.checked
-                                ? [...(agent.mcpBindings ?? []), { serverId: server.id, toolAllowlist: [] }]
-                                : (agent.mcpBindings ?? []).filter((item) => item.serverId !== server.id),
-                            }))} /><Server size={13} /><strong>{server.name}</strong></label>
-                            {binding ? <div className="agent-mcp-tools">{server.tools.map((tool) => <label key={tool.name}><input type="checkbox" checked={binding.toolAllowlist.includes(tool.name)} onChange={(event) => onUpdateConfiguredAgent(selected.id, (agent) => ({
-                              ...agent,
-                              mcpBindings: (agent.mcpBindings ?? []).map((item) => item.serverId !== server.id ? item : {
-                                ...item,
-                                toolAllowlist: event.currentTarget.checked ? [...item.toolAllowlist, tool.name] : item.toolAllowlist.filter((name) => name !== tool.name),
-                              }),
-                            }))} />{tool.name}</label>)}</div> : null}
-                          </div>;
-                        }) : <p>{copy.noMcp}</p>}
-                      </section>
-                    </div>
-                  )}
-
-                  <section className="configured-agent-revisions">
-                    <h4>{copy.revisions}</h4>
-                    {selectedRevisions.length > 0 ? selectedRevisions.slice(0, 5).map((revision) => (
-                      <div key={revision.id}><strong>v{revision.revision}</strong><span>{revision.modelId}</span><time>{new Date(revision.createdAt).toLocaleString()}</time></div>
-                    )) : <p>No revisions yet.</p>}
-                  </section>
+                    ) : null}
+                    <label className="config-field">
+                      <span>{configText.tags}</span>
+                      <input
+                        aria-label="Agent tags"
+                        value={selectedConfiguredAgent.tags.join(", ")}
+                        onChange={(event) =>
+                          onUpdateConfiguredAgent(selectedConfiguredAgent.id, (item) => ({
+                            ...item,
+                            tags: event.currentTarget.value
+                              .split(",")
+                              .map((tag) => tag.trim())
+                              .filter(Boolean),
+                          }))
+                        }
+                      />
+                    </label>
+                    <label className="config-field config-field-wide">
+                      <span>{configText.descriptionField}</span>
+                      <input
+                        aria-label="Agent description"
+                        value={selectedConfiguredAgent.description}
+                        onChange={(event) =>
+                          onUpdateConfiguredAgent(selectedConfiguredAgent.id, (item) => ({ ...item, description: event.currentTarget.value }))
+                        }
+                      />
+                    </label>
+                  </div>
                 </>
-              ) : <div className="empty-state configured-agent-empty">{copy.empty}</div>}
+              ) : (
+                <div className="empty-state config-empty configured-agent-empty">
+                  <span>{configText.emptyAgent}</span>
+                  <button className="control-btn compact" onClick={() => void onAddConfiguredAgent()}>
+                    <Plus size={13} />
+                    <span>{configText.newAgent}</span>
+                  </button>
+                </div>
+              )}
             </section>
           </section>
         </section>
       </div>
     </section>
-  );
-}
-
-function ReadOnlyField({ label, value }: { label: string; value: string }) {
-  return (
-    <div className="config-field">
-      <span>{label}</span>
-      <div className="configured-agent-runtime-readonly"><strong>{value}</strong></div>
-    </div>
   );
 }

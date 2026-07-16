@@ -1,22 +1,23 @@
 import type {
   FinishWorkflowRunRequest,
   StartWorkflowRunRequest,
-  WorkflowDraftState,
-  WorkflowGraph,
-  WorkflowRunState,
 } from "../../../shared/types";
+import type { WorkflowDraftState } from "../../../shared/workflow/draft";
+import type { WorkflowRunState } from "../../../shared/workflow/run";
+import { cloneWorkflowV2Plan } from "../../../shared/workflow-v2/planning";
 import type { WorkflowRunStateUpdate } from "../../workflows/workflow-runtime";
 
 export function startWorkflowRunState(input: {
   workflow: WorkflowDraftState;
   request: StartWorkflowRunRequest;
   runId: string;
-  cloneGraph: (graph: WorkflowGraph) => WorkflowGraph;
   cloneDraft: (draft: WorkflowDraftState) => WorkflowDraftState;
   now?: number;
 }): { nextWorkflow: WorkflowDraftState; nextRun: WorkflowRunState } {
   const now = input.now ?? Date.now();
   const contextDocument = input.request.contextDocument ?? input.workflow.contextDocument;
+  if (!input.workflow.workflowV2Plan) throw new Error("Workflow V2 plan is required before starting a run.");
+  if (input.workflow.confirmedRevision !== input.workflow.revision) throw new Error("Workflow must be confirmed before starting a run.");
   const { finalReport: _workflowFinalReport, ...workflowWithoutFinalReport } = input.workflow;
 
   return {
@@ -24,7 +25,7 @@ export function startWorkflowRunState(input: {
       runId: input.runId,
       workflowId: input.workflow.workflowId,
       status: "running",
-      graphSnapshot: input.cloneGraph(input.workflow.graph),
+      workflowV2Plan: cloneWorkflowV2Plan(input.workflow.workflowV2Plan),
       progress: [],
       events: [],
       contextDocument,
@@ -102,6 +103,7 @@ export function updateWorkflowRunState(input: {
       ? { finalReport: input.update.finalReport ?? input.run.finalReport }
       : {}),
     lastError: input.update.lastError ?? input.run.lastError,
+    finishedAt: input.run.finishedAt,
   };
 
   const nextWorkflow = input.cloneDraft({

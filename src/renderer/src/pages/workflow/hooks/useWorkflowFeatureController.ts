@@ -29,10 +29,13 @@ export function useWorkflowFeatureController({
   onRefresh,
   onReadOutputFile,
 }: UseWorkflowFeatureControllerOptions): WorkflowController {
-  const activeRunId =
-    snapshot.workflowStore.runs.find((run) => run.workflowId === draft.workflowId && run.status === "running")?.runId ??
-    draft.workflowRunIds[draft.workflowRunIds.length - 1];
-  const artifacts = (snapshot.artifacts ?? []).filter((artifact) => artifact.target === draft.workflowId || artifact.target === activeRunId);
+  const activeRun = snapshot.workflowStore.runs.find((run) =>
+    run.workflowId === draft.workflowId && (run.status === "running" || run.status === "waiting_for_user"));
+  const activeRunId = activeRun?.runId;
+  const nodeConversations = activeRunId
+    ? snapshot.workflowNodeConversations.filter((conversation) => conversation.workflowId === draft.workflowId && conversation.runId === activeRunId)
+    : [];
+  const artifacts = activeRunId ? (snapshot.artifacts ?? []).filter((artifact) => artifact.target === activeRunId) : [];
   const activeWorkflow = snapshot.workflowStore.workflows.find((workflow) => workflow.workflowId === draft.workflowId);
 
   return useMemo(
@@ -42,14 +45,19 @@ export function useWorkflowFeatureController({
       topologyLocked: activeWorkflow?.topologyLocked === true,
       title: draft.workflowTitle,
       status: draft.workflowStatus,
-      graph: draft.workflowGraph,
-      graphReady: draft.workflowGraphReady,
+      ...(activeWorkflow ? { revision: activeWorkflow.revision } : {}),
+      ...(activeWorkflow?.confirmedRevision !== undefined ? { confirmedRevision: activeWorkflow.confirmedRevision } : {}),
+      definition: draft.workflowDefinition,
+      definitionReady: draft.workflowDefinitionReady,
       objective: draft.workflowObjective,
       messages: draft.workflowMessages,
       reply: draft.workflowReply,
       error: draft.workflowError,
       configuredAgentId: draft.workflowConfiguredAgentId || defaultConfiguredAgentId(snapshot.configuredAgents),
       modelId: draft.workflowModelId,
+      reviewerConfiguredAgentId: draft.workflowReviewerConfiguredAgentId,
+      reviewerModelId: draft.workflowReviewerModelId,
+      generationReview: activeWorkflow?.generationReview,
       runtimes: snapshot.runtimes,
       channels: snapshot.channels,
       configuredAgents: snapshot.configuredAgents,
@@ -60,6 +68,9 @@ export function useWorkflowFeatureController({
       artifacts,
       contextDocument: draft.workflowRunContextDocument,
       finalReport: draft.workflowFinalReport,
+      ...(activeWorkflow?.workflowV2Plan ? { workflowV2Plan: activeWorkflow.workflowV2Plan } : {}),
+      nodeTasks: snapshot.tasks.filter((task) => draft.workflowRunProgress.some((item) => item.taskId === task.id)),
+      nodeConversations,
       onObjectiveChange: draft.setWorkflowObjective,
       onPauseNode: async (nodeId: string) => {
         if (!draft.workflowId || !activeRunId) return;
@@ -77,22 +88,54 @@ export function useWorkflowFeatureController({
           setSnapshot(next);
         }
       },
-      onAnswerGate: async (nodeId: string, answer: string) => {
+      onStopRun: async () => {
         if (!draft.workflowId || !activeRunId) return;
-        const result = await workflows.answerGate({ workflowId: draft.workflowId, runId: activeRunId, nodeId, answer });
-        if (!result.ok && result.error) {
-          const next = await workflows.patchDraft({ workflowId: draft.workflowId, error: result.error });
-          setSnapshot(next);
+        const result = await workflows.stopRun({ workflowId: draft.workflowId, runId: activeRunId });
+        if (!result.ok && result.error) setSnapshot(await workflows.patchDraft({ workflowId: draft.workflowId, error: result.error }));
+      },
+      onSendNodeMessage: async (conversationId, message) => setSnapshot(await workflows.sendNodeMessage({ conversationId, message })),
+      onCompleteNodeConversation: async (conversationId) => {
+        const result = await workflows.completeNodeConversation({ conversationId });
+        if (!result.ok) {
+          const error = result.error ?? "Workflow node completion could not be confirmed.";
+          if (draft.workflowId) setSnapshot(await workflows.patchDraft({ workflowId: draft.workflowId, error }));
+          throw new Error(error);
         }
       },
+      onSubmitScriptInput: async (nodeId, values) => {
+        if (!draft.workflowId || !activeRunId) return;
+        const result = await workflows.submitScriptInput({ workflowId: draft.workflowId, runId: activeRunId, nodeId, values });
+        if (!result.ok) {
+          const error = result.error ?? "Workflow script input could not be submitted.";
+          setSnapshot(await workflows.patchDraft({ workflowId: draft.workflowId, error }));
+          throw new Error(error);
+        }
+        await onRefresh();
+      },
+      onRejectNodeCompletion: async (conversationId, instruction) => setSnapshot(await workflows.rejectNodeCompletion({ conversationId, instruction })),
+      onInterruptNodeConversation: async (conversationId) => setSnapshot(await workflows.interruptNodeConversation({ conversationId })),
       onSelectConfiguredAgent: (configuredAgentId: string) => {
         void draft.selectConfiguredAgent(configuredAgentId);
       },
       onSelectModel: (modelId: string) => {
         void draft.selectModel(modelId);
       },
-      onDraftGraph: () => {
-        void draft.draftWorkflowGraph();
+      onSelectReviewerConfiguredAgent: (configuredAgentId: string) => {
+        void draft.selectReviewerConfiguredAgent(configuredAgentId);
+      },
+      onSelectReviewerModel: (modelId: string) => {
+        void draft.selectReviewerModel(modelId);
+      },
+    onReviewWorkflow: async () => {
+        if (!draft.workflowId || !activeWorkflow) return;
+        setSnapshot(await workflows.reviewWorkflow({ workflowId: draft.workflowId, expectedRevision: activeWorkflow.revision }));
+    },
+    onInterruptWorkflowReview: async () => {
+      if (!draft.workflowId) return;
+      setSnapshot(await workflows.interruptWorkflowReview({ workflowId: draft.workflowId }));
+    },
+      onBuildDefinition: () => {
+        void draft.buildWorkflowDefinition();
       },
       onReplyChange: draft.setWorkflowReply,
       onSendReply: () => {
@@ -101,12 +144,21 @@ export function useWorkflowFeatureController({
       onUpdateNode: (nodeId: string, update) => {
         void draft.updateWorkflowNode(nodeId, update);
       },
-      onRunGraph: async () => {
-        const result = await runner.runWorkflowGraphInternal();
+      onRunWorkflow: async () => {
+        const result = await runner.runWorkflowInternal();
         if (!result.ok && result.error && draft.workflowId) {
           const next = await workflows.patchDraft({ workflowId: draft.workflowId, error: result.error });
           setSnapshot(next);
         }
+      },
+      onConfirmWorkflow: async () => {
+        if (!draft.workflowId || !activeWorkflow) return;
+        const result = await workflows.confirmWorkflow({ workflowId: draft.workflowId, expectedRevision: activeWorkflow.revision });
+        if (!result.ok && result.error) {
+          setSnapshot(await workflows.patchDraft({ workflowId: draft.workflowId, error: result.error }));
+          return;
+        }
+        await onRefresh();
       },
       onResetSession: () => draft.resetWorkflowSession(),
       onStopGrill: () => draft.stopWorkflowGrill(),
@@ -115,7 +167,7 @@ export function useWorkflowFeatureController({
       ...(onReadOutputFile ? { onReadOutputFile } : {}),
       ...(draft.workflowId
         ? {
-            onListOutputs: () => workflows.listOutputs(draft.workflowId as string),
+            onListOutputs: () => activeRunId ? workflows.listOutputs({ workflowId: draft.workflowId as string, runId: activeRunId }) : Promise.resolve([]),
           }
         : {}),
       language,
@@ -127,6 +179,7 @@ export function useWorkflowFeatureController({
       artifacts,
       draft,
       language,
+      nodeConversations,
       onChooseWorkDir,
       onReadOutputFile,
       onRefresh,

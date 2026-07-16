@@ -1,5 +1,4 @@
 import type {
-  AgentChannel,
   AgentEvent,
   AgentId,
   AgentRuntime,
@@ -9,7 +8,6 @@ import type {
   RuntimeConversation,
   RuntimeExecutionMode,
   RuntimeRequest,
-  WorkflowGraph,
   WorkflowAgentEvent,
   WorkflowAgentResponse,
 } from "../../../shared/types";
@@ -35,26 +33,22 @@ export interface InteractiveSessionContext extends RuntimeRequest {
   configuredAgentId: string;
   runtime: AgentRuntime;
   channelId: string;
-  channel?: AgentChannel;
   workDir: string;
+  planningWorkflowId?: string;
   developerInstructions: string;
   emit: (event: AgentEvent) => void;
   syncState?: (state: InteractiveSessionSnapshot) => void;
-  onWorkflowGraph?: (payload: {
-    graph: WorkflowGraph;
-    workflowId?: string;
-    revision?: number;
-  }) => void;
 }
 
 export interface RuntimeWorkflowRequestContext extends RuntimeRequest {
+  planningWorkflowId?: string;
   requestId: string;
   prompt: string;
   runtime: AgentRuntime;
   channelId: string;
-  channel?: AgentChannel;
   workDir: string;
   onEvent?: ((event: WorkflowAgentEvent) => void) | undefined;
+  signal?: AbortSignal | undefined;
 }
 
 export interface RuntimeChannelTestContext {

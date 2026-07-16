@@ -4,13 +4,16 @@ import type {
   ConfiguredAgent,
   LocalFilePreview,
   RegisteredArtifact,
+  TaskRun,
   WorkflowDraftState,
-  WorkflowGraph,
-  WorkflowGraphNode,
+  WorkflowV2Definition,
+  WorkflowV2Node,
   WorkflowGrillMessage,
   WorkflowRunProgressItem,
   WorkflowStatus,
+  WorkflowV2Plan,
 } from "../../../../shared/types";
+import type { WorkflowNodeConversation } from "../../../../shared/workflow-v2/conversation";
 import type { Language } from "../../app/language";
 
 type MaybePromise = void | Promise<void>;
@@ -48,14 +51,19 @@ export interface WorkflowController {
   topologyLocked?: boolean;
   title?: string;
   status?: WorkflowStatus;
-  graph: WorkflowGraph;
-  graphReady: boolean;
+  revision?: number;
+  confirmedRevision?: number;
+  definition: WorkflowV2Definition;
+  definitionReady: boolean;
   objective: string;
   messages: WorkflowGrillMessage[];
   reply: string;
   error: string | undefined;
   configuredAgentId: string;
   modelId?: string;
+  reviewerConfiguredAgentId: string;
+  reviewerModelId?: string;
+  generationReview?: WorkflowDraftState["generationReview"];
   runtimes: AgentRuntime[];
   channels: AgentChannel[];
   configuredAgents?: ConfiguredAgent[];
@@ -66,17 +74,30 @@ export interface WorkflowController {
   artifacts?: RegisteredArtifact[];
   contextDocument?: string;
   finalReport?: string;
+  nodeConversations?: WorkflowNodeConversation[];
+  nodeTasks?: TaskRun[];
+  workflowV2Plan?: WorkflowV2Plan;
   onObjectiveChange: (value: string) => void;
   onPauseNode?: (nodeId: string) => MaybePromise;
+  onStopRun?: () => MaybePromise;
   onStartNode?: (nodeId: string) => MaybePromise;
-  onAnswerGate?: (nodeId: string, answer: string) => MaybePromise;
+  onSubmitScriptInput?: (nodeId: string, values: Record<string, unknown>) => MaybePromise;
+  onSendNodeMessage?: (conversationId: string, message: string) => MaybePromise;
+  onCompleteNodeConversation?: (conversationId: string) => MaybePromise;
+  onRejectNodeCompletion?: (conversationId: string, instruction: string) => MaybePromise;
+  onInterruptNodeConversation?: (conversationId: string) => MaybePromise;
   onSelectConfiguredAgent: (configuredAgentId: string) => void;
   onSelectModel?: (modelId: string) => void;
-  onDraftGraph: () => void;
+  onSelectReviewerConfiguredAgent: (configuredAgentId: string) => void;
+  onSelectReviewerModel?: (modelId: string) => void;
+  onReviewWorkflow?: () => MaybePromise;
+  onInterruptWorkflowReview?: () => MaybePromise;
+  onBuildDefinition: () => void;
   onReplyChange: (value: string) => void;
   onSendReply: () => void;
-  onUpdateNode: (nodeId: string, update: Partial<WorkflowGraphNode>) => void;
-  onRunGraph: () => MaybePromise;
+  onUpdateNode: (nodeId: string, update: Partial<WorkflowV2Node>) => void;
+  onRunWorkflow: () => MaybePromise;
+  onConfirmWorkflow?: () => MaybePromise;
   onResetSession: () => MaybePromise;
   onStopGrill?: () => void;
   onChooseWorkDir?: () => MaybePromise;

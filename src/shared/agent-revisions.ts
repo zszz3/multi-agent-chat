@@ -1,4 +1,5 @@
-import type { AgentChannel, AgentRevision, AgentType, ConfiguredAgent } from "./types";
+import type { AgentChannel, ConfiguredAgent } from "./types";
+import type { AgentRevision, AgentType } from "./agent/types";
 
 export function configuredAgentType(agent: Pick<ConfiguredAgent, "agentType" | "managed">): AgentType {
   return agent.agentType ?? (agent.managed ? "execution" : "composed");

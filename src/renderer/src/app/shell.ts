@@ -55,3 +55,8 @@ export function scheduledWorkflowEventTarget(event: ScheduledWorkflowDueEvent): 
   if (!scheduleId || !workflowId) return undefined;
   return { scheduleId, workflowId };
 }
+
+export async function refreshSnapshotForFeature<T>(feature: ActiveFeature, load: () => Promise<T>, apply: (snapshot: T) => void): Promise<void> {
+  if (feature !== "workflow") return;
+  apply(await load());
+}

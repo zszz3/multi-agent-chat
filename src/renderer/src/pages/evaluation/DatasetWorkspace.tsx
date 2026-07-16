@@ -8,15 +8,16 @@ import {
   WorkbenchLayout,
   WorkbenchSection,
 } from "../../ui/workbench/Workbench";
+import { useEntityDraft } from "../../ui/workbench/useEntityDraft";
 
 export function DatasetWorkspace({
   zh,
   datasets,
-  selected,
+  selected: persistedSelected,
   busy,
   onSelect,
   onCreate,
-  onChange,
+  onDraftChange,
   onSave,
   onDelete,
 }: {
@@ -26,10 +27,11 @@ export function DatasetWorkspace({
   busy: string | undefined;
   onSelect: (id: string) => void;
   onCreate: () => void;
-  onChange: (value: EvaluationDataset) => void;
-  onSave: () => void;
+  onDraftChange?: (value: EvaluationDataset) => void;
+  onSave: (value: EvaluationDataset) => void;
   onDelete: () => void;
 }) {
+  const [selected, onChange] = useEntityDraft(persistedSelected, onDraftChange);
   return (
     <WorkbenchLayout
       browser={
@@ -73,7 +75,7 @@ export function DatasetWorkspace({
                   className="control-btn compact is-active"
                   type="button"
                   disabled={Boolean(busy)}
-                  onClick={onSave}
+                  onClick={() => selected && onSave(selected)}
                 >
                   <Save size={13} />
                   {busy === "save"

@@ -1,8 +1,8 @@
 import { mkdir } from "node:fs/promises";
 import { createRequire } from "node:module";
 import path from "node:path";
-import type { McpServerDefinition, McpToolDefinition } from "../shared/types";
-import { createNormalizedSchema } from "./hub/persisted/sqlite-schema";
+import type { McpServerDefinition, McpToolDefinition } from "../shared/mcp/types";
+import { ensureMcpRegistrySchema } from "./mcp/schema";
 
 const require = createRequire(import.meta.url);
 
@@ -115,7 +115,7 @@ export class McpRegistryStore {
     db.exec("pragma journal_mode = WAL");
     db.exec("pragma foreign_keys = ON");
     db.exec("pragma busy_timeout = 5000");
-    createNormalizedSchema(db);
+    ensureMcpRegistrySchema(db);
     this.db = db;
     return db;
   }

@@ -1,5 +1,5 @@
 import type { MouseEvent } from "react";
-import { GitBranch, Plus, SquarePen, Trash2, X } from "lucide-react";
+import { GitBranch, LockKeyhole, Plus, SquarePen, Trash2, UserRound, X } from "lucide-react";
 import type { WorkflowDraftState } from "../../../../shared/types";
 
 type MaybePromise = void | Promise<void>;
@@ -36,24 +36,30 @@ export function WorkflowHistoryPanel({
   onDeleteWorkflow,
 }: WorkflowHistoryPanelProps) {
   const officialWorkflows = workflows.filter((workflow) => workflow.sourceType === "official");
-  const userWorkflows = workflows.filter((workflow) => workflow.sourceType !== "official");
-  const renderWorkflow = (workflow: WorkflowDraftState) => (
+  const userWorkflows = workflows.filter((workflow) => workflow.sourceType === "user");
+  const renderWorkflow = (workflow: WorkflowDraftState) => {
+    const official = workflow.sourceType === "official";
+    return (
     <button
       key={workflow.workflowId}
-      className={`workflow-history-card ${workflow.workflowId === activeWorkflowId ? "is-active" : ""}`}
+      className={`workflow-history-card ${official ? "is-official" : "is-personal"} ${workflow.workflowId === activeWorkflowId ? "is-active" : ""}`}
       onClick={() => void onSelectWorkflow(workflow.workflowId)}
-      onContextMenu={workflow.sourceType === "official" ? undefined : (event) => onOpenContextMenu?.(event, workflow.workflowId)}
+      onContextMenu={official ? undefined : (event) => onOpenContextMenu?.(event, workflow.workflowId)}
     >
-      <strong>{workflow.title}</strong>
-      <span>{`${workflow.status} · ${workflow.graph.nodes.length} nodes · rev ${workflow.revision}`}</span>
+      <div className="workflow-history-card-title">
+        <strong>{workflow.title}</strong>
+        {official ? <span className="workflow-official-badge"><LockKeyhole size={10} />Official</span> : null}
+      </div>
+      <span>{`${workflow.status} · ${workflow.definition.nodes.length} nodes · rev ${workflow.revision}`}</span>
       <small>
         {workflow.objective ||
-          (workflow.graphReady || workflow.runProgress.length > 0 || Boolean(workflow.contextDocument || workflow.runContextDocument || workflow.finalReport)
+          (workflow.definition.nodes.length > 0 || workflow.runProgress.length > 0 || Boolean(workflow.contextDocument || workflow.runContextDocument || workflow.finalReport)
             ? "未保存目标"
             : "未开始")}
       </small>
     </button>
-  );
+    );
+  };
   return (
     <section className="resource-panel workflow-list-panel">
       <div className="panel-header">
@@ -68,10 +74,26 @@ export function WorkflowHistoryPanel({
       </div>
       <div className="workflow-history-list" aria-label="Workflow history">
         {workflows.length === 0 ? <div className="workflow-empty-history">No workflows yet</div> : null}
-        {officialWorkflows.length > 0 ? <div className="workflow-history-group-label">Official workflows</div> : null}
-        {officialWorkflows.map(renderWorkflow)}
-        {userWorkflows.length > 0 ? <div className="workflow-history-group-label">My workflows</div> : null}
-        {userWorkflows.map(renderWorkflow)}
+        {officialWorkflows.length > 0 ? (
+          <section className="workflow-history-group is-official" aria-label="Official workflows">
+            <header className="workflow-history-group-header">
+              <span><LockKeyhole size={12} />Official workflows</span>
+              <small>{officialWorkflows.length}</small>
+            </header>
+            <p>Built-in, read-only workflow templates</p>
+            <div className="workflow-history-group-cards">{officialWorkflows.map(renderWorkflow)}</div>
+          </section>
+        ) : null}
+        <section className="workflow-history-group is-personal" aria-label="My workflows">
+          <header className="workflow-history-group-header">
+            <span><UserRound size={12} />My workflows</span>
+            <small>{userWorkflows.length}</small>
+          </header>
+          <p>Workflows created and managed by you</p>
+          {userWorkflows.length > 0
+            ? <div className="workflow-history-group-cards">{userWorkflows.map(renderWorkflow)}</div>
+            : <div className="workflow-history-group-empty">No personal workflows yet</div>}
+        </section>
       </div>
       {contextMenu ? (
         <div

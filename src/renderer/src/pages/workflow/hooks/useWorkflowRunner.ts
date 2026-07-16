@@ -2,7 +2,7 @@ import { useCallback } from "react";
 import type { WorkflowDraftState } from "../../../../../shared/types";
 import type { WorkflowService } from "../../../app/services/workflow-service";
 
-export interface RunWorkflowGraphResult {
+export interface RunWorkflowResult {
   ok: boolean;
   workflowRunId?: string;
   error?: string;
@@ -15,8 +15,8 @@ interface UseWorkflowRunnerOptions {
 }
 
 export interface WorkflowRunnerController {
-  runWorkflowGraph: () => Promise<void>;
-  runWorkflowGraphInternal: (targetWorkflow?: WorkflowDraftState) => Promise<RunWorkflowGraphResult>;
+  runWorkflow: () => Promise<void>;
+  runWorkflowInternal: (targetWorkflow?: WorkflowDraftState) => Promise<RunWorkflowResult>;
 }
 
 export function useWorkflowRunner({
@@ -24,13 +24,13 @@ export function useWorkflowRunner({
   workflowId,
   workflowContextDocument,
 }: UseWorkflowRunnerOptions): WorkflowRunnerController {
-  const runWorkflowGraphInternal = useCallback(async (targetWorkflow?: WorkflowDraftState): Promise<RunWorkflowGraphResult> => {
+  const runWorkflowInternal = useCallback(async (targetWorkflow?: WorkflowDraftState): Promise<RunWorkflowResult> => {
     const targetWorkflowId = targetWorkflow?.workflowId ?? workflowId;
     if (!targetWorkflowId) {
       return { ok: false, error: "Workflow was not found." };
     }
 
-    const result = await workflows.runGraph({
+    const result = await workflows.runWorkflow({
       workflowId: targetWorkflowId,
       contextDocument: targetWorkflow?.contextDocument ?? workflowContextDocument,
     });
@@ -41,12 +41,12 @@ export function useWorkflowRunner({
     };
   }, [workflowContextDocument, workflowId, workflows]);
 
-  const runWorkflowGraph = useCallback(async (): Promise<void> => {
-    await runWorkflowGraphInternal();
-  }, [runWorkflowGraphInternal]);
+  const runWorkflow = useCallback(async (): Promise<void> => {
+    await runWorkflowInternal();
+  }, [runWorkflowInternal]);
 
   return {
-    runWorkflowGraph,
-    runWorkflowGraphInternal,
+    runWorkflow,
+    runWorkflowInternal,
   };
 }

@@ -1,13 +1,12 @@
 import { useCallback, useEffect, useMemo, useRef, useState, type Dispatch, type SetStateAction } from "react";
 import { DEFAULT_MODEL_ID } from "../../../../../shared/models";
-import { createWorkflowGraphFromObjective } from "../../../../../shared/workflow-graph";
 import type {
   AgentChannel,
   AppSnapshot,
   ConfiguredAgent,
   WorkflowDraftState,
-  WorkflowGraph,
-  WorkflowGraphNode,
+  WorkflowV2Definition,
+  WorkflowV2Node,
   WorkflowRunProgressItem,
   WorkflowStatus,
 } from "../../../../../shared/types";
@@ -20,9 +19,11 @@ export interface WorkflowDraftController {
   workflowStatus: WorkflowStatus;
   workflowConfiguredAgentId: string;
   workflowModelId: string;
+  workflowReviewerConfiguredAgentId: string;
+  workflowReviewerModelId: string;
   workflowObjective: string;
-  workflowGraph: WorkflowGraph;
-  workflowGraphReady: boolean;
+  workflowDefinition: WorkflowV2Definition;
+  workflowDefinitionReady: boolean;
   workflowMessages: WorkflowDraftState["messages"];
   workflowReply: string;
   workflowError: string | undefined;
@@ -37,12 +38,14 @@ export interface WorkflowDraftController {
   stopWorkflowGrill: () => Promise<void>;
   createNewWorkflow: () => Promise<void>;
   resetWorkflowSession: () => Promise<void>;
-  draftWorkflowGraph: () => Promise<void>;
+  buildWorkflowDefinition: () => Promise<void>;
   sendWorkflowReply: () => Promise<void>;
-  updateWorkflowNode: (nodeId: string, update: Partial<WorkflowGraphNode>) => Promise<void>;
+  updateWorkflowNode: (nodeId: string, update: Partial<WorkflowV2Node>) => Promise<void>;
   selectWorkflow: (workflowId: string) => Promise<void>;
   selectConfiguredAgent: (configuredAgentId: string) => Promise<void>;
   selectModel: (modelId: string) => Promise<void>;
+  selectReviewerConfiguredAgent: (configuredAgentId: string) => Promise<void>;
+  selectReviewerModel: (modelId: string) => Promise<void>;
   setWorkflowObjective: Dispatch<SetStateAction<string>>;
   setWorkflowReply: Dispatch<SetStateAction<string>>;
 }
@@ -51,7 +54,7 @@ interface UseWorkflowDraftOptions {
   snapshot: AppSnapshot;
   setSnapshot: (snapshot: AppSnapshot) => void;
   snapshotRef: React.MutableRefObject<AppSnapshot>;
-  initialWorkflowGraph: WorkflowGraph;
+  initialWorkflowDefinition: WorkflowV2Definition;
   workflows: WorkflowService;
   configuredAgents: ConfiguredAgent[];
   channels: AgentChannel[];
@@ -62,7 +65,7 @@ export function useWorkflowDraft({
   snapshot,
   setSnapshot,
   snapshotRef,
-  initialWorkflowGraph,
+  initialWorkflowDefinition,
   workflows,
   configuredAgents,
   channels,
@@ -139,17 +142,16 @@ export function useWorkflowDraft({
     setSnapshot(next);
   }, [resetWorkflowLocalDraft, setSnapshot, snapshotRef, workflows]);
 
-  const draftWorkflowGraph = useCallback(async (): Promise<void> => {
+  const buildWorkflowDefinition = useCallback(async (): Promise<void> => {
     const workflow = await ensureActiveWorkflow();
     if (!workflow) return;
     const objective = workflowObjectiveInput.trim();
-    const nextGraph = createWorkflowGraphFromObjective(objective);
+    const definition = { ...structuredClone(workflow.definition), objective };
     const next = await workflows.patchDraft({
       workflowId: workflow.workflowId,
-      title: nextGraph.title,
+      title: workflow.title || objective || "Untitled workflow",
       objective,
-      graph: nextGraph,
-      graphReady: true,
+      definition,
       error: null,
       resetRunState: true,
       runtimeConversation: null,
@@ -185,19 +187,17 @@ export function useWorkflowDraft({
     }
   }, [ensureActiveWorkflow, setSnapshot, workflowGrillBusy, workflowObjectiveInput, workflowReplyInput, workflows]);
 
-  const updateWorkflowNode = useCallback(async (nodeId: string, update: Partial<WorkflowGraphNode>): Promise<void> => {
+  const updateWorkflowNode = useCallback(async (nodeId: string, update: Partial<WorkflowV2Node>): Promise<void> => {
     const workflow = await ensureActiveWorkflow();
     if (!workflow) return;
-    const nextGraph = {
-      ...workflow.graph,
-      nodes: workflow.graph.nodes.map((node) => (node.id === nodeId ? { ...node, ...update } : node)),
+    const definition = {
+      ...structuredClone(workflow.definition),
+      nodes: workflow.definition.nodes.map((node) => (node.id === nodeId ? { ...node, ...update } as WorkflowV2Node : node)),
     };
     const next = await workflows.patchDraft({
       workflowId: workflow.workflowId,
-      title: nextGraph.title,
       objective: workflow.objective,
-      graph: nextGraph,
-      graphReady: workflow.graphReady,
+      definition,
       error: null,
       resetRunState: true,
       finalReport: null,
@@ -244,6 +244,19 @@ export function useWorkflowDraft({
     setSnapshot(next);
   }, [ensureActiveWorkflow, setSnapshot, workflows]);
 
+  const selectReviewerConfiguredAgent = useCallback(async (configuredAgentId: string): Promise<void> => {
+    const workflow = await ensureActiveWorkflow();
+    if (!workflow) return;
+    const reviewerModelId = configuredAgentModelId(configuredAgentId, undefined, configuredAgents, channels);
+    setSnapshot(await workflows.patchDraft({ workflowId: workflow.workflowId, reviewerConfiguredAgentId: configuredAgentId, reviewerModelId, error: null }));
+  }, [channels, configuredAgents, ensureActiveWorkflow, setSnapshot, workflows]);
+
+  const selectReviewerModel = useCallback(async (reviewerModelId: string): Promise<void> => {
+    const workflow = await ensureActiveWorkflow();
+    if (!workflow) return;
+    setSnapshot(await workflows.patchDraft({ workflowId: workflow.workflowId, reviewerModelId, error: null }));
+  }, [ensureActiveWorkflow, setSnapshot, workflows]);
+
   const workflowConfiguredAgentId = activeWorkflow?.configuredAgentId || fallbackConfiguredAgentId;
   const workflowModelId = configuredAgentModelId(
     workflowConfiguredAgentId,
@@ -251,17 +264,21 @@ export function useWorkflowDraft({
     configuredAgents,
     channels,
   );
+  const workflowReviewerConfiguredAgentId = activeWorkflow?.reviewerConfiguredAgentId || workflowConfiguredAgentId;
+  const workflowReviewerModelId = configuredAgentModelId(workflowReviewerConfiguredAgentId, activeWorkflow?.reviewerModelId || workflowModelId, configuredAgents, channels);
 
   return useMemo(
     () => ({
       workflowId: activeWorkflow?.workflowId,
-      workflowTitle: activeWorkflow?.title || initialWorkflowGraph.title,
+      workflowTitle: activeWorkflow?.title || initialWorkflowDefinition.objective || "Untitled workflow",
       workflowStatus: activeWorkflow?.status ?? "draft",
       workflowConfiguredAgentId,
       workflowModelId,
+      workflowReviewerConfiguredAgentId,
+      workflowReviewerModelId,
       workflowObjective: activeWorkflow?.messages.length ? activeWorkflow.objective : workflowObjectiveInput,
-      workflowGraph: activeWorkflow?.graph ?? initialWorkflowGraph,
-      workflowGraphReady: activeWorkflow?.graphReady ?? false,
+      workflowDefinition: activeWorkflow?.definition ?? initialWorkflowDefinition,
+      workflowDefinitionReady: Boolean(activeWorkflow && activeWorkflow.definition.nodes.length > 0),
       workflowMessages: activeWorkflow?.messages ?? [],
       workflowReply: workflowReplyInput,
       workflowError: activeWorkflow?.error,
@@ -276,24 +293,28 @@ export function useWorkflowDraft({
       stopWorkflowGrill,
       createNewWorkflow,
       resetWorkflowSession,
-      draftWorkflowGraph,
+      buildWorkflowDefinition,
       sendWorkflowReply,
       updateWorkflowNode,
       selectWorkflow,
       selectConfiguredAgent,
       selectModel,
+      selectReviewerConfiguredAgent,
+      selectReviewerModel,
       setWorkflowObjective: setWorkflowObjectiveInput,
       setWorkflowReply: setWorkflowReplyInput,
     }),
     [
       activeWorkflow,
       createNewWorkflow,
-      draftWorkflowGraph,
-      initialWorkflowGraph,
+      buildWorkflowDefinition,
+      initialWorkflowDefinition,
       resetWorkflowLocalDraft,
       resetWorkflowSession,
       selectConfiguredAgent,
       selectModel,
+      selectReviewerConfiguredAgent,
+      selectReviewerModel,
       selectWorkflow,
       sendWorkflowReply,
       stopWorkflowGrill,
@@ -301,6 +322,8 @@ export function useWorkflowDraft({
       workflowConfiguredAgentId,
       workflowGrillBusy,
       workflowModelId,
+      workflowReviewerConfiguredAgentId,
+      workflowReviewerModelId,
       workflowObjectiveInput,
       workflowReplyInput,
     ],

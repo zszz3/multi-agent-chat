@@ -240,38 +240,58 @@ describe("MCP bridge", () => {
     expect(deletedAgent).toMatchObject({ ok: true, agentId: "doc-writer" });
     expect(deletedAgent.agents.some((agent: any) => agent.id === "doc-writer")).toBe(false);
 
+    const planningWorkflow = hub.createWorkflowDraft().workflowDraft!;
     const create = await bridgeRequest("/mcp/workflow/create", bridge.token, {
+      workflowId: planningWorkflow.workflowId,
       title: "Review workflow",
       objective: "Review example service",
-      graph: {
-        title: "Review workflow",
+      definition: {
+        workflowId: planningWorkflow.workflowId,
+        graphVersion: 1,
         objective: "Review example service",
-        nodes: [
-          { id: "start", kind: "start", title: "Start", prompt: "" },
-          { id: "review", kind: "agent", title: "Review", prompt: "Review code."},
-          { id: "end", kind: "end", title: "Done", prompt: "" },
-        ],
-        edges: [
-          { id: "start->review", fromNodeId: "start", toNodeId: "review" },
-          { id: "review->end", fromNodeId: "review", toNodeId: "end" },
-        ],
+        nodes: [{ id: "review", kind: "agent", title: "Review", execModel: "llm",
+        executionMode: "one-shot", prompt: "Review code.", outputFields: [{ key: "result", required: true }] }],
+        edges: [],
       },
     });
     expect(create.status).toBe(200);
     const created = (await create.json()) as any;
-    expect(created).toMatchObject({ ok: true, revision: 1, validation: { valid: true } });
-    expect(created.workflowId).toMatch(/^wf_/);
+    expect(created).toMatchObject({ ok: true, workflowId: planningWorkflow.workflowId });
+
+    const secondPlanningWorkflow = hub.createWorkflowDraft().workflowDraft!;
+    const secondCreate = await bridgeRequest("/mcp/workflow/create", bridge.token, {
+      workflowId: secondPlanningWorkflow.workflowId,
+      title: "Second workflow",
+      objective: "Route a second planning session",
+      definition: {
+        workflowId: secondPlanningWorkflow.workflowId,
+        graphVersion: 1,
+        objective: "Route a second planning session",
+        nodes: [{ id: "route", kind: "agent", title: "Route", execModel: "llm", executionMode: "one-shot", prompt: "Route it.", outputFields: [{ key: "result", required: true }] }],
+        edges: [],
+      },
+    });
+    expect(await secondCreate.json()).toMatchObject({ ok: true, workflowId: secondPlanningWorkflow.workflowId });
+
+    const mismatchedCreate = await bridgeRequest("/mcp/workflow/create", bridge.token, {
+      workflowId: planningWorkflow.workflowId,
+      title: "Wrong route",
+      objective: "Must fail",
+      definition: { workflowId: secondPlanningWorkflow.workflowId, graphVersion: 1, objective: "Must fail", nodes: [], edges: [] },
+    });
+    expect(await mismatchedCreate.json()).toMatchObject({ ok: false, error: "workflow_create workflowId must match definition.workflowId." });
 
     const list = (await (await bridgeRequest("/mcp/workflow/list", bridge.token, {})).json()) as any;
-    expect(list.workflows).toEqual([
+    expect(list.workflows).toEqual(expect.arrayContaining([
       expect.objectContaining({
         workflowId: created.workflowId,
         title: "Review workflow",
         status: "draft",
-        revision: 1,
-        nodeCount: 3,
+        revision: created.revision,
+        nodeCount: 1,
       }),
-    ]);
+      expect.objectContaining({ workflowId: secondPlanningWorkflow.workflowId, title: "Second workflow" }),
+    ]));
 
     const context = await bridgeRequest("/mcp/workflow/context/append", bridge.token, {
       workflowId: created.workflowId,
@@ -279,7 +299,7 @@ describe("MCP bridge", () => {
       handoff: "Writer can produce the summary.",
       artifacts: [{ kind: "text", title: "Finding", content: "No blockers." }],
     });
-    expect(await context.json()).toMatchObject({ ok: true, workflowId: created.workflowId, revision: 2 });
+    expect(await context.json()).toMatchObject({ ok: true, workflowId: created.workflowId, revision: created.revision + 1 });
 
     const get = (await (await bridgeRequest("/mcp/workflow/get", bridge.token, { workflowId: created.workflowId })).json()) as any;
     expect(get.workflow.contextDocument).toContain("Reviewed the service.");

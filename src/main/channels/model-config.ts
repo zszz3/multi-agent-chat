@@ -8,8 +8,8 @@ import type {
   AgentId,
   AgentModelOption,
   AgentPluginConfig,
-  CodexDefaultConfig,
   ClaudeDefaultConfig,
+  CodexDefaultConfig,
   GeneratedConfigFile,
   ImportedCodexConfig,
 } from "../../shared/types";
@@ -169,7 +169,7 @@ function readKnownToml(raw: string): Record<string, Record<string, unknown>> {
       section[key] = inlineTable ?? parseTomlScalar(value);
       sections[activeSection] = section;
     } catch {
-      // Unsupported TOML values must not hide otherwise valid provider fields.
+      // Unknown TOML values must not hide otherwise valid runtime defaults.
     }
   }
 
@@ -643,10 +643,7 @@ export function claudeHome(): string {
   return process.env.CLAUDE_CONFIG_DIR ?? path.join(os.homedir(), ".claude");
 }
 
-export function parseClaudeDefaultConfig(
-  rawSettingsJson: string | undefined,
-  env: NodeJS.ProcessEnv = process.env,
-): ClaudeDefaultConfig {
+export function parseClaudeDefaultConfig(rawSettingsJson: string | undefined, env: NodeJS.ProcessEnv = process.env): ClaudeDefaultConfig {
   let settings: Record<string, unknown> = {};
   if (rawSettingsJson) {
     try {

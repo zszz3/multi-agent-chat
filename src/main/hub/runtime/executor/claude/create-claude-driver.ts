@@ -1,7 +1,7 @@
 import { ClaudeAgentSdkAdapter, type ClaudeAgentSdkRunInput } from "../../../../agents/claude/claude-agent-sdk";
 import { ClaudeAgentSdkInteractive } from "../../../../agents/claude/claude-agent-sdk-interactive";
 import { ClaudeInteractiveSession } from "../../../../agents/claude/claude-interactive-session";
-import { claudeCliModelForChannel, claudeEnvironmentForChannel } from "../../../../agents/claude/claude-env";
+import { claudeCliModelForChannel } from "../../../../agents/claude/claude-env";
 import type { RuntimeDriver } from "../../../../agents/runtime/runtime-driver";
 import { claudeRuntimeStateCodec } from "../../../../agents/claude/claude-runtime-state-codec";
 import { createInteractiveRuntimeDriver } from "../agent-executor-driver-factories";
@@ -15,6 +15,7 @@ import { deleteClaudeSessionArtifacts } from "./claude-cleanup";
 import { ClaudeAgentExecutor } from "./claude-executor";
 import { runClaudeChannelTest } from "./claude-test";
 import { runClaudeWorkflow } from "./claude-workflow";
+import { claudeWorkflowMcpServers } from "./claude-workflow-mcp";
 
 export interface ClaudeDriverDependencies {
   runOneShot?: (input: ClaudeAgentSdkRunInput) => Promise<void>;
@@ -36,15 +37,12 @@ export function createClaudeDriver(
     surfaceSupport: [...claudeSurfaceSupport],
     getCapabilities: getClaudeCapabilities,
     runtimeStateCodec: claudeRuntimeStateCodec,
-    createOneShotExecutor: (context) => {
-      const channel = context.channel ?? options.channelById(context.channelId);
-      return new ClaudeAgentExecutor(
+    createOneShotExecutor: (context) =>
+      new ClaudeAgentExecutor(
         context,
         oneShotAdapter,
-        claudeCliModelForChannel(channel, modelFromRuntimeConfig(context.runtimeConfig)),
-        channel,
-      );
-    },
+        claudeCliModelForChannel(options.channelById(context.channelId), modelFromRuntimeConfig(context.runtimeConfig)),
+      ),
     createInteractiveSession: (context) =>
       new ClaudeInteractiveSession(
         context,
@@ -52,14 +50,11 @@ export function createClaudeDriver(
           capabilities: claudeInteractiveSessionCapabilities,
           resolveModelId: (interactiveContext) =>
             claudeCliModelForChannel(
-              interactiveContext.channel ?? options.channelById(interactiveContext.channelId),
+              options.channelById(interactiveContext.channelId),
               modelFromRuntimeConfig(interactiveContext.runtimeConfig),
             ) ?? modelFromRuntimeConfig(interactiveContext.runtimeConfig),
-          resolveEnvironment: (interactiveContext) =>
-            claudeEnvironmentForChannel(
-              interactiveContext.channel ?? options.channelById(interactiveContext.channelId),
-              modelFromRuntimeConfig(interactiveContext.runtimeConfig),
-            ),
+          resolveMcpServers: (interactiveContext) =>
+            claudeWorkflowMcpServers(options.workflowMcpDiscoveryPath?.(), interactiveContext.planningWorkflowId),
           sdkInteractive: new ClaudeAgentSdkInteractive(),
         },
       ),

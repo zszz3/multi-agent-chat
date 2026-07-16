@@ -25,7 +25,7 @@ import {
 } from "./app/agents";
 import { formatDuration, formatTime } from "./app/format";
 import type { Language } from "./app/language";
-import { appShellClass, appContentClass, missingAppCapabilityMessage, syncKeepAwakeIfAvailable, taskDetailIdFor, type ActiveFeature } from "./app/shell";
+import { appShellClass, appContentClass, missingAppCapabilityMessage, refreshSnapshotForFeature, syncKeepAwakeIfAvailable, taskDetailIdFor, type ActiveFeature } from "./app/shell";
 import {
   KEEP_AWAKE_STORAGE_KEY,
   LANGUAGE_STORAGE_KEY,
@@ -38,10 +38,6 @@ import {
 } from "./app/storage";
 import { UI_TEXT } from "./app/text";
 import { useShellMenuCoordinator } from "./app/useShellMenuCoordinator";
-import {
-  dispatchAppSaveRequest,
-  isSaveKeyboardShortcut,
-} from "./app/save-shortcut";
 import {
   buildFindSkillAgentPrompt,
   findSkillFallbackMessage,
@@ -286,13 +282,18 @@ export function AppShell() {
           ? "当前 Runtime 配置尚未保存，离开前保存吗？"
           : "This Runtime config has unsaved changes. Save before leaving?",
       ),
-      setActiveFeature,
+      (nextFeature) => {
+        void refreshSnapshotForFeature(nextFeature, snapshots.getSnapshot, setSnapshot)
+          .catch((error) => console.warn("Failed to refresh workflow history", error))
+          .finally(() => setActiveFeature(nextFeature));
+      },
     );
-  }, [activeFeature, confirmSaveBeforeSwitch, language]);
+  }, [activeFeature, confirmSaveBeforeSwitch, language, snapshots]);
   const {
+    configuredAgents: editableConfiguredAgents,
     selectedConfiguredAgentId,
     configuredAgentStatus,
-    selectConfiguredAgent,
+    setSelectedConfiguredAgentId,
     saveConfiguredAgents,
     addConfiguredAgent,
     updateConfiguredAgent,
@@ -499,11 +500,6 @@ export function AppShell() {
     }
 
     function onKeyDown(event: globalThis.KeyboardEvent): void {
-      if (isSaveKeyboardShortcut(event)) {
-        event.preventDefault();
-        dispatchAppSaveRequest(window);
-        return;
-      }
       if ((event.metaKey || event.ctrlKey) && event.key.toLowerCase() === "k") {
         event.preventDefault();
         setPaletteOpen((current) => !current);
@@ -887,7 +883,7 @@ export function AppShell() {
       <div className={appShellClass(activeFeature)}>
         <FeatureRail activeFeature={activeFeature} theme={theme} text={text} onSelectFeature={navigateToFeature} onToggleTheme={toggleTheme} />
 
-        <ResourceSidebar
+        {activeFeature !== "mcp" && activeFeature !== "evaluation" ? <ResourceSidebar
           activeFeature={activeFeature}
           language={language}
           text={text}
@@ -901,7 +897,7 @@ export function AppShell() {
           onSelectTask={selectTask}
           onStartCreatingScheduledWorkflow={startCreatingScheduledWorkflow}
           onSelectScheduledWorkflowSchedule={selectScheduledWorkflowSchedule}
-        />
+        /> : null}
 
         <main className={appContentClass(activeFeature)}>
         {activeFeature === "tasks" ? (
@@ -909,7 +905,7 @@ export function AppShell() {
             prompt={taskPrompt}
             configuredAgentId={taskConfiguredAgentId || defaultConfiguredAgentId(snapshot.configuredAgents)}
             modelId={taskModelId}
-            configuredAgents={snapshot.configuredAgents}
+            configuredAgents={editableConfiguredAgents}
             workDir={snapshot.workDir}
             runtimes={snapshot.runtimes}
             channels={snapshot.channels}
@@ -960,10 +956,6 @@ export function AppShell() {
             onCreateCategory={createSkillCategory}
             onAssignCategory={assignSkillCategory}
           />
-        ) : activeFeature === "mcp" ? (
-          <McpPage language={language} />
-        ) : activeFeature === "evaluation" ? (
-          <EvaluationPage language={language} agents={snapshot.configuredAgents} channels={snapshot.channels} />
         ) : activeFeature === "runtimes" ? (
           <RuntimePage
             language={language}
@@ -1001,17 +993,20 @@ export function AppShell() {
             onReplaceChannelAndPersist={replaceConfigChannelAndPersist}
             onStatusChange={setConfigStatus}
           />
+        ) : activeFeature === "mcp" ? (
+          <McpPage language={language} agents={snapshot.configuredAgents} />
+        ) : activeFeature === "evaluation" ? (
+          <EvaluationPage language={language} agents={snapshot.configuredAgents} channels={snapshot.channels} />
         ) : activeFeature === "agent" ? (
           <AgentPage
             language={language}
             channels={snapshot.channels}
             configuredAgents={snapshot.configuredAgents}
-            agentRevisions={snapshot.agentRevisions ?? []}
             selectedConfiguredAgentId={selectedConfiguredAgentId}
             status={configuredAgentStatus}
-            onSave={() => saveConfiguredAgents(snapshot.configuredAgents)}
+            onSave={() => saveConfiguredAgents(editableConfiguredAgents)}
             onAddConfiguredAgent={addConfiguredAgent}
-            onSelectConfiguredAgent={selectConfiguredAgent}
+            onSelectConfiguredAgent={setSelectedConfiguredAgentId}
             onUpdateConfiguredAgent={updateConfiguredAgent}
           />
         ) : (

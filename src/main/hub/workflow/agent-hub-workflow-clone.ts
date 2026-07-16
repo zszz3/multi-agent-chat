@@ -1,21 +1,15 @@
 import { randomUUID } from "node:crypto";
 import { DEFAULT_SCHEDULED_WORKFLOW_TIMEZONE } from "../../../shared/types";
 import type {
-  RuntimeConversation,
   ScheduledWorkflowRun,
   ScheduledWorkflowRunnerConfig,
   ScheduledWorkflowRunnerStatus,
   ScheduledWorkflowSchedule,
   ScheduledWorkflowStoreState,
-  WorkflowDraftState,
-  WorkflowGraph,
-  WorkflowGraphEdge,
-  WorkflowGraphNode,
-  WorkflowRunState,
-  WorkflowStatus,
-  WorkflowStoreState,
 } from "../../../shared/types";
-import { cloneRuntimeBindingSnapshot } from "../runtime/runtime-binding";
+import type { RuntimeConversation } from "../../../shared/runtime/conversation";
+import type { WorkflowDraftState, WorkflowStoreState } from "../../../shared/workflow/draft";
+import type { WorkflowRunProgressItem, WorkflowRunState, WorkflowStatus } from "../../../shared/workflow/run";
 import {
   isScheduledWorkflowRunStatus,
   normalizeScheduledWorkflowDayOfMonth,
@@ -23,47 +17,23 @@ import {
   normalizeScheduledWorkflowTimeOfDay,
   normalizeScheduledWorkflowWeekdays,
 } from "../persisted/agent-hub-persistence";
+import { cloneWorkflowV2Plan } from "../../../shared/workflow-v2/planning";
 
-export function cloneWorkflowGraphNode(node: WorkflowGraphNode): WorkflowGraphNode {
-  const cloned: WorkflowGraphNode = {
-    id: node.id,
-    kind: node.kind,
-    title: node.title,
-    prompt: node.prompt,
-  };
-  if (
-    node.position &&
-    typeof node.position.x === "number" &&
-    typeof node.position.y === "number" &&
-    Number.isFinite(node.position.x) &&
-    Number.isFinite(node.position.y)
-  ) {
-    cloned.position = { x: node.position.x, y: node.position.y };
-  }
-  if (typeof node.configuredAgentId === "string" && node.configuredAgentId) cloned.configuredAgentId = node.configuredAgentId;
-  if (typeof node.modelId === "string" && node.modelId) cloned.modelId = node.modelId;
-  return cloned;
-}
-
-export function cloneWorkflowGraphEdge(edge: WorkflowGraphEdge): WorkflowGraphEdge {
+export function cloneWorkflowRunProgressItem(item: WorkflowRunProgressItem): WorkflowRunProgressItem {
   return {
-    id: edge.id,
-    fromNodeId: edge.fromNodeId,
-    toNodeId: edge.toNodeId,
-  };
-}
-
-export function cloneWorkflowGraph(graph: WorkflowGraph): WorkflowGraph {
-  return {
-    title: graph.title,
-    objective: graph.objective,
-    nodes: graph.nodes.map((node) => cloneWorkflowGraphNode(node)),
-    edges: graph.edges.map((edge) => cloneWorkflowGraphEdge(edge)),
+    nodeId: item.nodeId,
+    title: item.title,
+    status: item.status,
+    ...(item.detail !== undefined ? { detail: item.detail } : {}),
+    ...(item.taskId !== undefined ? { taskId: item.taskId } : {}),
+    ...(item.intervention !== undefined ? { intervention: structuredClone(item.intervention) } : {}),
+    ...(item.inputRequest !== undefined ? { inputRequest: structuredClone(item.inputRequest) } : {}),
+    ...(item.outputs !== undefined ? { outputs: structuredClone(item.outputs) } : {}),
   };
 }
 
 export function normalizeWorkflowStatus(status: WorkflowStatus): WorkflowStatus {
-  return status === "running" || status === "completed" || status === "failed" || status === "stopped" ? status : "draft";
+  return status === "running" || status === "waiting_for_user" || status === "completed" || status === "failed" || status === "stopped" ? status : "draft";
 }
 
 export function cloneWorkflowRun(run: WorkflowRunState): WorkflowRunState {
@@ -71,15 +41,9 @@ export function cloneWorkflowRun(run: WorkflowRunState): WorkflowRunState {
     runId: run.runId,
     workflowId: run.workflowId,
     status: run.status,
-    graphSnapshot: cloneWorkflowGraph(run.graphSnapshot),
-    progress: run.progress.map((item) => ({
-      nodeId: item.nodeId,
-      title: item.title,
-      status: item.status,
-      ...(item.detail !== undefined ? { detail: item.detail } : {}),
-      ...(item.taskId !== undefined ? { taskId: item.taskId } : {}),
-    })),
-    events: run.events.map((event) => ({ ...event })),
+    workflowV2Plan: cloneWorkflowV2Plan(run.workflowV2Plan),
+    progress: run.progress.map(cloneWorkflowRunProgressItem),
+    events: run.events.map((event) => structuredClone(event)),
     contextDocument: run.contextDocument,
     ...(run.finalReport !== undefined ? { finalReport: run.finalReport } : {}),
     startedAt: run.startedAt,
@@ -154,17 +118,21 @@ export function cloneWorkflowDraft(input: {
   const { draft, normalizeConfiguredAgentId, normalizeModelId, cloneConversation, now = Date.now() } = input;
   return {
     workflowId: draft.workflowId || `wf_${randomUUID()}`,
-    ...(draft.sourceType ? { sourceType: draft.sourceType } : {}),
-    ...(draft.topologyLocked !== undefined ? { topologyLocked: draft.topologyLocked } : {}),
-    title: draft.title || draft.graph.title || draft.objective || "Untitled workflow",
+    sourceType: draft.sourceType === "official" ? "official" : "user",
+    topologyLocked: draft.sourceType === "official" || draft.topologyLocked === true,
+    title: draft.title || draft.definition.objective || draft.objective || "Untitled workflow",
     status: normalizeWorkflowStatus(draft.status),
     revision: Number.isFinite(draft.revision) && draft.revision > 0 ? Math.floor(draft.revision) : 1,
-    configuredAgentId: draft.runtimeBinding?.configuredAgent.id ?? normalizeConfiguredAgentId(draft.configuredAgentId),
-    modelId: draft.runtimeBinding?.modelId ?? normalizeModelId(draft.configuredAgentId, draft.modelId),
+    ...(Number.isFinite(draft.confirmedRevision) && draft.confirmedRevision === draft.revision
+      ? { confirmedRevision: Math.floor(draft.confirmedRevision!) }
+      : {}),
+    configuredAgentId: normalizeConfiguredAgentId(draft.configuredAgentId),
+    modelId: normalizeModelId(draft.configuredAgentId, draft.modelId),
+    reviewerConfiguredAgentId: normalizeConfiguredAgentId(draft.reviewerConfiguredAgentId),
+    reviewerModelId: normalizeModelId(draft.reviewerConfiguredAgentId, draft.reviewerModelId),
     objective: draft.objective,
+    definition: structuredClone(draft.definition),
     ...(draft.workDir ? { workDir: draft.workDir } : {}),
-    graph: cloneWorkflowGraph(draft.graph),
-    graphReady: draft.graphReady,
     messages: draft.messages.map((message) => ({
       id: message.id,
       role: message.role,
@@ -172,19 +140,14 @@ export function cloneWorkflowDraft(input: {
     })),
     reply: draft.reply,
     error: draft.error,
-    runProgress: draft.runProgress.map((item) => ({
-      nodeId: item.nodeId,
-      title: item.title,
-      status: item.status,
-      ...(item.detail !== undefined ? { detail: item.detail } : {}),
-      ...(item.taskId !== undefined ? { taskId: item.taskId } : {}),
-    })),
+    runProgress: draft.runProgress.map(cloneWorkflowRunProgressItem),
     runContextDocument: draft.runContextDocument,
     contextDocument: draft.contextDocument,
+    ...(draft.workflowV2Plan ? { workflowV2Plan: cloneWorkflowV2Plan(draft.workflowV2Plan) } : {}),
+    ...(draft.generationReview ? { generationReview: structuredClone(draft.generationReview) } : {}),
     ...(draft.finalReport !== undefined ? { finalReport: draft.finalReport } : {}),
     runIds: draft.runIds.map((runId) => runId),
     ...(draft.runtimeConversation ? { runtimeConversation: cloneConversation(draft.runtimeConversation) } : {}),
-    ...(draft.runtimeBinding ? { runtimeBinding: cloneRuntimeBindingSnapshot(draft.runtimeBinding) } : {}),
     createdAt: draft.createdAt || draft.updatedAt || now,
     updatedAt: draft.updatedAt,
   };

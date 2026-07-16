@@ -23,7 +23,7 @@ export class CodexAgentExecutor implements AgentExecutor {
   async start(): Promise<void> {
     const executable = this.context.runtime.command || this.options.executables.codex;
     const model = runtimeModelId(modelFromRuntimeConfig(this.context.runtimeConfig));
-    const channel = this.context.channel ?? this.options.channelById(this.context.channelId);
+    const channel = this.options.channelById(this.context.channelId);
     const threadIdFromConversation = codexThreadIdFromConversation(this.context.runtimeConversation);
     let client: CodexRpcClient;
     client = new CodexRpcClient({
@@ -37,7 +37,7 @@ export class CodexAgentExecutor implements AgentExecutor {
       env: codexEnvironmentForChannel(channel),
       onEvent: this.context.emit,
       onRequest: (id, method, params) => {
-        respondToCodexRuntimeServerRequest(this.options, client, id, method, params);
+        respondToCodexRuntimeServerRequest(client, id, method, params);
       },
       onExit: (code) => {
         this.context.onExit(code);

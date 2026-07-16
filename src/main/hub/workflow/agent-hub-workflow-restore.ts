@@ -1,17 +1,19 @@
 import { randomUUID } from "node:crypto";
 import { DEFAULT_SCHEDULED_WORKFLOW_TIMEZONE } from "../../../shared/types";
 import type {
-  RuntimeConversation,
   ScheduledWorkflowRun,
   ScheduledWorkflowRunnerConfig,
   ScheduledWorkflowSchedule,
   ScheduledWorkflowStoreState,
-  WorkflowDraftState,
+  WorkflowV2Plan,
+} from "../../../shared/types";
+import type { RuntimeConversation } from "../../../shared/runtime/conversation";
+import type { WorkflowDraftState, WorkflowStoreState } from "../../../shared/workflow/draft";
+import type {
   WorkflowEvent,
   WorkflowRunProgressItem,
   WorkflowRunState,
-  WorkflowStoreState,
-} from "../../../shared/types";
+} from "../../../shared/workflow/run";
 import {
   asArray,
   asNumber,
@@ -27,10 +29,29 @@ import {
 import {
   restoreWorkflowDraftStatus,
   restoreWorkflowEvent,
-  restoreWorkflowGraph,
   restoreWorkflowRunProgressItem,
   restoreWorkflowRunStatus,
 } from "../state/agent-hub-restore";
+import { cloneWorkflowV2Plan } from "../../../shared/workflow-v2/planning";
+import type { WorkflowV2Definition } from "../../../shared/workflow-v2/definition";
+import { validateWorkflowV2Definition } from "../../../shared/workflow-v2/validation";
+import type { WorkflowV2PersistedRunState } from "../../../shared/workflow-v2/storage";
+import type { WorkflowV2RunNodeState } from "../../../shared/workflow-v2/state";
+import { buildWorkflowV2FinalReport } from "../../workflows/v2/workflow-v2-recovery";
+import { projectWorkflowV2PausedNodeInteraction } from "../../workflows/v2/workflow-v2-node-interaction";
+
+function restoreWorkflowV2Plan(raw: unknown): WorkflowV2Plan | undefined {
+  const record = asRecord(raw);
+  if (!record) return undefined;
+  if (!asOptionalString(record.workflowId) || !asOptionalString(record.objective) || typeof record.graphVersion !== "number") {
+    return undefined;
+  }
+  try {
+    return cloneWorkflowV2Plan(record as unknown as WorkflowV2Plan);
+  } catch {
+    return undefined;
+  }
+}
 
 export function restoreScheduledWorkflowRunnerConfig(
   raw: unknown,
@@ -120,23 +141,45 @@ export function restoreWorkflowDraft(
 ): WorkflowDraftState | undefined {
   const record = asRecord(raw);
   if (!record || "agentSessionId" in record) return undefined;
-  const graph = restoreWorkflowGraph(record.graph);
-  if (!graph) return undefined;
+  const definitionRecord = asRecord(record.definition);
+  if (!definitionRecord) return undefined;
+  const definition = structuredClone(definitionRecord) as unknown as WorkflowV2Definition;
+  const workflowId = asOptionalString(record.workflowId) ?? definition.workflowId;
+  const planningDraft = restoreWorkflowDraftStatus(record.status) === "draft"
+    && Array.isArray(definition.nodes)
+    && definition.nodes.length === 0
+    && Array.isArray(definition.edges)
+    && definition.edges.length === 0
+    && typeof definition.workflowId === "string"
+    && definition.workflowId === workflowId
+    && Number.isSafeInteger(definition.graphVersion)
+    && definition.graphVersion > 0
+    && typeof definition.objective === "string";
+  if (!planningDraft && !validateWorkflowV2Definition(definition).valid) return undefined;
   const finalReport = asOptionalString(record.finalReport);
-  const restoredRuntimeConversation =
-    record.runtimeConversation === undefined ? undefined : deps.restoreRuntimeConversation(record.runtimeConversation);
+  const restoredRuntimeConversation = record.runtimeConversation === undefined
+    ? undefined
+    : deps.restoreRuntimeConversation(record.runtimeConversation);
   if (record.runtimeConversation !== undefined && !restoredRuntimeConversation) return undefined;
+  const restoredWorkflowV2Plan = record.workflowV2Plan === undefined
+    ? undefined
+    : restoreWorkflowV2Plan(record.workflowV2Plan);
+  if (record.workflowV2Plan !== undefined && !restoredWorkflowV2Plan) return undefined;
+  if (workflowId !== definition.workflowId) return undefined;
   return deps.cloneWorkflowDraft({
-    workflowId: asOptionalString(record.workflowId) ?? `wf_${randomUUID()}`,
-    title: asOptionalString(record.title) ?? graph.title,
+    workflowId,
+    sourceType: record.sourceType === "official" ? "official" : "user",
+    topologyLocked: record.sourceType === "official" || record.topologyLocked === true,
+    title: asOptionalString(record.title) ?? definition.objective ?? "Untitled workflow",
     status: restoreWorkflowDraftStatus(record.status),
     revision: Math.max(1, Math.floor(asNumber(record.revision, 1))),
     configuredAgentId: asOptionalString(record.configuredAgentId) ?? "",
     modelId: asOptionalString(record.modelId) ?? "",
-    objective: asOptionalString(record.objective) ?? graph.objective,
+    reviewerConfiguredAgentId: asOptionalString(record.reviewerConfiguredAgentId) ?? asOptionalString(record.configuredAgentId) ?? "",
+    reviewerModelId: asOptionalString(record.reviewerModelId) ?? asOptionalString(record.modelId) ?? "",
+    objective: asOptionalString(record.objective) ?? definition.objective,
+    definition,
     ...(asOptionalString(record.workDir) ? { workDir: asOptionalString(record.workDir) as string } : {}),
-    graph,
-    graphReady: record.graphReady === true,
     messages: asArray(record.messages)
       .map((message) => {
         const messageRecord = asRecord(message);
@@ -155,10 +198,11 @@ export function restoreWorkflowDraft(
       .filter((item): item is WorkflowRunProgressItem => Boolean(item)),
     runContextDocument: asOptionalString(record.runContextDocument) ?? "",
     contextDocument: asOptionalString(record.contextDocument) ?? "",
+    ...(restoredWorkflowV2Plan ? { workflowV2Plan: restoredWorkflowV2Plan } : {}),
     ...(finalReport !== undefined ? { finalReport } : {}),
-    runIds: asArray(record.runIds).map((item) => asOptionalString(item)).filter((item): item is string => Boolean(item)),
+    runIds: asArray(record.runIds).map((runId) => asOptionalString(runId)).filter((runId): runId is string => Boolean(runId)),
     ...(restoredRuntimeConversation ? { runtimeConversation: restoredRuntimeConversation } : {}),
-    createdAt: asNumber(record.createdAt, asNumber(record.updatedAt, Date.now())),
+    createdAt: asNumber(record.createdAt, Date.now()),
     updatedAt: asNumber(record.updatedAt, Date.now()),
   });
 }
@@ -168,14 +212,16 @@ export function restoreWorkflowRun(raw: unknown): WorkflowRunState | undefined {
   if (!record) return undefined;
   const runId = asOptionalString(record.runId);
   const workflowId = asOptionalString(record.workflowId);
-  const graphSnapshot = restoreWorkflowGraph(record.graphSnapshot);
-  if (!runId || !workflowId || !graphSnapshot) return undefined;
+  if (!runId || !workflowId) return undefined;
   const finalReport = asOptionalString(record.finalReport);
+  const restoredWorkflowV2Plan =
+    record.workflowV2Plan === undefined ? undefined : restoreWorkflowV2Plan(record.workflowV2Plan);
+  if (!restoredWorkflowV2Plan) return undefined;
   return {
     runId,
     workflowId,
     status: restoreWorkflowRunStatus(record.status),
-    graphSnapshot,
+    workflowV2Plan: restoredWorkflowV2Plan,
     progress: asArray(record.progress)
       .map((item) => restoreWorkflowRunProgressItem(item))
       .filter((item): item is WorkflowRunProgressItem => Boolean(item)),
@@ -188,6 +234,118 @@ export function restoreWorkflowRun(raw: unknown): WorkflowRunState | undefined {
     finishedAt: typeof record.finishedAt === "number" ? record.finishedAt : undefined,
     lastError: asOptionalString(record.lastError),
   };
+}
+
+export function reconcileWorkflowV2RunFromDurableState(input: {
+  workflow: WorkflowDraftState;
+  run: WorkflowRunState;
+  persisted: WorkflowV2PersistedRunState;
+  updateWorkflowProjection: boolean;
+}): { workflow: WorkflowDraftState; run: WorkflowRunState } | undefined {
+  if (input.persisted.workflowId !== input.workflow.workflowId
+    || input.persisted.workflowId !== input.run.workflowId
+    || input.persisted.runId !== input.run.runId
+    || !input.run.workflowV2Plan
+    || input.run.workflowV2Plan.graphVersion !== input.persisted.graphVersion) {
+    return undefined;
+  }
+
+  const outputByNodeId = new Map(input.persisted.workerOutputs.map((output) => [output.nodeId, output]));
+  const progress = input.persisted.runState.nodeOrder.map((nodeId): WorkflowRunProgressItem => {
+    const node = input.persisted.runState.nodes[nodeId]!;
+    const definitionNode = input.persisted.plan.definition.nodes.find((candidate) => candidate.id === nodeId);
+    const progressItem: WorkflowRunProgressItem = {
+      nodeId,
+      title: node.title,
+      status: publicWorkflowV2NodeStatus(node),
+      detail: publicWorkflowV2NodeDetail(node, outputByNodeId.get(nodeId)?.summary),
+    };
+    const output = outputByNodeId.get(nodeId);
+    if (output) progressItem.outputs = structuredClone(output.outputs);
+    if (node.intervention) {
+      Object.assign(progressItem, projectWorkflowV2PausedNodeInteraction({
+        nodeId,
+        interactiveAgent: definitionNode?.execModel === "llm" && definitionNode.executionMode === "interactive",
+        intervention: node.intervention,
+        ...(input.persisted.nodeControl[nodeId] ? { control: input.persisted.nodeControl[nodeId] } : {}),
+      }).progress);
+    }
+    return progressItem;
+  });
+  const events = [...input.run.events];
+  for (const nodeId of input.persisted.runState.nodeOrder) {
+    const intervention = input.persisted.runState.nodes[nodeId]?.intervention;
+    if (!intervention) continue;
+    const alreadyProjected = events.some((event) => event.type === "node_paused"
+      && event.nodeId === nodeId
+      && event.at === intervention.requestedAt);
+    if (!alreadyProjected) {
+      events.push({
+        type: "node_paused",
+        nodeId,
+        at: intervention.requestedAt,
+        detail: intervention.reason,
+        intervention: structuredClone(intervention),
+      });
+    }
+  }
+
+  const durableStatus = input.persisted.runState.status;
+  const status = durableStatus === "completed"
+    ? "completed"
+    : durableStatus === "failed"
+      ? "failed"
+      : "waiting_for_user";
+  const finalReport = status === "completed" || status === "failed"
+    ? buildWorkflowV2FinalReport(input.persisted.plan, input.persisted.workerOutputs, durableStatus)
+    : undefined;
+  const lastError = status === "failed"
+    ? progress.find((item) => item.status === "failed")?.detail ?? "Workflow V2 run failed before app restart."
+    : undefined;
+  const nextRun: WorkflowRunState = {
+    ...input.run,
+    status,
+    progress,
+    events,
+    finishedAt: status === "completed" || status === "failed" ? input.persisted.savedAt : undefined,
+    lastError,
+  };
+  if (finalReport !== undefined) nextRun.finalReport = finalReport;
+  else delete nextRun.finalReport;
+
+  if (!input.updateWorkflowProjection) return { workflow: input.workflow, run: nextRun };
+  const nextWorkflow: WorkflowDraftState = {
+    ...input.workflow,
+    status,
+    runProgress: structuredClone(progress),
+    error: lastError,
+    updatedAt: Math.max(input.workflow.updatedAt, input.persisted.savedAt),
+  };
+  if (finalReport !== undefined) nextWorkflow.finalReport = finalReport;
+  else delete nextWorkflow.finalReport;
+  return { workflow: nextWorkflow, run: nextRun };
+}
+
+function publicWorkflowV2NodeStatus(node: WorkflowV2RunNodeState): WorkflowRunProgressItem["status"] {
+  if (node.status === "completed" || node.status === "skipped") return "completed";
+  if (node.status === "failed") return "failed";
+  if (node.status === "paused" || node.status === "running" || node.status === "validating" || node.status === "awaiting_review") {
+    return "paused";
+  }
+  return "queued";
+}
+
+function publicWorkflowV2NodeDetail(node: WorkflowV2RunNodeState, outputSummary: string | undefined): string {
+  if (node.status === "completed") return outputSummary ?? "Completed before app restart";
+  if (node.status === "skipped") return "Skipped before app restart";
+  if (node.status === "failed") return node.lastError ?? "Failed before app restart";
+  if (node.status === "paused") {
+    return node.intervention?.reason ?? node.lastError ?? "Paused with durable recovery state";
+  }
+  if (node.status === "running" || node.status === "validating" || node.status === "awaiting_review") {
+    return "Interrupted before app restart; durable recovery is available";
+  }
+  return "Queued for recovery";
 }
 
 export function restoreWorkflowStoreCollections(
@@ -210,15 +368,13 @@ export function restoreWorkflowStoreCollections(
   const workflows: WorkflowDraftState[] = [];
   for (const item of asArray(storeRecord.workflows)) {
     const workflow = deps.restoreWorkflowDraft(item);
-    if (!workflow) return undefined;
-    workflows.push(workflow);
+    if (workflow) workflows.push(workflow);
   }
 
   const runs: WorkflowRunState[] = [];
   for (const item of asArray(storeRecord.runs)) {
     const run = deps.restoreWorkflowRun(item);
-    if (!run) return undefined;
-    runs.push(run);
+    if (run && workflows.some((workflow) => workflow.workflowId === run.workflowId)) runs.push(run);
   }
 
   const activeWorkflowId = asOptionalString(storeRecord.activeWorkflowId);

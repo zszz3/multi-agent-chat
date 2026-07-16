@@ -81,6 +81,7 @@ function createSdkInteractiveStub(options: {
     modelId?: string;
     developerInstructions?: string;
     resumeSessionId?: string;
+    mcpServers?: any;
     onEvent: (event: AgentEvent) => void;
   }) => Promise<void> | void;
   sendUserMessage?: (content: string) => Promise<void> | void;
@@ -109,6 +110,27 @@ function createSdkInteractiveStub(options: {
 }
 
 describe("ClaudeInteractiveSession", () => {
+  test("injects workflow MCP servers only for planning sessions", async () => {
+    const dir = await mkdtemp(path.join(os.tmpdir(), "multi-agent-chat-claude-planning-mcp-"));
+    const attachments: Array<Record<string, unknown>> = [];
+    const session = new ClaudeInteractiveSession(
+      { ...baseClaudeContext(dir), planningWorkflowId: "wf-1" },
+      {
+        capabilities: runtimeSessionCapabilities(),
+        resolveMcpServers: (context) => context.planningWorkflowId
+          ? { multi_agent_chat: { type: "stdio", command: "node", args: ["mcp-server.js"] } }
+          : undefined,
+        sdkInteractive: createSdkInteractiveStub({ attach: async (input) => { attachments.push(input); } }),
+      },
+    );
+
+    await session.ensureAttached();
+
+    expect(attachments[0]?.mcpServers).toEqual({
+      multi_agent_chat: { type: "stdio", command: "node", args: ["mcp-server.js"] },
+    });
+  });
+
   test("attaches the SDK interactive helper lazily on first prompt and sends the user message through it", async () => {
     const dir = await mkdtemp(path.join(os.tmpdir(), "multi-agent-chat-claude-sdk-interactive-"));
     const attaches: Array<Record<string, unknown>> = [];

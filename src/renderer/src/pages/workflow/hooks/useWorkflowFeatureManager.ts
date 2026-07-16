@@ -1,5 +1,4 @@
 import { useMemo } from "react";
-import { createWorkflowGraphFromObjective } from "../../../../../shared/workflow-graph";
 import type { AppSnapshot, LocalFilePreview } from "../../../../../shared/types";
 import type { WorkflowService } from "../../../app/services/workflow-service";
 import { buildWorkflowSidebarController, type WorkflowSidebarFeatureController, useWorkflowSidebarState } from "./useWorkflowSidebarState";
@@ -40,12 +39,12 @@ export function useWorkflowFeatureManager({
   onReadOutputFile,
   onEnterWorkflow,
 }: UseWorkflowFeatureManagerOptions): WorkflowFeatureManager {
-  const initialWorkflowGraph = useMemo(() => createWorkflowGraphFromObjective(""), []);
+  const initialWorkflowDefinition = useMemo(() => ({ workflowId: "draft", graphVersion: 1, objective: "", nodes: [], edges: [] }), []);
   const draft = useWorkflowDraft({
     snapshot,
     setSnapshot,
     snapshotRef,
-    initialWorkflowGraph,
+    initialWorkflowDefinition,
     workflows,
     configuredAgents: snapshot.configuredAgents,
     channels: snapshot.channels,

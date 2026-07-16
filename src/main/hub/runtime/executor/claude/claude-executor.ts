@@ -1,5 +1,4 @@
 import { ClaudeAgentSdkAdapter } from "../../../../agents/claude/claude-agent-sdk";
-import { claudeEnvironmentForChannel } from "../../../../agents/claude/claude-env";
 import { claudeSessionIdFromConversation } from "../agent-executor-conversation";
 import type { AgentExecutionContext, AgentExecutor } from "../agent-executor-types";
 
@@ -10,7 +9,6 @@ export class ClaudeAgentExecutor implements AgentExecutor {
     private readonly context: AgentExecutionContext,
     private readonly adapter: Pick<ClaudeAgentSdkAdapter, "runOneShot">,
     private readonly resolvedModelId: string | undefined,
-    private readonly channel = context.channel,
   ) {}
 
   async start(): Promise<void> {
@@ -25,7 +23,6 @@ export class ClaudeAgentExecutor implements AgentExecutor {
         developerInstructions: this.context.developerInstructions,
         onEvent: this.context.emit,
         abortController,
-        env: claudeEnvironmentForChannel(this.channel, this.context.runtimeConfig.model),
         ...(this.resolvedModelId ? { modelId: this.resolvedModelId } : {}),
         ...(resumeSessionId ? { resumeSessionId } : {}),
       });

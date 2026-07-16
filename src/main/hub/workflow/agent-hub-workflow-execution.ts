@@ -2,10 +2,10 @@ import type {
   AckScheduledWorkflowEventRequest,
   ScheduledWorkflowDueEvent,
   ScheduledWorkflowRun,
-  WorkflowDraftState,
   WorkflowOperationResult,
-  WorkflowRunState,
 } from "../../../shared/types";
+import type { WorkflowDraftState } from "../../../shared/workflow/draft";
+import type { WorkflowRunState } from "../../../shared/workflow/run";
 
 export function scheduledWorkflowEventTarget(
   event: ScheduledWorkflowDueEvent,
@@ -51,7 +51,7 @@ export async function runScheduledWorkflowEvent(input: {
   workflow: WorkflowDraftState | undefined;
   runId: string;
   recordScheduledWorkflowRun: (run: ScheduledWorkflowRun) => void;
-  runWorkflowGraph: (input: { workflowId: string; contextDocument?: string }) => WorkflowOperationResult;
+  runWorkflow: (input: { workflowId: string; contextDocument?: string }) => WorkflowOperationResult;
   finishScheduledWorkflowRun: (
     runId: string,
     input: {
@@ -92,7 +92,7 @@ export async function runScheduledWorkflowEvent(input: {
     message: input.event.message || "Runner started workflow.",
   });
 
-  const started = input.runWorkflowGraph({
+  const started = input.runWorkflow({
     workflowId: input.workflow.workflowId,
     contextDocument: input.workflow.contextDocument,
   });

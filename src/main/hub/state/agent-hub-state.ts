@@ -6,7 +6,7 @@ import type {
   ChatMessage,
   ChatRuntimeSessionState,
   RuntimeConversation,
-  RuntimeBindingSnapshot,
+  RuntimeContinuationPolicy,
   TaskProgress,
   TaskRunStatus,
   TeamRunStatus,
@@ -22,7 +22,8 @@ export class ChatState {
   channelId: string | undefined = undefined;
   runtimeState: ChatRuntimeSessionState | undefined = undefined;
   runtimeConversation: RuntimeConversation | undefined = undefined;
-  runtimeBinding: RuntimeBindingSnapshot | undefined = undefined;
+  developerInstructions: string | undefined = undefined;
+  contextDocument: string | undefined = undefined;
   running = false;
   messages: ChatMessage[] = [];
   pendingAssistantMessageId: string | undefined = undefined;
@@ -44,6 +45,9 @@ export class TaskState {
   id: string = randomUUID();
   title: string;
   runtimeConversation: RuntimeConversation | undefined = undefined;
+  developerInstructions: string | undefined = undefined;
+  contextDocument: string | undefined = undefined;
+  continuationPolicy: RuntimeContinuationPolicy = "fresh";
   running = false;
   status: TaskRunStatus = "queued";
   progress: TaskProgress = "todo";

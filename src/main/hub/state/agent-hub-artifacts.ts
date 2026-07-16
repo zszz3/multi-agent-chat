@@ -51,10 +51,12 @@ export async function registerArtifact(input: {
   return { ok: true, artifact };
 }
 
-export async function listWorkflowOutputs(workflow: WorkflowFileRoot | undefined, defaultWorkDir: string): Promise<Array<{ name: string; path: string }>> {
+export async function listWorkflowOutputs(workflow: WorkflowFileRoot | undefined, defaultWorkDir: string, workflowId: string, runId: string): Promise<Array<{ name: string; path: string }>> {
   if (!workflow) return [];
   const workDir = workflow.workDir || defaultWorkDir;
-  const outputsDir = path.join(workDir, "outputs");
+  const safeWorkflowId = workflowId.replace(/[^a-zA-Z0-9_-]/g, "_") || "workflow";
+  const safeRunId = runId.replace(/[^a-zA-Z0-9_-]/g, "_") || "run";
+  const outputsDir = path.join(workDir, "outputs", safeWorkflowId, safeRunId);
   let entries: Dirent[];
   try {
     entries = await readdir(outputsDir, { withFileTypes: true });

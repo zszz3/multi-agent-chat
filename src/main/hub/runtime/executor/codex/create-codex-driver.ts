@@ -37,7 +37,7 @@ export function createCodexDriver(options: RuntimeAgentExecutorFactoryOptions): 
       new CodexInteractiveSession(context, {
         capabilities: codexInteractiveSessionCapabilities,
         createCodexClient: ({ context: sessionContext, onEvent, onExit }) => {
-          const channel = sessionContext.channel ?? options.channelById(sessionContext.channelId);
+          const channel = options.channelById(sessionContext.channelId);
           let client: CodexRpcClient;
           client = new CodexRpcClient({
             executable: sessionContext.runtime.command || options.executables.codex,
@@ -48,18 +48,12 @@ export function createCodexDriver(options: RuntimeAgentExecutorFactoryOptions): 
                 modelFromRuntimeConfig(sessionContext.runtimeConfig),
                 reasoningEffortFromRuntimeConfig(sessionContext.runtimeConfig),
               ),
-              ...(sessionContext.onWorkflowGraph
-                ? codexWorkflowMcpArgs(options.workflowHost?.mcpBridgeDiscoveryPath())
-                : []),
+              ...codexWorkflowMcpArgs(options.workflowMcpDiscoveryPath?.(), sessionContext.planningWorkflowId),
             ],
             env: codexEnvironmentForChannel(channel),
             onEvent,
             onRequest: (id, method, params) => {
-              respondToCodexRuntimeServerRequest(options, client, id, method, params, {
-                ...(sessionContext.onWorkflowGraph
-                  ? { onWorkflowGraph: sessionContext.onWorkflowGraph }
-                  : {}),
-              });
+              respondToCodexRuntimeServerRequest(client, id, method, params);
             },
             onExit,
           });

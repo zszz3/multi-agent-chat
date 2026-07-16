@@ -32,13 +32,11 @@ export function resolveConfiguredAgentChannel(agent: ConfiguredAgent | undefined
 }
 
 export function configuredAgentById(configuredAgentId: string | undefined, configuredAgents: ConfiguredAgent[]): ConfiguredAgent | undefined {
-  return configuredAgents.find((agent) => agent.id === configuredAgentId)
-    ?? configuredAgents.find((agent) => agent.id === "default-agent")
-    ?? configuredAgents[0];
+  return configuredAgents.find((agent) => agent.id === configuredAgentId) ?? configuredAgents[0];
 }
 
 export function defaultConfiguredAgentId(configuredAgents: ConfiguredAgent[]): string {
-  return configuredAgents.find((agent) => agent.id === "default-agent")?.id ?? configuredAgents[0]?.id ?? "";
+  return configuredAgents[0]?.id ?? "";
 }
 
 export function resolveFindSkillConfiguredAgentId(configuredAgentId: string | undefined, configuredAgents: ConfiguredAgent[]): string {

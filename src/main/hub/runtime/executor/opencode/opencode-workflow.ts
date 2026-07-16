@@ -44,7 +44,11 @@ export async function runOpenCodeWorkflow(
     },
   });
 
-  await runner.start();
+  const abort = () => { void runner.stop(); };
+  if (input.signal?.aborted) abort();
+  else input.signal?.addEventListener("abort", abort, { once: true });
+  try { await runner.start(); } finally { input.signal?.removeEventListener("abort", abort); }
+  if (input.signal?.aborted) throw input.signal.reason instanceof Error ? input.signal.reason : new Error("Workflow agent interrupted.");
   const output = content.trim();
   if (runnerError) throw new Error(runnerError);
   if (exitCode !== 0) {

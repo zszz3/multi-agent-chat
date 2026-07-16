@@ -1,9 +1,10 @@
-import { mkdtemp, rm } from "node:fs/promises";
+﻿import { mkdtemp, rm } from "node:fs/promises";
 import { createRequire } from "node:module";
 import os from "node:os";
 import path from "node:path";
 import { afterEach, describe, expect, it } from "vitest";
 import { SqliteAppStore } from "./sqlite-store";
+import { buildWorkflowV2PlanSync } from "../../workflows/v2/workflow-v2-planner";
 
 const require = createRequire(import.meta.url);
 const tempDirs: string[] = [];
@@ -29,8 +30,24 @@ async function createDbPath(): Promise<string> {
 }
 
 function sampleState() {
+  const definition = {
+    workflowId: "workflow-1",
+    graphVersion: 3,
+    objective: "ship safely",
+    nodes: [{
+      id: "build",
+      kind: "implementation" as const,
+      title: "Build",
+      execModel: "llm" as const,
+      executionMode: "one-shot" as const,
+      prompt: "build it",
+      outputFields: [{ key: "result", required: true }],
+    }],
+    edges: [],
+  };
+  const workflowV2Plan = buildWorkflowV2PlanSync({ definition, approvedBy: "sqlite-test" });
   return {
-    version: 4,
+    version: 5,
     activeChatId: "chat-1",
     activeTaskId: "task-1",
     activeTeamId: null,
@@ -73,36 +90,7 @@ function sampleState() {
     taskEvents: [],
     teams: [],
     teamRuns: [],
-    configuredAgents: [{
-      id: "agent-1",
-      agentType: "composed",
-      name: "Agent",
-      description: "Reviews code",
-      instructions: "Review correctness.",
-      baseAgentId: "default-agent",
-      runtimeAgentId: "codex",
-      channelId: "channel-1",
-      modelId: "model-1",
-      tags: ["code"],
-      currentRevisionId: "agent-1:v1:hash-1",
-      revision: 1,
-      managed: false,
-      createdAt: 1,
-      updatedAt: 2,
-    }],
-    agentRevisions: [{
-      id: "agent-1:v1:hash-1",
-      agentId: "agent-1",
-      agentType: "composed",
-      revision: 1,
-      baseAgentId: "default-agent",
-      runtimeAgentId: "codex",
-      channelId: "channel-1",
-      modelId: "model-1",
-      instructions: "Review correctness.",
-      configHash: "hash-1",
-      createdAt: 1,
-    }],
+    configuredAgents: [{ id: "agent-1", name: "Agent" }],
     channels: [{ id: "channel-1", name: "Local" }],
     scheduledWorkflowStore: { schedules: [] },
     workflowStore: {
@@ -118,33 +106,27 @@ function sampleState() {
           configuredAgentId: "agent-1",
           modelId: "model-1",
           objective: "ship safely",
+          definition,
           workDir: "/tmp/project",
-          graph: {
-            title: "Release graph",
-            objective: "ship safely",
-            nodes: [
-              { id: "start", kind: "start", title: "Start", prompt: "", position: { x: 1, y: 2 } },
-              {
-                id: "build",
-                kind: "agent",
-                title: "Build",
-                prompt: "build it",
-                configuredAgentId: "agent-1",
-                modelId: "model-2",
-              },
-            ],
-            edges: [{ id: "edge-1", fromNodeId: "start", toNodeId: "build" }],
-          },
-          graphReady: true,
           messages: [{ id: "grill-1", role: "user", content: "go" }],
           reply: "ready",
           error: undefined,
-          runProgress: [{ nodeId: "build", title: "Build", status: "running", taskId: "task-1" }],
+          runProgress: [{
+            nodeId: "build",
+            title: "Build",
+            status: "awaiting_input",
+            taskId: "task-1",
+            inputRequest: {
+              kind: "script_parameters",
+              parameters: [{ key: "question", label: "Question", location: "stdin", valueType: "string", source: "user", required: true }],
+            },
+          }],
           runContextDocument: "run context",
           contextDocument: "context",
           finalReport: undefined,
           runIds: ["run-1"],
           runtimeConversation: { runtimeId: "codex", sessionId: "workflow-native", payload: {} },
+          workflowV2Plan,
           createdAt: 30,
           updatedAt: 40,
         },
@@ -154,13 +136,17 @@ function sampleState() {
           runId: "run-1",
           workflowId: "workflow-1",
           status: "running",
-          graphSnapshot: {
-            title: "Release graph",
-            objective: "ship safely",
-            nodes: [{ id: "build", kind: "agent", title: "Build", prompt: "build it" }],
-            edges: [],
-          },
-          progress: [{ nodeId: "build", title: "Build", status: "completed", detail: "done" }],
+          workflowV2Plan,
+          progress: [{
+            nodeId: "build",
+            title: "Build",
+            status: "awaiting_input",
+            detail: "Waiting for Question",
+            inputRequest: {
+              kind: "script_parameters",
+              parameters: [{ key: "question", label: "Question", location: "stdin", valueType: "string", source: "user", required: true }],
+            },
+          }],
           events: [
             {
               type: "node_output",
@@ -186,7 +172,7 @@ afterEach(async () => {
 });
 
 describe("SqliteAppStore normalized persistence", () => {
-  it("stores chats, runtime sessions, and workflow topology as relational rows", async () => {
+  it("stores chats, runtime sessions, and Workflow V2 state", async () => {
     const dbPath = await createDbPath();
     const store = new SqliteAppStore(dbPath);
     await store.save(sampleState());
@@ -201,12 +187,7 @@ describe("SqliteAppStore normalized persistence", () => {
         "chat_messages",
         "chat_events",
         "runtime_sessions",
-        "agents",
-        "agent_revisions",
         "workflows",
-        "workflow_graphs",
-        "workflow_nodes",
-        "workflow_edges",
         "workflow_runs",
         "workflow_run_nodes",
         "workflow_events",
@@ -216,14 +197,11 @@ describe("SqliteAppStore normalized persistence", () => {
     expect(tables.map(({ name }) => name)).not.toContain("app_state");
     expect(db.prepare("select count(*) as count from chats").get()).toEqual({ count: 1 });
     expect(db.prepare("select count(*) as count from runtime_sessions").get()).toEqual({ count: 1 });
-    expect(db.prepare("select count(*) as count from agents").get()).toEqual({ count: 1 });
-    expect(db.prepare("select count(*) as count from agent_revisions").get()).toEqual({ count: 1 });
-    expect(db.prepare("select count(*) as count from workflow_nodes").get()).toEqual({ count: 3 });
-    expect(db.prepare("select count(*) as count from workflow_edges").get()).toEqual({ count: 1 });
+    expect(tables.map(({ name }) => name)).not.toEqual(expect.arrayContaining(["workflow_graphs", "workflow_nodes", "workflow_edges"]));
+    const workflowRow = db.prepare("select definition_json, workflow_v2_plan_json from workflows").get() as Record<string, unknown>;
+    expect(JSON.parse(String(workflowRow.definition_json))).toMatchObject({ workflowId: "workflow-1", graphVersion: 3 });
+    expect(JSON.parse(String(workflowRow.workflow_v2_plan_json))).toMatchObject({ workflowId: "workflow-1", graphVersion: 3 });
     expect(db.prepare("select count(*) as count from workflow_runs").get()).toEqual({ count: 1 });
-    const aux = db.prepare("select payload from app_aux_state where id = 1").get() as { payload: string };
-    expect(JSON.parse(aux.payload)).not.toHaveProperty("configuredAgents");
-    expect(JSON.parse(aux.payload)).not.toHaveProperty("agentRevisions");
     db.close();
   });
 
@@ -235,6 +213,31 @@ describe("SqliteAppStore normalized persistence", () => {
 
     expect(await store.load()).toEqual(JSON.parse(JSON.stringify(state)));
     store.close();
+  });
+
+  it("persists and restores official workflow provenance", async () => {
+    const dbPath = await createDbPath();
+    const store = new SqliteAppStore(dbPath);
+    const state = sampleState();
+    const workflow = state.workflowStore.workflows[0]!;
+    workflow.sourceType = "official";
+    workflow.topologyLocked = true;
+
+    await store.save(state);
+    expect(await store.load()).toMatchObject({
+      workflowStore: {
+        workflows: [{ workflowId: "workflow-1", sourceType: "official", topologyLocked: true }],
+      },
+    });
+    store.close();
+
+    const { DatabaseSync } = require("node:sqlite") as SqliteModule;
+    const db = new DatabaseSync(dbPath);
+    expect(db.prepare("select source_type, topology_locked from workflows where id = ?").get("workflow-1")).toEqual({
+      source_type: "official",
+      topology_locked: 1,
+    });
+    db.close();
   });
 
   it("replaces removed aggregate rows on a later save", async () => {
@@ -259,30 +262,44 @@ describe("SqliteAppStore normalized persistence", () => {
     db.close();
   });
 
-  it("imports a legacy V4 app_state once and retains it as a backup", async () => {
+  it("updates one chat aggregate without rebuilding unrelated chats", async () => {
     const dbPath = await createDbPath();
-    const state = sampleState();
-    const { DatabaseSync } = require("node:sqlite") as SqliteModule;
-    const legacyDb = new DatabaseSync(dbPath);
-    legacyDb.exec(`
-      create table app_state (
-        id integer primary key check (id = 1),
-        payload text not null,
-        updated_at integer not null
-      )
-    `);
-    legacyDb.prepare("insert into app_state (id, payload, updated_at) values (1, ?, ?)").run(JSON.stringify(state), 1);
-    legacyDb.close();
-
     const store = new SqliteAppStore(dbPath);
-    expect(await store.load()).toEqual(JSON.parse(JSON.stringify(state)));
+    const state = sampleState();
+    const secondChat = {
+      id: "chat-2",
+      title: "Unrelated",
+      configuredAgentId: "agent-1",
+      modelId: "model-1",
+      createdAt: 30,
+      updatedAt: 30,
+    };
+    await store.save({
+      ...state,
+      sessions: [...state.sessions, secondChat],
+      messages: [...state.messages, { id: "message-3", chatId: "chat-2", role: "user", content: "keep", timestamp: 31 }],
+    });
     store.close();
 
-    const migratedDb = new DatabaseSync(dbPath);
-    const tables = migratedDb.prepare("select name from sqlite_master where type = 'table'").all() as Array<{ name: string }>;
-    expect(tables.map(({ name }) => name)).not.toContain("app_state");
-    expect(tables.map(({ name }) => name)).toContain("legacy_app_state");
-    expect(migratedDb.prepare("select count(*) as count from workflow_nodes").get()).toEqual({ count: 3 });
-    migratedDb.close();
+    const { DatabaseSync } = require("node:sqlite") as SqliteModule;
+    const beforeDb = new DatabaseSync(dbPath);
+    const before = beforeDb.prepare("select rowid from chats where id = ?").get("chat-2") as { rowid: number };
+    beforeDb.close();
+
+    const reopened = new SqliteAppStore(dbPath);
+    await reopened.save({
+      ...state,
+      sessions: [{ ...state.sessions[0], title: "Updated architecture", updatedAt: 40 }, secondChat],
+      messages: [...state.messages, { id: "message-3", chatId: "chat-2", role: "user", content: "keep", timestamp: 31 }],
+    });
+    reopened.close();
+
+    const afterDb = new DatabaseSync(dbPath);
+    const after = afterDb.prepare("select rowid from chats where id = ?").get("chat-2") as { rowid: number };
+    expect(after.rowid).toBe(before.rowid);
+    expect(afterDb.prepare("select content from chat_messages where id = ?").get("message-3")).toEqual({ content: "keep" });
+    afterDb.close();
   });
+
+
 });

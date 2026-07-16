@@ -1,14 +1,28 @@
 export interface SqliteSchemaDatabase {
   exec(sql: string): void;
-  prepare(sql: string): {
-    all(...params: unknown[]): unknown[];
-    run(...params: unknown[]): unknown;
-  };
+  prepare(sql: string): { all(...params: unknown[]): unknown[]; get(...params: unknown[]): unknown; run(...params: unknown[]): unknown };
 }
 
-const SCHEMA_VERSION = 7;
+const SCHEMA_VERSION = 3;
 
 export function createNormalizedSchema(db: SqliteSchemaDatabase): void {
+  db.exec(`create table if not exists schema_migrations (version integer primary key, applied_at integer not null);`);
+  const hasV3 = Boolean(db.prepare("select 1 from schema_migrations where version = ?").get(SCHEMA_VERSION));
+  if (!hasV3) {
+    db.exec(`
+      drop table if exists workflow_event_artifacts;
+      drop table if exists workflow_events;
+      drop table if exists workflow_run_nodes;
+      drop table if exists workflow_run_order;
+      drop table if exists workflow_runs;
+      drop table if exists workflow_run_progress;
+      drop table if exists workflow_draft_messages;
+      drop table if exists workflow_edges;
+      drop table if exists workflow_nodes;
+      drop table if exists workflow_graphs;
+      drop table if exists workflows;
+    `);
+  }
   db.exec(`
     create table if not exists schema_migrations (
       version integer primary key,
@@ -24,98 +38,6 @@ export function createNormalizedSchema(db: SqliteSchemaDatabase): void {
       payload text not null,
       updated_at integer not null
     );
-    create table if not exists agents (
-      id text primary key,
-      agent_type text not null,
-      name text not null,
-      description text not null,
-      instructions text not null,
-      base_agent_id text,
-      runtime_agent_id text not null,
-      channel_id text not null,
-      model_id text not null,
-      reasoning_effort text,
-      tags_json text not null,
-      current_revision_id text,
-      revision integer,
-      managed integer not null default 0,
-      created_at integer not null,
-      updated_at integer not null
-    );
-    create table if not exists agent_revisions (
-      id text primary key,
-      agent_id text not null references agents(id) on delete cascade,
-      agent_type text not null,
-      revision integer not null,
-      base_agent_id text,
-      runtime_agent_id text not null,
-      channel_id text not null,
-      model_id text not null,
-      reasoning_effort text,
-      instructions text not null,
-      config_hash text not null,
-      created_at integer not null,
-      unique(agent_id, revision)
-    );
-    create index if not exists agent_revisions_agent_revision on agent_revisions(agent_id, revision desc);
-    create table if not exists mcp_servers (
-      id text primary key,
-      name text not null,
-      transport text not null,
-      command text,
-      args_json text not null,
-      url text,
-      env_json text not null,
-      enabled integer not null default 1,
-      status text not null default 'untested',
-      last_error text,
-      last_tested_at integer,
-      created_at integer not null,
-      updated_at integer not null
-    );
-    create table if not exists mcp_tools (
-      server_id text not null references mcp_servers(id) on delete cascade,
-      name text not null,
-      description text,
-      input_schema_json text not null,
-      sequence integer not null,
-      primary key (server_id, name)
-    );
-    create table if not exists agent_mcp_bindings (
-      agent_id text not null references agents(id) on delete cascade,
-      server_id text not null,
-      sequence integer not null,
-      primary key (agent_id, server_id)
-    );
-    create table if not exists agent_mcp_tools (
-      agent_id text not null,
-      server_id text not null,
-      tool_name text not null,
-      primary key (agent_id, server_id, tool_name),
-      foreign key (agent_id, server_id) references agent_mcp_bindings(agent_id, server_id) on delete cascade
-    );
-    create table if not exists agent_revision_mcp_bindings (
-      revision_id text not null references agent_revisions(id) on delete cascade,
-      server_id text not null,
-      sequence integer not null,
-      primary key (revision_id, server_id)
-    );
-    create table if not exists agent_revision_mcp_tools (
-      revision_id text not null,
-      server_id text not null,
-      tool_name text not null,
-      primary key (revision_id, server_id, tool_name),
-      foreign key (revision_id, server_id) references agent_revision_mcp_bindings(revision_id, server_id) on delete cascade
-    );
-    create table if not exists evaluation_datasets (id text primary key, name text not null, description text not null, created_at integer not null, updated_at integer not null);
-    create table if not exists evaluation_dataset_items (id text primary key, dataset_id text not null references evaluation_datasets(id) on delete cascade, input text not null, expected_output text, metadata_json text not null, sequence integer not null);
-    create index if not exists evaluation_dataset_items_order on evaluation_dataset_items(dataset_id, sequence);
-    create table if not exists evaluation_evaluators (id text primary key, name text not null, kind text not null, prompt text, agent_id text, runtime_id text, threshold real not null, enabled integer not null, created_at integer not null, updated_at integer not null);
-    create table if not exists evaluation_experiments (id text primary key, name text not null, dataset_id text not null references evaluation_datasets(id), agent_id text not null, repetitions integer not null, created_at integer not null, updated_at integer not null);
-    create table if not exists evaluation_experiment_evaluators (experiment_id text not null references evaluation_experiments(id) on delete cascade, evaluator_id text not null references evaluation_evaluators(id), sequence integer not null, primary key(experiment_id, evaluator_id));
-    create table if not exists evaluation_runs (id text primary key, experiment_id text not null references evaluation_experiments(id) on delete cascade, status text not null, agent_revision_id text, started_at integer not null, finished_at integer, average_score real, minimum_score real, pass_rate real, total_duration_ms integer, error text);
-    create table if not exists evaluation_case_results (id text primary key, run_id text not null references evaluation_runs(id) on delete cascade, dataset_item_id text not null, repetition integer not null, input text not null, expected_output text, output text not null, error text, duration_ms integer not null);
-    create table if not exists evaluation_scores (case_result_id text not null references evaluation_case_results(id) on delete cascade, evaluator_id text not null, score real not null, passed integer not null, reason text, evidence_json text, failed_criteria_json text, duration_ms integer not null, token_count integer, estimated_cost real, primary key(case_result_id, evaluator_id));
     create table if not exists chats (
       id text primary key,
       title text not null,
@@ -175,45 +97,16 @@ export function createNormalizedSchema(db: SqliteSchemaDatabase): void {
       model_id text not null,
       objective text not null,
       work_dir text,
-      graph_ready integer not null,
       reply text not null,
       error text,
       run_context_document text not null,
       context_document text not null,
       final_report text,
       runtime_conversation_json text,
+      definition_json text,
+      workflow_v2_plan_json text,
       created_at integer not null,
       updated_at integer not null
-    );
-    create table if not exists workflow_graphs (
-      id text primary key,
-      workflow_id text not null references workflows(id) on delete cascade,
-      revision integer,
-      run_id text unique,
-      title text not null,
-      objective text not null,
-      created_at integer not null
-    );
-    create table if not exists workflow_nodes (
-      graph_id text not null references workflow_graphs(id) on delete cascade,
-      node_id text not null,
-      kind text not null,
-      title text not null,
-      prompt text not null,
-      configured_agent_id text,
-      model_id text,
-      position_x real,
-      position_y real,
-      sequence integer not null,
-      primary key (graph_id, node_id)
-    );
-    create table if not exists workflow_edges (
-      graph_id text not null references workflow_graphs(id) on delete cascade,
-      edge_id text not null,
-      from_node_id text not null,
-      to_node_id text not null,
-      sequence integer not null,
-      primary key (graph_id, edge_id)
     );
     create table if not exists workflow_draft_messages (
       id text primary key,
@@ -229,13 +122,15 @@ export function createNormalizedSchema(db: SqliteSchemaDatabase): void {
       status text not null,
       detail text,
       task_id text,
+      input_request_json text,
+      intervention_json text,
       sequence integer not null,
       primary key (workflow_id, node_id)
     );
     create table if not exists workflow_runs (
       id text primary key,
       workflow_id text not null references workflows(id) on delete cascade,
-      graph_id text not null references workflow_graphs(id),
+      workflow_v2_plan_json text,
       status text not null,
       context_document text not null,
       final_report text,
@@ -256,6 +151,8 @@ export function createNormalizedSchema(db: SqliteSchemaDatabase): void {
       status text not null,
       detail text,
       task_id text,
+      input_request_json text,
+      intervention_json text,
       sequence integer not null,
       primary key (run_id, node_id)
     );
@@ -286,30 +183,20 @@ export function createNormalizedSchema(db: SqliteSchemaDatabase): void {
       primary key (event_id, sequence)
     );
   `);
-  db.prepare(
-    "insert or ignore into schema_migrations (version, applied_at) values (?, ?)",
-  ).run(SCHEMA_VERSION, Date.now());
+  db.prepare("insert or ignore into schema_migrations (version, applied_at) values (?, ?)").run(SCHEMA_VERSION, Date.now());
   ensureColumn(db, "workflows", "source_type", "text not null default 'user'");
-  ensureColumn(
-    db,
-    "workflows",
-    "topology_locked",
-    "integer not null default 0",
-  );
-  ensureColumn(db, "evaluation_evaluators", "runtime_id", "text");
-  ensureColumn(db, "evaluation_scores", "evidence_json", "text");
-  ensureColumn(db, "evaluation_scores", "failed_criteria_json", "text");
+  ensureColumn(db, "workflows", "topology_locked", "integer not null default 0");
+  ensureColumn(db, "workflows", "definition_json", "text");
+  ensureColumn(db, "workflows", "workflow_v2_plan_json", "text");
+  ensureColumn(db, "workflow_runs", "workflow_v2_plan_json", "text");
+  ensureColumn(db, "workflow_run_progress", "input_request_json", "text");
+  ensureColumn(db, "workflow_run_progress", "intervention_json", "text");
+  ensureColumn(db, "workflow_run_nodes", "input_request_json", "text");
+  ensureColumn(db, "workflow_run_nodes", "intervention_json", "text");
 }
 
-function ensureColumn(
-  db: SqliteSchemaDatabase,
-  table: string,
-  column: string,
-  definition: string,
-): void {
-  const columns = db.prepare(`pragma table_info(${table})`).all() as Array<{
-    name?: unknown;
-  }>;
+function ensureColumn(db: SqliteSchemaDatabase, table: string, column: string, definition: string): void {
+  const columns = db.prepare(`pragma table_info(${table})`).all() as Array<{ name?: unknown }>;
   if (columns.some((item) => item.name === column)) return;
   db.exec(`alter table ${table} add column ${column} ${definition}`);
 }

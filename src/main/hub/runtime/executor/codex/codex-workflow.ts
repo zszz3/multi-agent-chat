@@ -25,7 +25,7 @@ export async function runCodexWorkflow(
   options: RuntimeWorkflowExecutionOptions,
 ): Promise<WorkflowAgentResponse> {
   const executable = input.runtime.command || options.executables.codex;
-  const channel = input.channel ?? options.channelById(input.channelId);
+  const channel = options.channelById(input.channelId);
   const model = runtimeModelId(modelFromRuntimeConfig(input.runtimeConfig));
   let settled = false;
   let content = "";
@@ -34,13 +34,19 @@ export async function runCodexWorkflow(
   let client: CodexRpcClient | undefined;
 
   return new Promise<WorkflowAgentResponse>((resolve, reject) => {
+    let abort: () => void;
     const settle = (callback: () => void): void => {
       if (settled) return;
       settled = true;
       timeout?.clear();
+      input.signal?.removeEventListener("abort", abort);
       void client?.shutdown();
       callback();
     };
+    abort = () => settle(() => reject(input.signal?.reason instanceof Error ? input.signal.reason : new Error("Workflow agent interrupted.")));
+
+    if (input.signal?.aborted) { abort(); return; }
+    input.signal?.addEventListener("abort", abort, { once: true });
 
     timeout = createWorkflowAgentTimeout({
       timeoutMs: WORKFLOW_AGENT_IDLE_TIMEOUT_MS,
@@ -56,7 +62,7 @@ export async function runCodexWorkflow(
           modelFromRuntimeConfig(input.runtimeConfig),
           reasoningEffortFromRuntimeConfig(input.runtimeConfig),
         ),
-        ...codexWorkflowMcpArgs(options.workflowHost?.mcpBridgeDiscoveryPath()),
+        ...codexWorkflowMcpArgs(options.workflowMcpDiscoveryPath?.(), input.planningWorkflowId),
       ],
       env: codexEnvironmentForChannel(channel),
       onEvent: (event) => {
@@ -84,18 +90,7 @@ export async function runCodexWorkflow(
       },
       onRequest: (id, method, params) => {
         if (client) {
-          respondToCodexRuntimeServerRequest(options, client, id, method, params, {
-            onWorkflowGraph: ({ graph, workflowId, revision }) => {
-              input.onEvent?.({
-                requestId: input.requestId,
-                type: "workflow_graph",
-                graph,
-                content: "Workflow graph created through MCP.",
-                ...(workflowId ? { workflowId } : {}),
-                ...(revision !== undefined ? { revision } : {}),
-              });
-            },
-          });
+          respondToCodexRuntimeServerRequest(client, id, method, params);
         }
       },
       onExit: (_code, _signal, stderr) => {
@@ -114,7 +109,7 @@ export async function runCodexWorkflow(
               model,
               modelProvider: null,
               cwd: input.workDir,
-              approvalPolicy: "never",
+              approvalPolicy: "on-request",
               config: null,
               baseInstructions: null,
               developerInstructions: WORKFLOW_DEVELOPER_INSTRUCTIONS,
@@ -124,7 +119,7 @@ export async function runCodexWorkflow(
               modelProvider: null,
               profile: null,
               cwd: input.workDir,
-              approvalPolicy: "never",
+              approvalPolicy: "on-request",
               config: null,
               baseInstructions: null,
               developerInstructions: WORKFLOW_DEVELOPER_INSTRUCTIONS,

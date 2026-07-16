@@ -1,13 +1,6 @@
 import type { CodexPluginCatalogItem } from "../../../shared/types";
 import { CodexRpcClient } from "../../agents/codex/codex-rpc";
 import { asArray, asBoolean, asOptionalString, asRecord } from "../persisted/agent-hub-persistence";
-import type { CodexWorkflowToolCallResult } from "./agent-hub-codex-workflow-tools";
-
-export interface CodexServerRequestOptions {
-  handleWorkflowToolCall?: (params: Record<string, unknown>) => CodexWorkflowToolCallResult;
-  onWorkflowGraph?: (payload: { graph: import("../../../shared/types").WorkflowGraph; workflowId?: string; revision?: number }) => void;
-}
-
 export function codexSlashHelpText(): string {
   return [
     "Slash commands",
@@ -146,8 +139,10 @@ export function respondToCodexServerRequest(
   id: number,
   method: string,
   params: Record<string, unknown>,
-  options: CodexServerRequestOptions = {},
 ): void {
+  const isWorkflowMcpRequest = ["workflow_create", "workflow_validate", "workflow_context_append"].some((toolName) =>
+    JSON.stringify(params).toLowerCase().includes(toolName),
+  );
   if (method === "item/commandExecution/requestApproval" || method === "execCommandApproval") {
     client.respond(id, { decision: "accept" });
     return;
@@ -156,8 +151,14 @@ export function respondToCodexServerRequest(
     client.respond(id, { answers: {} });
     return;
   }
+  if (method === "item/mcpToolCall/requestApproval" || method === "mcpServer/toolCall/requestApproval" || method === "mcp/tool/requestApproval") {
+    client.respond(id, { decision: isWorkflowMcpRequest ? "accept" : "decline" });
+    return;
+  }
   if (method === "mcpServer/elicitation/request") {
-    client.respond(id, { action: "decline", content: null, _meta: null });
+    client.respond(id, isWorkflowMcpRequest
+      ? { action: "accept", content: {}, _meta: null }
+      : { action: "decline", content: null, _meta: null });
     return;
   }
   if (method === "item/permissions/requestApproval") {
@@ -165,21 +166,6 @@ export function respondToCodexServerRequest(
     return;
   }
   if (method === "item/tool/call" || method === "mcp/dynamicToolCall") {
-    const toolResult = options.handleWorkflowToolCall?.(params);
-    if (toolResult?.handled) {
-      if (toolResult.graph && toolResult.workflowId) {
-        options.onWorkflowGraph?.({
-          graph: toolResult.graph,
-          workflowId: toolResult.workflowId,
-          ...(toolResult.revision !== undefined ? { revision: toolResult.revision } : {}),
-        });
-      }
-      client.respond(id, {
-        contentItems: [{ type: "inputText", text: JSON.stringify(toolResult.payload ?? { ok: toolResult.success !== false }) }],
-        success: toolResult.success !== false,
-      });
-      return;
-    }
     client.respond(id, {
       contentItems: [{ type: "inputText", text: "Multi Agent Chat does not handle Codex tool calls in the demo." }],
       success: false,

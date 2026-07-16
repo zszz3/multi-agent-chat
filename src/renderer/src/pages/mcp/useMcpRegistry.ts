@@ -1,5 +1,5 @@
 import { useCallback, useEffect, useMemo, useState } from "react";
-import type { McpServerDefinition } from "../../../../shared/types";
+import type { McpServerDefinition } from "../../../../shared/mcp/types";
 
 function createServer(): McpServerDefinition {
   const now = Date.now();

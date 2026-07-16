@@ -1,6 +1,5 @@
 import type {
   AgentChannel,
-  AgentRevision,
   ConfiguredAgent,
   RegisteredArtifact,
   RuntimeConversation,
@@ -12,6 +11,7 @@ import {
 } from "../chat/agent-hub-ui";
 import { buildWorkflowSnapshot, cloneTeamMember } from "../team/agent-team-workflow";
 import type { AgentTeamState, ChatState, TaskState, TeamRunState } from "../state/agent-hub-state";
+import type { WorkflowNodeConversation } from "../../../shared/workflow-v2/conversation";
 import {
   cloneRuntimeState,
   type PersistedAppStateV5,
@@ -24,7 +24,6 @@ import {
   type PersistedTaskRunRecord,
   type PersistedTeamRunRecord,
 } from "./agent-hub-persistence";
-import { cloneRuntimeBindingSnapshot } from "../runtime/runtime-binding";
 
 export function buildPersistedPayload(input: {
   activeChatId: string | undefined;
@@ -38,11 +37,11 @@ export function buildPersistedPayload(input: {
   teams: Iterable<AgentTeamState>;
   teamRuns: Iterable<TeamRunState>;
   configuredAgents: ConfiguredAgent[];
-  agentRevisions: AgentRevision[];
   artifacts: RegisteredArtifact[];
   cloneConversation: (conversation: RuntimeConversation) => RuntimeConversation;
   workflowStore: WorkflowStoreState;
   scheduledWorkflowStore: ScheduledWorkflowStoreState;
+  workflowNodeConversations: WorkflowNodeConversation[];
 }): PersistedAppStateV5 {
   const sessions: PersistedChatSessionRecord[] = [];
   const messages: PersistedChatMessageRecord[] = [];
@@ -62,7 +61,6 @@ export function buildPersistedPayload(input: {
       ...(chat.channelId ? { channelId: chat.channelId } : {}),
       ...(chat.runtimeState ? { runtimeState: cloneRuntimeState(chat.runtimeState) } : {}),
       ...(chat.runtimeConversation ? { runtimeConversation: input.cloneConversation(chat.runtimeConversation) } : {}),
-      ...(chat.runtimeBinding ? { runtimeBinding: cloneRuntimeBindingSnapshot(chat.runtimeBinding) } : {}),
       lastError: chat.lastError,
       createdAt: chat.createdAt,
       updatedAt: chat.updatedAt,
@@ -91,6 +89,8 @@ export function buildPersistedPayload(input: {
       id: task.id,
       title: task.title,
       prompt: task.prompt,
+      ...(task.developerInstructions ? { developerInstructions: task.developerInstructions } : {}),
+      ...(task.contextDocument ? { contextDocument: task.contextDocument } : {}),
       configuredAgentId: task.configuredAgentId,
       modelId: task.modelId,
       workDir: task.workDir,
@@ -179,8 +179,8 @@ export function buildPersistedPayload(input: {
     teams,
     teamRuns,
     configuredAgents: input.configuredAgents,
-    agentRevisions: input.agentRevisions,
     workflowStore: input.workflowStore,
     scheduledWorkflowStore: input.scheduledWorkflowStore,
+    workflowNodeConversations: input.workflowNodeConversations.map((conversation) => structuredClone(conversation)),
   };
 }

@@ -85,7 +85,7 @@ describe("ClaudeAgentSdkInteractive", () => {
       cwd: "C:/repo",
       modelId: "claude-sonnet",
       developerInstructions: "Be precise.",
-      env: { PATH: "/bin", ANTHROPIC_AUTH_TOKEN: "test-token" },
+      mcpServers: { multi_agent_chat: { type: "stdio", command: "node", args: ["mcp-server.js"] } },
       onEvent: () => undefined,
     });
 
@@ -96,13 +96,13 @@ describe("ClaudeAgentSdkInteractive", () => {
     expect(call?.options).toMatchObject({
       cwd: "C:/repo",
       model: "claude-sonnet",
-      env: { PATH: "/bin", ANTHROPIC_AUTH_TOKEN: "test-token" },
       systemPrompt: {
         type: "preset",
         preset: "claude_code",
         append: "Be precise.",
       },
       permissionMode: "default",
+      mcpServers: { multi_agent_chat: { type: "stdio", command: "node", args: ["mcp-server.js"] } },
     });
     expect(typeof call?.prompt?.[Symbol.asyncIterator]).toBe("function");
     expect(typeof call?.options?.canUseTool).toBe("function");

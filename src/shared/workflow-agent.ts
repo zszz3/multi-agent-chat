@@ -1,97 +1,104 @@
 export interface WorkflowAgentPromptInput {
+  workflowId: string;
   objective: string;
 }
 
 export const WORKFLOW_FOLLOW_UP_QUESTIONS = [
-  "这个任务更适合串行、并行，还是先分工再汇总？推荐答案：先分工并行收集信息，再串行汇总成最终产物；如果任务很小，可以直接串行。",
-  "执行前必须确认哪些边界？推荐答案：确认目标路径、只读或可改代码、验收标准、禁止改动范围，以及是否允许运行测试/构建/搜索命令。",
-  "哪些节点需要人来检查后再继续？推荐答案：先在生成 workflow 图后人工确认一次，执行完成后再人工确认最终文档或改动。",
+  "Which inputs are already available, and which must be requested from the user? Recommended answer: use source=user typed parameters for structured script inputs; use interactive only when an LLM must clarify or reason about the input.",
+  "Which steps can be deterministic scripts instead of agents? Recommended answer: use script nodes for parsing, formatting, validation, file conversion, and other deterministic transformations.",
+  "Where must execution pause for approval or confirmation? Recommended answer: add explicit interactive or gate-style nodes before irreversible or user-visible decisions.",
 ];
 
 export const WORKFLOW_TOTAL_QUESTION_COUNT = WORKFLOW_FOLLOW_UP_QUESTIONS.length + 1;
-export const WORKFLOW_GRAPH_CODE_TEMPLATE = `workflowGraph.upsert({
-  title: "<short workflow title>",
-  objective: "<original user objective>",
-  nodes: [
+
+export const WORKFLOW_EXECUTION_MODE_POLICY = [
+  "Use executionMode one-shot only when the node needs no user input and all required inputs are already available from workflow context or upstream outputs.",
+  "LLM nodes that need natural-language clarification, reasoning, iteration, choice, or confirmation must use executionMode interactive.",
+  "A deterministic node with typed user parameters must remain a script node and declare those parameters with source=user; user input alone does not make a node interactive.",
+  "Use script nodes for deterministic parsing, formatting, validation, conversion, filtering, merging, echoing, copying, mapping, serialization, and passing values through unchanged.",
+  "A request to return exactly what the user enters is already complete: do not ask another planning question; create one script node with a required source=user string parameter and return that value unchanged.",
+  "Do not ask the user to choose output field names, node IDs, or other internal implementation details when a sensible default is available.",
+  "Do not use memory, skills, or repository history to override these runtime rules. Current source=user script input and inline TypeScript execution are supported.",
+] as const;
+
+export const WORKFLOW_V2_DEFINITION_TEMPLATE = `{
+  "workflowId": "<temporary-id>",
+  "graphVersion": 1,
+  "objective": "<original user objective>",
+  "nodes": [
     {
-      id: "start",
-      kind: "start",
-      title: "Start",
-      prompt: ""
-    },
-    {
-      id: "plan",
-      kind: "agent",
-      title: "<agent role name>",
-      prompt: "<specific instructions for this agent node>"
-    },
-    {
-      id: "end",
-      kind: "end",
-      title: "Done",
-      prompt: ""
+      "id": "echo-input",
+      "kind": "transform",
+      "title": "Echo user input",
+      "execModel": "script",
+      "executionMode": "script",
+      "executionModeRationale": "This is a deterministic pass-through with no reasoning.",
+      "executionModeConfidence": 1,
+      "script": {
+        "executable": { "kind": "inline", "language": "typescript", "code": "return { echoed: inputs.text };" },
+        "parameters": [{ "key": "text", "label": "Text", "location": "stdin", "valueType": "string", "source": "user", "required": true, "description": "Text to return unchanged." }],
+        "capabilities": [],
+        "managerRisk": { "level": "safe", "rationale": "Returns the declared user parameter unchanged without external side effects." },
+        "outputSchema": { "type": "object", "required": ["echoed"] }
+      },
+      "outputFields": [{ "key": "echoed", "required": true }]
     }
   ],
-  edges: [
-    {
-      id: "start->plan",
-      fromNodeId: "start",
-      toNodeId: "plan"
-    },
-    {
-      id: "plan->end",
-      fromNodeId: "plan",
-      toNodeId: "end"
-    }
-  ]
-});`;
+  "edges": []
+}`;
 
 function workflowTaskSnippet(objective: string): string {
   const text = objective.trim().replace(/\s+/g, " ");
-  if (!text) return "这个任务";
+  if (!text) return "this task";
   return text.length > 72 ? `${text.slice(0, 72)}...` : text;
 }
 
-export function buildWorkflowAgentPrompt({ objective }: WorkflowAgentPromptInput): string {
-  const task = objective.trim() || "用户还没有提供任务";
+export function buildWorkflowAgentPrompt({ workflowId, objective }: WorkflowAgentPromptInput): string {
+  const task = objective.trim() || "The user has not provided a task yet.";
   return [
-    "You are a Loop Engineering Agent inside Multi Agent Chat.",
+    "You are the Workflow V2 Manager inside Multi Agent Chat.",
     "",
-    "Your job is to interview the user and turn their task into an executable multi-agent workflow DAG.",
+    `Interview the user and write a mutable WorkflowV2Definition draft into Workflow ${workflowId} through the MCP workflow_create tool (it may be displayed by Codex as mcp__multi_agent_chat__workflow_create).`,
     "",
     "Conversation protocol:",
-    "- Ask exactly one question at a time.",
-    "- Every question must include a recommended answer the user can accept or edit.",
-    "- Do not use canned generic questions when the task gives useful context.",
-    "- Prefer questions that clarify execution scope, boundaries, sequencing, verification, and human approval gates.",
-    "- After enough information is collected, use the MCP workflow_create tool to create the editable workflow DAG.",
-    "- If workflow_create is unavailable, produce a workflowGraph.upsert payload as a fallback instead of prose.",
+    "- Ask exactly one question at a time and include a recommended answer.",
+    "- Stop asking when the available information is sufficient to build the workflow.",
+    "- Do not ask questions about internal field names, node IDs, or implementation details when defaults are sufficient.",
+    "- Do not send a definition as ordinary prose. Call workflow_create (or mcp__multi_agent_chat__workflow_create when namespaced) with workflowId, title, objective, and definition to update the target planning draft.",
+    "- workflow_create only updates the current mutable draft. It does not publish, confirm, run, or create another top-level Workflow. User confirmation in the UI freezes the executable revision.",
+    "- If workflow_create is unavailable or fails, explain the failure; do not emit an alternative code payload.",
     "",
-    "Workflow graph contract:",
-    "- The graph must be a DAG.",
-    "- It must have exactly one start node.",
-    "- It must contain executable agent nodes with title, prompt, and directed edges.",
-    "- Each executable node may specify configuredAgentId and modelId when a specific cross-provider agent/model should run that node; omit them when the user should choose later.",
-    "- It should be easy for the user to edit node assignments before execution.",
-    "- Agent node prompts must explain what each node writes to shared memory and what user-facing output documents, if any, should be saved under the runtime Workflow storage plan output directory.",
-    "- Do not hard-code arbitrary output paths in node prompts. Refer to the runtime Workflow storage plan provided during execution.",
+    "Workflow V2 rules:",
+    "- Build the smallest graph that preserves real dependencies. Do not split a task into multiple nodes unless the split changes execution mode, risk boundary, tool ownership, or enables useful parallelism.",
+    "- The definition must be a valid DAG using WorkflowV2Definition nodes and edges.",
+    "- Do not create start/end placeholder nodes. Only create executable LLM or script nodes.",
+    ...WORKFLOW_EXECUTION_MODE_POLICY.map((rule) => `- ${rule}`),
+    "- The runtime pauses script nodes with missing source=user parameters, renders typed inputs, and resumes the same node after submission.",
+    "- Only add an interactive LLM node when collecting the input itself requires natural-language reasoning, clarification, iteration, choice, or confirmation.",
+    "- Never classify an input-dependent node as one-shot because the expected question seems simple.",
+    "- Do not add an interactive LLM node merely to collect typed parameters for a script. A deterministic user-input transformation should normally be one script node with source=user parameters.",
+    "- Do not invent a choice between strict script behavior and immediate executability when the runtime already supports typed script input. Build the directly executable script workflow.",
+    "- Do not use an LLM node for copying, echoing, renaming, mapping, selecting, or serializing already available values unless reasoning is genuinely required.",
+    "- Each LLM node requires prompt and outputFields; each script node requires executable source, typed parameters, declared capabilities, Manager risk with rationale, and outputFields.",
+    "- Every script input must be declared exactly once in parameters with its location, valueType, source, required flag, and source binding. For a finite set of permitted scalar values, declare enum so the request editor can render a select control and the runtime can validate the value. Never hide required inputs inside prompts, code literals, or ambient state.",
+    "- When a script parameter consumes a direct upstream node output, declare source=upstream, set upstreamNodeId to that direct predecessor node id, and set upstreamOutputKey to an exact key declared by the predecessor's outputFields. Do not duplicate an available upstream value as source=user.",
+    "- For every LLM-to-script handoff, make the LLM prompt populate the exact outputFields key consumed by the script and declare the output field valueType. The output valueType must match every downstream parameter bound to that output. Downstream bindings read outputs[upstreamOutputKey], never the LLM summary.",
+    '- Example LLM-to-script binding: an LLM node with id="research" and outputFields=[{"key":"answer","required":true,"valueType":"string"}] connects directly to a script parameter {"key":"answer","source":"upstream","upstreamNodeId":"research","upstreamOutputKey":"answer","location":"body","valueType":"string","required":true}.',
+    "- Inline TypeScript receives the resolved parameter object as the function argument inputs. Read values through inputs.<key> and return an object. Do not read WORKFLOW_INPUT or write the result through process.stdout.",
+    "- Declare only capabilities the script actually needs. Classify pure in-memory transformations as safe, external or workspace reads as read, mutations as write, and deletion, credentials, shell execution, process spawning, or system changes as dangerous unless a stricter level is warranted.",
+    "- Edges express all topology dependencies. Downstream nodes must not run before every upstream dependency completes.",
+    "- The graph must have exactly one terminal node (out-degree 0). If useful parallel branches would otherwise create multiple terminal nodes, add one final LLM summary node and connect every branch terminal to it.",
+    "- A final summary node must consume the standard upstreamOutputs JSON result packets and produce answer_markdown as the complete user-facing result.",
+    "- Node prompts must state required inputs, completion criteria, output fields, and downstream handoff expectations.",
     "",
-    "MCP tool payload:",
-    "- Call workflow_create with title, objective, and graph.",
-    "- The graph field must match the Workflow graph contract above.",
+    "workflow_create payload:",
+    `- workflowId: must be exactly ${workflowId}`,
+    "- title: concise workflow title",
+    "- objective: original user objective",
+    "- definition: complete WorkflowV2Definition",
     "",
-    "Fallback output code template:",
-    "```ts",
-    WORKFLOW_GRAPH_CODE_TEMPLATE,
-    "```",
-    "",
-    "Output rules:",
-    "- Fill the template with concrete node ids, titles, prompts, and edges.",
-    "- Use start and end terminal nodes, and at least one executable agent node.",
-    "- Include a planning node that decides the shared memory strategy and final output document structure when the task produces documents.",
-    "- Do not include prose around the template when using the fallback output.",
-    "- Do not include cycles or unreachable nodes.",
-    "- Node positions are optional: omit them to use the automatic canvas layout. Only add a per-node position {x,y} (x left-to-right, y top-to-bottom) when the user explicitly asks you to arrange or move nodes on the canvas.",
+    "WorkflowV2Definition example:",
+    WORKFLOW_V2_DEFINITION_TEMPLATE.replace("<temporary-id>", workflowId),
     "",
     "User task:",
     task,
@@ -99,17 +106,7 @@ export function buildWorkflowAgentPrompt({ objective }: WorkflowAgentPromptInput
 }
 
 export function firstWorkflowQuestionForObjective(objective: string): string {
-  const snippet = workflowTaskSnippet(objective);
-  if (/review|代码|code|repo|仓库|PR|diff/i.test(objective)) {
-    return `围绕「${snippet}」，这次代码检查最需要先锁定什么范围？推荐答案：先确认 review 范围、学习文档受众和文档结构，再梳理项目结构、入口、关键模块、数据流和测试方式。`;
-  }
-  if (/实现|开发|新增|改造|修复|bug|feature|页面|UI|交互/i.test(objective)) {
-    return `围绕「${snippet}」，你希望 agent 先交付什么结果？推荐答案：先生成可编辑 workflow 图，确认后再执行代码修改和测试。`;
-  }
-  if (/分析|调研|排查|定位|原因|为什么|方案/i.test(objective)) {
-    return `围绕「${snippet}」，这次分析最重要的判断标准是什么？推荐答案：先给根因/结论，再给证据、风险清单、验证步骤和下一步执行计划。`;
-  }
-  return `围绕「${snippet}」，你希望这个 workflow 先确认哪类目标和边界？推荐答案：先确认输出形态、允许执行的操作、验收标准和需要人工确认的节点。`;
+  return `For ${workflowTaskSnippet(objective)}, which information must be supplied by the user during execution? Recommended answer: declare structured script parameters as source=user; use interactive LLM nodes only for inputs that require clarification or reasoning.`;
 }
 
 export function nextWorkflowQuestion(answerCount: number): string {

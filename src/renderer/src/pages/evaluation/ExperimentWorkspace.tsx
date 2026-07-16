@@ -16,6 +16,7 @@ import {
   WorkbenchLayout,
   WorkbenchSection,
 } from "../../ui/workbench/Workbench";
+import { useEntityDraft } from "../../ui/workbench/useEntityDraft";
 import {
   averageCaseScore,
   formatDuration,
@@ -26,7 +27,7 @@ import {
 export function ExperimentWorkspace({
   zh,
   experiments,
-  selected,
+  selected: persistedSelected,
   datasets,
   evaluators,
   agents,
@@ -34,7 +35,7 @@ export function ExperimentWorkspace({
   busy,
   onSelect,
   onCreate,
-  onChange,
+  onDraftChange,
   onSave,
   onDelete,
   onRun,
@@ -49,11 +50,12 @@ export function ExperimentWorkspace({
   busy: string | undefined;
   onSelect: (id: string) => void;
   onCreate: () => void;
-  onChange: (value: EvaluationExperiment) => void;
-  onSave: () => void;
+  onDraftChange?: (value: EvaluationExperiment) => void;
+  onSave: (value: EvaluationExperiment) => void;
   onDelete: () => void;
-  onRun: () => void;
+  onRun: (value: EvaluationExperiment) => void;
 }) {
+  const [selected, onChange] = useEntityDraft(persistedSelected, onDraftChange);
   const latest = runs[0];
   const selectedAgent = agents.find((item) => item.id === selected?.agentId);
   return (
@@ -112,7 +114,7 @@ export function ExperimentWorkspace({
                   className="control-btn compact secondary"
                   type="button"
                   disabled={Boolean(busy)}
-                  onClick={onSave}
+                  onClick={() => selected && onSave(selected)}
                 >
                   <Save size={13} />
                   {zh ? "保存" : "Save"}
@@ -121,7 +123,7 @@ export function ExperimentWorkspace({
                   className="control-btn compact is-active"
                   type="button"
                   disabled={Boolean(busy)}
-                  onClick={onRun}
+                  onClick={() => selected && onRun(selected)}
                 >
                   <Play size={13} fill="currentColor" />
                   {busy === "run"

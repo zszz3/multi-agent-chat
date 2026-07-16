@@ -2,7 +2,6 @@ import {
   DEFAULT_SCHEDULED_WORKFLOW_TIME_OF_DAY,
   type AgentChannel,
   type AgentId,
-  type AgentRevision,
   type AgentTeamMember,
   type AgentTeamMode,
   type AgentWorkflowSnapshot,
@@ -12,7 +11,6 @@ import {
   type ChatRuntimeSessionState,
   type ConfiguredAgent,
   type RuntimeConversation,
-  type RuntimeBindingSnapshot,
   type RuntimeInteractionCapabilities,
   type RuntimeResumeCapabilities,
   type ScheduledWorkflowFrequency,
@@ -24,11 +22,11 @@ import {
   type TeamRunStep,
   type TeamRunStepStatus,
   type WorkflowDraftState,
-  type WorkflowGraphNode,
   type WorkflowRunNodeStatus,
   type WorkflowStoreState,
 } from "../../../shared/types";
 import { isRuntimeId } from "../../../shared/runtime-catalog";
+import type { WorkflowNodeConversation } from "../../../shared/workflow-v2/conversation";
 
 export interface PersistedChatSessionRecord {
   id: string;
@@ -38,7 +36,6 @@ export interface PersistedChatSessionRecord {
   channelId?: string;
   runtimeState?: ChatRuntimeSessionState;
   runtimeConversation?: RuntimeConversation;
-  runtimeBinding?: RuntimeBindingSnapshot;
   lastError: string | undefined;
   createdAt: number;
   updatedAt: number;
@@ -62,6 +59,8 @@ export interface PersistedTaskRunRecord {
   id: string;
   title: string;
   prompt: string;
+  developerInstructions?: string;
+  contextDocument?: string;
   configuredAgentId: string;
   modelId?: string;
   workDir: string;
@@ -118,8 +117,8 @@ export interface PersistedTeamRunRecord {
   updatedAt: number;
 }
 
-export interface PersistedAppStateV4 {
-  version: 4;
+export interface PersistedAppStateV5 {
+  version: 5;
   activeChatId: string | null;
   activeTaskId?: string | null;
   activeTeamId?: string | null;
@@ -138,14 +137,10 @@ export interface PersistedAppStateV4 {
   scheduledWorkflowStore?: ScheduledWorkflowStoreState;
   channels?: AgentChannel[];
   configuredAgents?: ConfiguredAgent[];
-  agentRevisions?: AgentRevision[];
+  workflowNodeConversations?: WorkflowNodeConversation[];
 }
 
-export interface PersistedAppStateV5 extends Omit<PersistedAppStateV4, "version"> {
-  version: 5;
-}
-
-export type PersistedAppState = PersistedAppStateV4 | PersistedAppStateV5;
+export type PersistedAppState = PersistedAppStateV5;
 
 export function isAgentId(value: unknown): value is AgentId {
   return isRuntimeId(value);
@@ -198,16 +193,12 @@ export function isAgentTeamMode(value: unknown): value is AgentTeamMode {
   return value === "pipeline" || value === "parallel" || value === "supervisor";
 }
 
-export function isWorkflowGraphNodeKind(value: unknown): value is WorkflowGraphNode["kind"] {
-  return value === "start" || value === "agent" || value === "end";
-}
-
 export function isWorkflowDraftMessageRole(value: unknown): value is WorkflowDraftState["messages"][number]["role"] {
   return value === "assistant" || value === "user";
 }
 
 export function isWorkflowRunNodeStatus(value: unknown): value is WorkflowRunNodeStatus {
-  return value === "queued" || value === "running" || value === "completed" || value === "failed";
+  return value === "queued" || value === "running" || value === "paused" || value === "awaiting_input" || value === "completed" || value === "failed";
 }
 
 export function isScheduledWorkflowRunStatus(value: unknown): value is ScheduledWorkflowRunStatus {

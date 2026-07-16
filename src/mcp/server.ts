@@ -45,11 +45,34 @@ function objectSchema(properties: Record<string, unknown>, required: string[] = 
   };
 }
 
-const workflowGraphSchema = {
+const workflowV2DefinitionSchema = {
   type: "object",
-  description:
-    "WorkflowGraph with title, objective, nodes, and edges. Each node may include an optional position {x,y} (canvas coordinates, x increases left-to-right, y top-to-bottom) to pin where it appears on the board; omit position to let the app auto-layout the node. Positions round-trip with user drags, so workflow_get returns current positions.",
-  additionalProperties: true,
+  properties: {
+    workflowId: { type: "string" },
+    graphVersion: { type: "integer", minimum: 1 },
+    objective: { type: "string" },
+    nodes: {
+      type: "array",
+      items: {
+        type: "object",
+        properties: {
+          id: { type: "string" }, kind: { type: "string" }, title: { type: "string" },
+          execModel: { type: "string", enum: ["llm", "script"] },
+          executionMode: { type: "string", enum: ["one-shot", "interactive", "script"] },
+          executionModeRationale: { type: "string" }, executionModeConfidence: { type: "number", minimum: 0, maximum: 1 },
+          role: { type: "string", enum: ["orchestrator", "executor", "reviewer"] },
+          modelProfile: { type: "string", enum: ["fast", "balanced", "expert"] }, prompt: { type: "string" },
+          outputFields: { type: "array", items: objectSchema({ key: { type: "string" }, required: { type: "boolean" }, description: { type: "string" } }, ["key"]) },
+          script: { type: "object", additionalProperties: true },
+        },
+        required: ["id", "kind", "title", "execModel", "executionMode", "outputFields"],
+        additionalProperties: true,
+      },
+    },
+    edges: { type: "array", items: objectSchema({ fromNodeId: { type: "string" }, toNodeId: { type: "string" } }, ["fromNodeId", "toNodeId"]) },
+  },
+  required: ["workflowId", "graphVersion", "objective", "nodes", "edges"],
+  additionalProperties: false,
 };
 
 const artifactsSchema = {
@@ -146,17 +169,18 @@ export function mcpToolDefinitions(): McpToolDefinition[] {
     },
     {
       name: "workflow_create",
-      description: "Create a new editable workflow DAG in Multi Agent Chat. Invalid graphs are rejected with validation errors.",
+      description: "Write an editable workflow DAG into the planning draft identified by workflowId. This never creates another top-level Workflow and does not confirm or publish the draft. Invalid graphs are rejected. Use interactive LLM nodes only to collect or clarify user input, and use script nodes for deterministic work such as echoing, copying, formatting, mapping, or passing values through unchanged.",
       inputSchema: objectSchema(
         {
+          workflowId: { type: "string" },
           title: { type: "string" },
           objective: { type: "string" },
-          graph: workflowGraphSchema,
+          definition: workflowV2DefinitionSchema,
           agentId: { type: "string", enum: RUNTIME_IDS },
           channelId: { type: "string" },
           modelId: { type: "string" },
         },
-        ["title", "objective", "graph"],
+        ["workflowId", "title", "objective", "definition"],
       ),
     },
     {
@@ -171,13 +195,13 @@ export function mcpToolDefinitions(): McpToolDefinition[] {
     },
     {
       name: "workflow_update",
-      description: "Update workflow metadata or replace the full graph. Requires expectedRevision for overwrite protection.",
+      description: "Update the editable planning draft identified by workflowId. This does not confirm or publish the draft.",
       inputSchema: objectSchema({
         workflowId: { type: "string" },
         expectedRevision: { type: "number" },
         title: { type: "string" },
         objective: { type: "string" },
-        graph: workflowGraphSchema,
+        definition: workflowV2DefinitionSchema,
       }, ["workflowId"]),
     },
     {
@@ -185,7 +209,7 @@ export function mcpToolDefinitions(): McpToolDefinition[] {
       description: "Validate a workflow graph or an existing workflowId without modifying state.",
       inputSchema: objectSchema({
         workflowId: { type: "string" },
-        graph: workflowGraphSchema,
+        definition: workflowV2DefinitionSchema,
       }),
     },
     {
@@ -251,7 +275,9 @@ export async function callMcpTool(name: string, args: unknown): Promise<unknown>
       authorization: `Bearer ${discovery.token}`,
       "content-type": "application/json",
     },
-    body: JSON.stringify(args ?? {}),
+    body: JSON.stringify({
+      ...(args && typeof args === "object" && !Array.isArray(args) ? args as Record<string, unknown> : {}),
+    }),
   });
   const payload = (await response.json()) as unknown;
   if (!response.ok) throw new Error(`MCP bridge request failed with ${response.status}: ${JSON.stringify(payload)}`);
@@ -259,8 +285,7 @@ export async function callMcpTool(name: string, args: unknown): Promise<unknown>
 }
 
 function writeJsonRpc(payload: unknown): void {
-  const text = JSON.stringify(payload);
-  process.stdout.write(`Content-Length: ${Buffer.byteLength(text, "utf8")}\r\n\r\n${text}`);
+  process.stdout.write(`${JSON.stringify(payload)}\n`);
 }
 
 async function handleJsonRpc(request: JsonRpcRequest): Promise<void> {
@@ -279,7 +304,11 @@ async function handleJsonRpc(request: JsonRpcRequest): Promise<void> {
       return;
     }
     if (request.method === "tools/list") {
-      writeJsonRpc({ jsonrpc: "2.0", id: request.id, result: { tools: mcpToolDefinitions() } });
+      writeJsonRpc({
+        jsonrpc: "2.0",
+        id: request.id,
+        result: { tools: mcpToolDefinitions() },
+      });
       return;
     }
     if (request.method === "tools/call") {
@@ -308,25 +337,17 @@ async function handleJsonRpc(request: JsonRpcRequest): Promise<void> {
 }
 
 export function startStdioMcpServer(): void {
-  let buffer = Buffer.alloc(0);
-  process.stdin.on("data", (chunk: Buffer) => {
-    buffer = Buffer.concat([buffer, chunk]);
+  let buffer = "";
+  process.stdin.setEncoding("utf8");
+  process.stdin.on("data", (chunk: string) => {
+    buffer += chunk;
     while (true) {
-      const separatorIndex = buffer.indexOf("\r\n\r\n");
-      if (separatorIndex < 0) return;
-      const header = buffer.slice(0, separatorIndex).toString("utf8");
-      const lengthMatch = /content-length:\s*(\d+)/i.exec(header);
-      if (!lengthMatch) {
-        buffer = buffer.slice(separatorIndex + 4);
-        continue;
-      }
-      const contentLength = Number(lengthMatch[1]);
-      const messageStart = separatorIndex + 4;
-      const messageEnd = messageStart + contentLength;
-      if (buffer.length < messageEnd) return;
-      const rawMessage = buffer.slice(messageStart, messageEnd).toString("utf8");
-      buffer = buffer.slice(messageEnd);
-      void handleJsonRpc(JSON.parse(rawMessage) as JsonRpcRequest);
+      const newlineIndex = buffer.indexOf("\n");
+      if (newlineIndex < 0) return;
+      const line = buffer.slice(0, newlineIndex).trim();
+      buffer = buffer.slice(newlineIndex + 1);
+      if (!line) continue;
+      void handleJsonRpc(JSON.parse(line) as JsonRpcRequest);
     }
   });
 }

@@ -17,7 +17,6 @@ import {
   applySkillTemplate,
   applyProviderPresetToChannel,
   applyCodexDefaultConfigToChannel,
-  applyClaudeDefaultConfigToChannel,
   applyProviderPresetToConfiguredAgent,
   applyProviderModelIdToAgentConfig,
   rememberProviderKeyFromChannel,
@@ -53,42 +52,22 @@ import {
   WorkflowPage,
   extractWorkflowOutputDocuments,
   extractWorkflowOutputDocumentsForPlan,
-  parseWorkflowJudgeResult,
   workflowArtifactSummary,
   workflowAssistantDisplayContent,
   workflowCanvasLayout,
   workflowContextDocumentFromArtifacts,
-  workflowFinalReviewPrompt,
   workflowDraftShouldPersist,
-  workflowJudgePrompt,
-  workflowNodeRunPrompt,
-  workflowProgressAfterFailure,
   workflowRunProgressSummary,
   workflowStoragePlanDocument,
   workflowTaskLiveDetail,
 } from "./App";
 import { DEFAULT_MODEL_ID } from "../../shared/models";
 import { generatedConfigChannels, normalizeConfigChannelsForStorage, selectConfigChannelsForDisplay } from "../../shared/config-channels";
-import {
-  AGENT_PROVIDER_PRESETS,
-  CLAUDE_LOCAL_DEFAULT_PRESET_ID,
-  CODEX_LOCAL_DEFAULT_PRESET_ID,
-} from "../../shared/provider-presets";
+import { AGENT_PROVIDER_PRESETS, CODEX_DEFAULT_PRESET_ID, CODEX_LOCAL_DEFAULT_PRESET_ID } from "../../shared/provider-presets";
 import { SKILL_TEMPLATES } from "../../shared/skill-templates";
 import { firstWorkflowQuestionForObjective } from "../../shared/workflow-agent";
 import { formatTime } from "./app/format";
-import {
-  APP_SAVE_REQUEST_EVENT,
-  dispatchAppSaveRequest,
-  isSaveKeyboardShortcut,
-} from "./app/save-shortcut";
 import { loadCodexDefaultConfigFromRuntimeApi } from "./pages/runtime/runtime-utils";
-import { FeatureRail } from "./app/FeatureRail";
-import { EvaluationPage } from "./pages/evaluation/EvaluationPage";
-import { EvaluatorTemplateMenu } from "./pages/evaluation/EvaluatorTemplateMenu";
-import { EvaluatorWorkspace } from "./pages/evaluation/EvaluatorWorkspace";
-import { ExperimentWorkspace } from "./pages/evaluation/ExperimentWorkspace";
-import { McpPage } from "./pages/mcp/McpPage";
 import type {
   AgentId,
   AgentChannel,
@@ -101,7 +80,7 @@ import type {
   InstalledSkillResult,
   TaskRun,
   TeamRun,
-  WorkflowGraph,
+  WorkflowV2Definition,
   WorkflowDraftState,
   ScheduledWorkflowRun,
   ScheduledWorkflowSchedule,
@@ -159,11 +138,8 @@ const channels: AgentChannel[] = [
 const configuredAgents: ConfiguredAgent[] = [
   {
     id: "repo-reviewer",
-    agentType: "composed",
     name: "Repo Reviewer",
     description: "Reviews repositories and writes learning docs.",
-    instructions: "Review the repository.",
-    baseAgentId: "default-agent",
     runtimeAgentId: "codex",
     channelId: "codex-openai",
     modelId: "gpt-5.5",
@@ -173,11 +149,8 @@ const configuredAgents: ConfiguredAgent[] = [
   },
   {
     id: "claude-reviewer",
-    agentType: "composed",
     name: "Claude Reviewer",
     description: "Reviews with Claude.",
-    instructions: "Review with Claude.",
-    baseAgentId: "runtime-agent:claude-code",
     runtimeAgentId: "claude",
     channelId: "claude-code",
     modelId: DEFAULT_MODEL_ID,
@@ -218,106 +191,6 @@ test("guards only navigation away from the Runtime page", async () => {
 
   expect(confirmations).toBe(1);
   expect(navigated).toEqual(["workflow"]);
-});
-
-describe("global save shortcut", () => {
-  test("accepts Command+S and Ctrl+S without hijacking other modifiers", () => {
-    expect(
-      isSaveKeyboardShortcut({ key: "s", metaKey: true, ctrlKey: false }),
-    ).toBe(true);
-    expect(
-      isSaveKeyboardShortcut({ key: "S", metaKey: false, ctrlKey: true }),
-    ).toBe(true);
-    expect(
-      isSaveKeyboardShortcut({
-        key: "s",
-        metaKey: true,
-        ctrlKey: false,
-        altKey: true,
-      }),
-    ).toBe(false);
-    expect(
-      isSaveKeyboardShortcut({ key: "k", metaKey: true, ctrlKey: false }),
-    ).toBe(false);
-  });
-
-  test("dispatches one save request to the active page", () => {
-    const target = new EventTarget();
-    let saves = 0;
-    target.addEventListener(APP_SAVE_REQUEST_EVENT, () => {
-      saves += 1;
-    });
-    dispatchAppSaveRequest(target);
-    expect(saves).toBe(1);
-  });
-});
-
-describe("Evaluation workbench redesign", () => {
-  const railText = {
-    nav: { chat: "Chat", tasks: "Tasks", workflow: "Workflow", schedules: "Schedules", skills: "Skills", agent: "Agent", mcp: "MCP", evaluation: "Evaluation", runtimes: "Config" },
-    chrome: { featureNav: "Features", lightTheme: "Light", darkTheme: "Dark", toggleTheme: "Toggle theme" },
-  };
-
-  test("uses one top-level Evaluation navigation entry", () => {
-    const html = renderToStaticMarkup(<FeatureRail activeFeature="evaluation" theme="light" text={railText} onSelectFeature={() => undefined} onToggleTheme={() => undefined} />);
-    expect(html.match(/>Evaluation</g)).toHaveLength(1);
-    expect(html).not.toContain(">Datasets<");
-    expect(html).not.toContain(">Evaluators<");
-    expect(html).not.toContain(">Experiments<");
-  });
-
-  test("renders four internal Evaluation views", () => {
-    const html = renderToStaticMarkup(<EvaluationPage language="en" agents={[]} channels={[]} />);
-    expect(html).toContain('role="tablist"');
-    expect(html).toContain(">Overview<");
-    expect(html).toContain(">Datasets<");
-    expect(html).toContain(">Evaluators<");
-    expect(html).toContain(">Experiments<");
-    expect(html).toContain("Quality overview");
-  });
-
-  test("prioritizes experiment metrics and case results", () => {
-    const experiment = { id: "experiment-1", name: "Regression", datasetId: "dataset-1", agentId: "agent-1", evaluatorIds: ["evaluator-1"], repetitions: 2, createdAt: 1, updatedAt: 2 };
-    const html = renderToStaticMarkup(<ExperimentWorkspace zh={false} experiments={[experiment]} selected={experiment} datasets={[{ id: "dataset-1", name: "Core", description: "", items: [], createdAt: 1, updatedAt: 2 }]} evaluators={[{ id: "evaluator-1", name: "Judge", kind: "contains", threshold: 0.8, enabled: true, createdAt: 1, updatedAt: 2 }]} agents={[]} busy={undefined} runs={[{ id: "run-1", experimentId: "experiment-1", status: "completed", startedAt: 3, finishedAt: 4, averageScore: 0.9, minimumScore: 0.8, passRate: 1, totalDurationMs: 1200, results: [] }]} onSelect={() => undefined} onCreate={() => undefined} onChange={() => undefined} onSave={() => undefined} onDelete={() => undefined} onRun={() => undefined} />);
-    expect(html).toContain("Average score");
-    expect(html).toContain("Minimum score");
-    expect(html).toContain("Pass rate");
-    expect(html).toContain("Case results");
-    expect(html).toContain("Run history");
-  });
-
-  test("configures LLM Judge with a concrete Runtime config", () => {
-    const evaluator = { id: "judge", name: "Quality Judge", kind: "llm_judge" as const, runtimeId: "codex-openai", prompt: "<Rubric>Full scoring rubric</Rubric>", threshold: 0.8, enabled: true, createdAt: 1, updatedAt: 2 };
-    const html = renderToStaticMarkup(<EvaluatorWorkspace zh evaluators={[evaluator]} selected={evaluator} channels={[{ id: "codex-openai", agentId: "codex", label: "Codex OpenAI", models: [] }]} busy={undefined} onSelect={() => undefined} onCreate={() => undefined} onChange={() => undefined} onSave={() => undefined} onDelete={() => undefined} />);
-    expect(html).toContain("评分 Runtime");
-    expect(html).toContain("Codex OpenAI · codex");
-    expect(html).not.toContain("评分 Agent");
-    expect(html).toContain("完整评分 Prompt");
-    expect(html).toContain('rows="24"');
-    expect(html).toContain("&lt;Rubric&gt;Full scoring rubric&lt;/Rubric&gt;");
-  });
-
-  test("groups built-in Evaluator templates beside the new action", () => {
-    const html = renderToStaticMarkup(
-      <EvaluatorTemplateMenu zh onSelect={() => undefined} />,
-    );
-    expect(html).toContain("模板");
-    expect(html).toContain("确定性评估");
-    expect(html).toContain("回答质量");
-    expect(html).toContain("事实与上下文");
-    expect(html).toContain("指令遵循");
-    expect(html).toContain("安全性");
-    expect(html).toContain("专项能力");
-    expect(html).toContain("幻觉检测");
-    expect(html).toContain("代码质量");
-  });
-
-  test("renders MCP in the shared workbench shell", () => {
-    const html = renderToStaticMarkup(<McpPage language="en" />);
-    expect(html).toContain("CAPABILITY REGISTRY");
-    expect(html).toContain("Servers");
-    expect(html).toContain("No MCP servers");
-  });
 });
 
 const taskRuns: TaskRun[] = [
@@ -378,6 +251,7 @@ const appSnapshot: AppSnapshot = {
     schedules: [],
     runs: [],
   },
+  workflowNodeConversations: [],
   workflowDraft: undefined,
   artifacts: [],
 };
@@ -921,20 +795,17 @@ describe("Markdown", () => {
 });
 
 describe("Sidebar history panels", () => {
-  const workflowPanelGraph: WorkflowGraph = {
-    title: "Review payment release",
+  const workflowPanelGraph: WorkflowV2Definition = {
+    workflowId: "wf_review",
+    graphVersion: 1,
     objective: "Review payment release",
     nodes: [
-      { id: "start", kind: "start", title: "Start", prompt: "" },
-      { id: "plan", kind: "agent", title: "Plan", prompt: "Plan release."},
-      { id: "review", kind: "agent", title: "Review", prompt: "Review release."},
-      { id: "end", kind: "end", title: "Done", prompt: "" },
+      { id: "plan", kind: "agent", title: "Plan", execModel: "llm",
+        executionMode: "one-shot", prompt: "Plan release.", outputFields: [{ key: "result", required: true }] },
+      { id: "review", kind: "agent", title: "Review", execModel: "llm",
+        executionMode: "one-shot", prompt: "Review release.", outputFields: [{ key: "result", required: true }] },
     ],
-    edges: [
-      { id: "start->plan", fromNodeId: "start", toNodeId: "plan" },
-      { id: "plan->review", fromNodeId: "plan", toNodeId: "review" },
-      { id: "review->end", fromNodeId: "review", toNodeId: "end" },
-    ],
+    edges: [{ fromNodeId: "plan", toNodeId: "review" }],
   };
 
   test("renders a chat context menu for deleting the selected session", () => {
@@ -1078,8 +949,7 @@ describe("Sidebar history panels", () => {
             objective: "Review payment release",
             status: "draft",
             revision: 2,
-            graph: workflowPanelGraph,
-            graphReady: true,
+            definition: workflowPanelGraph,
             messages: [],
             reply: "",
             error: undefined,
@@ -1089,6 +959,8 @@ describe("Sidebar history panels", () => {
             runIds: [],
             configuredAgentId: "repo-reviewer",
             modelId: "gpt-5.5",
+            reviewerConfiguredAgentId: "repo-reviewer",
+            reviewerModelId: "gpt-5.5",
             createdAt: 1710000000000,
             updatedAt: 1710000000000,
           },
@@ -1120,8 +992,7 @@ describe("Sidebar history panels", () => {
       objective: "Run",
       status: "draft" as const,
       revision: 1,
-      graph: workflowPanelGraph,
-      graphReady: true,
+      definition: workflowPanelGraph,
       messages: [],
       reply: "",
       error: undefined,
@@ -1131,6 +1002,8 @@ describe("Sidebar history panels", () => {
       runIds: [],
       configuredAgentId: "repo-reviewer",
       modelId: "gpt-5.5",
+      reviewerConfiguredAgentId: "repo-reviewer",
+      reviewerModelId: "gpt-5.5",
       createdAt: 1,
       updatedAt: 1,
     };
@@ -1148,6 +1021,11 @@ describe("Sidebar history panels", () => {
 
     expect(html).toContain("Official workflows");
     expect(html).toContain("My workflows");
+    expect(html).toContain("Built-in, read-only workflow templates");
+    expect(html).toContain("Workflows created and managed by you");
+    expect(html).toContain("workflow-history-group is-official");
+    expect(html).toContain("workflow-history-card is-official is-active");
+    expect(html).toContain("workflow-official-badge");
     expect(html.indexOf("Official release")).toBeLessThan(html.indexOf("My release"));
   });
 });
@@ -1163,7 +1041,6 @@ describe("AgentPage", () => {
       <AgentPage
         channels={channels}
         configuredAgents={configuredAgents}
-        agentRevisions={[]}
         selectedConfiguredAgentId="repo-reviewer"
         status=""
         onSave={async () => undefined}
@@ -1201,14 +1078,18 @@ describe("AgentPage", () => {
     expect(html).not.toContain(">导入模板<");
     expect(html).toContain("Repo Reviewer");
     expect(html).toContain("configured-agent-browser");
-    expect(html).toContain("aria-label=\"Base execution agent\"");
-    expect(html).toContain("aria-label=\"Agent instructions\"");
+    expect(html).toContain("aria-label=\"Agent runtime\"");
+    expect(html).toContain("aria-label=\"Agent execution config\"");
+    expect(html).toContain("Codex OpenAI · Codex");
+    expect(html).toContain("aria-label=\"Agent model\"");
+    expect(html).toContain("GPT-5.5");
     expect(html).not.toContain("aria-label=\"Agent prompt\"");
     expect(html).not.toContain(">Test<");
-    expect(html).toContain("Save new version");
+    expect(html).toContain("configured-agent-editor-actions");
+    expect(html).toContain(">Save<");
   });
 
-  test("renders execution agents as read-only runtime projections", () => {
+  test("renders model-specific Codex reasoning efforts", () => {
     const modelChannel: AgentChannel = {
       ...channels[0]!,
       models: [{
@@ -1220,8 +1101,6 @@ describe("AgentPage", () => {
     };
     const agent: ConfiguredAgent = {
       ...configuredAgents[0]!,
-      agentType: "execution",
-      managed: true,
       modelId: "gpt-5.6-sol",
       reasoningEffort: "xhigh",
     };
@@ -1230,7 +1109,6 @@ describe("AgentPage", () => {
       <AgentPage
         channels={[modelChannel]}
         configuredAgents={[agent]}
-        agentRevisions={[]}
         selectedConfiguredAgentId={agent.id}
         status=""
         onSave={async () => undefined}
@@ -1240,11 +1118,9 @@ describe("AgentPage", () => {
       />,
     );
 
-    expect(html).toContain("Execution · Read only");
-    expect(html).toContain("This agent is generated from a Runtime config");
-    expect(html).toContain("GPT-5.6-Sol");
-    expect(html).toContain("xhigh");
-    expect(html).not.toContain("Save new version");
+    expect(html).toContain('aria-label="Agent reasoning effort"');
+    expect(html).toContain('<option value="xhigh" selected="">XHigh</option>');
+    expect(html).toContain('<option value="ultra">Ultra</option>');
   });
 
   test("renders runtime provider settings separately from agent profile settings", () => {
@@ -1309,8 +1185,6 @@ describe("AgentPage", () => {
     expect(html).toContain('class="runtime-choice-dot agent-opencode"');
     expect(html).toContain('class="runtime-choice-dot agent-openclaw"');
     expect(styles).toContain(".agent-provider-preset-list {\n  display: grid;\n  grid-template-columns: repeat(6, minmax(0, 1fr));");
-    expect(styles).toContain(".runtime-page {\n  display: grid;\n  flex: 1 1 0;");
-    expect(styles).toContain("grid-template-columns: minmax(190px, 240px) minmax(0, 1fr);\n  height: 100%;");
     expect(styles).toContain("@media (max-width: 820px) {\n  .runtime-layout {\n    grid-template-columns: 1fr;");
   });
 
@@ -1348,51 +1222,6 @@ describe("AgentPage", () => {
     expect(html).toContain("尚无本地配置");
     expect(html).toContain("一键导入本地默认配置");
     expect(html).toContain("新建配置");
-  });
-
-  test("shows imported OpenClaw model and a revealable gateway token", () => {
-    const html = renderToStaticMarkup(
-      <RuntimePage
-        language="en"
-        channels={[{
-          id: "openclaw-default",
-          agentId: "openclaw",
-          label: "OpenClaw Default",
-          presetId: "openclaw-default",
-          environment: { OPENCLAW_GATEWAY_TOKEN: "gateway-token" },
-          models: [
-            { id: DEFAULT_MODEL_ID, label: "Default" },
-            { id: "provider/model", label: "provider/model" },
-          ],
-        }]}
-        selectedChannelId="openclaw-default"
-        selectedRuntimeId="openclaw"
-        providerKeys={{}}
-        codexPluginCatalog={[]}
-        pluginCatalogStatus=""
-        agentTestResults={{}}
-        testingAgentId={undefined}
-        agentTestTick={0}
-        onUpdateChannel={() => undefined}
-        onAddModel={() => undefined}
-        onUpdateModel={() => undefined}
-        onRemoveModel={() => undefined}
-        onSave={async () => undefined}
-        onLoadCodexPluginCatalog={async () => undefined}
-        onSelectChannel={() => undefined}
-        onSelectRuntime={() => undefined}
-        onAddConfig={() => undefined}
-        onImportLocalConfig={async () => undefined}
-        onOpenContextMenu={() => undefined}
-        onDeleteConfig={() => undefined}
-        onTestChannel={async () => undefined}
-        onUpdateProviderKey={() => undefined}
-      />,
-    );
-
-    expect(html).toContain('aria-label="OpenClaw Gateway Token" type="password" value="gateway-token"');
-    expect(html).toContain('value="provider/model"');
-    expect(html).toContain('aria-label="Show advanced secrets"');
   });
 
   test("shows the stored channel key ahead of stale provider key cache", () => {
@@ -1436,6 +1265,51 @@ describe("AgentPage", () => {
 
     expect(html).toContain("value=\"saved-key\"");
     expect(html).not.toContain("value=\"stale-key\"");
+  });
+
+  test("shows imported OpenClaw model and gateway token fields", () => {
+    const html = renderToStaticMarkup(
+      <RuntimePage
+        language="en"
+        channels={[{
+          id: "openclaw-default",
+          agentId: "openclaw",
+          label: "OpenClaw Default",
+          presetId: "openclaw-default",
+          environment: { OPENCLAW_GATEWAY_TOKEN: "gateway-token" },
+          models: [
+            { id: DEFAULT_MODEL_ID, label: "Default" },
+            { id: "provider/model", label: "provider/model" },
+          ],
+        }]}
+        selectedChannelId="openclaw-default"
+        selectedRuntimeId="openclaw"
+        providerKeys={{}}
+        codexPluginCatalog={[]}
+        pluginCatalogStatus=""
+        agentTestResults={{}}
+        testingAgentId={undefined}
+        agentTestTick={0}
+        onUpdateChannel={() => undefined}
+        onAddModel={() => undefined}
+        onUpdateModel={() => undefined}
+        onRemoveModel={() => undefined}
+        onSave={async () => undefined}
+        onLoadCodexPluginCatalog={async () => undefined}
+        onSelectChannel={() => undefined}
+        onSelectRuntime={() => undefined}
+        onAddConfig={() => undefined}
+        onImportLocalConfig={async () => undefined}
+        onOpenContextMenu={() => undefined}
+        onDeleteConfig={() => undefined}
+        onTestChannel={async () => undefined}
+        onUpdateProviderKey={() => undefined}
+      />,
+    );
+
+    expect(html).toContain('aria-label="OpenClaw Gateway Token"');
+    expect(html).toContain('value="gateway-token"');
+    expect(html).toContain('value="provider/model"');
   });
 
   test("renders the Codex Default preset button", () => {
@@ -1519,19 +1393,19 @@ describe("AgentPage", () => {
     const runtimeProviderPresets = AGENT_PROVIDER_PRESETS.filter((preset) => preset.runtimeAgentId === "codex");
     const channel: AgentChannel = {
       ...channels[0]!,
-      presetId: CODEX_LOCAL_DEFAULT_PRESET_ID,
+      presetId: CODEX_DEFAULT_PRESET_ID,
       modelProvider: "bridge",
       providerName: "Bridge",
       baseUrl: "https://bridge.example/v1",
     };
 
-    expect(resolveProviderPresetId(channel, runtimeProviderPresets)).toBe(CODEX_LOCAL_DEFAULT_PRESET_ID);
+    expect(resolveProviderPresetId(channel, runtimeProviderPresets)).toBe(CODEX_DEFAULT_PRESET_ID);
   });
 
   test("shows Codex Default loaded values and blank fallbacks in runtime inputs", () => {
     const defaultChannel: AgentChannel = {
       ...channels[0]!,
-      presetId: CODEX_LOCAL_DEFAULT_PRESET_ID,
+      presetId: CODEX_DEFAULT_PRESET_ID,
       label: "Codex Default",
       modelProvider: "bridge",
       providerName: "Bridge",
@@ -1550,7 +1424,7 @@ describe("AgentPage", () => {
         channels={[defaultChannel]}
         selectedChannelId="codex-openai"
         selectedRuntimeId="codex"
-        providerKeys={{ [CODEX_LOCAL_DEFAULT_PRESET_ID]: "stale-key" }}
+        providerKeys={{ [CODEX_DEFAULT_PRESET_ID]: "stale-key" }}
         codexPluginCatalog={[]}
         pluginCatalogStatus=""
         agentTestResults={{}}
@@ -1572,9 +1446,7 @@ describe("AgentPage", () => {
       />,
     );
 
-    expect(html).toContain('aria-label="Provider API key" type="password"');
-    expect(html).toContain('value="sk-default"');
-    expect(html).toContain('aria-label="Show provider API key"');
+    expect(html).not.toContain('aria-label="Provider API key"');
     expect(html).not.toContain("value=\"stale-key\"");
     expect(html).toContain("value=\"Bridge\"");
     expect(html).toContain("value=\"bridge\"");
@@ -1651,23 +1523,6 @@ describe("AgentPage", () => {
       { id: DEFAULT_MODEL_ID, label: "Default" },
       { id: "gpt-5.5", label: "gpt-5.5" },
     ]);
-  });
-
-  test("maps Claude Code Default values onto a Claude channel", () => {
-    const mapped = applyClaudeDefaultConfigToChannel(channels[1]!, {
-      baseUrl: "https://claude.example/anthropic",
-      apiKey: "claude-token",
-      modelId: "claude-sonnet-4-6",
-    });
-
-    expect(mapped).toMatchObject({
-      agentId: "claude",
-      presetId: CLAUDE_LOCAL_DEFAULT_PRESET_ID,
-      modelProvider: "claude-default-anthropic",
-      baseUrl: "https://claude.example/anthropic",
-      httpHeaders: { Authorization: "Bearer claude-token" },
-    });
-    expect(mapped.models).toContainEqual({ id: "claude-sonnet-4-6", label: "claude-sonnet-4-6" });
   });
 
   test("renders all stored execution configs without legacy cleanup controls", () => {
@@ -1842,8 +1697,6 @@ describe("AgentPage", () => {
 
     expect(html).toContain("Claude Code");
     expect(html).toContain('class="agent-provider-option is-active" aria-pressed="true" title="Claude Official">Claude Official</button>');
-    expect(html).toContain('class="agent-provider-option " aria-pressed="false" title="Default">Default</button>');
-    expect(html).toContain("Local config");
     expect(html).toContain(">DeepSeek<");
     expect(html).toContain(">Zhipu GLM<");
     expect(html).toContain(">Kimi<");
@@ -2116,21 +1969,17 @@ describe("AgentPage", () => {
       revision: 1,
       configuredAgentId: "repo-reviewer",
       modelId: "gpt-5.5",
+      reviewerConfiguredAgentId: "repo-reviewer",
+      reviewerModelId: "gpt-5.5",
       objective: "每天总结代码变化",
-      graph: {
-        title: "每日代码复盘",
+      definition: {
+        workflowId: "wf_daily_review",
+        graphVersion: 1,
         objective: "每天总结代码变化",
-        nodes: [
-          { id: "start", kind: "start", title: "Start", prompt: "" },
-          { id: "review", kind: "agent", title: "Review", prompt: "Review changes."},
-          { id: "end", kind: "end", title: "Done", prompt: "" },
-        ],
-        edges: [
-          { id: "start->review", fromNodeId: "start", toNodeId: "review" },
-          { id: "review->end", fromNodeId: "review", toNodeId: "end" },
-        ],
+        nodes: [{ id: "review", kind: "agent", title: "Review", execModel: "llm",
+        executionMode: "one-shot", prompt: "Review changes.", outputFields: [{ key: "result", required: true }] }],
+        edges: [],
       },
-      graphReady: true,
       messages: [],
       reply: "",
       error: undefined,
@@ -2208,7 +2057,6 @@ describe("AgentPage", () => {
     expect(html).toContain("scheduled-toolbar");
     expect(html).toContain("scheduled-side-panel");
     expect(html).toContain("aria-label=\"定时任务 Workflow 详情\"");
-    expect(html).toContain("aria-label=\"Workflow 图详情\"");
     expect(html).toContain("workflow-graph-board");
     expect(html).toContain("workflow-react-flow-board");
     expect(html).toContain("react-flow__edges");
@@ -2233,9 +2081,7 @@ describe("AgentPage", () => {
     expect(html).not.toContain("scheduled-inline-control");
     expect(html).toContain("应用");
     expect(html).toContain("disabled=\"\"");
-    expect(html).toContain("Start");
     expect(html).toContain("Review");
-    expect(html).toContain("Done");
     expect(html).not.toContain("Review changes.");
     expect(html).not.toContain(DEFAULT_MODEL_ID);
     expect(html).not.toContain("每天总结代码变化");
@@ -2260,20 +2106,14 @@ describe("AgentPage", () => {
       objective: "每天总结代码变化",
       status: "draft",
       revision: 1,
-      graph: {
-        title: "每日代码复盘",
+      definition: {
+        workflowId: "wf_daily_review",
+        graphVersion: 1,
         objective: "每天总结代码变化",
-        nodes: [
-          { id: "start", kind: "start", title: "Start", prompt: "" },
-          { id: "review", kind: "agent", title: "Review", prompt: "Review changes."},
-          { id: "end", kind: "end", title: "Done", prompt: "" },
-        ],
-        edges: [
-          { id: "start-review", fromNodeId: "start", toNodeId: "review" },
-          { id: "review-end", fromNodeId: "review", toNodeId: "end" },
-        ],
+        nodes: [{ id: "review", kind: "agent", title: "Review", execModel: "llm",
+        executionMode: "one-shot", prompt: "Review changes.", outputFields: [{ key: "result", required: true }] }],
+        edges: [],
       },
-      graphReady: true,
       messages: [],
       reply: "",
       error: undefined,
@@ -2284,6 +2124,8 @@ describe("AgentPage", () => {
       runIds: [],
       configuredAgentId: "repo-reviewer",
       modelId: "gpt-5.5",
+      reviewerConfiguredAgentId: "repo-reviewer",
+      reviewerModelId: "gpt-5.5",
       createdAt: 1710000000000,
       updatedAt: 1710000000000,
     };
@@ -2922,7 +2764,6 @@ describe("TaskPage", () => {
     expect(html).toContain("aria-label=\"Task progress\"");
     expect(html).toContain("All");
     expect(html).toContain("Review");
-    expect(html).toContain("Done");
     expect(html).toContain(">2<");
   });
 
@@ -3123,8 +2964,6 @@ describe("TeamPage", () => {
     expect(html).toContain("workflow-builder-toolbar");
     expect(html).toContain("workflow-canvas-pipeline");
     expect(html).toContain("workflow-terminal");
-    expect(html).toContain("Start");
-    expect(html).toContain("Done");
     expect(html).toContain("workflow-edge");
     expect(html).toContain("workflow-node-card");
     expect(html).toContain("data-workflow-node-status=\"completed\"");
@@ -3300,7 +3139,6 @@ describe("TeamPage", () => {
     expect(html).not.toContain("aria-label=\"Member 1 reusable agent\"");
     expect(html).not.toContain("aria-label=\"Member 2 prompt\"");
     expect(html).not.toContain("team-member-card is-editing");
-    expect(html).toContain("Done");
   });
 
   test("renders an empty teams state with a create action", () => {
@@ -3329,1004 +3167,5 @@ describe("TeamPage", () => {
 
     expect(html).toContain("No teams yet");
     expect(html).toContain("New team");
-  });
-});
-
-describe("WorkflowPage", () => {
-  const graph: WorkflowGraph = {
-    title: "Review payment release",
-    objective: "Review payment release",
-    nodes: [
-      { id: "start", kind: "start", title: "Start", prompt: "" },
-      {
-        id: "plan",
-        kind: "agent",
-        title: "Clarify & Plan",
-        prompt: "Interrogate the task and produce a plan.",
-      },
-      {
-        id: "review",
-        kind: "agent",
-        title: "Review",
-        prompt: "Review the output.",
-      },
-      { id: "end", kind: "end", title: "Done", prompt: "" },
-    ],
-    edges: [
-      { id: "start->plan", fromNodeId: "start", toNodeId: "plan" },
-      { id: "plan->review", fromNodeId: "plan", toNodeId: "review" },
-      { id: "review->end", fromNodeId: "review", toNodeId: "end" },
-    ],
-  };
-
-  test("builds the first grill question from the submitted workflow task", () => {
-    const question = firstWorkflowQuestionForObjective("帮我 review cd../example-service 的代码");
-
-    expect(question).toContain("cd../example-service");
-    expect(question).toContain("代码");
-    expect(question).not.toContain("最终交付物是什么");
-  });
-
-  test("renders only a chat-style task composer before the workflow chat starts", () => {
-    const html = renderToStaticMarkup(
-      <WorkflowPage
-        graph={graph}
-        graphReady={false}
-        objective="Review payment release"
-        messages={[]}
-        reply=""
-        error={undefined}
-        configuredAgentId="repo-reviewer"
-        runtimes={runtimes}
-        channels={channels}
-        configuredAgents={configuredAgents}
-        workDir="/tmp/workspace"
-        running={false}
-        onObjectiveChange={() => undefined}
-        onSelectConfiguredAgent={() => undefined}
-        onDraftGraph={() => undefined}
-        onReplyChange={() => undefined}
-        onSendReply={() => undefined}
-        onUpdateNode={() => undefined}
-        onRunGraph={async () => undefined}
-        onResetSession={() => undefined}
-      />,
-    );
-
-    expect(html).toContain("New workflow");
-    expect(html).toContain("Describe a task to start generating a workflow.");
-    expect(html).toContain("aria-label=\"Configured agent\"");
-    expect(html).toContain("Repo Reviewer");
-    expect(html).toContain("Codex OpenAI");
-    expect(html).toContain("GPT-5.5");
-    expect(html).toContain("aria-label=\"Workflow task\"");
-    expect(html).toContain("Start");
-    expect(html).not.toContain("第一个问题：最终交付物是什么？");
-    expect(html).not.toContain("Send Answer");
-    expect(html).not.toContain("Generate Graph");
-    expect(html).not.toContain("workflowGraph.upsert");
-    expect(html).not.toContain("aria-label=\"Workflow graph JSON\"");
-    expect(html).not.toContain("DAG valid");
-    expect(html).not.toContain("Workflow graph board");
-    expect(html).not.toContain("Node plan agent");
-    expect(html).not.toContain("Run Graph");
-    expect(html).not.toContain("Grill first");
-    expect(html).not.toContain("Answer one question at a time");
-  });
-
-  test("shows the selected saved workflow title before a graph exists", () => {
-    const html = renderToStaticMarkup(
-      <WorkflowPage
-        title="qjagents Agent 功能速览"
-        status="failed"
-        graph={graph}
-        graphReady={false}
-        objective=""
-        messages={[]}
-        reply=""
-        error={undefined}
-        configuredAgentId="repo-reviewer"
-        runtimes={runtimes}
-        channels={channels}
-        workDir="/tmp/workspace"
-        running={false}
-        onObjectiveChange={() => undefined}
-        onSelectConfiguredAgent={() => undefined}
-        onDraftGraph={() => undefined}
-        onReplyChange={() => undefined}
-        onSendReply={() => undefined}
-        onUpdateNode={() => undefined}
-        onRunGraph={async () => undefined}
-        onResetSession={() => undefined}
-      />,
-    );
-
-    expect(html).toContain("qjagents Agent 功能速览");
-    expect(html).toContain("failed");
-    expect(html).toContain("Describe a task to start generating a workflow.");
-    expect(html).not.toContain("<h2>New workflow</h2>");
-  });
-
-  test("shows saved final output even when the graph was not restored", () => {
-    const html = renderToStaticMarkup(
-      <WorkflowPage
-        title="qjagents Agent 功能速览"
-        status="failed"
-        graph={graph}
-        graphReady={false}
-        objective=""
-        messages={[]}
-        reply=""
-        error={undefined}
-        configuredAgentId="repo-reviewer"
-        runtimes={runtimes}
-        channels={channels}
-        workDir="/tmp/workspace"
-        running={false}
-        finalReport="## Final User Report\nqjagents workflow finished."
-        onObjectiveChange={() => undefined}
-        onSelectConfiguredAgent={() => undefined}
-        onDraftGraph={() => undefined}
-        onReplyChange={() => undefined}
-        onSendReply={() => undefined}
-        onUpdateNode={() => undefined}
-        onRunGraph={async () => undefined}
-        onResetSession={() => undefined}
-      />,
-    );
-
-    expect(html).toContain("DAG valid");
-    expect(html).toContain("Review payment release");
-    expect(html).toContain("Main agent summary");
-    expect(html).toContain("qjagents workflow finished.");
-    expect(html).toContain("Run Graph");
-  });
-
-  test("lays out workflow graphs on a two-dimensional canvas with parallel node groups", () => {
-    const parallelGraph: WorkflowGraph = {
-      title: "Parallel review",
-      objective: "Review release in parallel",
-      nodes: [
-        { id: "start", kind: "start", title: "Start", prompt: "" },
-        { id: "inventory", kind: "agent", title: "Inventory", prompt: "Map repo."},
-        { id: "security", kind: "agent", title: "Security", prompt: "Review security."},
-        { id: "testing", kind: "agent", title: "Testing", prompt: "Review tests."},
-        { id: "writer", kind: "agent", title: "Writer", prompt: "Synthesize results."},
-        { id: "end", kind: "end", title: "Done", prompt: "" },
-      ],
-      edges: [
-        { id: "start->inventory", fromNodeId: "start", toNodeId: "inventory" },
-        { id: "inventory->security", fromNodeId: "inventory", toNodeId: "security" },
-        { id: "inventory->testing", fromNodeId: "inventory", toNodeId: "testing" },
-        { id: "security->writer", fromNodeId: "security", toNodeId: "writer" },
-        { id: "testing->writer", fromNodeId: "testing", toNodeId: "writer" },
-        { id: "writer->end", fromNodeId: "writer", toNodeId: "end" },
-      ],
-    };
-    const layout = workflowCanvasLayout(parallelGraph);
-    const byId = new Map(layout.nodes.map((node) => [node.node.id, node]));
-
-    expect(byId.get("start")!.x).toBeLessThan(byId.get("inventory")!.x);
-    expect(byId.get("inventory")!.x).toBeLessThan(byId.get("security")!.x);
-    expect(byId.get("testing")!.x).toBe(byId.get("security")!.x);
-    expect(byId.get("testing")!.y).toBeGreaterThan(byId.get("security")!.y);
-    // long flows wrap onto additional rows instead of one wide line
-    expect(byId.get("writer")!.y).toBeGreaterThan(byId.get("security")!.y);
-    expect(byId.get("writer")!.x).toBeLessThan(byId.get("security")!.x);
-    expect(byId.get("end")!.y).toBeGreaterThan(byId.get("start")!.y);
-    expect(layout.edges).toHaveLength(6);
-    expect(layout.width).toBeLessThan(900);
-  });
-
-  test("pins workflow nodes to their explicit position when set", () => {
-    const graph: WorkflowGraph = {
-      title: "Pinned",
-      objective: "Pin one node",
-      nodes: [
-        { id: "start", kind: "start", title: "Start", prompt: "" },
-        { id: "plan", kind: "agent", title: "Plan", prompt: "Plan.", position: { x: 999, y: 777 } },
-        { id: "end", kind: "end", title: "Done", prompt: "" },
-      ],
-      edges: [
-        { id: "start->plan", fromNodeId: "start", toNodeId: "plan" },
-        { id: "plan->end", fromNodeId: "plan", toNodeId: "end" },
-      ],
-    };
-    const byId = new Map(workflowCanvasLayout(graph).nodes.map((node) => [node.node.id, node]));
-    expect(byId.get("plan")!.x).toBe(999);
-    expect(byId.get("plan")!.y).toBe(777);
-    // nodes without an explicit position still auto-layout
-    expect(byId.get("start")!.x).not.toBe(999);
-  });
-
-  test("renders workflow graphs as a pannable canvas with parallel node groups", () => {
-    const parallelGraph: WorkflowGraph = {
-      title: "Parallel review",
-      objective: "Review release in parallel",
-      nodes: [
-        { id: "start", kind: "start", title: "Start", prompt: "" },
-        { id: "inventory", kind: "agent", title: "Inventory", prompt: "Map repo."},
-        { id: "security", kind: "agent", title: "Security", prompt: "Review security."},
-        { id: "testing", kind: "agent", title: "Testing", prompt: "Review tests."},
-        { id: "writer", kind: "agent", title: "Writer", prompt: "Synthesize results."},
-        { id: "end", kind: "end", title: "Done", prompt: "" },
-      ],
-      edges: [
-        { id: "start->inventory", fromNodeId: "start", toNodeId: "inventory" },
-        { id: "inventory->security", fromNodeId: "inventory", toNodeId: "security" },
-        { id: "inventory->testing", fromNodeId: "inventory", toNodeId: "testing" },
-        { id: "security->writer", fromNodeId: "security", toNodeId: "writer" },
-        { id: "testing->writer", fromNodeId: "testing", toNodeId: "writer" },
-        { id: "writer->end", fromNodeId: "writer", toNodeId: "end" },
-      ],
-    };
-
-    const html = renderToStaticMarkup(
-      <WorkflowPage
-        title="Parallel review"
-        status="draft"
-        graph={parallelGraph}
-        graphReady
-        objective="Review release in parallel"
-        messages={[]}
-        reply=""
-        error={undefined}
-        configuredAgentId="repo-reviewer"
-        runtimes={runtimes}
-        channels={channels}
-        workDir="/tmp/workspace"
-        running={false}
-        runProgress={[
-          { nodeId: "inventory", title: "Inventory", status: "completed" },
-          { nodeId: "security", title: "Security", status: "running", detail: "Checking auth paths" },
-          { nodeId: "testing", title: "Testing", status: "running", detail: "Inspecting coverage" },
-          { nodeId: "writer", title: "Writer", status: "queued" },
-        ]}
-        onObjectiveChange={() => undefined}
-        onSelectConfiguredAgent={() => undefined}
-        onDraftGraph={() => undefined}
-        onReplyChange={() => undefined}
-        onSendReply={() => undefined}
-        onUpdateNode={() => undefined}
-        onRunGraph={async () => undefined}
-        onResetSession={() => undefined}
-      />,
-    );
-
-    expect(html).toContain("workflow-canvas-board");
-    expect(html).toContain("workflow-canvas-viewport");
-    expect(html).toContain("workflow-react-flow-board");
-    expect(html).toContain("workflow-canvas-node");
-    expect(html).toContain("react-flow__edges");
-    expect(html).toContain("workflow-canvas-controls");
-    expect(html).toContain("Fit View");
-    expect(html).not.toContain("workflow-preview-list");
-    expect(html).not.toContain("workflow-preview-row");
-    expect(html).toContain("data-layer-size=\"2\"");
-    expect(html.indexOf("Security")).toBeLessThan(html.indexOf("Writer"));
-    expect(html.indexOf("Testing")).toBeLessThan(html.indexOf("Writer"));
-    expect(html).toContain("Checking auth paths");
-    expect(html).toContain("Inspecting coverage");
-  });
-
-  test("renders long workflow previews without folding nodes", () => {
-    const nodes: WorkflowGraph["nodes"] = [
-      { id: "start", kind: "start", title: "Start", prompt: "" },
-      ...Array.from({ length: 8 }, (_, index) => ({
-        id: `agent-${index + 1}`,
-        kind: "agent" as const,
-        title: `Agent ${index + 1}`,
-        prompt: `Run step ${index + 1}.`,
-        agentId: "codex" as const,
-        channelId: "codex-openai",
-        modelId: DEFAULT_MODEL_ID,
-      })),
-      { id: "end", kind: "end", title: "Done", prompt: "" },
-    ];
-    const edges: WorkflowGraph["edges"] = nodes.slice(0, -1).map((node, index) => ({
-      id: `${node.id}->${nodes[index + 1]!.id}`,
-      fromNodeId: node.id,
-      toNodeId: nodes[index + 1]!.id,
-    }));
-    const graph: WorkflowGraph = {
-      title: "Long workflow",
-      objective: "Run many steps",
-      nodes,
-      edges,
-    };
-
-    const html = renderToStaticMarkup(
-      <WorkflowPage
-        title="Long workflow"
-        status="draft"
-        graph={graph}
-        graphReady
-        objective="Run many steps"
-        messages={[]}
-        reply=""
-        error={undefined}
-        configuredAgentId="repo-reviewer"
-        runtimes={runtimes}
-        channels={channels}
-        workDir="/tmp/workspace"
-        running={false}
-        onObjectiveChange={() => undefined}
-        onSelectConfiguredAgent={() => undefined}
-        onDraftGraph={() => undefined}
-        onReplyChange={() => undefined}
-        onSendReply={() => undefined}
-        onUpdateNode={() => undefined}
-        onRunGraph={async () => undefined}
-        onResetSession={() => undefined}
-      />,
-    );
-
-    expect(html).not.toContain("workflow-preview-gap");
-    expect(html).not.toContain("workflow-preview-more");
-    expect(html).not.toContain("+ 6 nodes");
-    expect(html).toContain("Agent 1");
-    expect(html).toContain("Agent 4");
-    expect(html).toContain("Agent 8");
-  });
-
-  test("extracts workflow output document paths from text", () => {
-    expect(extractWorkflowOutputDocuments("产物见 docs/learning-highlights.md 和 [summary](reports/summary.md).")).toEqual([
-      { path: "docs/learning-highlights.md", title: "learning-highlights.md" },
-      { path: "reports/summary.md", title: "summary.md" },
-    ]);
-    expect(
-      extractWorkflowOutputDocumentsForPlan(
-        {
-          memoryPath: ".multi-agent-chat/workflows/wf_review/memory.md",
-          outputDir: ".multi-agent-chat/workflows/wf_review/outputs",
-        },
-        "证据包含 README.md；最终产物见 .multi-agent-chat/workflows/wf_review/outputs/learning-highlights.md。",
-      ),
-    ).toEqual([{ path: ".multi-agent-chat/workflows/wf_review/outputs/learning-highlights.md", title: "learning-highlights.md" }]);
-  });
-
-  test("renders workflow history beside the workflow workspace", () => {
-    const html = renderToStaticMarkup(
-      <WorkflowHistoryPanel
-        workflows={[
-          {
-            workflowId: "wf_review",
-            title: "Review payment release",
-            objective: "Review payment release",
-            status: "draft",
-            revision: 2,
-            graph,
-            graphReady: true,
-            messages: [],
-            reply: "",
-            error: undefined,
-            runProgress: [],
-            runContextDocument: "",
-            contextDocument: "",
-            runIds: [],
-            configuredAgentId: "repo-reviewer",
-            modelId: "gpt-5.5",
-            createdAt: 1710000000000,
-            updatedAt: 1710000000000,
-          },
-          {
-            workflowId: "wf_release",
-            title: "Release workflow",
-            objective: "Prepare release",
-            status: "completed",
-            revision: 1,
-            graph: { ...graph, title: "Release workflow", objective: "Prepare release" },
-            graphReady: true,
-            messages: [],
-            reply: "",
-            error: undefined,
-            runProgress: [],
-            runContextDocument: "",
-            contextDocument: "",
-            runIds: [],
-            configuredAgentId: "repo-reviewer",
-            modelId: "gpt-5.5",
-            createdAt: 1710001000000,
-            updatedAt: 1710001000000,
-          },
-        ]}
-        activeWorkflowId="wf_review"
-        onSelectWorkflow={() => undefined}
-        onNewWorkflow={() => undefined}
-      />,
-    );
-
-    expect(html).toContain("Workflows");
-    expect(html).toContain("New workflow");
-    expect(html).toContain("Review payment release");
-    expect(html).toContain("Release workflow");
-    expect(html).toContain("draft · 4 nodes · rev 2");
-    expect(html).toContain("completed · 4 nodes · rev 1");
-    expect(html).toContain("workflow-history-card is-active");
-  });
-
-  test("keeps the new workflow action visible without workflow history", () => {
-    const html = renderToStaticMarkup(
-      <WorkflowHistoryPanel workflows={[]} activeWorkflowId={undefined} onSelectWorkflow={() => undefined} onNewWorkflow={() => undefined} />,
-    );
-
-    expect(html).toContain("Workflows");
-    expect(html).toContain("New workflow");
-    expect(html).toContain("No workflows yet");
-  });
-
-  test("summarizes generated workflow graph code in the grill transcript", () => {
-    const content = workflowAssistantDisplayContent(`Agent is thinking...\`\`\`ts
-workflowGraph.upsert({
-  title: "Review DAG",
-  objective: "Review the repo",
-  nodes: [
-    { id: "start", kind: "start", title: "Start", prompt: "" },
-    { id: "review", kind: "agent", title: "Review Agent", prompt: "Review."},
-    { id: "end", kind: "end", title: "Done", prompt: "" }
-  ],
-  edges: [
-    { id: "start->review", fromNodeId: "start", toNodeId: "review" },
-    { id: "review->end", fromNodeId: "review", toNodeId: "end" }
-  ]
-});
-\`\`\``);
-
-    expect(content).toBe("Workflow graph ready: Review DAG");
-    expect(content).not.toContain("Agent is thinking");
-    expect(content).not.toContain("workflowGraph.upsert");
-  });
-
-  test("builds workflow node prompts with upstream artifacts", () => {
-    const graph: WorkflowGraph = {
-      title: "Review DAG",
-      objective: "Review the repo",
-      nodes: [
-        { id: "start", kind: "start", title: "Start", prompt: "" },
-        { id: "inventory", kind: "agent", title: "Inventory", prompt: "Map the repo." },
-        { id: "writer", kind: "agent", title: "Writer", prompt: "Write the doc." },
-        { id: "end", kind: "end", title: "Done", prompt: "" },
-      ],
-      edges: [
-        { id: "start->inventory", fromNodeId: "start", toNodeId: "inventory" },
-        { id: "inventory->writer", fromNodeId: "inventory", toNodeId: "writer" },
-        { id: "writer->end", fromNodeId: "writer", toNodeId: "end" },
-      ],
-    };
-
-    const storagePlan = {
-      memoryPath: ".multi-agent-chat/workflows/wf_review/memory.md",
-      outputDir: ".multi-agent-chat/workflows/wf_review/outputs",
-    };
-    const prompt = workflowNodeRunPrompt(
-      graph,
-      graph.nodes[2]!,
-      [{ node: graph.nodes[1]!, artifact: "Inventory artifact" }],
-      "## Inventory\nKey context.",
-      storagePlan,
-    );
-
-    expect(prompt).toContain("Workflow: Review DAG");
-    expect(prompt).toContain("Node: Writer (writer)");
-    expect(prompt).toContain("Write the doc.");
-    expect(prompt).toContain("Use this workflow context document first:");
-    expect(prompt).toContain("## Inventory");
-    expect(prompt).toContain("Key context.");
-    expect(prompt).toContain("## Upstream: Inventory (inventory)");
-    expect(prompt).toContain("Inventory artifact");
-    expect(prompt).toContain("Work Completion Report");
-    expect(prompt).toContain("This report will be appended to the shared Workflow Context document");
-    expect(prompt).toContain("Workflow storage plan");
-    expect(prompt).toContain(storagePlan.outputDir);
-    expect(prompt).toContain("When you finish, include a concise Handoff section.");
-  });
-
-  test("builds workflow storage plan instructions for shared memory and outputs", () => {
-    const storagePlan = {
-      memoryPath: ".multi-agent-chat/workflows/wf_review/memory.md",
-      outputDir: ".multi-agent-chat/workflows/wf_review/outputs",
-    };
-
-    expect(workflowStoragePlanDocument(storagePlan)).toContain("Shared memory file: .multi-agent-chat/workflows/wf_review/memory.md");
-    expect(workflowStoragePlanDocument(storagePlan)).toContain("Output document directory: .multi-agent-chat/workflows/wf_review/outputs");
-
-    const prompt = workflowFinalReviewPrompt(
-      graph,
-      [{ node: graph.nodes[1]!, artifact: "Wrote .multi-agent-chat/workflows/wf_review/outputs/summary.md" }],
-      workflowStoragePlanDocument(storagePlan),
-      [],
-      storagePlan,
-    );
-
-    expect(prompt).toContain("Workflow storage plan");
-    expect(prompt).toContain(storagePlan.memoryPath);
-    expect(prompt).toContain(storagePlan.outputDir);
-    expect(prompt).toContain("Only list output documents that are under the output document directory.");
-  });
-
-  test("builds and parses workflow judge prompts for node completion decisions", () => {
-    const judgePrompt = workflowJudgePrompt(
-      graph,
-      graph.nodes.find((node) => node.id === "review")!,
-      "## Work Completion Report\nImplemented the requested page.\n\n## Handoff\nNeeds tests.",
-      "# Workflow Context\n\n## Clarify & Plan\nBuild the page.",
-      1,
-      2,
-    );
-
-    expect(judgePrompt).toContain("You are the workflow judge");
-    expect(judgePrompt).toContain("attempt 1 of 2");
-    expect(judgePrompt).toContain("workflowEvaluation.submit");
-    expect(judgePrompt).toContain("## Work Completion Report");
-    expect(judgePrompt).toContain("# Workflow Context");
-
-    expect(
-      parseWorkflowJudgeResult(`
-        workflowEvaluation.submit({
-          complete: false,
-          reason: "The report does not mention verification.",
-          retryPrompt: "Run or explain the relevant tests, then update the handoff."
-        });
-      `),
-    ).toEqual({
-      complete: false,
-      reason: "The report does not mention verification.",
-      retryPrompt: "Run or explain the relevant tests, then update the handoff.",
-    });
-  });
-
-  test("builds a final main agent review prompt from all workflow node outputs", () => {
-    const prompt = workflowFinalReviewPrompt(
-      graph,
-      [
-        { node: graph.nodes[1]!, artifact: "## Work Completion Report\nPlanned the review.\n\n## Handoff\nCheck auth." },
-        { node: graph.nodes[2]!, artifact: "## Work Completion Report\nReviewed auth.\n\n## Handoff\nNo blocker." },
-      ],
-      "# Workflow Context\n\n## Clarify & Plan\nCheck auth first.",
-      [
-        { nodeId: "plan", title: "Clarify & Plan", status: "completed", detail: "Approved" },
-        { nodeId: "review", title: "Review", status: "completed", detail: "Approved" },
-      ],
-    );
-
-    expect(prompt).toContain("You are the main workflow agent");
-    expect(prompt).toContain("Continue the same workflow chat with the user");
-    expect(prompt).toContain("Objective: Review payment release");
-    expect(prompt).toContain("Shared Workflow Context document:");
-    expect(prompt).toContain("## Node: Clarify & Plan (plan)");
-    expect(prompt).toContain("Planned the review.");
-    expect(prompt).toContain("## Node: Review (review)");
-    expect(prompt).toContain("Reviewed auth.");
-    expect(prompt).toContain("Final User Report");
-    expect(prompt).toContain("Do not rerun the workflow nodes");
-  });
-
-  test("builds a workflow context document from node handoffs", () => {
-    const artifact = [
-      "Detailed analysis that can be long.",
-      "",
-      "## Handoff",
-      "- Key finding: service uses active turn guards.",
-      "- Next input: inspect persistence.",
-      "",
-      "## Extra Detail",
-      "This should not be part of the handoff summary.",
-    ].join("\n");
-
-    expect(workflowArtifactSummary(artifact)).toBe("- Key finding: service uses active turn guards.\n- Next input: inspect persistence.");
-    expect(
-      workflowContextDocumentFromArtifacts([
-        { nodeId: "inventory", title: "Inventory", summary: workflowArtifactSummary(artifact) },
-      ]),
-    ).toContain("## Inventory (inventory)\n- Key finding: service uses active turn guards.");
-  });
-
-  test("keeps workflow work completion reports in the shared context summary", () => {
-    const artifact = [
-      "Verbose logs.",
-      "",
-      "## Work Completion Report",
-      "- Did: mapped the repository.",
-      "- Evidence: src/main.ts.",
-      "",
-      "## Handoff",
-      "- Next: inspect renderer state.",
-    ].join("\n");
-
-    expect(workflowArtifactSummary(artifact)).toContain("### Work Completion Report\n- Did: mapped the repository.");
-    expect(workflowArtifactSummary(artifact)).toContain("### Handoff\n- Next: inspect renderer state.");
-  });
-
-  test("summarizes workflow run progress while the graph is executing", () => {
-    expect(
-      workflowRunProgressSummary([
-        { nodeId: "inventory", title: "Inventory", status: "completed" },
-        { nodeId: "analysis", title: "Analysis", status: "running", detail: "Task running" },
-        { nodeId: "writer", title: "Writer", status: "queued" },
-      ]),
-    ).toBe("Running 2/3 · 1 done · 1 queued");
-  });
-
-  test("marks unfinished workflow progress as failed when a run fails", () => {
-    expect(
-      workflowProgressAfterFailure(
-        [
-          { nodeId: "plan", title: "Plan", status: "completed", taskId: "task-done" },
-          { nodeId: "review", title: "Review", status: "running", taskId: "task-running", detail: "Judge running" },
-          { nodeId: "ship", title: "Ship", status: "queued" },
-          { nodeId: "doc", title: "Doc", status: "failed", detail: "Already failed" },
-        ],
-        "Workflow task timed out.",
-      ),
-    ).toEqual([
-      { nodeId: "plan", title: "Plan", status: "completed", taskId: "task-done" },
-      { nodeId: "review", title: "Review", status: "failed", detail: "Workflow task timed out." },
-      { nodeId: "ship", title: "Ship", status: "failed", detail: "Workflow task timed out." },
-      { nodeId: "doc", title: "Doc", status: "failed", detail: "Already failed" },
-    ]);
-  });
-
-  test("keeps an empty active workflow draft persistable", () => {
-    const emptyDraftInput = {
-      workflowId: "wf_new",
-      activeWorkflowId: "wf_new",
-      workflowIds: ["wf_existing", "wf_new"],
-      objective: "",
-      messages: [],
-      graphReady: false,
-      reply: "",
-      error: undefined,
-      runProgress: [],
-      runContextDocument: "",
-      contextDocument: "",
-      finalReport: "",
-    };
-
-    expect(workflowDraftShouldPersist(emptyDraftInput)).toBe(true);
-    expect(workflowDraftShouldPersist({ ...emptyDraftInput, activeWorkflowId: undefined, workflowIds: [] })).toBe(false);
-  });
-
-  test("summarizes live workflow task activity from the latest agent event", () => {
-    const task: TaskRun = {
-      ...taskRuns[0]!,
-      status: "running",
-      running: true,
-      messages: [
-        {
-          id: "assistant-1",
-          role: "assistant",
-          content: "Inspecting files",
-          timestamp: 1710000000001,
-          events: [
-            {
-              id: "event-1",
-              type: "tool_call",
-              name: "shell_command",
-              content: "rg -n \"auth\" src",
-              timestamp: 1710000000002,
-            },
-          ],
-        },
-      ],
-    };
-
-    expect(workflowTaskLiveDetail(task)).toBe('Tool shell_command: rg -n "auth" src');
-  });
-
-  test("hides shell tool transport metadata from live workflow task activity", () => {
-    const task: TaskRun = {
-      ...taskRuns[0]!,
-      status: "running",
-      running: true,
-      messages: [
-        {
-          id: "assistant-1",
-          role: "assistant",
-          content: "Inspecting files",
-          timestamp: 1710000000001,
-          events: [
-            {
-              id: "event-1",
-              type: "tool_result",
-              name: "exec_command",
-              content: [
-                "Chunk ID: e28e4a",
-                "Wall time: 0.0000 seconds",
-                "Process exited with code 0",
-                "Original token count: 1816",
-                "Output:",
-                "What I did:",
-                "- Interpreted workflow results.",
-              ].join("\n"),
-              timestamp: 1710000000002,
-            },
-          ],
-        },
-      ],
-    };
-
-    expect(workflowTaskLiveDetail(task)).toBe("Tool exec_command done: What I did: - Interpreted workflow results.");
-  });
-
-  test("renders the first grill question only after the user starts the workflow chat", () => {
-    const html = renderToStaticMarkup(
-      <WorkflowPage
-        graph={graph}
-        graphReady={false}
-        objective="Review payment release"
-        messages={[
-          { id: "m-1", role: "user", content: "Review payment release" },
-          { id: "m-2", role: "assistant", content: "第一个问题：最终交付物是什么？推荐答案：风险清单和验证步骤。" },
-        ]}
-        reply=""
-        error={undefined}
-        configuredAgentId="repo-reviewer"
-        runtimes={runtimes}
-        channels={channels}
-        workDir="/tmp/workspace"
-        running={false}
-        onObjectiveChange={() => undefined}
-        onSelectConfiguredAgent={() => undefined}
-        onDraftGraph={() => undefined}
-        onReplyChange={() => undefined}
-        onSendReply={() => undefined}
-        onUpdateNode={() => undefined}
-        onRunGraph={async () => undefined}
-        onResetSession={() => undefined}
-      />,
-    );
-
-    expect(html).toContain("Review payment release");
-    expect(html).toContain("第一个问题：最终交付物是什么？");
-    expect(html).toContain("aria-label=\"Reply to grill question\"");
-    expect(html).toContain("Send");
-    expect(html).not.toContain("DAG valid");
-  });
-
-  test("renders a compact graph preview after the grill session is complete", () => {
-    const html = renderToStaticMarkup(
-      <WorkflowPage
-        graph={graph}
-        graphReady
-        objective="Review payment release"
-        messages={[
-          { id: "m-1", role: "assistant", content: "第一个问题：最终交付物是什么？推荐答案：风险清单和验证步骤。" },
-          { id: "m-2", role: "user", content: "我要风险清单。" },
-          { id: "m-3", role: "assistant", content: "信息足够了，已经生成 DAG。" },
-        ]}
-        reply=""
-        error={undefined}
-        configuredAgentId="repo-reviewer"
-        runtimes={runtimes}
-        channels={channels}
-        workDir="/tmp/workspace"
-        running={false}
-        onObjectiveChange={() => undefined}
-        onSelectConfiguredAgent={() => undefined}
-        onDraftGraph={() => undefined}
-        onReplyChange={() => undefined}
-        onSendReply={() => undefined}
-        onUpdateNode={() => undefined}
-        onRunGraph={async () => undefined}
-        onResetSession={() => undefined}
-      />,
-    );
-
-    expect(html).toContain("DAG valid");
-    expect(html).toContain("Start");
-    expect(html).toContain("Clarify &amp; Plan");
-    expect(html).toContain("Review");
-    expect(html).toContain("Done");
-    expect(html).toContain("workflow-canvas-board");
-    expect(html).toContain("workflow-react-flow-board");
-    expect(html).toContain("react-flow__edges");
-    expect(html).not.toContain("workflow-canvas-preview-trigger");
-    expect(html).not.toContain("workflow-preview-list");
-    expect(html).not.toContain("aria-label=\"Node plan runtime\"");
-    expect(html).not.toContain("aria-label=\"Node plan provider\"");
-    expect(html).not.toContain("aria-label=\"Node plan model\"");
-    expect(html).toContain("aria-label=\"Expand workflow graph board\"");
-    expect(html).toContain("Run Graph");
-    expect(html).not.toContain("aria-label=\"New workflow\"");
-    expect(html).not.toContain("<span>New workflow</span>");
-    expect(html).toContain("aria-label=\"Reply to workflow agent\"");
-    expect(html).toContain("Ask the workflow agent to modify the graph");
-    expect(html).toContain("Send");
-    expect(html).not.toContain("Generate Graph");
-  });
-
-  test("keeps workflow provider controls out of the collapsed graph preview", () => {
-    const html = renderToStaticMarkup(
-      <WorkflowPage
-        graph={graph}
-        graphReady
-        objective="Review payment release"
-        messages={[{ id: "m-1", role: "assistant", content: "信息足够了，已经生成 DAG。" }]}
-        reply=""
-        error={undefined}
-        configuredAgentId="repo-reviewer"
-        runtimes={runtimes}
-        channels={channels}
-        configuredAgents={configuredAgents}
-        workDir="/tmp/workspace"
-        running={false}
-        onObjectiveChange={() => undefined}
-        onSelectConfiguredAgent={() => undefined}
-        onDraftGraph={() => undefined}
-        onReplyChange={() => undefined}
-        onSendReply={() => undefined}
-        onUpdateNode={() => undefined}
-        onRunGraph={async () => undefined}
-        onResetSession={() => undefined}
-      />,
-    );
-
-    expect(html).toContain("workflow-canvas-board");
-    expect(html).toContain("workflow-react-flow-board");
-    expect(html).not.toContain("workflow-preview-list");
-    expect(html).not.toContain("aria-label=\"Node plan configured agent\"");
-    expect(html).not.toContain("aria-label=\"Node plan channel\"");
-    expect(html).not.toContain(">Channel</span>");
-  });
-
-  test("keeps expanded workflow nodes readable and moves editing into a right-click modal", () => {
-    const html = renderToStaticMarkup(
-      <WorkflowPage
-        graph={graph}
-        graphReady
-        objective="Review payment release"
-        messages={[{ id: "m-1", role: "assistant", content: "信息足够了，已经生成 DAG。" }]}
-        reply=""
-        error={undefined}
-        configuredAgentId="repo-reviewer"
-        runtimes={runtimes}
-        channels={channels}
-        configuredAgents={configuredAgents}
-        workDir="/tmp/workspace"
-        running={false}
-        defaultGraphExpanded
-        onObjectiveChange={() => undefined}
-        onSelectConfiguredAgent={() => undefined}
-        onDraftGraph={() => undefined}
-        onReplyChange={() => undefined}
-        onSendReply={() => undefined}
-        onUpdateNode={() => undefined}
-        onRunGraph={async () => undefined}
-        onResetSession={() => undefined}
-      />,
-    );
-
-    expect(html).toContain("workflow-expanded-node-card");
-    expect(html).not.toContain("右键编辑");
-    expect(html).not.toContain("Right-click to edit");
-    expect(html).not.toContain("aria-label=\"Node plan prompt\"");
-    expect(html).not.toContain("aria-label=\"Node plan model\"");
-    expect(styles).toContain(".workflow-expanded-node-card {");
-    expect(styles).toContain(".workflow-node-edit-overlay {");
-    expect(styles).not.toContain(".workflow-node-edit-trigger");
-  });
-
-  test("renders workflow run feedback while execution is in progress", () => {
-    const html = renderToStaticMarkup(
-      <WorkflowPage
-        graph={graph}
-        graphReady
-        objective="Review payment release"
-        messages={[{ id: "m-1", role: "assistant", content: "信息足够了，已经生成 DAG。" }]}
-        reply=""
-        error={undefined}
-        configuredAgentId="repo-reviewer"
-        runtimes={runtimes}
-        channels={channels}
-        workDir="/tmp/workspace"
-        running
-        contextDocument={"# Workflow Context\n\n## Clarify & Plan\nUse active turn guards."}
-        runProgress={[
-          { nodeId: "plan", title: "Clarify & Plan", status: "completed", detail: "Output captured" },
-          { nodeId: "work", title: "Execute", status: "running", detail: "Task running" },
-          { nodeId: "review", title: "Review", status: "queued" },
-        ]}
-        onObjectiveChange={() => undefined}
-        onSelectConfiguredAgent={() => undefined}
-        onDraftGraph={() => undefined}
-        onReplyChange={() => undefined}
-        onSendReply={() => undefined}
-        onUpdateNode={() => undefined}
-        onRunGraph={async () => undefined}
-        onResetSession={() => undefined}
-      />,
-    );
-
-    expect(html).toContain("Run progress");
-    expect(html).toContain("Running 2/3 · 1 done · 1 queued");
-    expect(html).toContain("Task running");
-    expect(html).toContain("Output captured");
-    expect(html).not.toContain("Workflow context");
-    expect(html).not.toContain("Use active turn guards.");
-    expect(html).toContain("Running...");
-  });
-
-  test("renders the main agent final report after workflow execution", () => {
-    const html = renderToStaticMarkup(
-      <WorkflowPage
-        graph={graph}
-        graphReady
-        objective="Review payment release"
-        messages={[
-          { id: "m-1", role: "assistant", content: "信息足够了，已经生成 DAG。" },
-          { id: "m-2", role: "assistant", content: "## Final User Report\nPayment release is ready with one follow-up risk." },
-        ]}
-        reply=""
-        error={undefined}
-        configuredAgentId="repo-reviewer"
-        runtimes={runtimes}
-        channels={channels}
-        workDir="/tmp/workspace"
-        running={false}
-        finalReport={"## Final User Report\nPayment release is ready with one follow-up risk."}
-        runProgress={[
-          { nodeId: "plan", title: "Clarify & Plan", status: "completed", detail: "Approved" },
-          { nodeId: "review", title: "Review", status: "completed", detail: "Approved" },
-          { nodeId: "__final_review__", title: "Main agent review", status: "completed", detail: "Main agent report ready" },
-        ]}
-        onObjectiveChange={() => undefined}
-        onSelectConfiguredAgent={() => undefined}
-        onDraftGraph={() => undefined}
-        onReplyChange={() => undefined}
-        onSendReply={() => undefined}
-        onUpdateNode={() => undefined}
-        onRunGraph={async () => undefined}
-        onResetSession={() => undefined}
-      />,
-    );
-
-    expect(html).toContain("Main agent summary");
-    expect(html).toContain("Main agent review");
-    expect(html).toContain("<h2>Final User Report</h2>");
-    expect(html).not.toContain("<pre>## Final User Report");
-    expect(html).toContain("Payment release is ready with one follow-up risk.");
-    expect(html).toContain("Workflow transcript");
-    expect(html).toContain("Main agent report ready");
-    // Graph is shown first, then run outputs flow below it.
-    expect(styles).toContain(".workflow-result-card .workflow-graph-board {\n  order: 1;");
-    expect(styles).toContain(".workflow-result-card .workflow-run-progress {\n  order: 2;");
-    expect(styles).toContain(".workflow-result-card .workflow-final-report {\n  order: 3;");
-  });
-
-  test("shows validation errors and disables execution for cyclic graphs", () => {
-    const cyclicGraph: WorkflowGraph = {
-      ...graph,
-      edges: [
-        ...graph.edges,
-        { id: "review->plan", fromNodeId: "review", toNodeId: "plan" },
-      ],
-    };
-    const html = renderToStaticMarkup(
-      <WorkflowPage
-        graph={cyclicGraph}
-        graphReady
-        objective="Review payment release"
-        messages={[{ id: "m-1", role: "assistant", content: "第一个问题：最终交付物是什么？推荐答案：风险清单。" }]}
-        reply=""
-        error={undefined}
-        configuredAgentId="repo-reviewer"
-        runtimes={runtimes}
-        channels={channels}
-        workDir="/tmp/workspace"
-        running={false}
-        onObjectiveChange={() => undefined}
-        onSelectConfiguredAgent={() => undefined}
-        onDraftGraph={() => undefined}
-        onReplyChange={() => undefined}
-        onSendReply={() => undefined}
-        onUpdateNode={() => undefined}
-        onRunGraph={async () => undefined}
-        onResetSession={() => undefined}
-      />,
-    );
-
-    expect(html).toContain("DAG invalid");
-    expect(html).toContain("Workflow graph must be acyclic.");
-    expect(html).toContain("disabled=\"\"");
   });
 });

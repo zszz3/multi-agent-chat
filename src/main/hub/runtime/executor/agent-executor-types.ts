@@ -3,12 +3,8 @@ import type {
   AgentEvent,
   AgentId,
   AgentRuntime,
-  AppendWorkflowContextRequest,
-  CreateWorkflowRequest,
   RuntimeRequest,
-  WorkflowDraftState,
   WorkflowAgentResponse,
-  WorkflowOperationResult,
 } from "../../../../shared/types";
 import type {
   RuntimeChannelTestContext,
@@ -21,7 +17,6 @@ export interface AgentExecutionContext extends RuntimeRequest {
   runKind: "chat" | "task";
   runtime: AgentRuntime;
   channelId: string;
-  channel?: AgentChannel;
   prompt: string;
   workDir: string;
   developerInstructions: string;
@@ -38,19 +33,10 @@ export interface AgentExecutorFactory {
   create(context: AgentExecutionContext): AgentExecutor;
 }
 
-export interface RuntimeWorkflowHost {
-  mcpBridgeDiscoveryPath: () => string | undefined;
-  tools: {
-    createWorkflow: (request: CreateWorkflowRequest) => WorkflowOperationResult;
-    getWorkflow: (workflowId: string) => WorkflowDraftState | undefined;
-    appendWorkflowContext: (request: AppendWorkflowContextRequest) => WorkflowOperationResult;
-  };
-}
-
 export interface RuntimeAgentExecutorFactoryOptions {
   executables: Record<AgentId, string>;
   channelById: (channelId: string) => AgentChannel | undefined;
-  workflowHost?: RuntimeWorkflowHost;
+  workflowMcpDiscoveryPath?: () => string | undefined;
   askWorkflowByRuntime?: Partial<Record<AgentId, (input: RuntimeWorkflowRequestContext) => Promise<WorkflowAgentResponse>>>;
   testChannelByRuntime?: Partial<Record<AgentId, (input: RuntimeChannelTestContext) => Promise<string>>>;
   deleteSessionArtifactsByRuntime?: Partial<Record<AgentId, (input: RuntimeSessionCleanupContext) => Promise<void>>>;

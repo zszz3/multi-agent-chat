@@ -1,4 +1,78 @@
+import type {
+  WorkflowV2AcceptanceCriterion,
+  WorkflowV2CostBudget,
+  WorkflowV2GraphRevision,
+  WorkflowV2Plan,
+} from "./workflow-v2/planning";
+import type {
+  WorkflowV2ContextBudget,
+  WorkflowV2Definition,
+  WorkflowV2ModelProfile,
+  WorkflowV2NodeRole,
+  WorkflowV2ValidationResult,
+} from "./workflow-v2/definition";
+import type { WorkflowV2HumanIntervention, WorkflowV2InterventionAction } from "./workflow-v2/review";
 import type { RuntimeId } from "./runtime-catalog";
+import type { ResourceSourceType } from "./resource";
+import type { RuntimeConversation } from "./runtime/conversation";
+import type { WorkflowNodeConversation } from "./workflow-v2/conversation";
+import type { ConfiguredAgent } from "./agent/types";
+import type { WorkflowDraftState, WorkflowGrillMessage, WorkflowStoreState } from "./workflow/draft";
+import type {
+  WorkflowArtifactReference,
+  WorkflowEvent,
+  WorkflowRunProgressItem,
+  WorkflowRunState,
+  WorkflowStatus,
+} from "./workflow/run";
+export {
+  isWorkflowRunTerminalStatus,
+  type WorkflowArtifactReference,
+  type WorkflowEvent,
+  type WorkflowEventType,
+  type WorkflowRunNodeStatus,
+  type WorkflowRunProgressItem,
+  type WorkflowRunState,
+  type WorkflowStatus,
+} from "./workflow/run";
+export type { ResourceSourceType } from "./resource";
+export type { RuntimeConversation } from "./runtime/conversation";
+export type { AgentRevision, AgentType, ConfiguredAgent } from "./agent/types";
+export type { AgentMcpBinding, McpServerDefinition, McpToolDefinition, McpTransport } from "./mcp/types";
+export type { EvaluationCaseResult, EvaluationDataset, EvaluationDatasetItem, EvaluationEvaluator, EvaluationExperiment, EvaluationRun, EvaluationScore, EvaluatorKind } from "./evaluation/types";
+export type { WorkflowDraftState, WorkflowGrillMessage, WorkflowStoreState } from "./workflow/draft";
+export type { WorkflowV2GenerationReviewFinding, WorkflowV2GenerationReviewResult, WorkflowV2GenerationReviewState, WorkflowV2GenerationReviewStatus, WorkflowV2GenerationReviewVerdict } from "./workflow-v2/generation-review";
+export type {
+  SendWorkflowNodeMessageRequest,
+  CompleteWorkflowNodeConversationRequest,
+  RejectWorkflowNodeCompletionRequest,
+  InterruptWorkflowNodeConversationRequest,
+  WorkflowOperationResult,
+  MaterializeWorkflowDraftRequest,
+  CreateWorkflowDraftRequest,
+  PatchWorkflowDraftRequest,
+  SendWorkflowDraftReplyRequest,
+  UpdateWorkflowRequest,
+  AppendWorkflowContextRequest,
+  AppendWorkflowRunContextRequest,
+  StartWorkflowRunRequest,
+  ListWorkflowOutputsRequest,
+  RunWorkflowRequest,
+  ConfirmWorkflowRequest,
+  ReviewWorkflowRequest,
+  InterruptWorkflowReviewRequest,
+  BuildWorkflowV2PlanRequest,
+  BuildWorkflowV2PlanResult,
+  BuildWorkflowV2GraphRevisionRequest,
+  BuildWorkflowV2GraphRevisionResult,
+  PauseWorkflowNodeRequest,
+  StopWorkflowRunRequest,
+  StartWorkflowNodeRequest,
+  SubmitWorkflowScriptInputRequest,
+  ResolveWorkflowV2InterventionRequest,
+  AnswerWorkflowGateRequest,
+  FinishWorkflowRunRequest,
+} from "./workflow/commands";
 
 export type AgentId = RuntimeId;
 
@@ -37,11 +111,7 @@ export interface AgentPluginConfig {
   enabled: boolean;
 }
 
-export type RuntimeProviderApiFormat =
-  | "anthropic"
-  | "openai_chat"
-  | "openai_responses"
-  | "gemini_native";
+export type RuntimeProviderApiFormat = "anthropic" | "openai_chat" | "openai_responses" | "gemini_native";
 export type ClaudeApiKeyField = "ANTHROPIC_AUTH_TOKEN" | "ANTHROPIC_API_KEY";
 
 export interface RuntimeRequestOverrides {
@@ -80,162 +150,6 @@ export interface AgentChannel {
   modelCatalogJson?: string;
   modelReasoningEffort?: string;
 }
-
-export type AgentType = "execution" | "composed";
-
-export type McpTransport = "stdio" | "http";
-
-export interface McpToolDefinition {
-  name: string;
-  description?: string;
-  inputSchema: Record<string, unknown>;
-}
-
-export interface McpServerDefinition {
-  id: string;
-  name: string;
-  transport: McpTransport;
-  command?: string;
-  args: string[];
-  url?: string;
-  env: Record<string, string>;
-  enabled: boolean;
-  tools: McpToolDefinition[];
-  status: "untested" | "connected" | "error";
-  lastError?: string;
-  lastTestedAt?: number;
-  createdAt: number;
-  updatedAt: number;
-}
-
-export interface AgentMcpBinding {
-  serverId: string;
-  toolAllowlist: string[];
-}
-
-export interface EvaluationDatasetItem {
-  id: string;
-  input: string;
-  expectedOutput?: string;
-  metadata: Record<string, unknown>;
-  sequence: number;
-}
-export interface EvaluationDataset {
-  id: string;
-  name: string;
-  description: string;
-  items: EvaluationDatasetItem[];
-  createdAt: number;
-  updatedAt: number;
-}
-export type EvaluatorKind =
-  | "contains"
-  | "exact_match"
-  | "json_valid"
-  | "llm_judge";
-export interface EvaluationEvaluator {
-  id: string;
-  name: string;
-  kind: EvaluatorKind;
-  prompt?: string;
-  runtimeId?: string;
-  threshold: number;
-  enabled: boolean;
-  createdAt: number;
-  updatedAt: number;
-}
-export interface EvaluationExperiment {
-  id: string;
-  name: string;
-  datasetId: string;
-  agentId: string;
-  evaluatorIds: string[];
-  repetitions: number;
-  createdAt: number;
-  updatedAt: number;
-}
-export interface EvaluationScore {
-  evaluatorId: string;
-  score: number;
-  passed: boolean;
-  reason?: string;
-  evidence?: string[];
-  failedCriteria?: string[];
-  durationMs: number;
-  tokenCount?: number;
-  estimatedCost?: number;
-}
-export interface EvaluationCaseResult {
-  id: string;
-  runId: string;
-  datasetItemId: string;
-  repetition: number;
-  input: string;
-  expectedOutput?: string;
-  output: string;
-  error?: string;
-  durationMs: number;
-  scores: EvaluationScore[];
-}
-export interface EvaluationRun {
-  id: string;
-  experimentId: string;
-  status: "pending" | "running" | "completed" | "failed" | "cancelled";
-  agentRevisionId?: string;
-  startedAt: number;
-  finishedAt?: number;
-  averageScore?: number;
-  minimumScore?: number;
-  passRate?: number;
-  totalDurationMs?: number;
-  error?: string;
-  results: EvaluationCaseResult[];
-}
-
-export interface ConfiguredAgent {
-  id: string;
-  agentType?: AgentType;
-  name: string;
-  description: string;
-  instructions?: string;
-  baseAgentId?: string;
-  mcpBindings?: AgentMcpBinding[];
-  runtimeAgentId: AgentId;
-  channelId: string;
-  modelId: string;
-  reasoningEffort?: string;
-  tags: string[];
-  currentRevisionId?: string;
-  revision?: number;
-  managed?: boolean;
-  createdAt: number;
-  updatedAt: number;
-}
-
-export interface AgentRevision {
-  id: string;
-  agentId: string;
-  agentType: AgentType;
-  revision: number;
-  baseAgentId?: string;
-  runtimeAgentId: AgentId;
-  channelId: string;
-  modelId: string;
-  reasoningEffort?: string;
-  instructions: string;
-  mcpBindings: AgentMcpBinding[];
-  configHash: string;
-  createdAt: number;
-}
-
-export interface RuntimeBindingSnapshot {
-  configuredAgent: ConfiguredAgent;
-  runtimeAgentId: AgentId;
-  channel: AgentChannel;
-  modelId: string;
-}
-
-export type ResourceSourceType = "official" | "user";
 
 export interface SkillTemplate {
   id: string;
@@ -322,11 +236,7 @@ export interface AgentTestResult {
   modelId: string;
 }
 
-export type ProviderBalanceStatus =
-  | "success"
-  | "unsupported"
-  | "missing_key"
-  | "error";
+export type ProviderBalanceStatus = "success" | "unsupported" | "missing_key" | "error";
 
 export interface ProviderBalanceItem {
   label?: string;
@@ -351,12 +261,7 @@ export interface ProviderBalanceResult {
 export type AgentTestEvent =
   | { agentId: string; type: "phase"; content: string; timestamp: number }
   | { agentId: string; type: "user"; content: string; timestamp: number }
-  | {
-      agentId: string;
-      type: "assistant_delta";
-      content: string;
-      timestamp: number;
-    }
+  | { agentId: string; type: "assistant_delta"; content: string; timestamp: number }
   | { agentId: string; type: "assistant"; content: string; timestamp: number }
   | { agentId: string; type: "tool"; content: string; timestamp: number }
   | { agentId: string; type: "warning"; content: string; timestamp: number }
@@ -396,21 +301,12 @@ export interface ClaudeDefaultConfig {
 
 export type ExecutionStyle = "oneshot" | "interactive";
 export type RuntimeExecutionMode = ExecutionStyle;
-export type RuntimeContinuationPolicy =
-  | "fresh"
-  | "resume-preferred"
-  | "resume-required";
+export type RuntimeContinuationPolicy = "fresh" | "resume-preferred" | "resume-required";
 
 export interface RuntimeConfig {
   model: string;
   reasoningEffort?: string;
   [key: string]: unknown;
-}
-
-export interface RuntimeConversation {
-  runtimeId: AgentId;
-  codecVersion: string;
-  payload: unknown;
 }
 
 export interface RuntimeRequest {
@@ -452,50 +348,13 @@ export type AgentEvent =
   | { type: "delta"; content: string }
   | { type: "meta"; content: string }
   | { type: "system"; content: string; metadata?: Record<string, unknown> }
-  | {
-      type: "tool_call";
-      content: string;
-      name?: string;
-      metadata?: Record<string, unknown>;
-    }
-  | {
-      type: "tool_result";
-      content: string;
-      name?: string;
-      metadata?: Record<string, unknown>;
-    }
-  | {
-      type: "handoff";
-      content: string;
-      fromAgentId?: AgentId;
-      toAgentId?: AgentId;
-      metadata?: Record<string, unknown>;
-    }
-  | {
-      type: "approval_request";
-      requestId: string;
-      content: string;
-      metadata?: Record<string, unknown>;
-    }
-  | {
-      type: "approval_response";
-      requestId: string;
-      decision: ApprovalDecision;
-      content?: string;
-      metadata?: Record<string, unknown>;
-    }
-  | {
-      type: "user_input_request";
-      requestId: string;
-      content: string;
-      metadata?: Record<string, unknown>;
-    }
-  | {
-      type: "user_input_response";
-      requestId: string;
-      content: string;
-      metadata?: Record<string, unknown>;
-    }
+  | { type: "tool_call"; content: string; name?: string; metadata?: Record<string, unknown> }
+  | { type: "tool_result"; content: string; name?: string; metadata?: Record<string, unknown> }
+  | { type: "handoff"; content: string; fromAgentId?: AgentId; toAgentId?: AgentId; metadata?: Record<string, unknown> }
+  | { type: "approval_request"; requestId: string; content: string; metadata?: Record<string, unknown> }
+  | { type: "approval_response"; requestId: string; decision: ApprovalDecision; content?: string; metadata?: Record<string, unknown> }
+  | { type: "user_input_request"; requestId: string; content: string; metadata?: Record<string, unknown> }
+  | { type: "user_input_response"; requestId: string; content: string; metadata?: Record<string, unknown> }
   | { type: "completed"; content?: string }
   | { type: "error"; error: string };
 
@@ -555,18 +414,8 @@ export interface ChatSession {
   updatedAt: number;
 }
 
-export type TaskRunStatus =
-  | "queued"
-  | "running"
-  | "completed"
-  | "failed"
-  | "stopped";
-export type TaskProgress =
-  | "backlog"
-  | "todo"
-  | "in_progress"
-  | "in_review"
-  | "done";
+export type TaskRunStatus = "queued" | "running" | "completed" | "failed" | "stopped";
+export type TaskProgress = "backlog" | "todo" | "in_progress" | "in_review" | "done";
 
 export interface TaskRun {
   id: string;
@@ -588,17 +437,21 @@ export interface TaskRun {
 
 export interface RunTaskRequest {
   prompt: string;
+  developerInstructions?: string;
+  contextDocument?: string;
   configuredAgentId: string;
   modelId?: string;
   workDir?: string;
+  continuationPolicy?: RuntimeContinuationPolicy;
+  runtimeConversation?: RuntimeConversation;
 }
 
 export interface WorkflowAgentRequest extends RuntimeRequest {
+  planningWorkflowId?: string;
   requestId?: string;
   prompt: string;
   configuredAgentId: string;
   workDir?: string;
-  runtimeBinding?: RuntimeBindingSnapshot;
 }
 
 export interface WorkflowAgentResponse {
@@ -608,20 +461,7 @@ export interface WorkflowAgentResponse {
 
 export type WorkflowAgentEvent =
   | { requestId: string; type: "delta"; content: string }
-  | {
-      requestId: string;
-      type: "workflow_graph";
-      graph: WorkflowGraph;
-      workflowId?: string;
-      revision?: number;
-      content?: string;
-    }
-  | {
-      requestId: string;
-      type: "completed";
-      content: string;
-      runtimeConversation?: RuntimeConversation;
-    }
+  | { requestId: string; type: "completed"; content: string; runtimeConversation?: RuntimeConversation }
   | { requestId: string; type: "error"; error: string };
 
 export type AgentTeamMode = "pipeline" | "parallel" | "supervisor";
@@ -638,19 +478,8 @@ export interface AgentCanvasPosition {
   y: number;
 }
 
-export type AgentWorkflowNodeKind =
-  | "start"
-  | "agent"
-  | "join"
-  | "synthesis"
-  | "done";
-export type AgentWorkflowNodeStatus =
-  | "idle"
-  | "queued"
-  | "running"
-  | "completed"
-  | "failed"
-  | "stopped";
+export type AgentWorkflowNodeKind = "start" | "agent" | "join" | "synthesis" | "done";
+export type AgentWorkflowNodeStatus = "idle" | "queued" | "running" | "completed" | "failed" | "stopped";
 
 export interface AgentWorkflowNode {
   id: string;
@@ -702,18 +531,8 @@ export interface AgentTeam {
   updatedAt: number;
 }
 
-export type TeamRunStatus =
-  | "queued"
-  | "running"
-  | "completed"
-  | "failed"
-  | "stopped";
-export type TeamRunStepStatus =
-  | "queued"
-  | "running"
-  | "completed"
-  | "failed"
-  | "stopped";
+export type TeamRunStatus = "queued" | "running" | "completed" | "failed" | "stopped";
+export type TeamRunStepStatus = "queued" | "running" | "completed" | "failed" | "stopped";
 
 export interface TeamRunStep {
   id: string;
@@ -769,118 +588,6 @@ export interface RunAgentTeamRequest {
   workDir?: string;
 }
 
-export type WorkflowGraphNodeKind = "start" | "agent" | "end";
-
-export interface WorkflowGraphNode {
-  id: string;
-  kind: WorkflowGraphNodeKind;
-  title: string;
-  prompt: string;
-  /**
-   * Optional per-node agent/model override. When set, this agent node runs with
-   * this configured agent (and model) instead of the workflow-level default.
-   */
-  configuredAgentId?: string | undefined;
-  modelId?: string | undefined;
-  /**
-   * Optional explicit canvas position. When set, the workflow board pins the
-   * node here instead of auto-layout; agents (via MCP) and user drags both write
-   * this. Omit it to let the auto wrapping layout place the node.
-   */
-  position?: { x: number; y: number };
-}
-
-export interface WorkflowGraphEdge {
-  id: string;
-  fromNodeId: string;
-  toNodeId: string;
-}
-
-export interface WorkflowGraph {
-  title: string;
-  objective: string;
-  nodes: WorkflowGraphNode[];
-  edges: WorkflowGraphEdge[];
-}
-
-export interface WorkflowGraphValidation {
-  valid: boolean;
-  errors: string[];
-  startNodeIds: string[];
-  executableNodeIds: string[];
-  topologicalNodeIds: string[];
-}
-
-export interface WorkflowGrillMessage {
-  id: string;
-  role: "assistant" | "user";
-  content: string;
-}
-
-export type WorkflowRunNodeStatus =
-  | "queued"
-  | "running"
-  | "paused"
-  | "awaiting_input"
-  | "completed"
-  | "failed";
-
-export interface WorkflowRunProgressItem {
-  nodeId: string;
-  title: string;
-  status: WorkflowRunNodeStatus;
-  detail?: string;
-  taskId?: string;
-}
-
-export type WorkflowEventType =
-  | "node_ready"
-  | "node_started"
-  | "node_paused"
-  | "node_output"
-  | "node_judged"
-  | "node_failed"
-  | "node_completed"
-  | "gate_opened"
-  | "gate_answered";
-
-/**
- * Append-only record of a workflow run's node transitions. The event log is the
- * source of truth; the UI-facing progress list is projected from it via
- * projectNodeStates(). See src/main/WORKFLOW-RUNTIME.md.
- */
-export interface WorkflowEvent {
-  type: WorkflowEventType;
-  nodeId: string;
-  at: number;
-  attempt?: number;
-  taskId?: string;
-  detail?: string;
-  pass?: boolean;
-  summary?: string;
-  artifactRefs?: WorkflowArtifactReference[];
-  error?: string;
-  /** gate_opened: the concrete question the agent needs a human to answer. */
-  question?: string;
-  /** gate_answered: the human's answer that unblocks the node. */
-  answer?: string;
-}
-
-export type WorkflowStatus =
-  | "draft"
-  | "running"
-  | "completed"
-  | "failed"
-  | "stopped";
-
-export interface WorkflowArtifactReference {
-  kind: "text" | "file" | "url";
-  title: string;
-  content?: string;
-  path?: string;
-  url?: string;
-}
-
 export interface LocalFilePreview {
   path: string;
   title: string;
@@ -916,68 +623,11 @@ export interface RegisterArtifactRequest {
   description?: string;
 }
 
-export interface WorkflowDraftState {
-  workflowId: string;
-  sourceType?: ResourceSourceType;
-  topologyLocked?: boolean;
-  title: string;
-  status: WorkflowStatus;
-  revision: number;
-  configuredAgentId: string;
-  modelId: string;
-  objective: string;
-  /**
-   * Dedicated working directory for this workflow. All node agents run with this
-   * as their cwd, and outputs/memory are written under it. Defaults to a
-   * per-workflow directory; can be pointed at a real project dir when needed.
-   */
-  workDir?: string;
-  graph: WorkflowGraph;
-  graphReady: boolean;
-  messages: WorkflowGrillMessage[];
-  reply: string;
-  error: string | undefined;
-  runProgress: WorkflowRunProgressItem[];
-  runContextDocument: string;
-  contextDocument: string;
-  finalReport?: string;
-  runIds: string[];
-  runtimeConversation?: RuntimeConversation;
-  runtimeBinding?: RuntimeBindingSnapshot;
-  createdAt: number;
-  updatedAt: number;
-}
-
-export interface WorkflowRunState {
-  runId: string;
-  workflowId: string;
-  status: WorkflowStatus;
-  graphSnapshot: WorkflowGraph;
-  progress: WorkflowRunProgressItem[];
-  events: WorkflowEvent[];
-  contextDocument: string;
-  finalReport?: string;
-  startedAt: number;
-  finishedAt: number | undefined;
-  lastError: string | undefined;
-}
-
-export interface WorkflowStoreState {
-  activeWorkflowId: string | undefined;
-  workflows: WorkflowDraftState[];
-  runs: WorkflowRunState[];
-}
-
 export const DEFAULT_SCHEDULED_WORKFLOW_CLOUD_BASE_URL = "";
 export const DEFAULT_SCHEDULED_WORKFLOW_TIME_OF_DAY = "09:00";
 export const DEFAULT_SCHEDULED_WORKFLOW_TIMEZONE = "Asia/Shanghai";
 
-export type ScheduledWorkflowRunStatus =
-  | "queued"
-  | "running"
-  | "completed"
-  | "failed"
-  | "skipped";
+export type ScheduledWorkflowRunStatus = "queued" | "running" | "completed" | "failed" | "skipped";
 export type ScheduledWorkflowFrequency = "daily" | "weekly" | "monthly";
 
 export interface ScheduledWorkflowRunnerConfig {
@@ -989,10 +639,7 @@ export interface ScheduledWorkflowRunnerConfig {
   runnerToken?: string | undefined;
 }
 
-export type RegisterScheduledWorkflowRunnerRequest = Pick<
-  ScheduledWorkflowRunnerConfig,
-  "baseUrl" | "tenantId" | "userId" | "deviceName"
->;
+export type RegisterScheduledWorkflowRunnerRequest = Pick<ScheduledWorkflowRunnerConfig, "baseUrl" | "tenantId" | "userId" | "deviceName">;
 
 export interface ScheduledWorkflowRunnerStatus {
   connected: boolean;
@@ -1032,8 +679,7 @@ export interface CreateScheduledWorkflowScheduleRequest {
   dayOfMonth?: number | undefined;
 }
 
-export type UpdateScheduledWorkflowScheduleRequest =
-  Partial<CreateScheduledWorkflowScheduleRequest>;
+export type UpdateScheduledWorkflowScheduleRequest = Partial<CreateScheduledWorkflowScheduleRequest>;
 
 export interface ScheduledWorkflowRun {
   runId: string;
@@ -1057,10 +703,7 @@ export interface ScheduledWorkflowDueEvent {
 }
 
 export interface AckScheduledWorkflowEventRequest {
-  status: Extract<
-    ScheduledWorkflowRunStatus,
-    "completed" | "failed" | "skipped"
-  >;
+  status: Extract<ScheduledWorkflowRunStatus, "completed" | "failed" | "skipped">;
   workflowRunId?: string | undefined;
   message?: string | undefined;
 }
@@ -1080,135 +723,6 @@ export interface ScheduledWorkflowOperationResult {
   error?: string;
 }
 
-export interface WorkflowOperationResult {
-  ok: boolean;
-  workflowId?: string;
-  runId?: string;
-  revision?: number;
-  error?: string;
-  validation?: WorkflowGraphValidation;
-}
-
-export interface CreateWorkflowRequest {
-  title: string;
-  objective: string;
-  graph: WorkflowGraph;
-  configuredAgentId?: string;
-  modelId?: string;
-  workDir?: string;
-  graphReady?: boolean;
-  messages?: WorkflowGrillMessage[];
-  reply?: string;
-  error?: string;
-  runProgress?: WorkflowRunProgressItem[];
-  runContextDocument?: string;
-  contextDocument?: string;
-  finalReport?: string;
-  runIds?: string[];
-  runtimeConversation?: RuntimeConversation;
-  createdAt?: number;
-  updatedAt?: number;
-}
-
-export interface CreateWorkflowDraftRequest {
-  title?: string;
-  configuredAgentId?: string;
-  modelId?: string;
-}
-
-export interface PatchWorkflowDraftRequest {
-  workflowId: string;
-  title?: string;
-  status?: WorkflowStatus;
-  configuredAgentId?: string;
-  modelId?: string;
-  objective?: string;
-  workDir?: string | null;
-  graph?: WorkflowGraph;
-  graphReady?: boolean;
-  messages?: WorkflowGrillMessage[];
-  reply?: string;
-  error?: string | null;
-  runProgress?: WorkflowRunProgressItem[];
-  runContextDocument?: string;
-  contextDocument?: string;
-  finalReport?: string | null;
-  runtimeConversation?: RuntimeConversation | null;
-  resetRunState?: boolean;
-}
-
-export interface SendWorkflowDraftReplyRequest {
-  workflowId: string;
-  reply: string;
-}
-
-export interface UpdateWorkflowRequest {
-  workflowId: string;
-  expectedRevision?: number;
-  title?: string;
-  objective?: string;
-  graph?: WorkflowGraph;
-  configuredAgentId?: string;
-  modelId?: string;
-  graphReady?: boolean;
-  messages?: WorkflowGrillMessage[];
-  reply?: string;
-  error?: string;
-  runProgress?: WorkflowRunProgressItem[];
-  runContextDocument?: string;
-  contextDocument?: string;
-  finalReport?: string;
-  runtimeConversation?: RuntimeConversation;
-}
-
-export interface AppendWorkflowContextRequest {
-  workflowId: string;
-  report: string;
-  handoff: string;
-  artifacts?: WorkflowArtifactReference[];
-}
-
-export interface AppendWorkflowRunContextRequest
-  extends AppendWorkflowContextRequest {
-  runId: string;
-  nodeId?: string;
-}
-
-export interface StartWorkflowRunRequest {
-  workflowId: string;
-  contextDocument?: string;
-}
-
-export interface RunWorkflowGraphRequest {
-  workflowId: string;
-  contextDocument?: string;
-}
-
-export interface PauseWorkflowNodeRequest {
-  workflowId: string;
-  runId: string;
-  nodeId: string;
-}
-
-export interface StartWorkflowNodeRequest extends PauseWorkflowNodeRequest {}
-
-export interface AnswerWorkflowGateRequest {
-  workflowId: string;
-  runId: string;
-  nodeId: string;
-  answer: string;
-}
-
-export interface FinishWorkflowRunRequest {
-  workflowId: string;
-  runId: string;
-  status: Exclude<WorkflowStatus, "draft" | "running">;
-  progress?: WorkflowRunProgressItem[];
-  appendEvents?: WorkflowEvent[];
-  contextDocument?: string;
-  finalReport?: string;
-  lastError?: string;
-}
 
 export interface AppSnapshot {
   detectedAt: number;
@@ -1220,13 +734,76 @@ export interface AppSnapshot {
   runtimes: AgentRuntime[];
   channels: AgentChannel[];
   configuredAgents: ConfiguredAgent[];
-  agentRevisions?: AgentRevision[];
   chats: ChatSession[];
   tasks: TaskRun[];
   teams: AgentTeam[];
   teamRuns: TeamRun[];
   workflowStore: WorkflowStoreState;
   scheduledWorkflowStore: ScheduledWorkflowStoreState;
+  workflowNodeConversations: WorkflowNodeConversation[];
   workflowDraft: WorkflowDraftState | undefined;
   artifacts: RegisteredArtifact[];
 }
+
+export type {
+  WorkflowV2AuthoredDefinition,
+  WorkflowV2AuthoredNode,
+  WorkflowV2BaseNode,
+  WorkflowV2ConstraintDef,
+  WorkflowV2ContextBudget,
+  WorkflowV2Definition,
+  WorkflowV2Edge,
+  WorkflowV2ExecModel,
+  WorkflowV2ExhaustedPolicy,
+  WorkflowV2HookActionDef,
+  WorkflowV2HookActionKind,
+  WorkflowV2HookFailurePolicy,
+  WorkflowV2HookLifecycle,
+  WorkflowV2HookSource,
+  WorkflowV2JudgeDimensionDef,
+  WorkflowV2LLMNode,
+  WorkflowV2LLMNodeTemplate,
+  WorkflowV2ModelProfile,
+  WorkflowV2Node,
+  WorkflowV2NodeHooks,
+  WorkflowV2NodeRole,
+  WorkflowV2NodeTemplate,
+  WorkflowV2OutputFieldDef,
+  WorkflowV2PassThreshold,
+  WorkflowV2ScriptLanguage,
+  WorkflowV2ScriptRiskLevel,
+  WorkflowV2ScriptCapability,
+  WorkflowV2ScriptAuthorization,
+  WorkflowV2ScriptParameterDef,
+  WorkflowV2ScriptParameterLocation,
+  WorkflowV2ScriptParameterSource,
+  WorkflowV2ScriptParameterValue,
+  WorkflowV2ScriptParameterValueType,
+  WorkflowV2ScriptNode,
+  WorkflowV2ScriptNodeTemplate,
+  WorkflowV2ScriptSpec,
+  WorkflowV2TemplateNodeDraft,
+  WorkflowV2TemplateNodeOverrides,
+  WorkflowV2TemplateParamValue,
+  WorkflowV2ValidationResult,
+} from "./workflow-v2/definition";
+export type {
+  WorkflowV2AcceptanceCriterion,
+  WorkflowV2BudgetEnvelope,
+  WorkflowV2CostBudget,
+  WorkflowV2GraphRevision,
+  WorkflowV2Plan,
+  WorkflowV2PlanNode,
+  WorkflowV2ResultPacket,
+  WorkflowV2RoleRoute,
+  WorkflowV2TaskPacket,
+  WorkflowV2UpstreamDigest,
+} from "./workflow-v2/planning";
+export type { WorkflowV2WorkProposal, WorkflowV2WorkerOutput } from "./workflow-v2/packets";
+export type { WorkflowV2InterventionAction, WorkflowV2HumanIntervention, WorkflowV2ReviewVerdict } from "./workflow-v2/review";
+export type {
+  WorkflowV2NodeExecutionState,
+  WorkflowV2RunExecutionStatus,
+  WorkflowV2RunNodeState,
+  WorkflowV2RunState,
+} from "./workflow-v2/state";

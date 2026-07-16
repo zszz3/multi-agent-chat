@@ -10,8 +10,10 @@ describe("resolvePreloadBundlePath", () => {
       path.join("/workspace", "out", "preload", "index.mjs"),
     );
   });
+});
 
-  test("points the main bundle at the copied bundled workflow directory", () => {
+describe("resolveBundledWorkflowsPath", () => {
+  test("points the main bundle at copied bundled workflow assets", () => {
     const mainBundleDir = path.join("/workspace", "out", "main");
 
     expect(resolveBundledWorkflowsPath(mainBundleDir)).toBe(

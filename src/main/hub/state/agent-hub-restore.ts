@@ -4,12 +4,12 @@ import type {
   ChatMessage,
   WorkflowArtifactReference,
   WorkflowEvent,
-  WorkflowGraph,
-  WorkflowGraphEdge,
-  WorkflowGraphNode,
   WorkflowRunProgressItem,
   WorkflowStatus,
 } from "../../../shared/types";
+import type { WorkflowNodeInputRequest } from "../../../shared/workflow/run";
+import type { WorkflowV2ScriptParameterDef } from "../../../shared/workflow-v2/definition";
+import { isWorkflowV2HumanIntervention } from "../../../shared/workflow-v2/review";
 import {
   asArray,
   asNumber,
@@ -20,13 +20,12 @@ import {
   isChatEventType,
   isInteractionRequestState,
   isMessageRole,
-  isWorkflowGraphNodeKind,
   isWorkflowRunNodeStatus,
 } from "../persisted/agent-hub-persistence";
 import { createAssistantMessage } from "../chat/agent-hub-ui";
 
 export function restoreWorkflowStatus(value: unknown): WorkflowStatus {
-  return value === "running" || value === "completed" || value === "failed" || value === "stopped" ? value : "draft";
+  return value === "running" || value === "waiting_for_user" || value === "completed" || value === "failed" || value === "stopped" ? value : "draft";
 }
 
 export function restoreWorkflowDraftStatus(value: unknown): WorkflowStatus {
@@ -39,52 +38,50 @@ export function restoreWorkflowRunStatus(value: unknown): WorkflowStatus {
   return status === "running" ? "failed" : status;
 }
 
-export function restoreWorkflowGraph(raw: unknown): WorkflowGraph | undefined {
+function restoreWorkflowV2ScriptParameter(raw: unknown): WorkflowV2ScriptParameterDef | undefined {
   const record = asRecord(raw);
   if (!record) return undefined;
-  const title = asOptionalString(record.title);
-  const objective = asOptionalString(record.objective);
-  if (!title || !objective) return undefined;
-  const nodes = asArray(record.nodes)
-    .map((node) => restoreWorkflowGraphNode(node))
-    .filter((node): node is WorkflowGraphNode => Boolean(node));
-  const edges = asArray(record.edges)
-    .map((edge) => restoreWorkflowGraphEdge(edge))
-    .filter((edge): edge is WorkflowGraphEdge => Boolean(edge));
-  if (nodes.length === 0) return undefined;
-  return { title, objective, nodes, edges };
-}
-
-export function restoreWorkflowGraphNode(raw: unknown): WorkflowGraphNode | undefined {
-  const record = asRecord(raw);
-  if (!record || !isWorkflowGraphNodeKind(record.kind)) return undefined;
-  const id = asOptionalString(record.id);
-  const title = asOptionalString(record.title);
-  const prompt = asOptionalString(record.prompt);
-  if (!id || title === undefined || prompt === undefined) return undefined;
-  const node: WorkflowGraphNode = { id, kind: record.kind, title, prompt };
-  const position = asRecord(record.position);
-  if (position && typeof position.x === "number" && typeof position.y === "number" && Number.isFinite(position.x) && Number.isFinite(position.y)) {
-    node.position = { x: position.x, y: position.y };
+  const key = asOptionalString(record.key);
+  const label = asOptionalString(record.label);
+  const location = record.location;
+  const valueType = record.valueType;
+  const source = record.source;
+  if (!key || !label
+    || (location !== "argument" && location !== "environment" && location !== "header" && location !== "query" && location !== "body" && location !== "stdin")
+    || (valueType !== "string" && valueType !== "number" && valueType !== "boolean" && valueType !== "json" && valueType !== "secret" && valueType !== "file" && valueType !== "directory")
+    || (source !== "user" && source !== "workflow" && source !== "upstream" && source !== "literal")
+    || typeof record.required !== "boolean") {
+    return undefined;
   }
-  const configuredAgentId = asOptionalString(record.configuredAgentId);
-  if (configuredAgentId) node.configuredAgentId = configuredAgentId;
-  const modelId = asOptionalString(record.modelId);
-  if (modelId) node.modelId = modelId;
-  return node;
+  const parameter: WorkflowV2ScriptParameterDef = { key, label, location, valueType, source, required: record.required };
+  const description = asOptionalString(record.description);
+  const upstreamNodeId = asOptionalString(record.upstreamNodeId);
+  const upstreamOutputKey = asOptionalString(record.upstreamOutputKey);
+  const workflowPath = asOptionalString(record.workflowPath);
+  if (description) parameter.description = description;
+  if (Array.isArray(record.enum) && record.enum.every((item) => typeof item === "string" || typeof item === "number" || typeof item === "boolean")) {
+    parameter.enum = structuredClone(record.enum) as NonNullable<WorkflowV2ScriptParameterDef["enum"]>;
+  }
+  if (record.defaultValue !== undefined) parameter.defaultValue = structuredClone(record.defaultValue) as NonNullable<WorkflowV2ScriptParameterDef["defaultValue"]>;
+  if (record.literalValue !== undefined) parameter.literalValue = structuredClone(record.literalValue) as NonNullable<WorkflowV2ScriptParameterDef["literalValue"]>;
+  if (upstreamNodeId) parameter.upstreamNodeId = upstreamNodeId;
+  if (upstreamOutputKey) parameter.upstreamOutputKey = upstreamOutputKey;
+  if (workflowPath) parameter.workflowPath = workflowPath;
+  return parameter;
 }
 
-export function restoreWorkflowGraphEdge(raw: unknown): WorkflowGraphEdge | undefined {
+function restoreWorkflowNodeInputRequest(raw: unknown): WorkflowNodeInputRequest | undefined {
   const record = asRecord(raw);
   if (!record) return undefined;
-  const fromNodeId = asOptionalString(record.fromNodeId);
-  const toNodeId = asOptionalString(record.toNodeId);
-  if (!fromNodeId || !toNodeId) return undefined;
-  return {
-    id: asOptionalString(record.id) || `${fromNodeId}->${toNodeId}`,
-    fromNodeId,
-    toNodeId,
-  };
+  if (record.kind === "agent_message") {
+    const prompt = asOptionalString(record.prompt);
+    return prompt ? { kind: "agent_message", prompt } : undefined;
+  }
+  if (record.kind !== "script_parameters") return undefined;
+  const rawParameters = asArray(record.parameters);
+  const parameters = rawParameters.map(restoreWorkflowV2ScriptParameter);
+  if (parameters.some((parameter) => !parameter)) return undefined;
+  return { kind: "script_parameters", parameters: parameters as WorkflowV2ScriptParameterDef[] };
 }
 
 export function restoreWorkflowRunProgressItem(raw: unknown): WorkflowRunProgressItem | undefined {
@@ -103,6 +100,15 @@ export function restoreWorkflowRunProgressItem(raw: unknown): WorkflowRunProgres
   if (detail) item.detail = detail;
   const taskId = asOptionalString(record.taskId);
   if (taskId) item.taskId = taskId;
+  if (record.intervention !== undefined && isWorkflowV2HumanIntervention(record.intervention)) {
+    item.intervention = structuredClone(record.intervention);
+  }
+  if (status === "awaiting_input") {
+    const inputRequest = restoreWorkflowNodeInputRequest(record.inputRequest);
+    if (inputRequest) item.inputRequest = inputRequest;
+  }
+  const outputs = asRecord(record.outputs);
+  if (outputs) item.outputs = structuredClone(outputs);
   return item;
 }
 
@@ -152,6 +158,9 @@ export function restoreWorkflowEvent(raw: unknown): WorkflowEvent | undefined {
   if (artifactRefs.length > 0) event.artifactRefs = artifactRefs;
   const error = asOptionalString(record.error);
   if (error) event.error = error;
+  if (record.intervention !== undefined && isWorkflowV2HumanIntervention(record.intervention)) {
+    event.intervention = structuredClone(record.intervention);
+  }
   return event;
 }
 

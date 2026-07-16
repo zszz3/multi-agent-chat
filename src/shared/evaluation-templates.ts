@@ -3,8 +3,8 @@ import type {
   EvaluationDatasetItem,
   EvaluationEvaluator,
   EvaluatorKind,
-} from "./types";
-import { JUDGE_PROMPTS } from "./evaluator-prompts";
+} from "./evaluation/types";
+import { JUDGE_PROMPTS } from "./evaluation/evaluator-prompts";
 
 export interface EvaluationDatasetTemplate {
   id: string;

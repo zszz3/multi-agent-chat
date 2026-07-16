@@ -4,7 +4,8 @@ import path from "node:path";
 import { describe, expect, test, vi } from "vitest";
 import { AgentHub, createWorkflowAgentTimeout } from "./agent-hub";
 import { DEFAULT_MODEL_ID } from "../../shared/models";
-import { projectNodeStates } from "../../shared/workflow-run";
+import { projectNodeStates } from "../../shared/workflow-v2/runtime-utils";
+import { createWorkflowV2InlineScriptSpec } from "../../shared/workflow-v2/definition";
 import type { AgentChannel, AgentId, ChatRuntimeSessionState, ConfiguredAgent, RuntimeConversation } from "../../shared/types";
 import { createRuntimeDriverRegistry, RuntimeDriverRegistry } from "./runtime/executor/agent-executor";
 import type {
@@ -52,6 +53,40 @@ function configuredAgent(
 
 function addConfiguredAgents(hub: AgentHub, agents: ConfiguredAgent[]): void {
   hub.updateConfiguredAgents([...hub.snapshot().configuredAgents, ...agents]);
+}
+
+function createV2Workflow(hub: AgentHub, input: any): any {
+  const agentNodes = input.graph?.nodes?.filter((node: any) => node.kind === "agent") ?? [];
+  const agentNodeIds = new Set(agentNodes.map((node: any) => node.id));
+  const draft = hub.createWorkflowDraft({ configuredAgentId: input.configuredAgentId });
+  const workflowId = draft.workflowDraft!.workflowId;
+  const result = hub.materializeWorkflowDraft(workflowId, {
+    ...input,
+    definition: input.definition ?? {
+      workflowId: "test-placeholder",
+      graphVersion: 1,
+      objective: input.objective,
+      nodes: agentNodes.map((node: any) => ({
+        id: node.id,
+        kind: "implementation",
+        title: node.title,
+        execModel: "llm",
+        executionMode: "one-shot",
+        prompt: node.prompt,
+        outputFields: [{ key: "result", required: true }],
+      })),
+      edges: (input.graph?.edges ?? [])
+        .filter((edge: any) => agentNodeIds.has(edge.fromNodeId) && agentNodeIds.has(edge.toNodeId))
+        .map((edge: any) => ({ fromNodeId: edge.fromNodeId, toNodeId: edge.toNodeId })),
+    },
+  });
+  if (result.ok) {
+    const route = hub.snapshot().workflowDraft!;
+    const scriptRisks = Object.fromEntries(route.workflowV2Plan?.definition.nodes.filter((node) => node.execModel === "script").map((node) => [node.id, { level: node.script.managerRisk.level, rationale: "Matches the Manager classification in this test fixture." }]) ?? []);
+    hub.patchWorkflowDraft({ workflowId, generationReview: { status: "approved", reviewerConfiguredAgentId: route.reviewerConfiguredAgentId, reviewerModelId: route.reviewerModelId, reviewedRevision: route.revision, result: { verdict: "approve", reviewedRevision: route.revision, summary: "Approved by test reviewer", findings: [], scriptRisks, suggestions: [] }, updatedAt: 1 } });
+    hub.confirmWorkflow({ workflowId, expectedRevision: route.revision });
+  }
+  return result;
 }
 
 function interactiveChatCapabilities(runtimeId: AgentId) {
@@ -130,6 +165,7 @@ function support(
 function createHubWithClaudeOneShot(
   runOneShot: (input: any) => Promise<void>,
   executables: Partial<Record<AgentId, string>> = {},
+  workflowMcpDiscoveryPath?: () => string | undefined,
 ): AgentHub {
   let hub: AgentHub;
   const resolvedExecutables = {
@@ -143,14 +179,7 @@ function createHubWithClaudeOneShot(
   const options: RuntimeAgentExecutorFactoryOptions = {
     executables: resolvedExecutables,
     channelById: (channelId) => (hub as any).channelById(channelId),
-    workflowHost: {
-      mcpBridgeDiscoveryPath: () => (hub as any).mcpBridgeDiscoveryPath,
-      tools: {
-        createWorkflow: (request) => hub.createWorkflow(request),
-        getWorkflow: (workflowId) => (hub as any).workflowStore.getWorkflow(workflowId),
-        appendWorkflowContext: (request) => hub.appendWorkflowContext(request),
-      },
-    },
+    ...(workflowMcpDiscoveryPath ? { workflowMcpDiscoveryPath } : {}),
   };
   const defaultDrivers = createRuntimeDriverRegistry(options);
   const runtimeDrivers = new RuntimeDriverRegistry([
@@ -476,101 +505,6 @@ rl.on("line", (line) => {
   return { executable, callsPath };
 }
 
-async function writeWorkflowToolCodexFake(dir: string): Promise<{ executable: string; callsPath: string }> {
-  const callsPath = path.join(dir, "workflow-tool-calls.jsonl");
-  const graph = {
-    title: "MCP Planned Workflow",
-    objective: "Build a workflow through MCP",
-    nodes: [
-      { id: "start", kind: "start", title: "Start", prompt: "" },
-      { id: "plan", kind: "agent", title: "Plan", prompt: "Plan the work." },
-      { id: "end", kind: "end", title: "Done", prompt: "" },
-    ],
-    edges: [
-      { id: "start->plan", fromNodeId: "start", toNodeId: "plan" },
-      { id: "plan->end", fromNodeId: "plan", toNodeId: "end" },
-    ],
-  };
-  const script = `#!/usr/bin/env node
-const fs = require("fs");
-const readline = require("readline");
-
-const callsPath = ${JSON.stringify(callsPath)};
-const graph = ${JSON.stringify(graph)};
-let threadIndex = 0;
-fs.appendFileSync(callsPath, JSON.stringify({ method: "process/argv", params: { args: process.argv.slice(2) } }) + "\\n");
-
-function write(message) {
-  process.stdout.write(JSON.stringify(message) + "\\n");
-}
-
-function record(message) {
-  if (!message.method) return;
-  fs.appendFileSync(callsPath, JSON.stringify({ method: message.method, params: message.params ?? null }) + "\\n");
-}
-
-function completeAfterToolResponse(response) {
-  fs.appendFileSync(callsPath, JSON.stringify({ method: "client/toolResponse", params: response.result ?? response.error ?? null }) + "\\n");
-  write({
-    jsonrpc: "2.0",
-    method: "turn/completed",
-    params: {
-      turn: {
-        status: "completed",
-        type: "message",
-        role: "assistant",
-        content: [{ type: "output_text", text: "Workflow created through MCP." }]
-      }
-    }
-  });
-}
-
-const rl = readline.createInterface({ input: process.stdin });
-rl.on("line", (line) => {
-  if (!line.trim()) return;
-  const message = JSON.parse(line);
-  if (!message.method && message.id === 900) {
-    completeAfterToolResponse(message);
-    return;
-  }
-  record(message);
-  if (message.id === undefined) return;
-
-  if (message.method === "initialize") {
-    write({ jsonrpc: "2.0", id: message.id, result: {} });
-    return;
-  }
-  if (message.method === "thread/start") {
-    threadIndex += 1;
-    write({ jsonrpc: "2.0", id: message.id, result: { thread: { id: "thread-" + threadIndex } } });
-    return;
-  }
-  if (message.method === "turn/start") {
-    write({ jsonrpc: "2.0", id: message.id, result: { turn: { id: "turn-1" } } });
-    setTimeout(() => {
-      write({
-        jsonrpc: "2.0",
-        id: 900,
-        method: "mcp/dynamicToolCall",
-        params: {
-          name: "workflow_create",
-          arguments: {
-            title: graph.title,
-            objective: graph.objective,
-            graph
-          }
-        }
-      });
-    }, 10);
-    return;
-  }
-  write({ jsonrpc: "2.0", id: message.id, error: { code: -32601, message: "unknown method " + message.method } });
-});
-`;
-  const executable = await writeNodeCliLauncher(dir, "codex-workflow-tool-fake", script);
-  return { executable, callsPath };
-}
-
 async function writeTurnStartFailureCodexFake(dir: string): Promise<{ executable: string; callsPath: string }> {
   const callsPath = path.join(dir, "turn-start-failure-calls.jsonl");
   const script = `#!/usr/bin/env node
@@ -660,7 +594,7 @@ async function waitFor<T>(read: () => T, predicate: (value: T) => boolean): Prom
 }
 
 describe("AgentHub chat sessions", () => {
-  test("synchronizes one read-only execution agent per runtime config", () => {
+  test("creates default agents once without binding their later edits to runtime configs", () => {
     const hub = new AgentHub();
     (hub as any).channels = [
       {
@@ -680,8 +614,8 @@ describe("AgentHub chat sessions", () => {
 
     expect(hub.snapshot().configuredAgents).toEqual(
       expect.arrayContaining([
-        expect.objectContaining({ id: "default-agent", agentType: "execution", name: "Codex Official", channelId: "codex-openai", managed: true, revision: expect.any(Number) }),
-        expect.objectContaining({ id: "runtime-agent:codex-glm", agentType: "execution", name: "Codex GLM", channelId: "codex-glm", managed: true, revision: 1 }),
+        expect.objectContaining({ id: "default-agent", name: "Codex Official", channelId: "codex-openai", managed: true }),
+        expect.objectContaining({ id: "runtime-agent:codex-glm", name: "Codex GLM", channelId: "codex-glm", managed: true }),
       ]),
     );
 
@@ -700,47 +634,12 @@ describe("AgentHub chat sessions", () => {
     (hub as any).channels[1].label = "Codex GLM Updated";
     (hub as any).installRestoredConfiguredAgents(existing);
     expect(hub.snapshot().configuredAgents.find((agent) => agent.id === "runtime-agent:codex-glm")).toMatchObject({
-      agentType: "execution",
-      name: "Codex GLM Updated",
-      channelId: "codex-glm",
+      name: "My Reviewer",
+      channelId: "codex-openai",
       runtimeAgentId: "codex",
       modelId: DEFAULT_MODEL_ID,
-      managed: true,
     });
-    expect(hub.snapshot().agentRevisions?.filter((revision) => revision.agentId === "runtime-agent:codex-glm")).toHaveLength(1);
-  });
-
-  test("versions composed agent behavior but not display-only edits", () => {
-    const hub = new AgentHub();
-    const base = hub.snapshot().configuredAgents.find((agent) => agent.agentType === "execution")!;
-    const created = hub.saveComposedAgent({
-      id: "reviewer",
-      agentType: "composed",
-      name: "Reviewer",
-      description: "Reviews code",
-      instructions: "Review correctness.",
-      baseAgentId: base.id,
-      runtimeAgentId: base.runtimeAgentId,
-      channelId: base.channelId,
-      modelId: base.modelId,
-      tags: ["code"],
-      createdAt: 1,
-      updatedAt: 1,
-    });
-    expect(created.configuredAgents.find((agent) => agent.id === "reviewer")).toMatchObject({
-      agentType: "composed",
-      baseAgentId: base.id,
-      revision: 1,
-    });
-
-    hub.saveComposedAgent({ ...created.configuredAgents.find((agent) => agent.id === "reviewer")!, name: "Renamed" });
-    expect(hub.listAgentRevisions("reviewer")).toHaveLength(1);
-
-    hub.saveComposedAgent({
-      ...hub.snapshot().configuredAgents.find((agent) => agent.id === "reviewer")!,
-      instructions: "Review correctness and security.",
-    });
-    expect(hub.listAgentRevisions("reviewer").map((revision) => revision.revision)).toEqual([2, 1]);
+    expect(hub.snapshot().configuredAgents.find((agent) => agent.id === "runtime-agent:codex-glm")?.managed).toBeUndefined();
   });
 
   test("restores a configured agent reasoning effort supported by its model", () => {
@@ -861,11 +760,8 @@ describe("AgentHub chat sessions", () => {
     }];
     hub.updateConfiguredAgents([{
       id: "sol-agent",
-      agentType: "composed",
       name: "Sol Agent",
       description: "",
-      instructions: "Review every answer before responding.",
-      baseAgentId: "default-agent",
       runtimeAgentId: "codex",
       channelId: "codex-openai",
       modelId: "gpt-5.6-sol",
@@ -889,7 +785,6 @@ describe("AgentHub chat sessions", () => {
       continuationPolicy: "resume-preferred",
       developerInstructions: expect.stringContaining("desktop chat UI"),
     });
-    expect(events[0].developerInstructions).toContain("## Agent Instructions\nReview every answer before responding.");
     const activeChat = hub.snapshot().chats.find((chat) => chat.id === chatId);
     expect(activeChat?.runtimeConversation).toEqual(runtimeConversation("codex", { native: { threadId: "executor-session" } }));
     expect(activeChat?.messages).toEqual([
@@ -904,7 +799,7 @@ describe("AgentHub chat sessions", () => {
     await writeFile(
       storagePath,
       JSON.stringify({
-        version: 4,
+        version: 5,
         activeChatId: "chat-1",
         workDir: dir,
         sessions: [
@@ -980,7 +875,7 @@ describe("AgentHub chat sessions", () => {
     await writeFile(
       storagePath,
       JSON.stringify({
-        version: 4,
+        version: 5,
         activeChatId: "chat-1",
         workDir: dir,
         sessions: [
@@ -2080,11 +1975,6 @@ describe("AgentHub chat sessions", () => {
         updatedAt: 1710000000000,
       },
     ]);
-    expect(hub.snapshot().configuredAgents.find((agent) => agent.id === "doubao-agent")).toMatchObject({
-      agentType: "composed",
-      baseAgentId: "runtime-agent:codex-volcengine",
-      modelId: "ep-m-user-owned-endpoint",
-    });
 
     try {
       const result = await hub.testConfiguredAgent("doubao-agent");
@@ -2498,32 +2388,7 @@ fs.writeFileSync(${JSON.stringify(argsPath)}, process.argv.slice(2).join("\\n") 
     expect(activeChat?.configuredAgentId).toBe("default-agent");
   });
 
-  test("creates a selectable configured agent for a newly saved provider channel", async () => {
-    const dir = await mkdtemp(path.join(os.tmpdir(), "multi-agent-chat-provider-agent-"));
-    const hub = new AgentHub();
-    await hub.loadModelChannels(path.join(dir, "model-channels.json"));
-    await hub.saveModelChannels([
-      ...hub.snapshot().channels,
-      {
-        id: "api-custom-test",
-        agentId: "api",
-        label: "Custom Test API",
-        modelProvider: "custom-api",
-        baseUrl: "https://example.com/v1",
-        models: [{ id: "test-model", label: "Test Model" }],
-      },
-    ]);
-
-    expect(hub.snapshot().configuredAgents).toContainEqual(
-      expect.objectContaining({
-        name: "Custom Test API",
-        runtimeAgentId: "api",
-        channelId: "api-custom-test",
-      }),
-    );
-  });
-
-  test("setChatChannel keeps the original channel after the first prompt", async () => {
+  test("setChatChannel stores a same-runtime channel override even after the first prompt", async () => {
     const hub = new AgentHub({ codex: "missing-codex-for-test", claude: "missing-claude-for-test" });
     (hub as any).channels = [
       {
@@ -2546,10 +2411,13 @@ fs.writeFileSync(${JSON.stringify(argsPath)}, process.argv.slice(2).join("\\n") 
 
     hub.setChatChannel(chat.id, "codex-openrouter");
 
-    expect(hub.snapshot().chats.find((item) => item.id === chat.id)?.channelId).toBeUndefined();
+    expect(hub.snapshot().chats.find((item) => item.id === chat.id)).toMatchObject({
+      id: chat.id,
+      channelId: "codex-openrouter",
+    });
   });
 
-  test("setChatModel keeps the stored model after chat history exists", () => {
+  test("setChatModel updates the stored model after chat history exists", () => {
     const hub = createHubWithTwoCodexChannels();
     const chat = hub.createChat();
     const raw = (hub as any).chats.get(chat.id);
@@ -2557,10 +2425,10 @@ fs.writeFileSync(${JSON.stringify(argsPath)}, process.argv.slice(2).join("\\n") 
 
     hub.setChatModel(chat.id, "gpt-5.5");
 
-    expect(hub.snapshot().chats.find((item) => item.id === chat.id)?.modelId).toBe("default");
+    expect(hub.snapshot().chats.find((item) => item.id === chat.id)?.modelId).toBe("gpt-5.5");
   });
 
-  test("rejects chat configuration changes after a conversation has started", () => {
+  test("allows chat configuration changes after a conversation has started", () => {
     const hub = new AgentHub();
     addConfiguredAgents(hub, [configuredAgent("claude-agent", { runtimeAgentId: "claude", name: "Claude Agent" })]);
     const chatId = hub.snapshot().activeChatId!;
@@ -2573,10 +2441,10 @@ fs.writeFileSync(${JSON.stringify(argsPath)}, process.argv.slice(2).join("\\n") 
     hub.setChatModel(chatId, "gpt-5.5");
 
     const activeChat = hub.snapshot().chats.find((item) => item.id === chatId);
-    expect(activeChat?.configuredAgentId).toBe("default-agent");
+    expect(activeChat?.configuredAgentId).toBe("claude-agent");
   });
 
-  test("setChatAgent preserves the original native handle after the chat starts", () => {
+  test("setChatAgent clears the old native handle when the runtime family changes", () => {
     const hub = createHubWithCodexAndClaudeAgents();
     const chat = hub.createChat("codex-agent");
     const raw = (hub as any).chats.get(chat.id);
@@ -2592,11 +2460,9 @@ fs.writeFileSync(${JSON.stringify(argsPath)}, process.argv.slice(2).join("\\n") 
     hub.setChatAgent(chat.id, "claude-agent");
 
     expect(hub.snapshot().chats.find((item) => item.id === chat.id)).toMatchObject({
-      configuredAgentId: "codex-agent",
+      configuredAgentId: "claude-agent",
     });
-    expect(hub.snapshot().chats.find((item) => item.id === chat.id)?.runtimeConversation).toEqual(
-      runtimeConversation("codex", { native: { threadId: "thread-1" } }),
-    );
+    expect(hub.snapshot().chats.find((item) => item.id === chat.id)?.runtimeConversation).toBeUndefined();
   });
 
   test("stores runtime conversations without adding transcript messages", () => {
@@ -2735,7 +2601,7 @@ fs.writeFileSync(${JSON.stringify(argsPath)}, process.argv.slice(2).join("\\n") 
     const chat = (hub as any).chats.get(chatId);
 
     (hub as any).handleAgentEvent(chat, { type: "delta", content: "I will inspect files." });
-    (hub as any).handleAgentEvent(chat, { type: "meta", content: "→ shell_command\nls" });
+    (hub as any).handleAgentEvent(chat, { type: "meta", content: "鈫?shell_command\nls" });
     (hub as any).handleAgentEvent(chat, { type: "delta", content: "Found the files." });
 
     const activeChat = hub.snapshot().chats.find((item) => item.id === chatId);
@@ -2743,7 +2609,7 @@ fs.writeFileSync(${JSON.stringify(argsPath)}, process.argv.slice(2).join("\\n") 
     expect(activeChat?.messages[0]).toMatchObject({
       role: "assistant",
       content: "I will inspect files.Found the files.",
-      events: [expect.objectContaining({ type: "meta", content: "→ shell_command\nls" })],
+      events: [expect.objectContaining({ type: "meta", content: "鈫?shell_command\nls" })],
     });
   });
 
@@ -2791,7 +2657,7 @@ fs.writeFileSync(${JSON.stringify(argsPath)}, process.argv.slice(2).join("\\n") 
     hub.setChatAgent(chatId, "claude-agent");
 
     const activeChat = hub.snapshot().chats.find((item) => item.id === chatId);
-    expect(activeChat?.configuredAgentId).toBe("default-agent");
+    expect(activeChat?.configuredAgentId).toBe("claude-agent");
     expect(activeChat?.running).toBe(false);
     expect(activeChat?.lastError).toBeUndefined();
     expect(activeChat?.messages).toEqual([
@@ -2956,11 +2822,10 @@ fs.writeFileSync(${JSON.stringify(argsPath)}, process.argv.slice(2).join("\\n") 
     expect(calls.some((call) => call.method === "thread/start" && call.params.developerInstructions.includes("Final User Report"))).toBe(true);
   });
 
-  test("injects the local workflow MCP server into Codex workflow agent runs", async () => {
+  test("injects the workflow MCP server into Codex planning runs", async () => {
     const dir = await mkdtemp(path.join(os.tmpdir(), "multi-agent-chat-workflow-mcp-"));
     const fake = await writeSequentialCodexFake(dir);
     const hub = new AgentHub({ codex: fake.executable, claude: "missing-claude-for-test" });
-    hub.setMcpBridgeDiscoveryPath(path.join(dir, "mcp-bridge.json"));
     (hub as any).runtimes.set("codex", {
       id: "codex",
       label: "Codex",
@@ -2969,8 +2834,10 @@ fs.writeFileSync(${JSON.stringify(argsPath)}, process.argv.slice(2).join("\\n") 
       available: true,
     });
 
+    hub.setWorkflowMcpDiscoveryPath(path.join(dir, "mcp-bridge.json"));
     await (hub as any).askWorkflowAgent({
       requestId: "workflow-mcp-config-test",
+      planningWorkflowId: "wf-codex-planning",
       prompt: "Use workflow tools when ready.",
       configuredAgentId: "default-agent",
       workDir: dir,
@@ -2983,48 +2850,8 @@ fs.writeFileSync(${JSON.stringify(argsPath)}, process.argv.slice(2).join("\\n") 
     const calls = (await readFile(fake.callsPath, "utf8")).trim().split("\n").map((line) => JSON.parse(line) as any);
     const argv = calls.find((call) => call.method === "process/argv")?.params.args as string[];
     expect(argv.join("\n")).toContain("mcp_servers.multi_agent_chat.command");
-    expect(argv.join("\n")).toContain("mcp_servers.multi_agent_chat.args");
-    expect(argv.join("\n")).toContain("mcp_servers.multi_agent_chat.env.MULTI_AGENT_CHAT_MCP_BRIDGE");
-    expect(argv.join("\n")).toContain(path.join(dir, "mcp-bridge.json"));
-  });
-
-  test("creates and activates a workflow from Codex workflow_create tool calls", async () => {
-    const dir = await mkdtemp(path.join(os.tmpdir(), "multi-agent-chat-workflow-tool-"));
-    const fake = await writeWorkflowToolCodexFake(dir);
-    const hub = new AgentHub({ codex: fake.executable, claude: "missing-claude-for-test" });
-    (hub as any).runtimes.set("codex", {
-      id: "codex",
-      label: "Codex",
-      command: fake.executable,
-      version: "test",
-      available: true,
-    });
-    const created = hub.createWorkflowDraft({ configuredAgentId: "default-agent" });
-    const sourceWorkflowId = created.workflowDraft?.workflowId;
-    expect(sourceWorkflowId).toBeTruthy();
-
-    const next = await hub.sendWorkflowDraftReply({
-      workflowId: sourceWorkflowId!,
-      reply: "Create the workflow with the MCP workflow_create tool.",
-    });
-
-    expect(next.workflowDraft).toMatchObject({
-      workflowId: expect.stringMatching(/^wf_/),
-      title: "MCP Planned Workflow",
-      objective: "Build a workflow through MCP",
-      graphReady: true,
-      messages: [
-        { role: "user", content: "Create the workflow with the MCP workflow_create tool." },
-        { role: "assistant", content: "Workflow created through MCP." },
-      ],
-      runtimeConversation: runtimeConversation("codex", { native: { threadId: "thread-1" } }),
-    });
-    expect(next.workflowDraft?.workflowId).not.toBe(sourceWorkflowId);
-    expect(next.workflowDraft?.graph.nodes.map((node) => node.id)).toEqual(["start", "plan", "end"]);
-    expect(next.workflowStore.workflows.some((workflow) => workflow.workflowId === sourceWorkflowId)).toBe(false);
-
-    const calls = (await readFile(fake.callsPath, "utf8")).trim().split("\n").map((line) => JSON.parse(line) as any);
-    expect(calls.some((call) => call.method === "client/toolResponse" && call.params.success === true)).toBe(true);
+    expect(argv.join("\n")).toContain("MULTI_AGENT_CHAT_MCP_BRIDGE");
+    expect(argv.join("\n")).toContain("wf-codex-planning");
   });
 
   test("asks a Claude workflow agent through the official SDK one-shot path without resuming when continuationPolicy is fresh", async () => {
@@ -3080,19 +2907,19 @@ fs.writeFileSync(${JSON.stringify(argsPath)}, process.argv.slice(2).join("\\n") 
     expect(oneShotInput).toMatchObject({
       prompt: "Plan the repo",
       cwd: dir,
-      developerInstructions: expect.stringContaining("workflow builder"),
+      developerInstructions: expect.stringContaining("Workflow V2 Manager"),
     });
     expect(oneShotInput?.resumeSessionId).toBeUndefined();
   });
 
-  test("passes the local workflow MCP server to Claude workflow SDK runs", async () => {
-    const dir = await mkdtemp(path.join(os.tmpdir(), "multi-agent-chat-claude-workflow-mcp-"));
+  test("injects a session-scoped workflow MCP server into Claude planning runs", async () => {
+    const dir = await mkdtemp(path.join(os.tmpdir(), "multi-agent-chat-claude-planning-"));
     const runOneShot = vi.fn(async (input: any) => {
       input.onEvent({ type: "delta", content: "workflow-sdk" });
       input.onEvent({ type: "completed", content: "workflow-sdk" });
     });
-    const hub = createHubWithClaudeOneShot(runOneShot);
-    hub.setMcpBridgeDiscoveryPath(path.join(dir, "mcp-bridge.json"));
+    const discoveryPath = path.join(dir, "mcp-bridge.json");
+    const hub = createHubWithClaudeOneShot(runOneShot, {}, () => discoveryPath);
     addConfiguredAgents(hub, [configuredAgent("claude-agent", { runtimeAgentId: "claude", name: "Claude Agent" })]);
     (hub as any).runtimes.set("claude", {
       id: "claude",
@@ -3103,7 +2930,8 @@ fs.writeFileSync(${JSON.stringify(argsPath)}, process.argv.slice(2).join("\\n") 
     });
 
     await (hub as any).askWorkflowAgent({
-      requestId: "claude-workflow-mcp-test",
+      requestId: "claude-planning-no-injection-test",
+      planningWorkflowId: "wf-claude-planning",
       prompt: "Plan the repo",
       configuredAgentId: "claude-agent",
       workDir: dir,
@@ -3114,14 +2942,13 @@ fs.writeFileSync(${JSON.stringify(argsPath)}, process.argv.slice(2).join("\\n") 
     });
 
     const oneShotInput = runOneShot.mock.calls[0]?.[0];
-    expect(oneShotInput?.mcpServers).toMatchObject({
-      multi_agent_chat: {
-        type: "stdio",
-        command: "node",
-        env: { MULTI_AGENT_CHAT_MCP_BRIDGE: path.join(dir, "mcp-bridge.json") },
-      },
+    expect(oneShotInput?.mcpServers?.multi_agent_chat).toMatchObject({
+      type: "stdio",
+      env: expect.objectContaining({
+        MULTI_AGENT_CHAT_MCP_BRIDGE: discoveryPath,
+        MULTI_AGENT_CHAT_WORKFLOW_ID: "wf-claude-planning",
+      }),
     });
-    expect(oneShotInput?.mcpServers?.multi_agent_chat.args.join("\n")).toContain("src/mcp/server.ts");
   });
 
   test("resumes a Claude workflow agent through the official SDK one-shot path when continuationPolicy is resume-preferred", async () => {
@@ -3161,7 +2988,7 @@ fs.writeFileSync(${JSON.stringify(argsPath)}, process.argv.slice(2).join("\\n") 
     expect(oneShotInput).toMatchObject({
       prompt: "Continue the repo plan",
       cwd: dir,
-      developerInstructions: expect.stringContaining("workflow builder"),
+      developerInstructions: expect.stringContaining("Workflow V2 Manager"),
       resumeSessionId: "claude-session-9",
     });
   });
@@ -3238,7 +3065,6 @@ fs.writeFileSync(${JSON.stringify(argsPath)}, process.argv.slice(2).join("\\n") 
     const dir = await mkdtemp(path.join(os.tmpdir(), "multi-agent-chat-workflow-draft-reply-"));
     const fake = await writeSequentialCodexFake(dir);
     const hub = new AgentHub({ codex: fake.executable, claude: "missing-claude-for-test" });
-    hub.setMcpBridgeDiscoveryPath(path.join(dir, "mcp-bridge.json"));
     (hub as any).runtimes.set("codex", {
       id: "codex",
       label: "Codex",
@@ -3297,7 +3123,7 @@ fs.writeFileSync(${JSON.stringify(argsPath)}, process.argv.slice(2).join("\\n") 
     expect(calls.filter((call) => call.method === "thread/resume")).toHaveLength(0);
     expect(calls.filter((call) => call.method === "turn/start")).toHaveLength(2);
     expect((calls.find((call) => call.method === "process/argv")?.params.args as string[]).join("\n"))
-      .toContain("mcp_servers.multi_agent_chat.command");
+      .not.toContain("mcp_servers.multi_agent_chat");
   });
 
   test("rejects one-shot-only runtimes in the Workflow planning dialog", async () => {
@@ -3393,7 +3219,7 @@ fs.writeFileSync(${JSON.stringify(argsPath)}, process.argv.slice(2).join("\\n") 
     addConfiguredAgents(hub, [configuredAgent("claude-agent", { runtimeAgentId: "claude", name: "Claude Agent" })]);
     const chat = hub.createChat("claude-agent");
     const chatState = (hub as any).chats.get(chat.id);
-    (hub as any).handleAgentEvent(chatState, { type: "meta", content: "→ shell_command\npwd" });
+    (hub as any).handleAgentEvent(chatState, { type: "meta", content: "鈫?shell_command\npwd" });
     (hub as any).handleAgentEvent(chatState, { type: "delta", content: "Saved response" });
     (hub as any).handleAgentEvent(chatState, { type: "completed" });
     await hub.flushPersistence();
@@ -3402,7 +3228,7 @@ fs.writeFileSync(${JSON.stringify(argsPath)}, process.argv.slice(2).join("\\n") 
     expect(persisted.version).toBe(5);
     expect(persisted.sessions).toEqual([expect.objectContaining({ id: expect.any(String) }), expect.objectContaining({ id: chat.id })]);
     expect(persisted.messages).toEqual(expect.arrayContaining([expect.objectContaining({ chatId: chat.id, role: "assistant" })]));
-    expect(persisted.events).toEqual(expect.arrayContaining([expect.objectContaining({ chatId: chat.id, type: "meta", content: "→ shell_command\npwd" })]));
+    expect(persisted.events).toEqual(expect.arrayContaining([expect.objectContaining({ chatId: chat.id, type: "meta", content: "鈫?shell_command\npwd" })]));
 
     const restored = new AgentHub();
     await restored.loadPersistedState(storagePath);
@@ -3417,7 +3243,7 @@ fs.writeFileSync(${JSON.stringify(argsPath)}, process.argv.slice(2).join("\\n") 
       expect.objectContaining({
         role: "assistant",
         content: "Saved response",
-        events: [expect.objectContaining({ type: "meta", content: "→ shell_command\npwd" })],
+        events: [expect.objectContaining({ type: "meta", content: "鈫?shell_command\npwd" })],
       }),
     ]);
   });
@@ -3545,7 +3371,7 @@ fs.writeFileSync(${JSON.stringify(argsPath)}, process.argv.slice(2).join("\\n") 
     await writeFile(
       storagePath,
       JSON.stringify({
-        version: 4,
+        version: 5,
         activeChatId: "chat-1",
         workDir: dir,
         sessions: [
@@ -3680,7 +3506,7 @@ fs.writeFileSync(${JSON.stringify(argsPath)}, process.argv.slice(2).join("\\n") 
     await writeFile(
       storagePath,
       JSON.stringify({
-        version: 4,
+        version: 5,
         activeChatId: "chat-1",
         workDir: dir,
         sessions: [
@@ -3959,62 +3785,6 @@ fs.writeFileSync(${JSON.stringify(argsPath)}, process.argv.slice(2).join("\\n") 
     ]);
   });
 
-  test("compacts generated execution channel records when restoring app state", async () => {
-    const dir = await mkdtemp(path.join(os.tmpdir(), "multi-agent-chat-generated-channels-"));
-    const storagePath = path.join(dir, "app-chats.json");
-    const realChannel: AgentChannel = {
-      id: "codex-deepseek",
-      agentId: "codex",
-      label: "Codex DeepSeek",
-      providerName: "DeepSeek",
-      modelProvider: "deepseek",
-      models: [{ id: DEFAULT_MODEL_ID, label: "Default" }],
-    };
-
-    await writeFile(
-      storagePath,
-      JSON.stringify({
-        version: 4,
-        activeChatId: null,
-        workDir: "C:/tmp/project",
-        channels: [
-          realChannel,
-          {
-            ...realChannel,
-            id: "repo-reviewer-channel",
-            label: "Repo Reviewer Runtime",
-          },
-          {
-            ...realChannel,
-            id: "codex-multi-agent-repo-reviewer-default",
-            label: "Codex multi-agent-repo-reviewer-default",
-          },
-        ],
-        sessions: [],
-        messages: [],
-        events: [],
-        tasks: [],
-        taskMessages: [],
-        taskEvents: [],
-        teams: [],
-        teamRuns: [],
-      }),
-      "utf8",
-    );
-
-    const restored = new AgentHub();
-    await restored.loadPersistedState(storagePath);
-
-    expect(restored.snapshot().channels.map((channel) => channel.id)).toEqual([
-      "codex-deepseek",
-      "claude-code",
-      "api-openai",
-      "hermes-default",
-      "opencode-default",
-      "openclaw-default",
-    ]);
-  });
-
   test("does not salvage legacy JSON history into SQLite storage", async () => {
     const dir = await mkdtemp(path.join(os.tmpdir(), "multi-agent-chat-sqlite-"));
     const legacyPath = path.join(dir, "app-chats.json");
@@ -4022,7 +3792,7 @@ fs.writeFileSync(${JSON.stringify(argsPath)}, process.argv.slice(2).join("\\n") 
     await writeFile(
       legacyPath,
       JSON.stringify({
-        version: 4,
+        version: 5,
         activeChatId: "chat-legacy",
         workDir: "/tmp/legacy-project",
         sessions: [
@@ -4094,46 +3864,16 @@ fs.writeFileSync(${JSON.stringify(argsPath)}, process.argv.slice(2).join("\\n") 
     expect("activeWorkflowId" in (hub as any)).toBe(false);
   });
 
-  test("seeds bundled workflows through WorkflowStore as locked official templates", () => {
-    const hub = new AgentHub({ codex: "codex-for-test", claude: "missing-claude-for-test" });
-    hub.ensureBundledWorkflows([
-      {
-        workflowId: "official-resume",
-        title: "Official Resume",
-        objective: "Tailor resume",
-        graph: {
-          title: "Official Resume",
-          objective: "Tailor resume",
-          nodes: [
-            { id: "start", kind: "start", title: "Start", prompt: "" },
-            { id: "tailor", kind: "agent", title: "Tailor", prompt: "Use evidence" },
-            { id: "end", kind: "end", title: "End", prompt: "" },
-          ],
-          edges: [
-            { id: "start-tailor", fromNodeId: "start", toNodeId: "tailor" },
-            { id: "tailor-end", fromNodeId: "tailor", toNodeId: "end" },
-          ],
-        },
-      },
-    ]);
-
-    expect(hub.snapshot().workflowStore.workflows.find((workflow) => workflow.workflowId === "official-resume")).toMatchObject({
-      sourceType: "official",
-      topologyLocked: true,
-    });
-  });
-
   test("persists and restores multiple workflow drafts", async () => {
     const dir = await mkdtemp(path.join(os.tmpdir(), "multi-agent-chat-"));
     const storagePath = path.join(dir, "app-chats.json");
     const hub = new AgentHub();
 
     await hub.loadPersistedState(storagePath);
-    const first = (hub as any).createWorkflow({
+    const first = createV2Workflow(hub, {
       configuredAgentId: "default-agent",
       title: "sample repo review",
       objective: "Review sample repo",
-      graphReady: true,
       graph: {
         title: "sample repo review",
         objective: "Review sample repo",
@@ -4160,7 +3900,41 @@ fs.writeFileSync(${JSON.stringify(argsPath)}, process.argv.slice(2).join("\\n") 
       createdAt: 1710000000000,
       updatedAt: 1710002000000,
     });
-    const second = (hub as any).createWorkflow({
+    const planned = await (hub as any).buildWorkflowV2Plan({
+      approvedBy: "planner-agent",
+      definition: {
+        workflowId: first.workflowId,
+        graphVersion: 4,
+        objective: "Persist workflow v2 planning metadata with the draft",
+        nodes: [
+          {
+            id: "plan",
+            kind: "planner",
+            title: "Plan",
+            execModel: "llm",
+        executionMode: "one-shot",
+            role: "orchestrator",
+            prompt: "Plan the review",
+            outputFields: [{ key: "planDoc", required: true }],
+          },
+          {
+            id: "inventory",
+            kind: "implementation",
+            title: "Inventory",
+            execModel: "llm",
+        executionMode: "one-shot",
+            prompt: "Map repo.",
+            outputFields: [{ key: "inventoryDoc", required: true }],
+          },
+        ],
+        edges: [{ fromNodeId: "plan", toNodeId: "inventory" }],
+      },
+    });
+    hub.patchWorkflowDraft({
+      workflowId: first.workflowId,
+      workflowV2Plan: planned.plan!,
+    });
+    const second = createV2Workflow(hub, {
       title: "release workflow",
       objective: "Prepare release",
       createdAt: 1710001000000,
@@ -4195,10 +3969,17 @@ fs.writeFileSync(${JSON.stringify(argsPath)}, process.argv.slice(2).join("\\n") 
     expect(persisted.workflowStore.workflows[1]).toMatchObject({
       title: "sample repo review",
       objective: "Review sample repo",
-      revision: 2,
-      graphReady: true,
+      revision: 3,
       contextDocument: expect.stringContaining("Added architecture note."),
       runProgress: [{ nodeId: "inventory", status: "completed" }],
+      workflowV2Plan: {
+        workflowId: first.workflowId,
+        graphVersion: 4,
+        roleDefaults: {
+          orchestrator: { role: "orchestrator", modelProfile: "expert" },
+          executor: { role: "executor", modelProfile: "fast" },
+        },
+      },
     });
 
     const restored = new AgentHub();
@@ -4212,20 +3993,26 @@ fs.writeFileSync(${JSON.stringify(argsPath)}, process.argv.slice(2).join("\\n") 
       workflowId: first.workflowId,
       title: "sample repo review",
       objective: "Review sample repo",
-      revision: 2,
+      revision: 3,
       status: "draft",
-      graphReady: true,
-      graph: { title: "sample repo review" },
+      definition: { objective: "Review sample repo" },
       messages: [{ id: "m-1", role: "user" }, { id: "m-2", role: "assistant" }],
       runProgress: [{ nodeId: "inventory", status: "completed", detail: "Output captured" }],
       runContextDocument: "# Workflow Context\n\n## Inventory (inventory)\nMapped repo.",
       contextDocument: expect.stringContaining("Architecture note."),
+      workflowV2Plan: {
+        workflowId: first.workflowId,
+        graphVersion: 4,
+        roleDefaults: {
+          reviewer: { role: "reviewer", modelProfile: "expert" },
+        },
+      },
     });
   });
 
   test("renames a workflow draft without changing its graph", () => {
     const hub = new AgentHub();
-    const created = (hub as any).createWorkflow({
+    const created = createV2Workflow(hub, {
       title: "Original workflow",
       objective: "Review sample repo",
       graph: {
@@ -4249,55 +4036,15 @@ fs.writeFileSync(${JSON.stringify(argsPath)}, process.argv.slice(2).join("\\n") 
     expect(workflow).toMatchObject({
       title: "Renamed workflow",
       objective: "Review sample repo",
-      revision: 2,
-      graph: { title: "Original workflow", objective: "Review sample repo" },
+      revision: 3,
+      definition: { objective: "Review sample repo" },
     });
     expect(snapshot.workflowDraft.title).toBe("Renamed workflow");
   });
 
-  test("preserves explicit node positions through create and update", () => {
-    const hub = new AgentHub();
-    const created = (hub as any).createWorkflow({
-      title: "Positioned workflow",
-      objective: "Pin nodes",
-      graph: {
-        title: "Positioned workflow",
-        objective: "Pin nodes",
-        nodes: [
-          { id: "start", kind: "start", title: "Start", prompt: "", position: { x: 12, y: 34 } },
-          { id: "inventory", kind: "agent", title: "Inventory", prompt: "Map repo."},
-          { id: "end", kind: "end", title: "Done", prompt: "" },
-        ],
-        edges: [
-          { id: "start->inventory", fromNodeId: "start", toNodeId: "inventory" },
-          { id: "inventory->end", fromNodeId: "inventory", toNodeId: "end" },
-        ],
-      },
-    });
-
-    const graphOf = (workflowId: string) =>
-      (hub as any).snapshot().workflowStore.workflows.find((item: any) => item.workflowId === workflowId).graph;
-    const createdNodes = new Map<string, any>(graphOf(created.workflowId).nodes.map((node: any) => [node.id, node]));
-    expect(createdNodes.get("start").position).toEqual({ x: 12, y: 34 });
-    expect(createdNodes.get("inventory").position).toBeUndefined();
-
-    (hub as any).updateWorkflow({
-      workflowId: created.workflowId,
-      graph: {
-        ...graphOf(created.workflowId),
-        nodes: graphOf(created.workflowId).nodes.map((node: any) =>
-          node.id === "inventory" ? { ...node, position: { x: 200, y: 80 } } : node,
-        ),
-      },
-    });
-    const updatedNodes = new Map<string, any>(graphOf(created.workflowId).nodes.map((node: any) => [node.id, node]));
-    expect(updatedNodes.get("inventory").position).toEqual({ x: 200, y: 80 });
-    expect(updatedNodes.get("start").position).toEqual({ x: 12, y: 34 });
-  });
-
   test("deletes a workflow draft with its runs and selects the next remaining workflow", async () => {
     const hub = new AgentHub();
-    const first = (hub as any).createWorkflow({
+    const first = createV2Workflow(hub, {
       title: "First workflow",
       objective: "Review sample repo",
       graph: {
@@ -4315,7 +4062,7 @@ fs.writeFileSync(${JSON.stringify(argsPath)}, process.argv.slice(2).join("\\n") 
       },
     });
     const run = (hub as any).startWorkflowRun({ workflowId: first.workflowId, contextDocument: "# Run context" });
-    const second = (hub as any).createWorkflow({
+    const second = createV2Workflow(hub, {
       title: "Second workflow",
       objective: "Prepare release",
       graph: {
@@ -4380,7 +4127,6 @@ fs.writeFileSync(${JSON.stringify(argsPath)}, process.argv.slice(2).join("\\n") 
       title: "Untitled workflow",
       status: "draft",
       objective: "",
-      graphReady: false,
       messages: [],
       runProgress: [],
       runContextDocument: "",
@@ -4417,47 +4163,135 @@ fs.writeFileSync(${JSON.stringify(argsPath)}, process.argv.slice(2).join("\\n") 
     expect(patched.contextDocument).toBe("# Context");
   });
 
-  test("locks the workflow base agent and model after planning starts", () => {
+  test("patchWorkflowDraft stores a workflow-v2 plan and clears it when the draft objective changes", async () => {
     const hub = new AgentHub();
-    addConfiguredAgents(hub, [configuredAgent("claude-agent", { runtimeAgentId: "claude", name: "Claude Agent" })]);
-    const workflow = hub.createWorkflowDraft({ configuredAgentId: "default-agent" }).workflowDraft!;
-    hub.patchWorkflowDraft({
-      workflowId: workflow.workflowId,
-      messages: [{ id: "user-1", role: "user", content: "Build a release workflow" }],
+    const workflow = hub.createWorkflowDraft({ title: "V2 draft" }).workflowDraft!;
+    const planned = await (hub as any).buildWorkflowV2Plan({
+      approvedBy: "planner-agent",
+      definition: {
+        workflowId: workflow.workflowId,
+        graphVersion: 1,
+        objective: "Route planning metadata before execution",
+        nodes: [
+          {
+            id: "plan",
+            kind: "planner",
+            title: "Plan",
+            execModel: "llm",
+        executionMode: "one-shot",
+            role: "orchestrator",
+            prompt: "Plan the work",
+            outputFields: [{ key: "planDoc", required: true }],
+          },
+          {
+            id: "execute",
+            kind: "implementation",
+            title: "Execute",
+            execModel: "llm",
+        executionMode: "one-shot",
+            prompt: "Implement the plan",
+            outputFields: [{ key: "diff", required: true }],
+          },
+        ],
+        edges: [{ fromNodeId: "plan", toNodeId: "execute" }],
+      },
     });
 
-    expect(() => hub.patchWorkflowDraft({
+    expect(planned.ok).toBe(true);
+    const stored = hub.patchWorkflowDraft({
       workflowId: workflow.workflowId,
-      configuredAgentId: "claude-agent",
-    })).toThrow("Workflow base agent and model cannot change after planning starts.");
+      workflowV2Plan: planned.plan!,
+    }).workflowDraft!;
+    expect(stored.workflowV2Plan).toMatchObject({
+      workflowId: workflow.workflowId,
+      graphVersion: 1,
+      roleDefaults: {
+        executor: { role: "executor", modelProfile: "fast" },
+      },
+    });
+
+    const cleared = hub.patchWorkflowDraft({
+      workflowId: workflow.workflowId,
+      objective: "A changed objective invalidates the frozen plan",
+    }).workflowDraft!;
+    expect(cleared.workflowV2Plan).toBeUndefined();
   });
 
-  test("rejects invalid workflow creation with validation reasons", () => {
+  test("keeps a running workflow status and rejects a duplicate graph run after a draft patch", () => {
+    const hub = new AgentHub();
+    const created = createV2Workflow(hub, {
+      title: "Duplicate guard workflow",
+      objective: "Do not start twice",
+      graph: {
+        title: "Duplicate guard workflow",
+        objective: "Do not start twice",
+        nodes: [
+          { id: "start", kind: "start", title: "Start", prompt: "" },
+          { id: "work", kind: "agent", title: "Work", prompt: "Work." },
+          { id: "end", kind: "end", title: "End", prompt: "" },
+        ],
+        edges: [
+          { id: "start->work", fromNodeId: "start", toNodeId: "work" },
+          { id: "work->end", fromNodeId: "work", toNodeId: "end" },
+        ],
+      },
+    });
+    const started = hub.startWorkflowRun({ workflowId: created.workflowId });
+
+    const patched = hub.patchWorkflowDraft({
+      workflowId: created.workflowId,
+      status: "draft",
+      title: "Still running",
+      resetRunState: true,
+    });
+    const duplicate = hub.runWorkflow({ workflowId: created.workflowId });
+
+    expect(patched.workflowStore.workflows.find((workflow) => workflow.workflowId === created.workflowId)).toMatchObject({
+      status: "running",
+      title: "Still running",
+      runIds: [started.runId],
+    });
+    expect(duplicate).toEqual({
+      ok: false,
+      workflowId: created.workflowId,
+      error: "Workflow is already running.",
+    });
+    expect(hub.snapshot().workflowStore.runs.filter((run) => run.workflowId === created.workflowId)).toHaveLength(1);
+    expect(started.ok).toBe(true);
+  });
+
+  test("rejects invalid V2 workflow creation with validation reasons", () => {
     const hub = new AgentHub();
 
-    const result = (hub as any).createWorkflow({
+    const workflowId = hub.createWorkflowDraft().workflowDraft!.workflowId;
+    const result = hub.materializeWorkflowDraft(workflowId, {
       title: "Broken",
       objective: "Broken",
-      graph: {
-        title: "Broken",
+      definition: {
+        workflowId: "broken",
+        graphVersion: 1,
         objective: "Broken",
-        nodes: [{ id: "agent-a", kind: "agent", title: "Agent A", prompt: "Work" }],
-        edges: [],
+        nodes: [
+          { id: "a", kind: "implementation", title: "A", execModel: "llm",
+        executionMode: "one-shot", prompt: "A", outputFields: [{ key: "result", required: true }] },
+          { id: "b", kind: "implementation", title: "B", execModel: "llm",
+        executionMode: "one-shot", prompt: "B", outputFields: [{ key: "result", required: true }] },
+        ],
+        edges: [
+          { fromNodeId: "a", toNodeId: "b" },
+          { fromNodeId: "b", toNodeId: "a" },
+        ],
       },
     });
 
     expect(result).toMatchObject({
       ok: false,
-      error: "Workflow graph must have exactly one start node.",
-      validation: {
-        valid: false,
-        errors: ["Workflow graph must have exactly one start node."],
-      },
+      error: expect.stringContaining("acyclic"),
     });
-    expect((hub.snapshot() as any).workflowStore.workflows).toHaveLength(0);
+    expect((hub.snapshot() as any).workflowStore.workflows).toHaveLength(1);
   });
 
-  test("rejects workflow graphs that exceed node limits", () => {
+  test("rejects V2 definitions that exceed node limits", () => {
     const hub = new AgentHub();
     const nodes = [
       { id: "start", kind: "start", title: "Start", prompt: "" },
@@ -4475,22 +4309,37 @@ fs.writeFileSync(${JSON.stringify(argsPath)}, process.argv.slice(2).join("\\n") 
       toNodeId: nodes[index + 1]!.id,
     }));
 
-    const result = (hub as any).createWorkflow({
+    const workflowId = hub.createWorkflowDraft().workflowDraft!.workflowId;
+    const result = hub.materializeWorkflowDraft(workflowId, {
       title: "Too large",
       objective: "Too large",
-      graph: { title: "Too large", objective: "Too large", nodes, edges },
+      definition: {
+        workflowId: "too-large",
+        graphVersion: 1,
+        objective: "Too large",
+        nodes: Array.from({ length: 51 }, (_value, index) => ({
+          id: `v2_${index}`,
+          kind: "implementation",
+          title: `V2 ${index}`,
+          execModel: "llm",
+          executionMode: "one-shot",
+          prompt: "Work.",
+          outputFields: [{ key: "result", required: true }],
+        })),
+        edges: [],
+      },
     });
 
     expect(result).toMatchObject({
       ok: false,
-      error: "Workflow graph exceeds 50 nodes.",
+      error: "Workflow V2 definition exceeds 50 nodes.",
     });
-    expect((hub.snapshot() as any).workflowStore.workflows).toHaveLength(0);
+    expect((hub.snapshot() as any).workflowStore.workflows).toHaveLength(1);
   });
 
-  test("tracks workflow runs separately from editable workflow drafts", () => {
+  test("tracks workflow runs separately from editable workflow drafts", async () => {
     const hub = new AgentHub();
-    const created = (hub as any).createWorkflow({
+    const created = createV2Workflow(hub, {
       title: "Run tracked workflow",
       objective: "Run tracked workflow",
       graph: {
@@ -4506,6 +4355,41 @@ fs.writeFileSync(${JSON.stringify(argsPath)}, process.argv.slice(2).join("\\n") 
           { id: "work->end", fromNodeId: "work", toNodeId: "end" },
         ],
       },
+    });
+    const planned = await (hub as any).buildWorkflowV2Plan({
+      approvedBy: "planner-agent",
+      contextBudget: { maxContextTokens: 2800, maxEvidenceItems: 5, maxUpstreamNodes: 2 },
+      definition: {
+        workflowId: created.workflowId,
+        graphVersion: 2,
+        objective: "Carry planning metadata into the workflow run surface",
+        nodes: [
+          {
+            id: "plan",
+            kind: "planner",
+            title: "Plan",
+            execModel: "llm",
+        executionMode: "one-shot",
+            role: "orchestrator",
+            prompt: "Plan the work",
+            outputFields: [{ key: "planDoc", required: true }],
+          },
+          {
+            id: "work",
+            kind: "implementation",
+            title: "Work",
+            execModel: "llm",
+        executionMode: "one-shot",
+            prompt: "Work.",
+            outputFields: [{ key: "diff", required: true }],
+          },
+        ],
+        edges: [{ fromNodeId: "plan", toNodeId: "work" }],
+      },
+    });
+    hub.patchWorkflowDraft({
+      workflowId: created.workflowId,
+      workflowV2Plan: planned.plan!,
     });
 
     const started = (hub as any).startWorkflowRun({
@@ -4535,7 +4419,7 @@ fs.writeFileSync(${JSON.stringify(argsPath)}, process.argv.slice(2).join("\\n") 
       workflowId: created.workflowId,
       status: "completed",
       runIds: [started.runId],
-      revision: 1,
+      revision: 2,
       finalReport: "## Final User Report\nThe workflow completed successfully.",
     });
     expect(snapshot.workflowStore.runs[0]).toMatchObject({
@@ -4544,11 +4428,30 @@ fs.writeFileSync(${JSON.stringify(argsPath)}, process.argv.slice(2).join("\\n") 
       status: "completed",
       contextDocument: expect.stringContaining("Finished the work."),
       progress: [{ nodeId: "work", status: "completed" }],
+      workflowV2Plan: {
+        workflowId: created.workflowId,
+        graphVersion: 2,
+        budget: {
+          context: { maxContextTokens: 2800, maxEvidenceItems: 5, maxUpstreamNodes: 2 },
+        },
+        roleDefaults: {
+          orchestrator: { role: "orchestrator", modelProfile: "expert" },
+          executor: { role: "executor", modelProfile: "fast" },
+        },
+      },
       finalReport: "## Final User Report\nThe workflow completed successfully.",
+    });
+    expect(snapshot.workflowStore.runs[0].workflowV2Plan.nodes[1].taskPacket).toMatchObject({
+      nodeId: "work",
+      role: "executor",
+      modelProfile: "fast",
+      budget: {
+        context: { maxContextTokens: 2800, maxEvidenceItems: 5, maxUpstreamNodes: 2 },
+      },
     });
   });
 
-  test("runs a workflow graph from the main process runtime", async () => {
+  test("runs a frozen Workflow V2 plan from the main process runtime without legacy judge or final review", async () => {
     const contexts: AgentExecutionContext[] = [];
     const hub = new AgentHub(
       { codex: "codex-for-test", claude: "missing-claude-for-test" },
@@ -4557,11 +4460,13 @@ fs.writeFileSync(${JSON.stringify(argsPath)}, process.argv.slice(2).join("\\n") 
           contexts.push(context);
           return {
             start: async () => {
-              const content = context.prompt.includes("workflow judge")
-                ? 'workflowEvaluation.submit({ complete: true, reason: "good enough", retryPrompt: "" })'
-                : context.prompt.includes("main workflow agent")
-                  ? "## Final User Report\nWorkflow completed from main runtime."
-                  : "### Work Completion Report\nWorker finished.\n\n### Handoff\nReady for downstream work.";
+              const content = JSON.stringify({
+                nodeId: "work",
+                summary: "Worker finished through the V2 runtime.",
+                outputs: { diff: "Implemented the approved change." },
+                evidence: ["main runtime V2 evidence"],
+                proposals: [],
+              });
               context.emit({ type: "completed", content });
             },
             stop: async () => undefined,
@@ -4576,7 +4481,7 @@ fs.writeFileSync(${JSON.stringify(argsPath)}, process.argv.slice(2).join("\\n") 
       version: "test",
       available: true,
     });
-    const created = (hub as any).createWorkflow({
+    const created = createV2Workflow(hub, {
       title: "Runtime workflow",
       objective: "Run from main",
       graph: {
@@ -4593,9 +4498,35 @@ fs.writeFileSync(${JSON.stringify(argsPath)}, process.argv.slice(2).join("\\n") 
         ],
       },
     });
+    const planned = await (hub as any).buildWorkflowV2Plan({
+      approvedBy: "planner-agent",
+      contextBudget: { maxContextTokens: 2600, maxEvidenceItems: 4, maxUpstreamNodes: 1 },
+      definition: {
+        workflowId: created.workflowId,
+        graphVersion: 3,
+        objective: "Surface V2 task packets before runtime execution begins",
+        nodes: [
+          {
+            id: "work",
+            kind: "implementation",
+            title: "Work",
+            execModel: "llm",
+        executionMode: "one-shot",
+            prompt: "Do the work.",
+            outputFields: [{ key: "diff", required: true }],
+            constraints: [{ key: "stay_scoped", description: "Do not invent execution behavior outside the approved plan." }],
+          },
+        ],
+        edges: [],
+      },
+    });
+    hub.patchWorkflowDraft({
+      workflowId: created.workflowId,
+      workflowV2Plan: planned.plan!,
+    });
 
-    expect(typeof (hub as any).runWorkflowGraph).toBe("function");
-    const started = await (hub as any).runWorkflowGraph({
+    expect(typeof (hub as any).runWorkflow).toBe("function");
+    const started = await (hub as any).runWorkflow({
       workflowId: created.workflowId,
       contextDocument: "# Initial context",
     });
@@ -4610,30 +4541,86 @@ fs.writeFileSync(${JSON.stringify(argsPath)}, process.argv.slice(2).join("\\n") 
       status: "completed",
       progress: [
         expect.objectContaining({ nodeId: "work", status: "completed" }),
-        expect.objectContaining({ nodeId: "__final_review__", status: "completed" }),
       ],
-      contextDocument: expect.stringContaining("Worker finished."),
-      finalReport: "## Final User Report\nWorkflow completed from main runtime.",
+      contextDocument: expect.stringContaining("# Initial context"),
+      finalReport: expect.stringContaining("# Workflow V2 Run Summary"),
     });
     expect(snapshot.workflowStore.workflows.find((item: any) => item.workflowId === created.workflowId)).toMatchObject({
       status: "completed",
-      finalReport: "## Final User Report\nWorkflow completed from main runtime.",
+      finalReport: expect.stringContaining("Worker finished through the V2 runtime."),
     });
-    expect(contexts.map((context) => context.runKind)).toEqual(["task", "task", "task"]);
+    expect(contexts.map((context) => context.runKind)).toEqual(["task"]);
+    expect(contexts[0]?.prompt).toBe("Do the work.");
+    expect(contexts[0]?.developerInstructions).toContain("Workflow V2 task packet");
+    expect(contexts[0]?.developerInstructions).toContain('"role": "executor"');
+    expect(contexts[0]?.developerInstructions).toContain('"modelProfile": "fast"');
+    expect(contexts[0]?.developerInstructions).toContain("Do not invent execution behavior outside the approved plan.");
+    expect(contexts[0]?.developerInstructions).toContain('"maxContextTokens": 2600');
+    expect(contexts[0]?.developerInstructions).toContain('"upstreamOutputs": []');
+    expect(contexts[0]?.prompt).not.toContain("workflow judge");
+    expect(contexts[0]?.prompt).not.toContain("main workflow agent");
 
     const eventTypesForWork = run.events.filter((event: any) => event.nodeId === "work").map((event: any) => event.type);
-    expect(eventTypesForWork).toEqual(["node_started", "node_output", "node_judged", "node_completed"]);
-    expect(run.events.some((event: any) => event.nodeId === "__final_review__" && event.type === "node_completed")).toBe(true);
-    const projected = projectNodeStates(
-      run.events,
-      [{ nodeId: "work", title: "Work" }],
-      [{ nodeId: "__final_review__", title: "Main agent review" }],
-    );
+    expect(eventTypesForWork).toEqual(["node_started", "node_output", "node_completed"]);
+    expect(run.events.some((event: any) => event.nodeId === "__final_review__")).toBe(false);
+    const projected = projectNodeStates(run.events, [{ nodeId: "work", title: "Work" }]);
     expect(projected.map((item) => ({ nodeId: item.nodeId, status: item.status }))).toEqual(
       run.progress.map((item: any) => ({ nodeId: item.nodeId, status: item.status })),
     );
   });
 
+  test("runs a safe Workflow V2 script node without user approval", async () => {
+    const hub = new AgentHub({ codex: "codex-for-test", claude: "missing-claude-for-test" });
+    const created = createV2Workflow(hub, {
+      title: "Safe script workflow",
+      objective: "Run a pure in-memory script",
+      graph: {
+        title: "Legacy graph is not executed",
+        objective: "Legacy graph is not executed",
+        nodes: [
+          { id: "start", kind: "start", title: "Start", prompt: "" },
+          { id: "legacy", kind: "agent", title: "Legacy", prompt: "Must not run." },
+          { id: "end", kind: "end", title: "Done", prompt: "" },
+        ],
+        edges: [
+          { id: "start->legacy", fromNodeId: "start", toNodeId: "legacy" },
+          { id: "legacy->end", fromNodeId: "legacy", toNodeId: "end" },
+        ],
+      },
+    });
+    const planned = await (hub as any).buildWorkflowV2Plan({
+      approvedBy: "planner-agent",
+      definition: {
+        workflowId: created.workflowId,
+        graphVersion: 1,
+        objective: "Exercise automatic safe script authorization",
+        nodes: [{
+          id: "script",
+          kind: "verification",
+          title: "Script",
+          execModel: "script",
+          executionMode: "script",
+          script: createWorkflowV2InlineScriptSpec({ language: "typescript", code: "return { result: 'ok' };", timeoutMs: 1_000, outputSchema: { type: "object", required: ["result"] } }),
+          outputFields: [{ key: "result", required: true }],
+        }],
+        edges: [],
+      },
+    });
+    hub.patchWorkflowDraft({ workflowId: created.workflowId, workflowV2Plan: planned.plan! });
+    const route = hub.snapshot().workflowDraft!;
+    hub.patchWorkflowDraft({ workflowId: created.workflowId, generationReview: { status: "approved", reviewerConfiguredAgentId: route.reviewerConfiguredAgentId, reviewerModelId: route.reviewerModelId, reviewedRevision: route.revision, result: { verdict: "approve", reviewedRevision: route.revision, summary: "Approved safe script", findings: [], scriptRisks: { script: { level: "safe", rationale: "Pure in-memory transformation." } }, suggestions: [] }, updatedAt: 1 } });
+    hub.confirmWorkflow({ workflowId: created.workflowId, expectedRevision: route.revision });
+
+    const started = await (hub as any).runWorkflow({ workflowId: created.workflowId });
+    const snapshot = await waitFor(
+      () => hub.snapshot() as any,
+      (value) => value.workflowStore.runs.some((run: any) => run.workflowId === created.workflowId && run.status === "completed"),
+    );
+    const run = snapshot.workflowStore.runs.find((item: any) => item.runId === started.runId);
+
+    expect(run).toMatchObject({ status: "completed", progress: [{ nodeId: "script", status: "completed", detail: "Script completed." }] });
+    expect(run.events.filter((event: any) => event.nodeId === "script").map((event: any) => event.type)).toEqual(["node_started", "node_output", "node_completed"]);
+  });
   test("pauses a running workflow node without evaluating it or starting downstream nodes", async () => {
     const contexts: AgentExecutionContext[] = [];
     let stopCount = 0;
@@ -4658,9 +4645,21 @@ fs.writeFileSync(${JSON.stringify(argsPath)}, process.argv.slice(2).join("\\n") 
       version: "test",
       available: true,
     });
-    const created = (hub as any).createWorkflow({
+    const created = createV2Workflow(hub, {
       title: "Pausable workflow",
       objective: "Pause one node",
+      definition: {
+        workflowId: "wf_pausable",
+        graphVersion: 1,
+        objective: "Pause one node",
+        nodes: [
+          { id: "work", kind: "implementation", title: "Work", execModel: "llm",
+        executionMode: "one-shot", prompt: "Do the work.", outputFields: [{ key: "result", required: true }] },
+          { id: "followup", kind: "implementation", title: "Follow up", execModel: "llm",
+        executionMode: "one-shot", prompt: "Use the work output.", outputFields: [{ key: "result", required: true }] },
+        ],
+        edges: [{ fromNodeId: "work", toNodeId: "followup" }],
+      },
       graph: {
         title: "Pausable workflow",
         objective: "Pause one node",
@@ -4677,7 +4676,7 @@ fs.writeFileSync(${JSON.stringify(argsPath)}, process.argv.slice(2).join("\\n") 
         ],
       },
     });
-    const started = (hub as any).runWorkflowGraph({ workflowId: created.workflowId });
+    const started = (hub as any).runWorkflow({ workflowId: created.workflowId });
     expect(started).toMatchObject({ ok: true });
     await waitFor(
       () => hub.snapshot() as any,
@@ -4706,6 +4705,8 @@ fs.writeFileSync(${JSON.stringify(argsPath)}, process.argv.slice(2).join("\\n") 
   });
 
   test("starts a paused workflow node and continues downstream execution", async () => {
+    const dir = await mkdtemp(path.join(os.tmpdir(), "multi-agent-chat-workflow-v2-resume-"));
+    const storagePath = path.join(dir, "app-state.json");
     const contexts: AgentExecutionContext[] = [];
     let stopCount = 0;
     let hangingStarted = false;
@@ -4714,20 +4715,16 @@ fs.writeFileSync(${JSON.stringify(argsPath)}, process.argv.slice(2).join("\\n") 
       {
         create: (context) => {
           contexts.push(context);
-          const countsAsPauseStop = !hangingStarted && context.prompt.includes("Current node: Work");
+          const countsAsPauseStop = !hangingStarted && context.prompt === "Do the work.";
           return {
             start: async () => {
-              if (!hangingStarted && context.prompt.includes("Current node: Work")) {
+              if (!hangingStarted && context.prompt === "Do the work.") {
                 hangingStarted = true;
                 return new Promise<void>(() => undefined);
               }
-              const content = context.prompt.includes("workflow judge")
-                ? 'workflowEvaluation.submit({ complete: true, reason: "approved", retryPrompt: "" })'
-                : context.prompt.includes("main workflow agent")
-                  ? "## Final User Report\nResumed workflow completed."
-                  : context.prompt.includes("Current node: Follow up")
-                    ? "### Work Completion Report\nFollow-up finished.\n\n### Handoff\nDone."
-                    : "### Work Completion Report\nWork finished after resume.\n\n### Handoff\nReady.";
+              const content = context.prompt === "Use the work output."
+                ? JSON.stringify({ nodeId: "followup", summary: "Follow-up finished.", outputs: { result: "done" }, proposals: [] })
+                : JSON.stringify({ nodeId: "work", summary: "Work finished after resume.", outputs: { result: "ready" }, proposals: [] });
               context.emit({ type: "completed", content });
             },
             stop: async () => {
@@ -4744,9 +4741,22 @@ fs.writeFileSync(${JSON.stringify(argsPath)}, process.argv.slice(2).join("\\n") 
       version: "test",
       available: true,
     });
-    const created = (hub as any).createWorkflow({
+    await hub.loadPersistedState(storagePath);
+    const created = createV2Workflow(hub, {
       title: "Resume node workflow",
       objective: "Resume one node",
+      definition: {
+        workflowId: "wf_resume_node",
+        graphVersion: 1,
+        objective: "Resume one node",
+        nodes: [
+          { id: "work", kind: "implementation", title: "Work", execModel: "llm",
+        executionMode: "one-shot", prompt: "Do the work.", outputFields: [{ key: "result", required: true }] },
+          { id: "followup", kind: "implementation", title: "Follow up", execModel: "llm",
+        executionMode: "one-shot", prompt: "Use the work output.", outputFields: [{ key: "result", required: true }] },
+        ],
+        edges: [{ fromNodeId: "work", toNodeId: "followup" }],
+      },
       graph: {
         title: "Resume node workflow",
         objective: "Resume one node",
@@ -4763,7 +4773,7 @@ fs.writeFileSync(${JSON.stringify(argsPath)}, process.argv.slice(2).join("\\n") 
         ],
       },
     });
-    const started = (hub as any).runWorkflowGraph({ workflowId: created.workflowId });
+    const started = (hub as any).runWorkflow({ workflowId: created.workflowId });
     await waitFor(
       () => hub.snapshot() as any,
       (value) => value.workflowStore.runs.some((run: any) => run.runId === started.runId && run.progress.some((item: any) => item.nodeId === "work" && item.status === "running" && item.taskId)),
@@ -4789,25 +4799,21 @@ fs.writeFileSync(${JSON.stringify(argsPath)}, process.argv.slice(2).join("\\n") 
     const run = snapshot.workflowStore.runs.find((item: any) => item.runId === started.runId);
     expect(run).toMatchObject({
       status: "completed",
-      finalReport: "## Final User Report\nResumed workflow completed.",
+      finalReport: expect.stringContaining("Status: completed"),
     });
     expect(run.progress).toEqual([
       expect.objectContaining({ nodeId: "work", status: "completed" }),
       expect.objectContaining({ nodeId: "followup", status: "completed" }),
-      expect.objectContaining({ nodeId: "__final_review__", status: "completed" }),
     ]);
     expect(stopCount).toBe(1);
-    expect(contexts.map((context) => (context.prompt.includes("workflow judge") ? "judge" : context.prompt.includes("main workflow agent") ? "final" : context.prompt.includes("Current node: Follow up") ? "followup" : "work"))).toEqual([
+    expect(contexts.map((context) => context.prompt === "Use the work output." ? "followup" : "work")).toEqual([
       "work",
       "work",
-      "judge",
       "followup",
-      "judge",
-      "final",
     ]);
   });
 
-  test("opens a human gate when a node asks, then resumes with the answer in context", async () => {
+  test("projects an unavailable interactive conversation as awaiting input", async () => {
     const contexts: AgentExecutionContext[] = [];
     const hub = new AgentHub(
       { codex: "codex-for-test", claude: "missing-claude-for-test" },
@@ -4816,14 +4822,7 @@ fs.writeFileSync(${JSON.stringify(argsPath)}, process.argv.slice(2).join("\\n") 
           contexts.push(context);
           return {
             start: async () => {
-              const content = context.prompt.includes("workflow judge")
-                ? 'workflowEvaluation.submit({ complete: true, reason: "approved", retryPrompt: "" })'
-                : context.prompt.includes("main workflow agent")
-                  ? "## Final User Report\nGated workflow completed."
-                  : context.prompt.includes("Current node: Work") && !context.prompt.includes("Human decision")
-                    ? 'I need a human decision.\nworkflowGate.ask("Deploy to prod or staging?")'
-                    : "### Work Completion Report\nWork finished after human decision.\n\n### Handoff\nReady.";
-              context.emit({ type: "completed", content });
+              context.emit({ type: "completed", content: "Persistent interactive session unavailable." });
             },
             stop: async () => undefined,
           };
@@ -4837,9 +4836,19 @@ fs.writeFileSync(${JSON.stringify(argsPath)}, process.argv.slice(2).join("\\n") 
       version: "test",
       available: true,
     });
-    const created = (hub as any).createWorkflow({
+    const created = createV2Workflow(hub, {
       title: "Gate workflow",
       objective: "Ask a human when needed",
+      definition: {
+        workflowId: "wf_gate",
+        graphVersion: 1,
+        objective: "Ask a human when needed",
+        nodes: [
+          { id: "work", kind: "implementation", title: "Work", execModel: "llm",
+        executionMode: "interactive", prompt: "Ask the user which environment to deploy to, then finish the work.", outputFields: [{ key: "result", required: true }] },
+        ],
+        edges: [],
+      },
       graph: {
         title: "Gate workflow",
         objective: "Ask a human when needed",
@@ -4854,48 +4863,22 @@ fs.writeFileSync(${JSON.stringify(argsPath)}, process.argv.slice(2).join("\\n") 
         ],
       },
     });
-    const started = (hub as any).runWorkflowGraph({ workflowId: created.workflowId });
+    const started = (hub as any).runWorkflow({ workflowId: created.workflowId });
 
-    const gatedSnapshot = await waitFor(
+    const pausedSnapshot = await waitFor(
       () => hub.snapshot() as any,
       (value) =>
         value.workflowStore.runs.some(
           (run: any) => run.runId === started.runId && run.progress.some((item: any) => item.nodeId === "work" && item.status === "awaiting_input"),
         ),
     );
-    const gatedRun = gatedSnapshot.workflowStore.runs.find((item: any) => item.runId === started.runId);
-    expect(gatedRun.status).toBe("running");
-    expect(gatedRun.progress.find((item: any) => item.nodeId === "work")).toMatchObject({
+    const pausedRun = pausedSnapshot.workflowStore.runs.find((item: any) => item.runId === started.runId);
+    expect(pausedRun.status).toBe("waiting_for_user");
+    expect(pausedRun.progress.find((item: any) => item.nodeId === "work")).toMatchObject({
       status: "awaiting_input",
-      detail: "Deploy to prod or staging?",
     });
-    // Gate must not run the final review while waiting for the human.
-    expect(gatedRun.progress.some((item: any) => item.nodeId === "__final_review__")).toBe(false);
-    expect(gatedRun.events.some((event: any) => event.type === "gate_opened" && event.nodeId === "work" && event.question === "Deploy to prod or staging?")).toBe(true);
-
-    expect(typeof (hub as any).answerWorkflowGate).toBe("function");
-    const answered = await (hub as any).answerWorkflowGate({
-      workflowId: created.workflowId,
-      runId: started.runId,
-      nodeId: "work",
-      answer: "staging",
-    });
-    expect(answered).toMatchObject({ ok: true });
-
-    const doneSnapshot = await waitFor(
-      () => hub.snapshot() as any,
-      (value) => value.workflowStore.runs.some((run: any) => run.runId === started.runId && run.status === "completed"),
-    );
-    const doneRun = doneSnapshot.workflowStore.runs.find((item: any) => item.runId === started.runId);
-    expect(doneRun).toMatchObject({ status: "completed", finalReport: "## Final User Report\nGated workflow completed." });
-    expect(doneRun.progress.find((item: any) => item.nodeId === "work")).toMatchObject({ status: "completed" });
-    expect(doneRun.events.some((event: any) => event.type === "gate_answered" && event.nodeId === "work" && event.answer === "staging")).toBe(true);
-    // The resumed work run must see the human decision in its prompt context.
-    const resumedWorkPrompt = contexts
-      .map((context) => context.prompt)
-      .filter((prompt) => prompt.includes("Current node: Work") && prompt.includes("Human decision"))
-      .at(-1);
-    expect(resumedWorkPrompt).toContain("staging");
+    expect(pausedRun.events.some((event: any) => event.type === "gate_opened" && event.nodeId === "work")).toBe(true);
+    expect(contexts).toHaveLength(0);
   });
 
   test("persists scheduled workflow config, schedules, and run history", async () => {
@@ -4904,7 +4887,7 @@ fs.writeFileSync(${JSON.stringify(argsPath)}, process.argv.slice(2).join("\\n") 
     const hub = new AgentHub();
     await hub.loadPersistedState(storagePath);
 
-    const created = (hub as any).createWorkflow({
+    const created = createV2Workflow(hub, {
       title: "Daily repo review",
       objective: "Review repository changes every morning",
       graph: {
@@ -5041,9 +5024,19 @@ fs.writeFileSync(${JSON.stringify(argsPath)}, process.argv.slice(2).join("\\n") 
       version: "test",
       available: true,
     });
-    const created = (hub as any).createWorkflow({
+    const created = createV2Workflow(hub, {
       title: "Scheduled workflow",
       objective: "Run from scheduled event",
+      definition: {
+        workflowId: "wf_scheduled",
+        graphVersion: 1,
+        objective: "Run from scheduled event",
+        nodes: [
+          { id: "work", kind: "implementation", title: "Work", execModel: "llm",
+        executionMode: "one-shot", prompt: "Do the scheduled work.", outputFields: [{ key: "result", required: true }] },
+        ],
+        edges: [],
+      },
       graph: {
         title: "Scheduled workflow",
         objective: "Run from scheduled event",
@@ -5095,7 +5088,7 @@ fs.writeFileSync(${JSON.stringify(argsPath)}, process.argv.slice(2).join("\\n") 
     expect(snapshot.workflowStore.runs.find((run: any) => run.runId === snapshot.scheduledWorkflowStore.runs[0].workflowRunId)).toMatchObject({
       workflowId: created.workflowId,
       status: "completed",
-      finalReport: "## Final User Report\nScheduled workflow completed.",
+      finalReport: expect.stringContaining("Status: completed"),
     });
     expect(ackEvent).toHaveBeenCalledTimes(1);
     expect(ackEvent).toHaveBeenCalledWith("event_1", expect.objectContaining({
@@ -5103,11 +5096,7 @@ fs.writeFileSync(${JSON.stringify(argsPath)}, process.argv.slice(2).join("\\n") 
       workflowRunId: snapshot.scheduledWorkflowStore.runs[0].workflowRunId,
       message: "Workflow completed.",
     }));
-    expect(contexts.map((context) => (context.prompt.includes("workflow judge") ? "judge" : context.prompt.includes("main workflow agent") ? "final" : "work"))).toEqual([
-      "work",
-      "judge",
-      "final",
-    ]);
+    expect(contexts).toHaveLength(1);
   });
 
   test("rejects schedules for missing workflows", () => {
@@ -5226,6 +5215,68 @@ describe("AgentHub task runs", () => {
       ]);
   });
 
+  test("runs an internal task with an explicitly resumed runtime conversation", async () => {
+    const executorCalls: any[] = [];
+    const executorFactory: AgentExecutorFactory = {
+      create: (context: any) => ({
+        start: async () => {
+          executorCalls.push(context);
+          context.emit({ type: "delta", content: "progress report" });
+          context.emit({ type: "completed" });
+        },
+        stop: async () => undefined,
+      }),
+    };
+    const runtimeDrivers = new RuntimeDriverRegistry([
+      {
+        runtimeId: "codex",
+        surfaceSupport: [
+          support("chat", ["oneshot"], ["fresh"]),
+          support("task", ["oneshot"], ["fresh", "resume-required"]),
+        ],
+        runtimeStateCodec: codexRuntimeStateCodec,
+        getCapabilities: () => interactiveChatCapabilities("codex"),
+        createOneShotExecutor: (context: AgentExecutionContext) => executorFactory.create(context),
+      } as any,
+    ]);
+    const hub = new AgentHub(
+      { codex: "codex-for-test", claude: "missing-claude-for-test" },
+      executorFactory,
+      runtimeDrivers,
+    );
+    (hub as any).runtimes.set("codex", {
+      id: "codex",
+      label: "Codex",
+      command: "codex",
+      version: "test",
+      available: true,
+    });
+    const conversation = runtimeConversation("codex", { native: { threadId: "workflow-task-thread" } });
+
+    const snapshot = await hub.runTask({
+      prompt: "Report structured workflow progress",
+      configuredAgentId: "default-agent",
+      workDir: "/tmp/project",
+      continuationPolicy: "resume-required",
+      runtimeConversation: conversation,
+    });
+    const taskId = snapshot.activeTaskId!;
+    await waitFor(
+      () => hub.snapshot().tasks.find((item) => item.id === taskId),
+      (item) => item?.running === false,
+    );
+
+    expect(executorCalls).toHaveLength(1);
+    expect(executorCalls[0]).toMatchObject({
+      runKind: "task",
+      executionMode: "oneshot",
+      continuationPolicy: "resume-required",
+      runtimeConversation: conversation,
+      prompt: "Report structured workflow progress",
+    });
+    expect(executorCalls[0].runtimeConversation).not.toBe(conversation);
+  });
+
   test("keeps user progress separate from agent execution status", () => {
     const hub = new AgentHub();
     const task = (hub as any).createTaskState({
@@ -5267,7 +5318,7 @@ describe("AgentHub task runs", () => {
     });
     (hub as any).tasks.set(task.id, task);
     (hub as any).handleAgentEvent(task, { type: "delta", content: "Working" });
-    (hub as any).handleAgentEvent(task, { type: "meta", content: "→ shell_command\npwd" });
+    (hub as any).handleAgentEvent(task, { type: "meta", content: "鈫?shell_command\npwd" });
     (hub as any).handleAgentEvent(task, { type: "completed" });
 
     const snapshot = hub.snapshot();
@@ -5276,7 +5327,7 @@ describe("AgentHub task runs", () => {
       expect.objectContaining({
         role: "assistant",
         content: "Working",
-        events: [expect.objectContaining({ type: "meta", content: "→ shell_command\npwd" })],
+        events: [expect.objectContaining({ type: "meta", content: "鈫?shell_command\npwd" })],
       }),
     ]);
     expect(snapshot.chats[0]?.messages).toEqual([]);
@@ -5329,6 +5380,25 @@ fs.writeFileSync(${JSON.stringify(argsPath)}, process.argv.slice(2).join("\\n") 
     await hub.deleteTask(task.id);
 
     expect(await readFile(argsPath, "utf8")).toBe("archive\n019e9143-2451-7612-a62d-e65389574d7d\n");
+  });
+
+  test("can delete an internal workflow task without archiving a conversation needed for resume", async () => {
+    const hub = new AgentHub();
+    const task = (hub as any).createTaskState({
+      prompt: "Progress probe source task",
+      configuredAgentId: "default-agent",
+      workDir: "/tmp/project",
+    });
+    task.runtimeConversation = runtimeConversation("codex", {
+      native: { threadId: "workflow-resume-thread" },
+    });
+    (hub as any).tasks.set(task.id, task);
+    const deleteAgentSession = vi.spyOn(hub as any, "deleteAgentSession");
+
+    const snapshot = await hub.deleteTask(task.id, { preserveRuntimeConversation: true });
+
+    expect(snapshot.tasks.some((item) => item.id === task.id)).toBe(false);
+    expect(deleteAgentSession).not.toHaveBeenCalled();
   });
 });
 
@@ -5707,3 +5777,4 @@ describe("AgentHub agent teams", () => {
     );
   });
 });
+

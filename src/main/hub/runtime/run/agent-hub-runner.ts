@@ -2,7 +2,6 @@ import type {
   AgentEvent,
   AgentId,
   AgentRuntime,
-  AgentChannel,
   ConfiguredAgent,
   RuntimeContinuationPolicy,
   RuntimeConversation,
@@ -16,7 +15,7 @@ export type HubRunState = ChatState | TaskState;
 export interface ResolvedHubRunAgent {
   agent: ConfiguredAgent;
   runtimeAgentId: AgentId;
-  channel: AgentChannel;
+  channel: { id: string };
   modelId: string;
   reasoningEffort?: string;
   runtime: AgentRuntime | undefined;
@@ -56,12 +55,13 @@ export async function runAgentExecution(input: {
     input.markRunFailed(input.run, `${input.resolved.agent.name || input.resolved.agent.id} is not available on this machine.`);
     return;
   }
-  const surfaceInstructions =
-    input.run.kind === "task" ? input.taskDeveloperInstructions : input.chatDeveloperInstructions;
-  const agentInstructions = input.resolved.agent.instructions?.trim();
-  const developerInstructions = agentInstructions
-    ? `${surfaceInstructions}\n\n## Agent Instructions\n${agentInstructions}`
-    : surfaceInstructions;
+  const developerInstructions = input.run.kind === "task"
+    ? [
+      input.taskDeveloperInstructions,
+      input.run.developerInstructions,
+      input.run.contextDocument ? `# Runtime context\n${input.run.contextDocument}` : undefined,
+    ].filter(Boolean).join("\n\n")
+    : input.chatDeveloperInstructions;
   const executionMode =
     input.run.kind === "chat"
       ? input.selectExecutionMode(input.resolved.runtimeAgentId, "chat", "oneshot")
@@ -69,7 +69,7 @@ export async function runAgentExecution(input: {
   const continuationPolicy =
     input.run.kind === "chat"
       ? input.defaultContinuationPolicy(input.resolved.runtimeAgentId, "chat", executionMode)
-      : "fresh";
+      : input.run.continuationPolicy;
   const runtimeConversation = input.cloneConversationForPolicy(continuationPolicy, input.run.runtimeConversation);
   const executor = input.executorFactory.create({
     runId: input.run.id,
@@ -84,7 +84,6 @@ export async function runAgentExecution(input: {
     ...(runtimeConversation ? { runtimeConversation } : {}),
     runtime,
     channelId: input.resolved.channel.id,
-    channel: input.resolved.channel,
     prompt: input.prompt,
     workDir: input.workDir,
     developerInstructions,

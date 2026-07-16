@@ -1,5 +1,4 @@
 import type {
-  AgentChannel,
   AgentId,
   AgentRuntime,
   ChatRuntimeSessionState,
@@ -22,7 +21,7 @@ export interface ResolvedConfiguredAgentForInteractive {
   modelId: string;
   reasoningEffort?: string;
   runtime: AgentRuntime | undefined;
-  channel: AgentChannel;
+  channel: { id: string };
 }
 
 export function runtimeStateFromCapabilities(capabilities: RuntimeCapabilities): ChatRuntimeSessionState {
@@ -91,7 +90,6 @@ export function buildInteractiveChatContext(input: {
     ...(runtimeConversation ? { runtimeConversation } : {}),
     runtime: input.resolved.runtime as AgentRuntime,
     channelId: input.resolved.channel.id,
-    channel: input.resolved.channel,
     workDir: input.workDir,
     developerInstructions: input.developerInstructions,
     emit: input.emit,

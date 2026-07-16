@@ -3,7 +3,6 @@ import type { AgentId, AgentModelOption, ClaudeApiKeyField, RuntimeProviderApiFo
 import { CC_SWITCH_PROVIDER_PRESETS } from "./cc-switch-provider-presets.generated";
 
 export const CODEX_DEFAULT_PRESET_ID = "codex-default";
-export const CLAUDE_DEFAULT_PRESET_ID = "claude-code";
 export const CODEX_LOCAL_DEFAULT_PRESET_ID = "codex-local-default";
 export const CLAUDE_LOCAL_DEFAULT_PRESET_ID = "claude-local-default";
 export const HERMES_DEFAULT_PRESET_ID = "hermes-default";
@@ -47,7 +46,7 @@ const LEGACY_PROVIDER_PRESETS: AgentProviderPreset[] = [
     models: FALLBACK_MODEL_OPTIONS.codex,
   },
   {
-    id: CLAUDE_DEFAULT_PRESET_ID,
+    id: "claude-code",
     label: "Claude Code",
     runtimeAgentId: "claude",
     models: FALLBACK_MODEL_OPTIONS.claude,

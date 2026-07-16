@@ -51,14 +51,8 @@ export function FeatureRail({ activeFeature, theme, text, onSelectFeature, onTog
           <SlidersHorizontal size={15} />
           <span>{text.nav.agent}</span>
         </button>
-        <button className={`feature-nav-item ${activeFeature === "mcp" ? "is-active" : ""}`} onClick={() => onSelectFeature("mcp")}>
-          <Server size={15} />
-          <span>{text.nav.mcp}</span>
-        </button>
-        <button className={`feature-nav-item ${activeFeature === "evaluation" ? "is-active" : ""}`} onClick={() => onSelectFeature("evaluation")}>
-          <Beaker size={15} />
-          <span>{text.nav.evaluation}</span>
-        </button>
+        <button className={`feature-nav-item ${activeFeature === "mcp" ? "is-active" : ""}`} onClick={() => onSelectFeature("mcp")}><Server size={15} /><span>{text.nav.mcp}</span></button>
+        <button className={`feature-nav-item ${activeFeature === "evaluation" ? "is-active" : ""}`} onClick={() => onSelectFeature("evaluation")}><Beaker size={15} /><span>{text.nav.evaluation}</span></button>
         <button className={`feature-nav-item ${activeFeature === "runtimes" ? "is-active" : ""}`} onClick={() => onSelectFeature("runtimes")}>
           <Cpu size={15} />
           <span>{text.nav.runtimes}</span>

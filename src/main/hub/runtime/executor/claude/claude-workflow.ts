@@ -1,5 +1,5 @@
 import type { WorkflowAgentResponse } from "../../../../../shared/types";
-import { claudeCliModelForChannel, claudeEnvironmentForChannel } from "../../../../agents/claude/claude-env";
+import { claudeCliModelForChannel } from "../../../../agents/claude/claude-env";
 import type { ClaudeAgentSdkRunInput } from "../../../../agents/claude/claude-agent-sdk";
 import type { RuntimeWorkflowRequestContext } from "../../../../agents/runtime/runtime-driver";
 import {
@@ -18,7 +18,7 @@ export async function runClaudeWorkflow(
   options: RuntimeWorkflowExecutionOptions,
   runClaudeOneShot: (input: ClaudeAgentSdkRunInput) => Promise<void>,
 ): Promise<WorkflowAgentResponse> {
-  const channel = input.channel ?? options.channelById(input.channelId);
+  const channel = options.channelById(input.channelId);
   const sdkModel =
     claudeCliModelForChannel(channel, modelFromRuntimeConfig(input.runtimeConfig)) ?? modelFromRuntimeConfig(input.runtimeConfig);
   const resumeSessionId = claudeSessionIdFromConversation(input.runtimeConversation);
@@ -26,7 +26,11 @@ export async function runClaudeWorkflow(
   let completedContent: string | undefined;
   let runtimeConversation = input.runtimeConversation ? cloneClaudeRuntimeConversation(input.runtimeConversation) : undefined;
   let errorMessage: string | undefined;
-  const mcpServers = claudeWorkflowMcpServers(options.workflowHost?.mcpBridgeDiscoveryPath());
+  const workflowMcpServers = claudeWorkflowMcpServers(options.workflowMcpDiscoveryPath?.(), input.planningWorkflowId);
+  const abortController = new AbortController();
+  const abort = () => abortController.abort(input.signal?.reason);
+  if (input.signal?.aborted) abort();
+  else input.signal?.addEventListener("abort", abort, { once: true });
 
   try {
     await runClaudeOneShot({
@@ -34,8 +38,9 @@ export async function runClaudeWorkflow(
       cwd: input.workDir,
       ...(sdkModel ? { modelId: sdkModel } : {}),
       developerInstructions: WORKFLOW_DEVELOPER_INSTRUCTIONS,
+      ...(workflowMcpServers ? { mcpServers: workflowMcpServers } : {}),
+      abortController,
       ...(resumeSessionId ? { resumeSessionId } : {}),
-      ...(mcpServers ? { mcpServers } : {}),
       onEvent: (event) => {
         if (event.type === "delta") {
           content += event.content;
@@ -56,7 +61,6 @@ export async function runClaudeWorkflow(
           input.onEvent?.({ requestId: input.requestId, type: "error", error: event.error });
         }
       },
-      env: claudeEnvironmentForChannel(channel, modelFromRuntimeConfig(input.runtimeConfig)),
     });
   } catch (error) {
     throw errorMessage
@@ -64,7 +68,7 @@ export async function runClaudeWorkflow(
       : error instanceof Error
         ? error
         : new Error(String(error));
-  }
+  } finally { input.signal?.removeEventListener("abort", abort); }
 
   const finalContent = completedContent?.trim() || content.trim();
   if (!finalContent) {

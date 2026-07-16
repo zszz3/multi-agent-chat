@@ -2,7 +2,7 @@ import { Client } from "@modelcontextprotocol/sdk/client/index.js";
 import { StdioClientTransport } from "@modelcontextprotocol/sdk/client/stdio.js";
 import { StreamableHTTPClientTransport } from "@modelcontextprotocol/sdk/client/streamableHttp.js";
 import type { Transport } from "@modelcontextprotocol/sdk/shared/transport.js";
-import type { McpServerDefinition, McpToolDefinition } from "../shared/types";
+import type { McpServerDefinition, McpToolDefinition } from "../shared/mcp/types";
 
 export async function discoverMcpTools(server: McpServerDefinition): Promise<McpToolDefinition[]> {
   const client = new Client({ name: "multi-agent-chat", version: "0.0.1" });

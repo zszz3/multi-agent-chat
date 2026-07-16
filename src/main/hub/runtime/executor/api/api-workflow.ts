@@ -8,7 +8,7 @@ export async function runApiWorkflow(
   input: RuntimeWorkflowRequestContext,
   options: RuntimeAgentExecutorFactoryOptions,
 ): Promise<WorkflowAgentResponse> {
-  const channel = input.channel ?? options.channelById(input.channelId);
+  const channel = options.channelById(input.channelId);
   if (!channel?.baseUrl) throw new Error("API workflow agent requires a provider base URL");
   const model = resolveApiModel(channel, input.runtimeConfig.model);
   if (!model) throw new Error("API workflow agent requires a model");
@@ -20,6 +20,7 @@ export async function runApiWorkflow(
       ...(channel.httpHeaders ?? {}),
     },
     body: JSON.stringify(apiRequestBody(channel, model, input.prompt, WORKFLOW_DEVELOPER_INSTRUCTIONS)),
+    ...(input.signal ? { signal: input.signal } : {}),
   });
   const text = await response.text();
   if (!response.ok) throw new Error(`API workflow request failed (${response.status}): ${text.slice(0, 800)}`);

@@ -10,52 +10,60 @@ import { startMcpBridge, type McpBridgeServer } from "../bridges/mcp-bridge";
 import { ScheduledWorkflowCloudClient, type ScheduledWorkflowCloudEventConnection } from "../workflows/scheduled-workflow-cloud";
 import { deleteImportedSkillFromLibrary, importOnlineSkillToLibrary, installBundledSkill, uninstallBundledSkill } from "../skills/skill-installer";
 import { loadBundledWorkflows } from "../workflows/bundled-workflows";
+import { loadClaudeDefaultConfig, loadCodexDefaultConfig } from "../channels/model-config";
 import { OfficialCatalogStore } from "../official-catalog-store";
 import { UserSkillStore } from "../user-skill-store";
 import { SkillCategoryStore } from "../skill-category-store";
-import { McpRegistryStore } from "../mcp-registry-store";
-import { discoverMcpTools } from "../mcp-client";
-import { EvaluationStore } from "../evaluation-store";
-import { runEvaluation } from "../evaluation-runner";
+import { PlatformServices } from "../platform/platform-services";
 import { centeredWindowBounds } from "../platform/window-bounds";
 import { resolveBundledWorkflowsPath, resolvePreloadBundlePath } from "./app-paths";
 import { fetchOnlineSkills, ONLINE_SKILL_SOURCES } from "../../shared/online-skills";
 import { SKILL_TEMPLATES } from "../../shared/skill-templates";
 import { DEFAULT_SCHEDULED_WORKFLOW_CLOUD_BASE_URL } from "../../shared/types";
+import { mcpToolDefinitions } from "../../mcp/server";
+import { existsSync } from "node:fs";
+import { readFile } from "node:fs/promises";
 import type {
   AgentChannel,
   AgentId,
   AssignSkillCategoryRequest,
   AckScheduledWorkflowEventRequest,
   AppSnapshot,
+  BuildWorkflowV2GraphRevisionRequest,
+  BuildWorkflowV2PlanRequest,
   CodexDefaultConfig,
   ClaudeDefaultConfig,
   ConfiguredAgent,
+  ConfirmWorkflowRequest,
+  ReviewWorkflowRequest,
+  InterruptWorkflowReviewRequest,
   CreateWorkflowDraftRequest,
   CreateScheduledWorkflowScheduleRequest,
   CreateAgentTeamRequest,
   FinishWorkflowRunRequest,
+  CompleteWorkflowNodeConversationRequest,
+  InterruptWorkflowNodeConversationRequest,
+  RejectWorkflowNodeCompletionRequest,
+  SendWorkflowNodeMessageRequest,
   ImportOnlineSkillRequest,
   InstallSkillRequest,
-  McpServerDefinition,
-  EvaluationDataset,
-  EvaluationEvaluator,
-  EvaluationExperiment,
-  EvaluationRun,
   PatchWorkflowDraftRequest,
   AnswerWorkflowGateRequest,
+  SubmitWorkflowScriptInputRequest,
   PauseWorkflowNodeRequest,
+  ResolveWorkflowV2InterventionRequest,
   RunAgentTeamRequest,
-  RunWorkflowGraphRequest,
+  RunWorkflowRequest,
+  ListWorkflowOutputsRequest,
   RunTaskRequest,
   SendWorkflowDraftReplyRequest,
   StartWorkflowNodeRequest,
+  StopWorkflowRunRequest,
   ScheduledWorkflowRun,
   ScheduledWorkflowRunnerConfig,
   ScheduledWorkflowRunnerStatus,
   ScheduledWorkflowSchedule,
   ScheduledWorkflowDueEvent,
-  StartWorkflowRunRequest,
   TaskProgress,
   UninstallSkillRequest,
   UpdateAgentTeamRequest,
@@ -77,14 +85,19 @@ const hub = new AgentHub();
 const officialCatalog = new OfficialCatalogStore(path.join(app.getPath("userData"), OFFICIAL_CATALOG_DATABASE_FILE));
 const userSkillStore = new UserSkillStore(path.join(app.getPath("userData"), APP_DATABASE_FILE));
 const skillCategoryStore = new SkillCategoryStore(path.join(app.getPath("userData"), APP_DATABASE_FILE));
-const mcpRegistryStore = new McpRegistryStore(path.join(app.getPath("userData"), APP_DATABASE_FILE));
-const evaluationStore = new EvaluationStore(path.join(app.getPath("userData"), APP_DATABASE_FILE));
+const platformServices = new PlatformServices(path.join(app.getPath("userData"), APP_DATABASE_FILE), {
+  homeDir: () => app.getPath("home"), appDataDir: () => app.getPath("appData"), workDir: () => hub.getWorkDir(),
+  serverPath: () => path.join(__dirname, "mcp-server.js"),
+  bridgePath: () => mcpBridge?.discoveryPath ?? path.join(app.getPath("appData"), "multi-agent-chat", MCP_BRIDGE_FILE),
+  bridgeRunning: () => Boolean(mcpBridge), workflowCreateAvailable: () => mcpToolDefinitions().some((tool) => tool.name === "workflow_create"),
+});
 
 let mainWindow: BrowserWindow | null = null;
 let ipcRegistered = false;
 let mcpBridge: McpBridgeServer | undefined;
 let codexChatRouter: CodexChatRouterServer | undefined;
 let keepAwakeBlockerId: number | undefined;
+let quitAfterFlush = false;
 const scheduledWorkflowCloudClient = new ScheduledWorkflowCloudClient();
 let scheduledWorkflowEventConnection: ScheduledWorkflowCloudEventConnection | undefined;
 
@@ -281,7 +294,8 @@ async function bootstrap(): Promise<void> {
     discoveryPath: process.env.MULTI_AGENT_CHAT_MCP_BRIDGE || path.join(app.getPath("appData"), "multi-agent-chat", MCP_BRIDGE_FILE),
     bundledSkillsRoot: path.join(app.getPath("userData"), "bundled-skills"),
   });
-  hub.setMcpBridgeDiscoveryPath(mcpBridge.discoveryPath);
+
+  hub.setWorkflowMcpDiscoveryPath(mcpBridge.discoveryPath);
 
   registerIpcHandlers();
   hub.onChange((snapshot) => mainWindow?.webContents.send("snapshot:changed", snapshot));
@@ -298,6 +312,7 @@ async function bootstrap(): Promise<void> {
 function registerIpcHandlers(): void {
   if (ipcRegistered) return;
   ipcRegistered = true;
+  platformServices.registerIpc({ ipc: ipcMain, agents: () => hub.listConfiguredAgents(), channels: () => hub.snapshot().channels, defaultWorkDir: () => hub.getWorkDir(), executeRuntime: (request) => hub.askWorkflowAgent(request), saveAgent: (agent) => hub.updateConfiguredAgents([...hub.listConfiguredAgents().filter((item) => item.id !== agent.id), agent]) });
   ipcMain.handle("snapshot:get", () => hub.snapshot());
   ipcMain.handle("agents:refresh", async () => hub.refreshAgents());
   ipcMain.handle("chat:create", (_event, configuredAgentId?: string) => {
@@ -323,63 +338,15 @@ function registerIpcHandlers(): void {
   });
   ipcMain.handle("model-channels:save", async (_event, channels: AgentChannel[]) => hub.saveModelChannels(channels));
   ipcMain.handle("configured-agents:save", async (_event, agents: ConfiguredAgent[]) => hub.updateConfiguredAgents(agents));
-  ipcMain.handle("configured-agents:save-composed", async (_event, agent: ConfiguredAgent) => hub.saveComposedAgent(agent));
-  ipcMain.handle("configured-agents:revisions:list", async (_event, agentId?: string) => hub.listAgentRevisions(agentId));
   ipcMain.handle("configured-agents:test", async (event, agentId: string) =>
     hub.testConfiguredAgent(agentId, (agentEvent) => event.sender.send("configured-agents:test-event", agentEvent)),
   );
-  ipcMain.handle("mcp:list", () => mcpRegistryStore.list());
-  ipcMain.handle("mcp:upsert", (_event, server: McpServerDefinition) => mcpRegistryStore.upsert(server));
-  ipcMain.handle("mcp:delete", (_event, serverId: string) => mcpRegistryStore.delete(serverId));
-  ipcMain.handle("mcp:test", async (_event, server: McpServerDefinition) => {
-    try {
-      return await mcpRegistryStore.recordTest(server, await discoverMcpTools(server));
-    } catch (error) {
-      return mcpRegistryStore.recordTest(server, [], error instanceof Error ? error.message : String(error));
-    }
-  });
-  ipcMain.handle("evaluation:datasets:list", () => evaluationStore.listDatasets());
-  ipcMain.handle("evaluation:datasets:save", (_event, value: EvaluationDataset) => evaluationStore.saveDataset(value));
-  ipcMain.handle("evaluation:datasets:delete", (_event, id: string) => evaluationStore.deleteDataset(id));
-  ipcMain.handle("evaluation:evaluators:list", () => evaluationStore.listEvaluators());
-  ipcMain.handle("evaluation:evaluators:save", (_event, value: EvaluationEvaluator) => evaluationStore.saveEvaluator(value));
-  ipcMain.handle("evaluation:evaluators:delete", (_event, id: string) => evaluationStore.deleteEvaluator(id));
-  ipcMain.handle("evaluation:experiments:list", () => evaluationStore.listExperiments());
-  ipcMain.handle("evaluation:experiments:save", (_event, value: EvaluationExperiment) => evaluationStore.saveExperiment(value));
-  ipcMain.handle("evaluation:experiments:delete", (_event, id: string) => evaluationStore.deleteExperiment(id));
-  ipcMain.handle("evaluation:runs:list", (_event, experimentId?: string) => evaluationStore.listRuns(experimentId));
-  ipcMain.handle("evaluation:runs:delete", (_event, id: string) => evaluationStore.deleteRun(id));
-  ipcMain.handle("evaluation:runs:save", (_event, value: EvaluationRun) => evaluationStore.saveRun(value));
-  ipcMain.handle("evaluation:experiments:run", async (_event, experimentId: string) => {
-    const experiment = (await evaluationStore.listExperiments()).find((item) => item.id === experimentId);
-    if (!experiment) throw new Error("Experiment not found");
-    const dataset = (await evaluationStore.listDatasets()).find((item) => item.id === experiment.datasetId);
-    if (!dataset) throw new Error("Dataset not found");
-    const evaluators = await evaluationStore.listEvaluators();
-    const snapshot = hub.snapshot();
-    const agent = snapshot.configuredAgents.find((item) => item.id === experiment.agentId);
-    const run = await runEvaluation({
-      experiment,
-      dataset,
-      evaluators,
-      ...(agent?.currentRevisionId ? { agentRevisionId: agent.currentRevisionId } : {}),
-      execute: (agentId, prompt) => hub.executeEvaluationAgent(agentId, prompt),
-      executeJudge: (runtimeId, prompt) => {
-        const executionAgent = snapshot.configuredAgents.find(
-          (item) => (item.agentType === "execution" || item.managed) && item.channelId === runtimeId,
-        );
-        if (!executionAgent) throw new Error(`Runtime ${runtimeId} does not have an execution Agent`);
-        return hub.executeEvaluationAgent(executionAgent.id, prompt);
-      },
-    });
-    return evaluationStore.saveRun(run);
-  });
   ipcMain.handle("runtime-channels:test", async (event, channelId: string) =>
     hub.testRuntimeChannel(channelId, (agentEvent) => event.sender.send("configured-agents:test-event", agentEvent)),
   );
   ipcMain.handle("runtime-channels:balance", async (_event, channelId: string) => hub.queryRuntimeChannelBalance(channelId));
-  ipcMain.handle("runtime-channels:load-codex-default", async (): Promise<CodexDefaultConfig> => hub.loadCodexDefaultConfig());
-  ipcMain.handle("runtime-channels:load-claude-default", async (): Promise<ClaudeDefaultConfig> => hub.loadClaudeDefaultConfig());
+  ipcMain.handle("runtime-channels:load-codex-default", async (): Promise<CodexDefaultConfig> => loadCodexDefaultConfig());
+  ipcMain.handle("runtime-channels:load-claude-default", async (): Promise<ClaudeDefaultConfig> => loadClaudeDefaultConfig());
   ipcMain.handle("runtime-channels:import-local", async (_event, runtimeId: AgentId, channelId?: string) =>
     hub.importRuntimeLocalConfig(runtimeId, channelId));
   ipcMain.handle("runtime-channels:refresh-models", async (_event, channelId: string) => hub.refreshModelCatalog(channelId));
@@ -413,7 +380,7 @@ function registerIpcHandlers(): void {
     const result = mainWindow ? await dialog.showOpenDialog(mainWindow, options) : await dialog.showOpenDialog(options);
     return result.canceled ? undefined : result.filePaths[0];
   });
-  ipcMain.handle("workflow:outputs:list", (_event, workflowId: string) => hub.listWorkflowOutputs(workflowId));
+  ipcMain.handle("workflow:outputs:list", (_event, request: ListWorkflowOutputsRequest) => hub.listWorkflowOutputs(request));
   ipcMain.handle("file:read-text", async (_event, filePath: string) =>
     createLocalTextFilePreviewUnderRoots(filePath, hub.allowedFileRoots(), app.getPath("home")),
   );
@@ -471,21 +438,31 @@ function registerIpcHandlers(): void {
   );
   ipcMain.handle("workflow:draft:create", (_event, request?: CreateWorkflowDraftRequest) => hub.createWorkflowDraft(request));
   ipcMain.handle("workflow:draft:patch", (_event, request: PatchWorkflowDraftRequest) => hub.patchWorkflowDraft(request));
+  ipcMain.handle("workflow-v2:plan", (_event, request: BuildWorkflowV2PlanRequest) => hub.buildWorkflowV2Plan(request));
+  ipcMain.handle("workflow-v2:graph-revision", (_event, request: BuildWorkflowV2GraphRevisionRequest) => hub.buildWorkflowV2GraphRevision(request));
   ipcMain.handle("workflow:draft:reset-session", (_event, workflowId: string) => hub.resetWorkflowDraftSession(workflowId));
   ipcMain.handle("workflow:draft:send-reply", async (_event, request: SendWorkflowDraftReplyRequest) => hub.sendWorkflowDraftReply(request));
   ipcMain.handle("workflow:draft:abandon", (_event, workflowId: string) => hub.abandonWorkflowDraftReply(workflowId));
   ipcMain.handle("workflow:draft:update", (_event, draft?: WorkflowDraftState) => hub.updateWorkflowDraft(draft));
   ipcMain.handle("workflow:select", (_event, workflowId: string) => hub.selectWorkflow(workflowId));
   ipcMain.handle("workflow:rename", (_event, workflowId: string, title: string) => hub.renameWorkflow(workflowId, title));
-  ipcMain.handle("workflow:delete", (_event, workflowId: string) => hub.deleteWorkflow(workflowId));
-  ipcMain.handle("workflow-run:run-graph", (_event, request: RunWorkflowGraphRequest) => hub.runWorkflowGraph(request));
+ipcMain.handle("workflow:delete", (_event, workflowId: string) => hub.deleteWorkflow(workflowId));
+ipcMain.handle("workflow:confirm", (_event, request: ConfirmWorkflowRequest) => hub.confirmWorkflow(request));
+  ipcMain.handle("workflow:review", (_event, request: ReviewWorkflowRequest) => hub.reviewWorkflow(request));
+  ipcMain.handle("workflow:review:interrupt", (_event, request: InterruptWorkflowReviewRequest) => hub.interruptWorkflowReview(request));
+ipcMain.handle("workflow-run:start", (_event, request: RunWorkflowRequest) => hub.runWorkflow(request));
   ipcMain.handle("workflow-run:pause-node", (_event, request: PauseWorkflowNodeRequest) => hub.pauseWorkflowNode(request));
+  ipcMain.handle("workflow-run:stop", (_event, request: StopWorkflowRunRequest) => hub.stopWorkflowRun(request));
+  ipcMain.handle("workflow-v2:intervention:resolve", (_event, request: ResolveWorkflowV2InterventionRequest) =>
+    hub.resolveWorkflowV2Intervention(request),
+  );
+  ipcMain.handle("workflow-node-conversation:send", (_event, request: SendWorkflowNodeMessageRequest) => hub.sendWorkflowNodeMessage(request));
+  ipcMain.handle("workflow-node-conversation:complete", (_event, request: CompleteWorkflowNodeConversationRequest) => hub.completeWorkflowNodeConversation(request));
+  ipcMain.handle("workflow-node-conversation:reject", (_event, request: RejectWorkflowNodeCompletionRequest) => hub.rejectWorkflowNodeCompletion(request));
+  ipcMain.handle("workflow-node-conversation:interrupt", (_event, request: InterruptWorkflowNodeConversationRequest) => hub.interruptWorkflowNodeConversation(request));
   ipcMain.handle("workflow-run:start-node", (_event, request: StartWorkflowNodeRequest) => hub.startWorkflowNode(request));
   ipcMain.handle("workflow-run:answer-gate", (_event, request: AnswerWorkflowGateRequest) => hub.answerWorkflowGate(request));
-  ipcMain.handle("workflow-run:start", (_event, request: StartWorkflowRunRequest) => {
-    hub.startWorkflowRun(request);
-    return hub.snapshot();
-  });
+  ipcMain.handle("workflow-run:submit-script-input", (_event, request: SubmitWorkflowScriptInputRequest) => hub.submitWorkflowScriptInput(request));
   ipcMain.handle("workflow-run:finish", (_event, request: FinishWorkflowRunRequest) => {
     hub.finishWorkflowRun(request);
     return hub.snapshot();
@@ -598,16 +575,22 @@ function registerIpcHandlers(): void {
 
 void bootstrap();
 
-app.on("before-quit", () => {
+app.on("before-quit", (event) => {
+  if (!quitAfterFlush) {
+    event.preventDefault();
+    void hub.flushPersistence().finally(() => {
+      quitAfterFlush = true;
+      app.quit();
+    });
+    return;
+  }
   setKeepAwake(false);
-  void hub.flushPersistence();
   scheduledWorkflowEventConnection?.close();
   void codexChatRouter?.stop();
   void mcpBridge?.stop();
   officialCatalog.close();
+  platformServices.close();
   userSkillStore.close();
-  mcpRegistryStore.close();
-  evaluationStore.close();
   skillCategoryStore.close();
 });
 

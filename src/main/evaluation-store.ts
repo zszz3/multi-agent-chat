@@ -6,8 +6,8 @@ import type {
   EvaluationEvaluator,
   EvaluationExperiment,
   EvaluationRun,
-} from "../shared/types";
-import { createNormalizedSchema } from "./hub/persisted/sqlite-schema";
+} from "../shared/evaluation/types";
+import { ensureEvaluationSchema } from "./evaluation/schema";
 const require = createRequire(import.meta.url);
 interface Stmt {
   all(...p: unknown[]): unknown[];
@@ -378,7 +378,7 @@ export class EvaluationStore {
     const db = new DatabaseSync(this.dbPath);
     db.exec("pragma journal_mode=WAL");
     db.exec("pragma foreign_keys=ON");
-    createNormalizedSchema(db);
+    ensureEvaluationSchema(db);
     this.db = db;
     return db;
   }
