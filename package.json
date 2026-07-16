@@ -3,7 +3,7 @@
   "productName": "Multi Agent Chat",
   "version": "0.0.1",
   "private": true,
-  "description": "Local desktop demo for chatting with multiple agent CLIs.",
+  "description": "Local-first desktop workspace for multi-runtime agents, Workflow V2, MCP, skills, and evaluations.",
   "main": "out/main/index.js",
   "type": "module",
   "engines": {
