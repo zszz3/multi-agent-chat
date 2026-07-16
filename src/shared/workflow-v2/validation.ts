@@ -22,6 +22,7 @@ const VALID_SCRIPT_RISKS = new Set(["safe", "read", "write", "dangerous"]);
 const VALID_SUMMARY_FALLBACK_POLICIES = new Set(["truncate", "summarize", "ask_human"]);
 const VALID_MODEL_PROFILES = new Set(["fast", "balanced", "expert"]);
 const VALID_NODE_ROLES = new Set(["orchestrator", "executor", "reviewer"]);
+const VALID_WORKFLOW_VALUE_TYPES = new Set(["string", "number", "boolean", "json", "secret", "file", "directory"]);
 
 export function isSafeInteger(value: unknown): value is number {
   return Number.isSafeInteger(value);
@@ -147,6 +148,9 @@ function appendNodeValidationErrors(node: WorkflowV2Node, errors: string[]): voi
       }
       if (outputFieldKeys.has(outputField.key)) errors.push(`Workflow V2 node ${node.id} has duplicate output field key ${outputField.key}.`);
       outputFieldKeys.add(outputField.key);
+      if (outputField.valueType !== undefined && !VALID_WORKFLOW_VALUE_TYPES.has(outputField.valueType)) {
+        errors.push(`Workflow V2 node ${node.id} output field ${outputField.key} has unsupported value type ${String(outputField.valueType)}.`);
+      }
     }
   }
 
@@ -243,9 +247,11 @@ function topologicalOrder(definition: WorkflowV2Definition, errors: string[]): s
   return orderedNodeIds;
 }
 
-function appendUpstreamScriptParameterValidationErrors(definition: WorkflowV2Definition, errors: string[]): void {
+function appendUpstreamScriptParameterValidationErrors(definition: WorkflowV2Definition, errors: string[], warnings: string[]): void {
   const nodesById = new Map(definition.nodes.map((node) => [node.id, node]));
   const directEdges = new Set(definition.edges.map((edge) => JSON.stringify([edge.fromNodeId, edge.toNodeId])));
+  const consumerTypeByOutput = new Map<string, string>();
+  const warnedUntypedOutputs = new Set<string>();
 
   for (const node of definition.nodes) {
     if (node.execModel !== "script" || !isRecord(node.script) || !Array.isArray(node.script.parameters)) continue;
@@ -270,8 +276,30 @@ function appendUpstreamScriptParameterValidationErrors(definition: WorkflowV2Def
       if (!directEdges.has(JSON.stringify([upstreamNodeId, node.id]))) {
         errors.push(`Workflow V2 script node ${node.id} upstream parameter ${parameterKey} must reference a direct upstream node, but ${upstreamNodeId} is not connected to ${node.id}.`);
       }
-      if (!Array.isArray(upstreamNode.outputFields) || !upstreamNode.outputFields.some((field) => field.key === upstreamOutputKey)) {
+      const outputField = Array.isArray(upstreamNode.outputFields)
+        ? upstreamNode.outputFields.find((field) => field.key === upstreamOutputKey)
+        : undefined;
+      if (!outputField) {
         errors.push(`Workflow V2 script node ${node.id} upstream parameter ${parameterKey} references output ${upstreamOutputKey}, which is not declared by node ${upstreamNodeId}.`);
+        continue;
+      }
+
+      const outputBindingKey = JSON.stringify([upstreamNodeId, upstreamOutputKey]);
+      const parameterValueType = typeof parameter.valueType === "string" ? parameter.valueType : "";
+      const existingConsumerType = consumerTypeByOutput.get(outputBindingKey);
+      if (existingConsumerType && existingConsumerType !== parameterValueType) {
+        errors.push(`Workflow V2 output ${upstreamNodeId}.${upstreamOutputKey} has conflicting downstream value types ${existingConsumerType} and ${parameterValueType}.`);
+      } else if (parameterValueType) {
+        consumerTypeByOutput.set(outputBindingKey, parameterValueType);
+      }
+
+      if (outputField.valueType === undefined) {
+        if (!warnedUntypedOutputs.has(outputBindingKey)) {
+          warnings.push(`Workflow V2 node ${upstreamNodeId} output field ${upstreamOutputKey} should declare valueType because a downstream script consumes it.`);
+          warnedUntypedOutputs.add(outputBindingKey);
+        }
+      } else if (outputField.valueType !== parameterValueType) {
+        errors.push(`Workflow V2 node ${upstreamNodeId} output field ${upstreamOutputKey} has value type ${outputField.valueType}, but script node ${node.id} parameter ${parameterKey} requires ${parameterValueType}.`);
       }
     }
   }
@@ -297,7 +325,7 @@ export function validateWorkflowV2Definition(definition: WorkflowV2Definition): 
   }
 
   const topologicalNodeIds = topologicalOrder(definition, errors);
-  appendUpstreamScriptParameterValidationErrors(definition, errors);
+  appendUpstreamScriptParameterValidationErrors(definition, errors, warnings);
   const terminalNodeIds = listWorkflowV2TerminalNodeIds(definition);
   if (terminalNodeIds.length !== 1) {
     errors.push(`Workflow V2 definition must have exactly one terminal node, found ${terminalNodeIds.length}.`);

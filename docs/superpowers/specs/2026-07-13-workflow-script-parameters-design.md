@@ -16,6 +16,8 @@ At node readiness time the runtime resolves non-user sources from frozen workflo
 
 An `upstream` parameter must reference a direct predecessor with `upstreamNodeId` and an exact key from that node's `outputFields` with `upstreamOutputKey`. Its value comes from the result packet's `outputs` object, never `summary`. Validation rejects missing nodes, non-direct bindings, and undeclared output keys before execution.
 
+For an Agent node with a direct downstream script, the frozen TaskPacket includes each consumed output key plus the downstream parameter key, location, value type, required flag, and description. The Agent uses this producer-consumer contract to shape its `outputs` before the script runs. Output fields may declare `valueType`; declared types must match all consuming script parameters.
+
 Submitted values are type-validated, stored as run-scoped node input, and shown in node history. Secrets use the secret facility and persist only redacted metadata.
 
 ## UI

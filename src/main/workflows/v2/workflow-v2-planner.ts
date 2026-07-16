@@ -9,6 +9,7 @@ import type {
 import {
   createWorkflowV2TaskPacket,
   DEFAULT_WORKFLOW_V2_CONTEXT_BUDGET,
+  deriveWorkflowV2DownstreamRequirements,
   deriveWorkflowV2DirectUpstreamDigest,
   deriveWorkflowV2AcceptanceCriteria,
   resolveWorkflowV2NodeModelProfile,
@@ -153,6 +154,7 @@ export function buildWorkflowV2PlanSync(input: BuildWorkflowV2PlanRequest): Work
     if (!node) throw new WorkflowV2PlanBuildError(`Workflow V2 planner lost node ${nodeId} during topological planning.`);
 
     const upstreamDigest = deriveWorkflowV2DirectUpstreamDigest(frozenDefinition, node.id);
+    const downstreamRequirements = deriveWorkflowV2DownstreamRequirements(frozenDefinition, node.id);
     const taskPacket = createWorkflowV2TaskPacket({
       node,
       workflowObjective: objective,
@@ -160,6 +162,7 @@ export function buildWorkflowV2PlanSync(input: BuildWorkflowV2PlanRequest): Work
       roleRoutes: roleDefaults,
       defaultContextBudget: budget.context,
       upstreamDigest,
+      downstreamRequirements,
       ...(budget.cost ? { costBudget: budget.cost } : {}),
     });
 

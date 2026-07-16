@@ -9,6 +9,8 @@ import type {
   WorkflowV2NodeRole,
   WorkflowV2OutputFieldDef,
   WorkflowV2ScriptCapability,
+  WorkflowV2ScriptParameterLocation,
+  WorkflowV2ScriptParameterValueType,
   WorkflowV2ScriptRiskLevel,
 } from "./definition";
 import { isWorkflowV2ModelProfile, isWorkflowV2NodeRole } from "./validation";
@@ -58,6 +60,7 @@ export interface WorkflowV2TaskPacket {
   constraints: WorkflowV2ConstraintDef[];
   upstreamDigest: WorkflowV2UpstreamDigest[];
   outputFields: WorkflowV2OutputFieldDef[];
+  downstreamRequirements?: WorkflowV2DownstreamRequirement[];
   budget: WorkflowV2BudgetEnvelope;
 }
 
@@ -91,6 +94,18 @@ export interface WorkflowV2PlanNode {
     capabilityDigest: string;
     reviewedRevision: number;
   };
+}
+
+export interface WorkflowV2DownstreamRequirement {
+  downstreamNodeId: string;
+  downstreamNodeTitle: string;
+  parameterKey: string;
+  parameterLabel: string;
+  upstreamOutputKey: string;
+  location: WorkflowV2ScriptParameterLocation;
+  valueType: WorkflowV2ScriptParameterValueType;
+  required: boolean;
+  description?: string;
 }
 
 export interface WorkflowV2Plan {
@@ -183,6 +198,7 @@ export function createWorkflowV2TaskPacket(input: {
   roleRoutes: Record<WorkflowV2NodeRole, WorkflowV2RoleRoute>;
   defaultContextBudget: WorkflowV2ContextBudget;
   upstreamDigest?: WorkflowV2UpstreamDigest[];
+  downstreamRequirements?: WorkflowV2DownstreamRequirement[];
   costBudget?: WorkflowV2CostBudget;
 }): WorkflowV2TaskPacket {
   const role = resolveWorkflowV2NodeRole(input.node);
@@ -194,6 +210,7 @@ export function createWorkflowV2TaskPacket(input: {
   };
   const nodeAcceptanceCriteria = deriveWorkflowV2NodeAcceptanceCriteria(input.node);
   const upstreamDigest = (input.upstreamDigest ?? []).slice(0, budget.context.maxUpstreamNodes ?? input.upstreamDigest?.length);
+  const downstreamRequirements = input.downstreamRequirements ?? [];
 
   return {
     nodeId: input.node.id,
@@ -209,8 +226,35 @@ export function createWorkflowV2TaskPacket(input: {
     constraints: input.node.execModel === "llm" ? [...(input.node.constraints ?? [])] : [],
     upstreamDigest: upstreamDigest.map(cloneUpstreamDigest),
     outputFields: input.node.outputFields.map((field) => ({ ...field })),
+    ...(downstreamRequirements.length > 0 ? { downstreamRequirements: downstreamRequirements.map((requirement) => ({ ...requirement })) } : {}),
     budget,
   };
+}
+
+export function deriveWorkflowV2DownstreamRequirements(
+  definition: WorkflowV2Definition,
+  nodeId: string,
+): WorkflowV2DownstreamRequirement[] {
+  const directDownstreamNodeIds = new Set(definition.edges
+    .filter((edge) => edge.fromNodeId === nodeId)
+    .map((edge) => edge.toNodeId));
+
+  return definition.nodes.flatMap((node) => {
+    if (node.execModel !== "script" || !directDownstreamNodeIds.has(node.id)) return [];
+    return node.script.parameters
+      .filter((parameter) => parameter.source === "upstream" && parameter.upstreamNodeId === nodeId && Boolean(parameter.upstreamOutputKey))
+      .map((parameter) => ({
+        downstreamNodeId: node.id,
+        downstreamNodeTitle: node.title,
+        parameterKey: parameter.key,
+        parameterLabel: parameter.label,
+        upstreamOutputKey: parameter.upstreamOutputKey!,
+        location: parameter.location,
+        valueType: parameter.valueType,
+        required: parameter.required,
+        ...(parameter.description ? { description: parameter.description } : {}),
+      }));
+  });
 }
 
 export function deriveWorkflowV2DirectUpstreamDigest(

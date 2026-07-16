@@ -1,7 +1,7 @@
 import type { AppSnapshot, WorkflowV2InterventionAction } from "../../../shared/types";
 import { DEFAULT_MODEL_ID } from "../../../shared/models";
 import type { WorkflowDraftState } from "../../../shared/workflow/draft";
-import type { WorkflowV2ContextBudget, WorkflowV2LLMNode, WorkflowV2ScriptNode } from "../../../shared/workflow-v2/definition";
+import type { WorkflowV2ContextBudget, WorkflowV2LLMNode, WorkflowV2OutputFieldDef, WorkflowV2ScriptNode } from "../../../shared/workflow-v2/definition";
 import type { WorkflowV2ResultPacket, WorkflowV2TaskPacket } from "../../../shared/workflow-v2/planning";
 import { isValidWorkflowV2ContextBudget, isValidWorkflowV2CostBudget } from "../../../shared/workflow-v2/validation";
 
@@ -9,6 +9,15 @@ export interface WorkflowV2LlmNodeMessages {
   prompt: string;
   developerInstructions: string;
   contextDocument: string;
+}
+
+function workflowV2OutputExample(field: WorkflowV2OutputFieldDef, taskPacket: WorkflowV2TaskPacket): unknown {
+  const valueType = field.valueType
+    ?? taskPacket.downstreamRequirements?.find((requirement) => requirement.upstreamOutputKey === field.key)?.valueType;
+  if (valueType === "number") return 0;
+  if (valueType === "boolean") return true;
+  if (valueType === "json") return {};
+  return "value";
 }
 
 export function configuredAgentModelId(workflow: WorkflowDraftState, snapshot: AppSnapshot): string {
@@ -115,12 +124,13 @@ export function workflowV2LlmNodePrompt(input: {
     "",
     input.storagePlanDocument,
     "",
-    "Populate outputs using the exact keys declared in taskPacket.outputFields. Downstream source=upstream script bindings read only outputs[key], never summary.",
+    "Populate outputs using the exact keys and value types declared in taskPacket.outputFields.",
+    "When taskPacket.downstreamRequirements is present, satisfy every listed downstream script parameter contract. These bindings read only outputs[upstreamOutputKey], never summary.",
     "Return only one structured JSON worker-output packet when the node can complete:",
     JSON.stringify({
       nodeId: input.node.id,
       summary: "concise summary",
-      outputs: Object.fromEntries(input.node.outputFields.map((field) => [field.key, "value"])),
+      outputs: Object.fromEntries(input.taskPacket.outputFields.map((field) => [field.key, workflowV2OutputExample(field, input.taskPacket)])),
       evidence: ["optional evidence"],
       risks: ["optional risk"],
       nextStepSuggestions: ["optional suggestion"],

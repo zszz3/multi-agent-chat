@@ -3,6 +3,7 @@ import type { WorkflowV2Definition } from "./definition";
 import {
   createWorkflowV2TaskPacket,
   deriveWorkflowV2AcceptanceCriteria,
+  deriveWorkflowV2DownstreamRequirements,
   resolveWorkflowV2NodeModelProfile,
   resolveWorkflowV2NodeRole,
   workflowV2DefaultRoleRoutes,
@@ -127,5 +128,46 @@ describe("workflow-v2 planning contracts", () => {
         context: { maxContextTokens: 2000, maxEvidenceItems: 6 },
       },
     });
+  });
+
+  test("adds direct downstream script requirements to an agent task packet", () => {
+    const graph = definition();
+    graph.nodes.push({
+      id: "publish",
+      kind: "publish",
+      title: "Publish",
+      execModel: "script",
+      executionMode: "script",
+      outputFields: [{ key: "published", required: true, valueType: "boolean" }],
+      script: {
+        executable: { kind: "inline", language: "typescript", code: "return { published: Boolean(inputs.content) };" },
+        parameters: [{ key: "content", label: "Content", location: "body", valueType: "string", source: "upstream", required: true, upstreamNodeId: "execute", upstreamOutputKey: "diff", description: "Content to publish." }],
+        capabilities: [],
+        managerRisk: { level: "safe", rationale: "Pure in-memory test transform." },
+      },
+    });
+    graph.edges.push({ fromNodeId: "execute", toNodeId: "publish" });
+    const downstreamRequirements = deriveWorkflowV2DownstreamRequirements(graph, "execute");
+
+    const packet = createWorkflowV2TaskPacket({
+      node: graph.nodes[1]!,
+      workflowObjective: graph.objective,
+      acceptanceCriteria: deriveWorkflowV2AcceptanceCriteria(graph),
+      roleRoutes: workflowV2DefaultRoleRoutes(),
+      defaultContextBudget: { maxContextTokens: 1200 },
+      downstreamRequirements,
+    });
+
+    expect(packet.downstreamRequirements).toEqual([{
+      downstreamNodeId: "publish",
+      downstreamNodeTitle: "Publish",
+      parameterKey: "content",
+      parameterLabel: "Content",
+      upstreamOutputKey: "diff",
+      location: "body",
+      valueType: "string",
+      required: true,
+      description: "Content to publish.",
+    }]);
   });
 });

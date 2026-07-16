@@ -3,6 +3,7 @@ import type { WorkflowDraftState } from "../../../shared/workflow/draft";
 import type { WorkflowV2Plan } from "../../../shared/workflow-v2/planning";
 import {
   createWorkflowV2TaskPacket,
+  deriveWorkflowV2DownstreamRequirements,
   deriveWorkflowV2DirectUpstreamDigest,
 } from "../../../shared/workflow-v2/planning";
 import {
@@ -82,8 +83,13 @@ export function workflowV2PlanValidationError(
         roleRoutes: plan.roleDefaults,
         defaultContextBudget: plan.budget.context,
         upstreamDigest: deriveWorkflowV2DirectUpstreamDigest(plan.definition, definitionNode.id),
+        downstreamRequirements: deriveWorkflowV2DownstreamRequirements(plan.definition, definitionNode.id),
         ...(plan.budget.cost ? { costBudget: plan.budget.cost } : {}),
       });
+      const comparableExpectedTaskPacket = { ...expectedTaskPacket };
+      if (isRecord(planNode.taskPacket) && !Object.hasOwn(planNode.taskPacket, "downstreamRequirements")) {
+        delete comparableExpectedTaskPacket.downstreamRequirements;
+      }
       if (
         planNode.title !== definitionNode.title
         || planNode.execModel !== definitionNode.execModel
@@ -91,7 +97,7 @@ export function workflowV2PlanValidationError(
         || planNode.modelProfile !== expectedTaskPacket.modelProfile
         || !isDeepStrictEqual(planNode.acceptanceCriteria, expectedTaskPacket.acceptanceCriteria)
         || !isDeepStrictEqual(planNode.budget, expectedTaskPacket.budget)
-        || !isDeepStrictEqual(planNode.taskPacket, expectedTaskPacket)
+        || !isDeepStrictEqual(planNode.taskPacket, comparableExpectedTaskPacket)
       ) {
         return `Workflow V2 plan node ${planNode.nodeId} does not match the frozen definition and task packet.`;
       }

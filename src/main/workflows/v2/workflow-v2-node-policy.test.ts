@@ -13,7 +13,7 @@ describe("workflow-v2 node prompt policy", () => {
       execModel: "llm",
       executionMode: "one-shot",
       prompt: "Research the answer.",
-      outputFields: [{ key: "answer", required: true }],
+      outputFields: [{ key: "answer", required: true, valueType: "json" }],
     };
     const taskPacket: WorkflowV2TaskPacket = {
       nodeId: node.id,
@@ -29,6 +29,7 @@ describe("workflow-v2 node prompt policy", () => {
       constraints: [],
       upstreamDigest: [],
       outputFields: node.outputFields,
+      downstreamRequirements: [{ downstreamNodeId: "publish", downstreamNodeTitle: "Publish", parameterKey: "content", parameterLabel: "Content", upstreamOutputKey: "answer", location: "body", valueType: "json", required: true }],
       budget: { context: { maxContextTokens: 1_000 } },
     };
 
@@ -40,8 +41,10 @@ describe("workflow-v2 node prompt policy", () => {
       storagePlanDocument: "# Workflow Storage Plan",
     });
 
-    expect(messages.developerInstructions).toContain("exact keys declared in taskPacket.outputFields");
-    expect(messages.developerInstructions).toContain("read only outputs[key], never summary");
-    expect(messages.developerInstructions).toContain('"answer": "value"');
+    expect(messages.developerInstructions).toContain("exact keys and value types declared in taskPacket.outputFields");
+    expect(messages.developerInstructions).toContain("taskPacket.downstreamRequirements");
+    expect(messages.developerInstructions).toContain('"answer": {}');
+    expect(messages.contextDocument).toContain('"downstreamNodeId": "publish"');
+    expect(messages.contextDocument).toContain('"valueType": "json"');
   });
 });

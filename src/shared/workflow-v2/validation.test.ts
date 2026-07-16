@@ -134,6 +134,7 @@ describe("workflow-v2 validation", () => {
 
   test("accepts a script parameter bound to a declared direct upstream output", () => {
     const definition = validDefinition();
+    definition.nodes[0]!.outputFields[0]!.valueType = "string";
     const node = definition.nodes[1]!;
     if (node.execModel !== "script") throw new Error("expected script node");
     node.script.parameters = [{
@@ -179,6 +180,18 @@ describe("workflow-v2 validation", () => {
 
     expect(validateWorkflowV2Definition(definition).errors).toContain(
       "Workflow V2 script node apply upstream parameter plan must reference a direct upstream node, but plan is not connected to apply.",
+    );
+  });
+
+  test("rejects an upstream output type that does not match the consuming script parameter", () => {
+    const definition = validDefinition();
+    definition.nodes[0]!.outputFields[0]!.valueType = "number";
+    const node = definition.nodes[1]!;
+    if (node.execModel !== "script") throw new Error("expected script node");
+    node.script.parameters = [{ key: "plan", label: "Plan", location: "body", valueType: "string", source: "upstream", required: true, upstreamNodeId: "plan", upstreamOutputKey: "plan" }];
+
+    expect(validateWorkflowV2Definition(definition).errors).toContain(
+      "Workflow V2 node plan output field plan has value type number, but script node apply parameter plan requires string.",
     );
   });
 

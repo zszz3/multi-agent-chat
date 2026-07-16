@@ -56,6 +56,7 @@ export interface WorkflowV2OutputFieldDef {
   key: string;
   required?: boolean;
   description?: string;
+  valueType?: WorkflowV2ScriptParameterValueType;
 }
 
 export interface WorkflowV2ConstraintDef {
