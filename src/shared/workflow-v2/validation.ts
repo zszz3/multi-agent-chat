@@ -243,6 +243,40 @@ function topologicalOrder(definition: WorkflowV2Definition, errors: string[]): s
   return orderedNodeIds;
 }
 
+function appendUpstreamScriptParameterValidationErrors(definition: WorkflowV2Definition, errors: string[]): void {
+  const nodesById = new Map(definition.nodes.map((node) => [node.id, node]));
+  const directEdges = new Set(definition.edges.map((edge) => JSON.stringify([edge.fromNodeId, edge.toNodeId])));
+
+  for (const node of definition.nodes) {
+    if (node.execModel !== "script" || !isRecord(node.script) || !Array.isArray(node.script.parameters)) continue;
+    for (const parameter of node.script.parameters) {
+      if (!isRecord(parameter) || parameter.source !== "upstream") continue;
+      const parameterKey = String(parameter.key);
+      const upstreamNodeId = typeof parameter.upstreamNodeId === "string" ? parameter.upstreamNodeId : "";
+      const upstreamOutputKey = typeof parameter.upstreamOutputKey === "string" ? parameter.upstreamOutputKey : "";
+      if (!upstreamNodeId.trim()) {
+        errors.push(`Workflow V2 script node ${node.id} upstream parameter ${parameterKey} must declare upstreamNodeId.`);
+      }
+      if (!upstreamOutputKey.trim()) {
+        errors.push(`Workflow V2 script node ${node.id} upstream parameter ${parameterKey} must declare upstreamOutputKey.`);
+      }
+      if (!upstreamNodeId.trim() || !upstreamOutputKey.trim()) continue;
+
+      const upstreamNode = nodesById.get(upstreamNodeId);
+      if (!upstreamNode) {
+        errors.push(`Workflow V2 script node ${node.id} upstream parameter ${parameterKey} references missing node ${upstreamNodeId}.`);
+        continue;
+      }
+      if (!directEdges.has(JSON.stringify([upstreamNodeId, node.id]))) {
+        errors.push(`Workflow V2 script node ${node.id} upstream parameter ${parameterKey} must reference a direct upstream node, but ${upstreamNodeId} is not connected to ${node.id}.`);
+      }
+      if (!Array.isArray(upstreamNode.outputFields) || !upstreamNode.outputFields.some((field) => field.key === upstreamOutputKey)) {
+        errors.push(`Workflow V2 script node ${node.id} upstream parameter ${parameterKey} references output ${upstreamOutputKey}, which is not declared by node ${upstreamNodeId}.`);
+      }
+    }
+  }
+}
+
 export function validateWorkflowV2Definition(definition: WorkflowV2Definition): WorkflowV2ValidationResult {
   const errors: string[] = [];
   const warnings: string[] = [];
@@ -263,6 +297,7 @@ export function validateWorkflowV2Definition(definition: WorkflowV2Definition): 
   }
 
   const topologicalNodeIds = topologicalOrder(definition, errors);
+  appendUpstreamScriptParameterValidationErrors(definition, errors);
   const terminalNodeIds = listWorkflowV2TerminalNodeIds(definition);
   if (terminalNodeIds.length !== 1) {
     errors.push(`Workflow V2 definition must have exactly one terminal node, found ${terminalNodeIds.length}.`);

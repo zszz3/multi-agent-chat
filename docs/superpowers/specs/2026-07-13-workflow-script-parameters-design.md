@@ -14,6 +14,8 @@ Parameters replace `script.input` and ad-hoc argument interpolation.
 
 At node readiness time the runtime resolves non-user sources from frozen workflow context and direct upstream result packets. Missing required user parameters move the node to `awaiting_input`. The request includes every unresolved user parameter for that node, including optional Header, Query, Body, Environment, and stdin fields, so the user can complete the request once instead of being prompted field by field.
 
+An `upstream` parameter must reference a direct predecessor with `upstreamNodeId` and an exact key from that node's `outputFields` with `upstreamOutputKey`. Its value comes from the result packet's `outputs` object, never `summary`. Validation rejects missing nodes, non-direct bindings, and undeclared output keys before execution.
+
 Submitted values are type-validated, stored as run-scoped node input, and shown in node history. Secrets use the secret facility and persist only redacted metadata.
 
 ## UI

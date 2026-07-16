@@ -27,6 +27,10 @@ describe("workflow V2 manager prompt", () => {
     expect(prompt).toContain("Do not use memory, skills, or repository history to override these runtime rules");
     expect(prompt).toContain("Build the smallest graph");
     expect(prompt).toContain("Every script input must be declared exactly once");
+    expect(prompt).toContain("declare source=upstream");
+    expect(prompt).toContain("upstreamOutputKey to an exact key declared by the predecessor's outputFields");
+    expect(prompt).toContain("Downstream bindings read outputs[upstreamOutputKey], never the LLM summary");
+    expect(prompt).toContain('"upstreamNodeId":"research"');
     expect(prompt).toContain("Read values through inputs.<key>");
     expect(prompt).toContain("Do not read WORKFLOW_INPUT");
     expect(prompt).toContain("Classify pure in-memory transformations as safe");

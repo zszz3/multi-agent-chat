@@ -132,6 +132,56 @@ describe("workflow-v2 validation", () => {
     expect(validateWorkflowV2Definition(definition).errors).toContain("Workflow V2 script node apply parameter format has duplicate enum values.");
   });
 
+  test("accepts a script parameter bound to a declared direct upstream output", () => {
+    const definition = validDefinition();
+    const node = definition.nodes[1]!;
+    if (node.execModel !== "script") throw new Error("expected script node");
+    node.script.parameters = [{
+      key: "plan",
+      label: "Plan",
+      location: "body",
+      valueType: "string",
+      source: "upstream",
+      required: true,
+      upstreamNodeId: "plan",
+      upstreamOutputKey: "plan",
+    }];
+
+    expect(validateWorkflowV2Definition(definition)).toMatchObject({ valid: true, errors: [] });
+  });
+
+  test("rejects incomplete or invalid upstream script parameter bindings", () => {
+    const definition = validDefinition();
+    const node = definition.nodes[1]!;
+    if (node.execModel !== "script") throw new Error("expected script node");
+    node.script.parameters = [
+      { key: "missingBinding", label: "Missing binding", location: "body", valueType: "string", source: "upstream", required: true },
+      { key: "missingNode", label: "Missing node", location: "body", valueType: "string", source: "upstream", required: true, upstreamNodeId: "unknown", upstreamOutputKey: "plan" },
+      { key: "missingOutput", label: "Missing output", location: "body", valueType: "string", source: "upstream", required: true, upstreamNodeId: "plan", upstreamOutputKey: "unknown" },
+    ];
+
+    const result = validateWorkflowV2Definition(definition);
+
+    expect(result.errors).toEqual(expect.arrayContaining([
+      "Workflow V2 script node apply upstream parameter missingBinding must declare upstreamNodeId.",
+      "Workflow V2 script node apply upstream parameter missingBinding must declare upstreamOutputKey.",
+      "Workflow V2 script node apply upstream parameter missingNode references missing node unknown.",
+      "Workflow V2 script node apply upstream parameter missingOutput references output unknown, which is not declared by node plan.",
+    ]));
+  });
+
+  test("rejects an upstream binding to a node that is not a direct predecessor", () => {
+    const definition = validDefinition();
+    const node = definition.nodes[1]!;
+    if (node.execModel !== "script") throw new Error("expected script node");
+    node.script.parameters = [{ key: "plan", label: "Plan", location: "body", valueType: "string", source: "upstream", required: true, upstreamNodeId: "plan", upstreamOutputKey: "plan" }];
+    definition.edges = [];
+
+    expect(validateWorkflowV2Definition(definition).errors).toContain(
+      "Workflow V2 script node apply upstream parameter plan must reference a direct upstream node, but plan is not connected to apply.",
+    );
+  });
+
   test("returns structured errors for an unsupported execution model instead of throwing", () => {
     const invalid = validDefinition();
     invalid.nodes[0]!.execModel = "tool" as unknown as typeof invalid.nodes[0]["execModel"];

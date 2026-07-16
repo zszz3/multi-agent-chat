@@ -115,6 +115,7 @@ export function workflowV2LlmNodePrompt(input: {
     "",
     input.storagePlanDocument,
     "",
+    "Populate outputs using the exact keys declared in taskPacket.outputFields. Downstream source=upstream script bindings read only outputs[key], never summary.",
     "Return only one structured JSON worker-output packet when the node can complete:",
     JSON.stringify({
       nodeId: input.node.id,
