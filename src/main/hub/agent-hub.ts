@@ -1130,14 +1130,13 @@ export class AgentHub {
     return this.snapshot();
   }
 
-  /**
-   * Seed git-bundled workflow definitions into the store. Idempotent by fixed
-   * workflowId: existing workflows (including user-edited copies) are left alone.
-   */
+  /** Seed bundled workflows and repair legacy provenance metadata by id. */
   ensureBundledWorkflows(defs: Array<{ workflowId: string; title: string; objective: string; definition: WorkflowV2Definition }>): void {
     let changed = false;
     for (const def of defs) {
-      if (!def.workflowId || this.workflowStore.workflows.has(def.workflowId)) continue;
+      if (!def.workflowId) continue;
+      const existing = this.workflowStore.workflows.get(def.workflowId);
+      if (existing) { if (existing.sourceType !== "official" || !existing.topologyLocked) { this.workflowStore.workflows.set(existing.workflowId, this.cloneWorkflowDraft({ ...existing, sourceType: "official", topologyLocked: true })); changed = true; } continue; }
       const now = Date.now();
       const workflow = this.cloneWorkflowDraft({
         workflowId: def.workflowId, sourceType: "official", topologyLocked: true,

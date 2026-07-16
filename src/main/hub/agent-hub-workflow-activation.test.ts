@@ -35,6 +35,49 @@ describe("AgentHub workflow materialization", () => {
     });
   });
 
+  test("repairs legacy bundled workflow provenance without replacing customized content", () => {
+    const hub = new AgentHub();
+    const legacy = hub.createWorkflowDraft().workflowDraft!;
+    const customizedDefinition = {
+      workflowId: legacy.workflowId,
+      graphVersion: 1,
+      objective: "Customized objective",
+      nodes: [{ id: "custom", kind: "answer" as const, title: "Custom", execModel: "llm" as const, executionMode: "one-shot" as const, prompt: "Customized prompt.", outputFields: [{ key: "answer", required: true }] }],
+      edges: [],
+    };
+    hub.materializeWorkflowDraft(legacy.workflowId, {
+      title: "Customized bundled workflow",
+      objective: "Customized objective",
+      definition: customizedDefinition,
+    });
+    const before = hub.snapshot().workflowStore.workflows.find((workflow) => workflow.workflowId === legacy.workflowId)!;
+
+    hub.ensureBundledWorkflows([{
+      workflowId: legacy.workflowId,
+      title: "Catalog title",
+      objective: "Catalog objective",
+      definition: {
+        workflowId: legacy.workflowId,
+        graphVersion: 2,
+        objective: "Catalog objective",
+        nodes: [{ id: "catalog", kind: "answer", title: "Catalog", execModel: "llm", executionMode: "one-shot", prompt: "Catalog prompt.", outputFields: [{ key: "answer", required: true }] }],
+        edges: [],
+      },
+    }]);
+
+    const repaired = hub.snapshot().workflowStore.workflows.find((workflow) => workflow.workflowId === legacy.workflowId)!;
+    expect(repaired).toMatchObject({
+      sourceType: "official",
+      topologyLocked: true,
+      title: before.title,
+      objective: before.objective,
+      revision: before.revision,
+      updatedAt: before.updatedAt,
+      definition: customizedDefinition,
+    });
+    expect(hub.snapshot().workflowStore.workflows).toHaveLength(1);
+  });
+
   test("reports definition validation errors when confirming a planning draft without a plan", () => {
     const hub = new AgentHub();
     const workflow = hub.createWorkflowDraft().workflowDraft!;

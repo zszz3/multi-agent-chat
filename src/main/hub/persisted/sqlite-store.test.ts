@@ -215,6 +215,31 @@ describe("SqliteAppStore normalized persistence", () => {
     store.close();
   });
 
+  it("persists and restores official workflow provenance", async () => {
+    const dbPath = await createDbPath();
+    const store = new SqliteAppStore(dbPath);
+    const state = sampleState();
+    const workflow = state.workflowStore.workflows[0]!;
+    workflow.sourceType = "official";
+    workflow.topologyLocked = true;
+
+    await store.save(state);
+    expect(await store.load()).toMatchObject({
+      workflowStore: {
+        workflows: [{ workflowId: "workflow-1", sourceType: "official", topologyLocked: true }],
+      },
+    });
+    store.close();
+
+    const { DatabaseSync } = require("node:sqlite") as SqliteModule;
+    const db = new DatabaseSync(dbPath);
+    expect(db.prepare("select source_type, topology_locked from workflows where id = ?").get("workflow-1")).toEqual({
+      source_type: "official",
+      topology_locked: 1,
+    });
+    db.close();
+  });
+
   it("replaces removed aggregate rows on a later save", async () => {
     const dbPath = await createDbPath();
     const store = new SqliteAppStore(dbPath);
