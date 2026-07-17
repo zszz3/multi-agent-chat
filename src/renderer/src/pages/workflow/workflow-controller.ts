@@ -1,6 +1,7 @@
 import type {
   AgentChannel,
   AgentRuntime,
+  ApprovalDecision,
   ConfiguredAgent,
   LocalFilePreview,
   RegisteredArtifact,
@@ -72,6 +73,7 @@ export interface WorkflowController {
   running: boolean;
   runProgress?: WorkflowRunProgressItem[];
   activeRunId?: string | undefined;
+  activeRunStatus?: WorkflowStatus;
   artifacts?: RegisteredArtifact[];
   contextDocument?: string;
   finalReport?: string;
@@ -89,6 +91,7 @@ export interface WorkflowController {
   onCompleteNodeConversation?: (conversationId: string) => MaybePromise;
   onRejectNodeCompletion?: (conversationId: string, instruction: string) => MaybePromise;
   onInterruptNodeConversation?: (conversationId: string) => MaybePromise;
+  onResolveRuntimeApproval?: (ownerId: string, requestId: string, decision: ApprovalDecision) => MaybePromise;
   onSelectConfiguredAgent: (configuredAgentId: string) => void;
   onSelectModel?: (modelId: string) => void;
   onSelectReviewerConfiguredAgent: (configuredAgentId: string) => void;

@@ -60,6 +60,7 @@ export function applyWorkflowDraftPatch(input: {
   const versionedDefinition = versionWorkflowDefinition(current.definition, candidateDefinition);
   const definitionChanged = versionedDefinition.changed;
   const executableChanged = definitionChanged || routeChanged || reviewerRouteChanged || patch.workDir !== undefined;
+  const clearRunProjection = resetRunState || executableChanged;
   const definition = versionedDefinition.definition;
   const nextWorkflowV2Plan = patch.workflowV2Plan === null
     ? undefined
@@ -80,7 +81,7 @@ export function applyWorkflowDraftPatch(input: {
     ...base
   } = current;
   const workDir = patch.workDir === null ? undefined : patch.workDir ?? current.workDir;
-  const finalReport = patch.finalReport === null || resetRunState ? undefined : patch.finalReport ?? current.finalReport;
+  const finalReport = patch.finalReport === null || clearRunProjection ? undefined : patch.finalReport ?? current.finalReport;
   const runtimeConversation = patch.runtimeConversation === null
     ? undefined
     : patch.runtimeConversation !== undefined
@@ -106,8 +107,8 @@ export function applyWorkflowDraftPatch(input: {
     messages: patch.messages ?? current.messages,
     reply: patch.reply ?? current.reply,
     error: patch.error === null ? undefined : patch.error ?? current.error,
-    runProgress: resetRunState ? [] : patch.runProgress ?? current.runProgress,
-    runContextDocument: resetRunState ? "" : patch.runContextDocument ?? current.runContextDocument,
+    runProgress: clearRunProjection ? [] : patch.runProgress ?? current.runProgress,
+    runContextDocument: clearRunProjection ? "" : patch.runContextDocument ?? current.runContextDocument,
     contextDocument: patch.contextDocument ?? current.contextDocument,
     ...(nextWorkflowV2Plan ? { workflowV2Plan: nextWorkflowV2Plan } : {}),
     ...(!executableChanged && patch.generationReview === undefined && current.generationReview
@@ -192,7 +193,7 @@ export function updateWorkflowDraftState(input: {
         : input.current.workflowV2Plan
           ? cloneWorkflowV2Plan(input.current.workflowV2Plan)
           : undefined;
-  const { workflowV2Plan: _plan, confirmedRevision: _confirmedRevision, generationReview: _generationReview, ...base } = input.current;
+  const { workflowV2Plan: _plan, confirmedRevision: _confirmedRevision, generationReview: _generationReview, finalReport: _finalReport, runProgress: _runProgress, runContextDocument: _runContextDocument, ...base } = input.current;
   return input.cloneDraft({
     ...base,
     title: input.request.title ?? input.current.title,
@@ -205,11 +206,11 @@ export function updateWorkflowDraftState(input: {
     messages: input.request.messages ?? input.current.messages,
     reply: input.request.reply ?? input.current.reply,
     error: input.request.error ?? input.current.error,
-    runProgress: input.request.runProgress ?? input.current.runProgress,
-    runContextDocument: input.request.runContextDocument ?? input.current.runContextDocument,
+    runProgress: executableChanged ? [] : input.request.runProgress ?? input.current.runProgress,
+    runContextDocument: executableChanged ? "" : input.request.runContextDocument ?? input.current.runContextDocument,
     contextDocument: input.request.contextDocument ?? input.current.contextDocument,
     ...(nextWorkflowV2Plan ? { workflowV2Plan: nextWorkflowV2Plan } : {}),
-    ...((input.request.finalReport ?? input.current.finalReport) !== undefined
+    ...(!executableChanged && (input.request.finalReport ?? input.current.finalReport) !== undefined
       ? { finalReport: input.request.finalReport ?? input.current.finalReport }
       : {}),
     ...(input.request.runtimeConversation !== undefined

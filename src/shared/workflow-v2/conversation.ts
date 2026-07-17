@@ -1,4 +1,4 @@
-import type { AgentEvent, RuntimeConversation } from "../types";
+import type { AgentEvent, ChatEvent, RuntimeConversation } from "../types";
 import type { WorkflowV2WorkerOutput } from "./packets";
 
 export type WorkflowNodeConversationStatus =
@@ -16,6 +16,7 @@ export interface WorkflowNodeMessage {
   at: number;
   eventType?: AgentEvent["type"];
   name?: string;
+  event?: ChatEvent;
 }
 
 export interface WorkflowNodeCompletionProposal {

@@ -9456,6 +9456,19 @@ textarea:focus-visible {
   min-width: 0;
 }
 
+.workflow-node-agent-select {
+  width: 100%;
+  min-width: 0;
+  padding: 5px 8px;
+  border: 1px solid color-mix(in srgb, var(--accent, #2563eb) 42%, var(--line));
+  border-radius: 7px;
+  background: var(--panel);
+  color: var(--text);
+  font: inherit;
+  font-size: 12px;
+  cursor: pointer;
+}
+
 .workflow-node-agent-row .workflow-node-agent-name {
   overflow: hidden;
   color: var(--text);

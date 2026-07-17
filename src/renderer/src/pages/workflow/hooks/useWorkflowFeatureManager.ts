@@ -1,5 +1,5 @@
 import { useMemo } from "react";
-import type { AppSnapshot, LocalFilePreview } from "../../../../../shared/types";
+import type { AppSnapshot, ApprovalDecision, LocalFilePreview } from "../../../../../shared/types";
 import type { WorkflowService } from "../../../app/services/workflow-service";
 import { buildWorkflowSidebarController, type WorkflowSidebarFeatureController, useWorkflowSidebarState } from "./useWorkflowSidebarState";
 import { useWorkflowDraft, type WorkflowDraftController } from "./useWorkflowDraft";
@@ -16,6 +16,7 @@ interface UseWorkflowFeatureManagerOptions {
   onChooseWorkDir: () => Promise<void>;
   onRefresh: () => Promise<void>;
   onReadOutputFile?: (filePath: string) => Promise<LocalFilePreview>;
+  onResolveRuntimeApproval?: (ownerId: string, requestId: string, decision: ApprovalDecision) => void | Promise<void>;
   onEnterWorkflow?: () => void;
 }
 
@@ -37,6 +38,7 @@ export function useWorkflowFeatureManager({
   onChooseWorkDir,
   onRefresh,
   onReadOutputFile,
+  onResolveRuntimeApproval,
   onEnterWorkflow,
 }: UseWorkflowFeatureManagerOptions): WorkflowFeatureManager {
   const initialWorkflowDefinition = useMemo(() => ({ workflowId: "draft", graphVersion: 1, objective: "", nodes: [], edges: [] }), []);
@@ -93,6 +95,7 @@ export function useWorkflowFeatureManager({
     onChooseWorkDir,
     onRefresh,
     onReadOutputFile,
+    ...(onResolveRuntimeApproval ? { onResolveRuntimeApproval } : {}),
   });
 
   return {

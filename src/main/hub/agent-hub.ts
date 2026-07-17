@@ -272,7 +272,7 @@ import {
   type ActiveWorkflowDraftRequest,
 } from "./workflow/agent-hub-workflow-draft-replies";
 import { abandonWorkflowDraftReplyState as abandonWorkflowDraftReplyStateValue } from "./workflow/agent-hub-workflow-draft-reply-state";
-import { validateWorkflowV2Definition } from "../../shared/workflow-v2/validation";
+import { assertWorkflowV2ConfiguredAgentReplacement, validateWorkflowV2Definition } from "../../shared/workflow-v2/validation";
 import { normalizeWorkflowV2TerminalNode } from "../../shared/workflow-v2/topology";
 import { WorkflowGenerationReviewCoordinator } from "./workflow/workflow-generation-review-service";
 import { WORKFLOW_DEVELOPER_INSTRUCTIONS } from "./runtime/executor/workflow/agent-executor-workflow-shared";
@@ -666,18 +666,17 @@ export class AgentHub {
   }
 
   updateConfiguredAgents(agents: ConfiguredAgent[]): AppSnapshot {
+    assertWorkflowV2ConfiguredAgentReplacement([...this.workflowStore.workflows.values()].map((workflow) => workflow.definition), this.configuredAgents.values(), agents);
     this.installRestoredConfiguredAgents(agents);
     this.normalizeRunSelections();
     this.emit();
     return this.snapshot();
   }
-
   listConfiguredAgents(): ConfiguredAgent[] {
     return [...this.configuredAgents.values()]
       .sort((left, right) => left.name.localeCompare(right.name))
       .map((agent) => ({ ...agent, tags: [...agent.tags] }));
   }
-
   private defaultConfiguredAgentId(): string {
     return this.configuredAgents.get("default-agent")?.id
       ?? this.listConfiguredAgents().find((agent) => agent.managed)?.id
@@ -1043,6 +1042,7 @@ export class AgentHub {
   materializeWorkflowDraft(workflowId: string, input: MaterializeWorkflowDraftRequest): WorkflowOperationResult {
     const current = this.workflowStore.workflows.get(workflowId);
     if (!current) return { ok: false, workflowId, error: `Workflow ${workflowId} was not found.` };
+    if (current.status === "running" || current.topologyLocked) return { ok: false, workflowId, revision: current.revision, error: current.status === "running" ? "Cannot modify workflow graph while it is running." : "Official workflow topology is locked." };
     if (!input.definition) return { ok: false, error: "Workflow V2 definition is required." };
     const normalized = normalizeWorkflowV2TerminalNode({ ...structuredClone(input.definition), workflowId, objective: input.objective.trim() || input.definition.objective });
     const definition = versionWorkflowDefinitionValue(current.definition, normalized.definition).definition;
@@ -1052,7 +1052,7 @@ export class AgentHub {
     if (definition.edges.length > MAX_WORKFLOW_EDGE_COUNT) {
       return { ok: false, error: `Workflow V2 definition exceeds ${MAX_WORKFLOW_EDGE_COUNT} edges.` };
     }
-    const validation = validateWorkflowV2Definition(definition);
+    const validation = validateWorkflowV2Definition(definition, { configuredAgentIds: this.configuredAgents.keys() });
     if (!validation.valid) return { ok: false, error: validation.errors[0] ?? "Workflow V2 definition is invalid." };
     let workflowV2Plan = normalized.addedSummaryNodeId ? undefined : input.workflowV2Plan;
     if (!workflowV2Plan) {
@@ -1090,7 +1090,7 @@ export class AgentHub {
     if (input.expectedRevision !== undefined && input.expectedRevision !== workflow.revision) {
       return { ok: false, workflowId: workflow.workflowId, revision: workflow.revision, error: "Workflow draft changed before confirmation." };
     }
-    const validation = validateWorkflowV2Definition(workflow.definition);
+    const validation = validateWorkflowV2Definition(workflow.definition, { configuredAgentIds: this.configuredAgents.keys() });
     if (!validation.valid) return { ok: false, workflowId: workflow.workflowId, revision: workflow.revision, error: validation.errors[0] ?? "Workflow V2 definition is invalid." };
     let frozenPlan;
     try {
@@ -1226,7 +1226,7 @@ export class AgentHub {
     if (definition.edges.length > MAX_WORKFLOW_EDGE_COUNT) {
       return { ok: false, workflowId: current.workflowId, revision: current.revision, error: `Workflow V2 definition exceeds ${MAX_WORKFLOW_EDGE_COUNT} edges.` };
     }
-    const validation = validateWorkflowV2Definition(definition);
+    const validation = validateWorkflowV2Definition(definition, { configuredAgentIds: this.configuredAgents.keys() });
     if (!validation.valid) return { ok: false, workflowId: current.workflowId, revision: current.revision, error: validation.errors[0] ?? "Workflow V2 definition is invalid." };
     const next = updateWorkflowDraftStateValue({
       current,

@@ -317,6 +317,7 @@ export function AppShell() {
     onChooseWorkDir: chooseWorkDir,
     onRefresh: refresh,
     onReadOutputFile: readLocalFile,
+    onResolveRuntimeApproval: resolveRuntimeApproval,
     onEnterWorkflow: () => navigateToFeature("workflow"),
   });
   const menuCoordinator = useShellMenuCoordinator({

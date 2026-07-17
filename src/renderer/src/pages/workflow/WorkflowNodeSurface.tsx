@@ -1,4 +1,4 @@
-import type { TaskRun, WorkflowRunProgressItem } from "../../../../shared/types";
+import type { ApprovalDecision, TaskRun, WorkflowRunProgressItem } from "../../../../shared/types";
 import type { WorkflowV2Node } from "../../../../shared/workflow-v2/definition";
 import type { WorkflowNodeConversation } from "../../../../shared/workflow-v2/conversation";
 import { WorkflowNodeAgentWindow, type WorkflowNodeAgentSession } from "./WorkflowNodeAgentWindow";
@@ -19,8 +19,9 @@ export function WorkflowNodeSurface(props: {
   onConfirm?: () => void | Promise<void>;
   onReject?: (instruction: string) => void | Promise<void>;
   onInterrupt?: () => void | Promise<void>;
+  onResolveRuntimeApproval?: (ownerId: string, requestId: string, decision: ApprovalDecision) => void | Promise<void>;
 }) {
   if (props.node.execModel === "script") return <WorkflowScriptNodePanel node={props.node} {...(props.progress ? { progress: props.progress } : {})} {...(props.onSubmitScriptInput ? { onSubmitInput: props.onSubmitScriptInput } : {})} {...(props.onResolveScriptApproval ? { onResolveApproval: props.onResolveScriptApproval } : {})} onClose={props.onClose} />;
   const inputPrompt = props.progress?.inputRequest?.kind === "agent_message" ? props.progress.inputRequest.prompt : undefined;
-  return <WorkflowNodeAgentWindow nodeTitle={props.node.title} {...(inputPrompt ? { inputPrompt } : {})} {...(props.conversation ? { conversation: props.conversation } : {})} {...(props.task ? { task: props.task } : {})} {...(props.sessions ? { sessions: props.sessions } : {})} {...(props.selectedNodeId ? { selectedNodeId: props.selectedNodeId } : {})} {...(props.onSelectNode ? { onSelectNode: props.onSelectNode } : {})} onClose={props.onClose} {...(props.onSend ? { onSend: props.onSend } : {})} {...(props.onConfirm ? { onConfirm: props.onConfirm } : {})} {...(props.onReject ? { onReject: props.onReject } : {})} {...(props.onInterrupt ? { onInterrupt: props.onInterrupt } : {})} />;
+  return <WorkflowNodeAgentWindow nodeTitle={props.node.title} {...(inputPrompt ? { inputPrompt } : {})} {...(props.conversation ? { conversation: props.conversation } : {})} {...(props.task ? { task: props.task } : {})} {...(props.sessions ? { sessions: props.sessions } : {})} {...(props.selectedNodeId ? { selectedNodeId: props.selectedNodeId } : {})} {...(props.onSelectNode ? { onSelectNode: props.onSelectNode } : {})} onClose={props.onClose} {...(props.onSend ? { onSend: props.onSend } : {})} {...(props.onConfirm ? { onConfirm: props.onConfirm } : {})} {...(props.onReject ? { onReject: props.onReject } : {})} {...(props.onInterrupt ? { onInterrupt: props.onInterrupt } : {})} {...(props.onResolveRuntimeApproval ? { onResolveRuntimeApproval: props.onResolveRuntimeApproval } : {})} />;
 }

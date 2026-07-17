@@ -32,6 +32,7 @@ import { ChatControls } from "../chat/ChatControls";
 import { TaskStatusChip } from "../tasks/task-status";
 import { WorkflowCanvasBoard } from "./WorkflowCanvasBoard";
 import { WorkflowDraftEditorDialog } from "./WorkflowDraftEditorDialog";
+import { WorkflowNodeAgentSelect } from "./WorkflowNodeAgentSelect";
 import { WorkflowNodeSurface } from "./WorkflowNodeSurface";
 import { WorkflowOutputPreviewModal } from "./WorkflowOutputPreviewModal";
 import { WorkflowRevisionDialog } from "./WorkflowRevisionDialog";
@@ -111,6 +112,7 @@ export function WorkflowPage({ controller: source }: { controller: WorkflowContr
   const workflowText = WORKFLOW_TEXT[language];
   const validation = validateWorkflowV2Definition(definition);
   const workflowConfirmed = revision !== undefined && confirmedRevision === revision;
+  const runOwnsInput = Boolean(activeRunId && (!source.activeRunStatus || source.activeRunStatus === "running" || source.activeRunStatus === "waiting_for_user"));
   const [reviewDrawerOpen, setReviewDrawerOpen] = useState(false);
   const [draftEditorOpen, setDraftEditorOpen] = useState(false);
 
@@ -262,11 +264,11 @@ export function WorkflowPage({ controller: source }: { controller: WorkflowContr
     const nodeAgentConfig = configuredAgentById(nodeAgentId, configuredAgents);
     const nodeAgentName = nodeAgentConfig?.name || nodeAgentId || "default";
     const nodeModelId = node.execModel === "llm" ? node.modelId ?? nodeAgentConfig?.modelId ?? modelId : "script";
+    const canConfigureNodeAgent = node.execModel === "llm" && !runOwnsInput && !topologyLocked && !running;
     const nodeAgentRow =
       node.execModel === "llm" ? (
         <div className="workflow-node-agent-row" title={`Agent: ${nodeAgentName} · Model: ${nodeModelId}`}>
-          <span className="workflow-node-agent-name">{nodeAgentName}</span>
-          <span className="workflow-node-agent-model">{nodeModelId}</span>
+          {canConfigureNodeAgent ? <WorkflowNodeAgentSelect nodeTitle={node.title} {...(node.configuredAgentId ? { configuredAgentId: node.configuredAgentId } : {})} workflowDefaultAgentId={configuredAgentId} configuredAgents={configuredAgents} onSelect={(selectedAgentId) => { void source.onUpdateNode(node.id, { configuredAgentId: selectedAgentId, modelId: undefined } as Partial<WorkflowV2Node>); }} /> : <><span className="workflow-node-agent-name">{nodeAgentName}</span><span className="workflow-node-agent-model">{nodeModelId}</span></>}
         </div>
       ) : null;
 
@@ -445,7 +447,7 @@ export function WorkflowPage({ controller: source }: { controller: WorkflowContr
                 <span>{validation.valid ? workflowText.dagValid : workflowText.dagInvalid}</span>
               </div>
               <div className="workflow-validation-row-actions">
-                {!activeRunId && !topologyLocked && onUpdateDefinition ? <button className="icon-btn flat" onClick={() => setDraftEditorOpen(true)} title="Edit workflow definition" aria-label="Edit workflow definition" disabled={running}><Pencil size={14} /></button> : null}
+                {!runOwnsInput && !topologyLocked && onUpdateDefinition ? <button className="icon-btn flat" onClick={() => setDraftEditorOpen(true)} title="Edit workflow definition" aria-label="Edit workflow definition" disabled={running}><Pencil size={14} /></button> : null}
                 <TaskStatusChip
                   label={!validation.valid ? workflowText.invalid : workflowConfirmed ? `${workflowText.confirmed} r${confirmedRevision}` : workflowText.awaitingConfirmation}
                   tone={!validation.valid ? "failed" : workflowConfirmed ? "done" : "running"}
@@ -487,7 +489,8 @@ export function WorkflowPage({ controller: source }: { controller: WorkflowContr
                       && (item.status === "paused" || item.status === "failed")
                       && !item.intervention
                       && typeof onStartNode === "function";
-                    const canRevise = controllable && item.status === "paused" && typeof onReviseRun === "function" && !topologyLocked;
+                    const runCanRevise = source.activeRunStatus === "waiting_for_user" || source.activeRunStatus === "stopped" || source.activeRunStatus === "failed";
+                    const canRevise = controllable && runCanRevise && (item.status === "paused" || item.status === "failed") && typeof onReviseRun === "function" && !topologyLocked && !item.intervention;
                     return (
                       <div key={item.nodeId} className={`workflow-run-progress-item is-${item.status}`}>
                         <span>{workflowRunStatusLabel(item.status)}</span>
@@ -569,9 +572,10 @@ export function WorkflowPage({ controller: source }: { controller: WorkflowContr
         {...(onCompleteNodeConversation && openNodeConversation ? { onConfirm: () => onCompleteNodeConversation(openNodeConversation.conversationId) } : {})}
         {...(onRejectNodeCompletion && openNodeConversation ? { onReject: (instruction: string) => onRejectNodeCompletion(openNodeConversation.conversationId, instruction) } : {})}
         {...(onInterruptNodeConversation && openNodeConversation ? { onInterrupt: () => onInterruptNodeConversation(openNodeConversation.conversationId) } : {})}
+        {...(source.onResolveRuntimeApproval ? { onResolveRuntimeApproval: source.onResolveRuntimeApproval } : {})}
       /> : null}
 
-      {!activeRunId && !topologyLocked ? <section className="composer workflow-composer">
+      {!runOwnsInput && !topologyLocked ? <section className="composer workflow-composer">
         <div className="composer-box">
           <textarea
             aria-label={workflowStarted ? (graphVisible ? workflowText.replyToAgent : workflowText.replyToQuestion) : workflowText.task}

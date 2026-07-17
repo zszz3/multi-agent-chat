@@ -91,6 +91,7 @@ describe("WorkflowPage input ownership", () => {
   test("offers full workflow revision for a manually paused user workflow", () => {
     const value = controller(true);
     value.running = false;
+    value.activeRunStatus = "waiting_for_user";
     value.runProgress = [{ nodeId: "answer", title: "Answer", status: "paused" }];
     value.onReviseRun = () => undefined;
 
@@ -111,5 +112,29 @@ describe("WorkflowPage input ownership", () => {
 
     expect(html).toContain("workflow-composer");
     expect(html).toContain("Edit workflow definition");
+  });
+  test("renders an Agent selector directly on editable LLM node cards", () => {
+    const value = controller(true);
+    value.running = false;
+    value.activeRunId = undefined;
+    value.runProgress = [];
+    value.configuredAgents = [{ id: "specialist", name: "Specialist", description: "", runtimeAgentId: "codex", channelId: "default", modelId: "gpt-specialist", tags: [], createdAt: 1, updatedAt: 1 }];
+    const html = renderToStaticMarkup(<WorkflowPage controller={value} />);
+    expect(html).toContain("Agent for Answer");
+    expect(html).toContain("Specialist");
+    expect(html).toContain("Workflow default");
+  });
+
+  test("offers same-run revision after the latest run fails while keeping draft editing available", () => {
+    const value = controller(true);
+    value.running = false;
+    value.activeRunStatus = "failed";
+    value.runProgress = [{ nodeId: "answer", title: "Answer", status: "failed" }];
+    value.onReviseRun = () => undefined;
+    value.onUpdateDefinition = () => undefined;
+    const html = renderToStaticMarkup(<WorkflowPage controller={value} />);
+    expect(html).toContain("Edit workflow and resume: Answer");
+    expect(html).toContain("Edit workflow definition");
+    expect(html).toContain("workflow-composer");
   });
 });
