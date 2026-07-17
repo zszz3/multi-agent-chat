@@ -98,4 +98,18 @@ describe("WorkflowPage input ownership", () => {
 
     expect(html).toContain("Edit workflow and resume: Answer");
   });
+
+  test("keeps conversation and manual editing available after a generated workflow finishes", () => {
+    const value = controller(true);
+    value.status = "completed";
+    value.running = false;
+    value.activeRunId = undefined;
+    value.runProgress = [{ nodeId: "answer", title: "Answer", status: "completed" }];
+    value.onUpdateDefinition = () => undefined;
+
+    const html = renderToStaticMarkup(<WorkflowPage controller={value} />);
+
+    expect(html).toContain("workflow-composer");
+    expect(html).toContain("Edit workflow definition");
+  });
 });

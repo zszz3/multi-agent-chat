@@ -170,6 +170,7 @@ export function useWorkflowFeatureController({
       onUpdateNode: (nodeId: string, update) => {
         void draft.updateWorkflowNode(nodeId, update);
       },
+      onUpdateDefinition: (definition) => draft.updateWorkflowDefinition(definition),
       onRunWorkflow: async () => {
         const result = await runner.runWorkflowInternal();
         if (!result.ok && result.error && draft.workflowId) {

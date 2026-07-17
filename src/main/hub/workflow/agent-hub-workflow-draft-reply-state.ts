@@ -2,7 +2,7 @@ import type {
   RuntimeConversation,
   WorkflowDraftState,
 } from "../../../shared/types";
-import { buildWorkflowAgentPrompt } from "../../../shared/workflow-agent";
+import { buildWorkflowAgentPrompt, buildWorkflowRevisionPrompt } from "../../../shared/workflow-agent";
 import { replaceWorkflowDraftMessage } from "./agent-hub-workflow-draft";
 
 export function beginWorkflowDraftReply(input: {
@@ -91,7 +91,9 @@ export function createWorkflowDraftInteractiveRequest(input: {
   return {
     workflowId: input.started.next.workflowId,
     requestId: input.started.request.requestId,
-    prompt: input.started.starting ? buildWorkflowAgentPrompt({ workflowId: input.started.next.workflowId, objective: input.reply }) : input.reply,
+    prompt: input.started.starting
+      ? buildWorkflowAgentPrompt({ workflowId: input.started.next.workflowId, objective: input.reply })
+      : buildWorkflowRevisionPrompt({ workflowId: input.started.next.workflowId, revision: input.started.next.revision, definition: input.started.next.definition, request: input.reply }),
     configuredAgentId: input.started.next.configuredAgentId,
     modelId: input.started.next.modelId,
     workDir: input.started.next.workDir || input.defaultWorkDir,

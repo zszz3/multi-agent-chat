@@ -41,6 +41,7 @@ export interface WorkflowDraftController {
   buildWorkflowDefinition: () => Promise<void>;
   sendWorkflowReply: () => Promise<void>;
   updateWorkflowNode: (nodeId: string, update: Partial<WorkflowV2Node>) => Promise<void>;
+  updateWorkflowDefinition: (definition: WorkflowV2Definition) => Promise<void>;
   selectWorkflow: (workflowId: string) => Promise<void>;
   selectConfiguredAgent: (configuredAgentId: string) => Promise<void>;
   selectModel: (modelId: string) => Promise<void>;
@@ -244,6 +245,17 @@ export function useWorkflowDraft({
     setSnapshot(next);
   }, [ensureActiveWorkflow, setSnapshot, workflows]);
 
+  const updateWorkflowDefinition = useCallback(async (definition: WorkflowV2Definition): Promise<void> => {
+    const workflow = await ensureActiveWorkflow();
+    if (!workflow) return;
+    const result = await workflows.updateWorkflow({ workflowId: workflow.workflowId, expectedRevision: workflow.revision, definition });
+    if (!result.ok) {
+      setSnapshot(await workflows.patchDraft({ workflowId: workflow.workflowId, error: result.error ?? "Workflow could not be updated." }));
+      throw new Error(result.error ?? "Workflow could not be updated.");
+    }
+    setSnapshot(await workflows.selectWorkflow(workflow.workflowId));
+  }, [ensureActiveWorkflow, setSnapshot, workflows]);
+
   const selectReviewerConfiguredAgent = useCallback(async (configuredAgentId: string): Promise<void> => {
     const workflow = await ensureActiveWorkflow();
     if (!workflow) return;
@@ -296,6 +308,7 @@ export function useWorkflowDraft({
       buildWorkflowDefinition,
       sendWorkflowReply,
       updateWorkflowNode,
+      updateWorkflowDefinition,
       selectWorkflow,
       selectConfiguredAgent,
       selectModel,
@@ -319,6 +332,7 @@ export function useWorkflowDraft({
       sendWorkflowReply,
       stopWorkflowGrill,
       updateWorkflowNode,
+      updateWorkflowDefinition,
       workflowConfiguredAgentId,
       workflowGrillBusy,
       workflowModelId,

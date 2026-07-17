@@ -18,6 +18,15 @@ function emptyWorkflowDefinition(workflowId: string): WorkflowV2Definition {
   };
 }
 
+export function versionWorkflowDefinition(current: WorkflowV2Definition, candidate: WorkflowV2Definition): { definition: WorkflowV2Definition; changed: boolean } {
+  const definition = structuredClone(candidate);
+  const changed = JSON.stringify({ ...current, graphVersion: 0 }) !== JSON.stringify({ ...definition, graphVersion: 0 });
+  definition.graphVersion = changed
+    ? current.nodes.length > 0 ? current.graphVersion + 1 : Math.max(current.graphVersion, definition.graphVersion)
+    : current.graphVersion;
+  return { definition, changed };
+}
+
 export function applyWorkflowDraftPatch(input: {
   current: WorkflowDraftState;
   patch: PatchWorkflowDraftRequest;
@@ -43,13 +52,15 @@ export function applyWorkflowDraftPatch(input: {
     : current.reviewerModelId;
   const routeChanged = nextConfiguredAgentId !== current.configuredAgentId || nextModelId !== current.modelId;
   const reviewerRouteChanged = nextReviewerConfiguredAgentId !== current.reviewerConfiguredAgentId || nextReviewerModelId !== current.reviewerModelId;
-  const definitionChanged = patch.definition !== undefined || patch.objective !== undefined;
-  const executableChanged = definitionChanged || routeChanged || reviewerRouteChanged || patch.workDir !== undefined;
-  const definition = patch.definition
+  const candidateDefinition = patch.definition
     ? structuredClone(patch.definition)
     : patch.objective !== undefined
       ? { ...structuredClone(current.definition), objective: patch.objective }
       : structuredClone(current.definition);
+  const versionedDefinition = versionWorkflowDefinition(current.definition, candidateDefinition);
+  const definitionChanged = versionedDefinition.changed;
+  const executableChanged = definitionChanged || routeChanged || reviewerRouteChanged || patch.workDir !== undefined;
+  const definition = versionedDefinition.definition;
   const nextWorkflowV2Plan = patch.workflowV2Plan === null
     ? undefined
     : patch.workflowV2Plan !== undefined
@@ -80,7 +91,7 @@ export function applyWorkflowDraftPatch(input: {
   const next = input.cloneDraft({
     ...base,
     title: patch.title ?? current.title,
-    status: current.status === "running" ? "running" : patch.status ?? current.status,
+    status: current.status === "running" ? "running" : executableChanged ? "draft" : patch.status ?? current.status,
     revision: executableChanged ? current.revision + 1 : current.revision,
     ...(!executableChanged && current.confirmedRevision === current.revision
       ? { confirmedRevision: current.revision }
@@ -169,7 +180,8 @@ export function updateWorkflowDraftState(input: {
 }): WorkflowDraftState {
   const routeChanged = input.configuredAgentId !== input.current.configuredAgentId || input.modelId !== input.current.modelId;
   const reviewerRouteChanged = input.reviewerConfiguredAgentId !== input.current.reviewerConfiguredAgentId || input.reviewerModelId !== input.current.reviewerModelId;
-  const definitionChanged = input.request.definition !== undefined || input.request.objective !== undefined;
+  const versionedDefinition = versionWorkflowDefinition(input.current.definition, input.definition);
+  const definitionChanged = versionedDefinition.changed;
   const executableChanged = definitionChanged || routeChanged || reviewerRouteChanged;
   const nextWorkflowV2Plan = input.request.workflowV2Plan === null
     ? undefined
@@ -185,7 +197,7 @@ export function updateWorkflowDraftState(input: {
     ...base,
     title: input.request.title ?? input.current.title,
     objective: input.request.objective ?? input.definition.objective,
-    definition: structuredClone(input.definition),
+    definition: versionedDefinition.definition,
     configuredAgentId: input.configuredAgentId,
     modelId: input.modelId,
     reviewerConfiguredAgentId: input.reviewerConfiguredAgentId,
@@ -203,6 +215,7 @@ export function updateWorkflowDraftState(input: {
     ...(input.request.runtimeConversation !== undefined
       ? { runtimeConversation: input.request.runtimeConversation }
       : {}),
+    status: input.current.status === "running" ? "running" : executableChanged ? "draft" : input.current.status,
     revision: executableChanged ? input.current.revision + 1 : input.current.revision,
     ...(!executableChanged && input.current.confirmedRevision === input.current.revision
       ? { confirmedRevision: input.current.revision }

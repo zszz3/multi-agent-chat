@@ -18,6 +18,7 @@ import type {
   CreateScheduledWorkflowScheduleRequest,
   CreateAgentTeamRequest,
   PatchWorkflowDraftRequest,
+  UpdateWorkflowRequest,
   FinishWorkflowRunRequest,
   CompleteWorkflowNodeConversationRequest,
   InterruptWorkflowNodeConversationRequest,
@@ -150,6 +151,7 @@ const api = {
   askWorkflowAgent: (request: WorkflowAgentRequest): Promise<WorkflowAgentResponse> => ipcRenderer.invoke("workflow-agent:ask", request),
   createWorkflowDraft: (request?: CreateWorkflowDraftRequest): Promise<AppSnapshot> => ipcRenderer.invoke("workflow:draft:create", request),
   patchWorkflowDraft: (request: PatchWorkflowDraftRequest): Promise<AppSnapshot> => ipcRenderer.invoke("workflow:draft:patch", request),
+  updateWorkflow: (request: UpdateWorkflowRequest): Promise<WorkflowOperationResult> => ipcRenderer.invoke("workflow:update", request),
   buildWorkflowV2Plan: (request: BuildWorkflowV2PlanRequest): Promise<BuildWorkflowV2PlanResult> =>
     ipcRenderer.invoke("workflow-v2:plan", request),
   buildWorkflowV2GraphRevision: (request: BuildWorkflowV2GraphRevisionRequest): Promise<BuildWorkflowV2GraphRevisionResult> =>

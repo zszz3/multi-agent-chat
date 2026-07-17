@@ -48,6 +48,7 @@ import type {
   ImportOnlineSkillRequest,
   InstallSkillRequest,
   PatchWorkflowDraftRequest,
+  UpdateWorkflowRequest,
   AnswerWorkflowGateRequest,
   SubmitWorkflowScriptInputRequest,
   PauseWorkflowNodeRequest,
@@ -444,6 +445,7 @@ function registerIpcHandlers(): void {
   );
   ipcMain.handle("workflow:draft:create", (_event, request?: CreateWorkflowDraftRequest) => hub.createWorkflowDraft(request));
   ipcMain.handle("workflow:draft:patch", (_event, request: PatchWorkflowDraftRequest) => hub.patchWorkflowDraft(request));
+  ipcMain.handle("workflow:update", (_event, request: UpdateWorkflowRequest) => hub.updateWorkflow(request));
   ipcMain.handle("workflow-v2:plan", (_event, request: BuildWorkflowV2PlanRequest) => hub.buildWorkflowV2Plan(request));
   ipcMain.handle("workflow-v2:graph-revision", (_event, request: BuildWorkflowV2GraphRevisionRequest) => hub.buildWorkflowV2GraphRevision(request));
   ipcMain.handle("workflow:draft:reset-session", (_event, workflowId: string) => hub.resetWorkflowDraftSession(workflowId));

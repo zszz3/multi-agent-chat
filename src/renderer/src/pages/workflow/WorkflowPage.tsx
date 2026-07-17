@@ -31,6 +31,7 @@ import { Markdown } from "../../Markdown";
 import { ChatControls } from "../chat/ChatControls";
 import { TaskStatusChip } from "../tasks/task-status";
 import { WorkflowCanvasBoard } from "./WorkflowCanvasBoard";
+import { WorkflowDraftEditorDialog } from "./WorkflowDraftEditorDialog";
 import { WorkflowNodeSurface } from "./WorkflowNodeSurface";
 import { WorkflowOutputPreviewModal } from "./WorkflowOutputPreviewModal";
 import { WorkflowRevisionDialog } from "./WorkflowRevisionDialog";
@@ -97,7 +98,7 @@ export function WorkflowPage({ controller: source }: { controller: WorkflowContr
   const onBuildDefinition = source.onBuildDefinition;
   const onReplyChange = source.onReplyChange;
   const onSendReply = source.onSendReply;
-  const onUpdateNode = source.onUpdateNode;
+  const onUpdateDefinition = source.onUpdateDefinition;
   const onReviseRun = source.onReviseRun;
   const onRunWorkflow = source.onRunWorkflow;
   const onConfirmWorkflow = source.onConfirmWorkflow;
@@ -111,6 +112,7 @@ export function WorkflowPage({ controller: source }: { controller: WorkflowContr
   const validation = validateWorkflowV2Definition(definition);
   const workflowConfirmed = revision !== undefined && confirmedRevision === revision;
   const [reviewDrawerOpen, setReviewDrawerOpen] = useState(false);
+  const [draftEditorOpen, setDraftEditorOpen] = useState(false);
 
   useEffect(() => {
     if (generationReview?.status === "reviewing") setReviewDrawerOpen(true);
@@ -340,7 +342,7 @@ export function WorkflowPage({ controller: source }: { controller: WorkflowContr
           </div>
         </div>
         <div className="chat-header-actions workflow-page-actions">
-          {running && !graphVisible ? (
+          {running && !activeRunId ? (
             <button className="icon-btn danger" onClick={() => onStopGrill()} title="Stop agent">
               <CircleStop size={14} />
             </button>
@@ -443,6 +445,7 @@ export function WorkflowPage({ controller: source }: { controller: WorkflowContr
                 <span>{validation.valid ? workflowText.dagValid : workflowText.dagInvalid}</span>
               </div>
               <div className="workflow-validation-row-actions">
+                {!activeRunId && !topologyLocked && onUpdateDefinition ? <button className="icon-btn flat" onClick={() => setDraftEditorOpen(true)} title="Edit workflow definition" aria-label="Edit workflow definition" disabled={running}><Pencil size={14} /></button> : null}
                 <TaskStatusChip
                   label={!validation.valid ? workflowText.invalid : workflowConfirmed ? `${workflowText.confirmed} r${confirmedRevision}` : workflowText.awaitingConfirmation}
                   tone={!validation.valid ? "failed" : workflowConfirmed ? "done" : "running"}
@@ -549,6 +552,7 @@ export function WorkflowPage({ controller: source }: { controller: WorkflowContr
       /> : null}
 
       {revisionEditorNodeId && onReviseRun ? <WorkflowRevisionDialog nodeId={revisionEditorNodeId} definition={definition} onRevise={onReviseRun} onClose={() => setRevisionEditorNodeId(undefined)} /> : null}
+      {draftEditorOpen && onUpdateDefinition ? <WorkflowDraftEditorDialog definition={definition} onSave={onUpdateDefinition} onClose={() => setDraftEditorOpen(false)} /> : null}
 
       {openNodeGraphNode ? <WorkflowNodeSurface
         node={openNodeGraphNode}
@@ -567,7 +571,7 @@ export function WorkflowPage({ controller: source }: { controller: WorkflowContr
         {...(onInterruptNodeConversation && openNodeConversation ? { onInterrupt: () => onInterruptNodeConversation(openNodeConversation.conversationId) } : {})}
       /> : null}
 
-      {!graphVisible ? <section className="composer workflow-composer">
+      {!activeRunId && !topologyLocked ? <section className="composer workflow-composer">
         <div className="composer-box">
           <textarea
             aria-label={workflowStarted ? (graphVisible ? workflowText.replyToAgent : workflowText.replyToQuestion) : workflowText.task}

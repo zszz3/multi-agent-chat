@@ -2,6 +2,7 @@ import type {
   AppSnapshot,
   CreateWorkflowDraftRequest,
   PatchWorkflowDraftRequest,
+  UpdateWorkflowRequest,
   PauseWorkflowNodeRequest,
   ReviseWorkflowV2RunRequest,
   RunWorkflowRequest,
@@ -25,6 +26,7 @@ import { multiAgentChatService } from "./multi-agent-chat-service";
 export interface WorkflowService {
   createDraft: (request?: CreateWorkflowDraftRequest) => Promise<AppSnapshot>;
   patchDraft: (request: PatchWorkflowDraftRequest) => Promise<AppSnapshot>;
+  updateWorkflow: (request: UpdateWorkflowRequest) => Promise<WorkflowOperationResult>;
   resetDraftSession: (workflowId: string) => Promise<AppSnapshot>;
   sendDraftReply: (request: SendWorkflowDraftReplyRequest) => Promise<AppSnapshot>;
   abandonDraftReply: (workflowId: string) => Promise<AppSnapshot>;
@@ -53,6 +55,7 @@ export function workflowService(): WorkflowService {
   return {
     createDraft: (request) => api.createWorkflowDraft(request),
     patchDraft: (request) => api.patchWorkflowDraft(request),
+    updateWorkflow: (request) => api.updateWorkflow(request),
     resetDraftSession: (workflowId) => api.resetWorkflowDraftSession(workflowId),
     sendDraftReply: (request) => api.sendWorkflowDraftReply(request),
     abandonDraftReply: (workflowId) => api.abandonWorkflowDraftReply(workflowId),

@@ -262,6 +262,7 @@ import {
   resetWorkflowDraftSessionState as resetWorkflowDraftSessionStateValue,
   replaceWorkflowDraftMessage as replaceWorkflowDraftMessageValue,
   updateWorkflowDraftState as updateWorkflowDraftStateValue,
+  versionWorkflowDefinition as versionWorkflowDefinitionValue,
 } from "./workflow/agent-hub-workflow-draft";
 import { buildWorkflowAgentExecution as buildWorkflowAgentExecutionValue } from "./workflow/agent-hub-workflow-agent";
 import type { WorkflowDraftInteractiveRequest } from "./workflow/agent-hub-workflow-draft-reply-state";
@@ -1039,13 +1040,12 @@ export class AgentHub {
     this.emit();
     return this.snapshot();
   }
-
   materializeWorkflowDraft(workflowId: string, input: MaterializeWorkflowDraftRequest): WorkflowOperationResult {
     const current = this.workflowStore.workflows.get(workflowId);
     if (!current) return { ok: false, workflowId, error: `Workflow ${workflowId} was not found.` };
     if (!input.definition) return { ok: false, error: "Workflow V2 definition is required." };
     const normalized = normalizeWorkflowV2TerminalNode({ ...structuredClone(input.definition), workflowId, objective: input.objective.trim() || input.definition.objective });
-    const definition = normalized.definition;
+    const definition = versionWorkflowDefinitionValue(current.definition, normalized.definition).definition;
     if (definition.nodes.length > MAX_WORKFLOW_NODE_COUNT) {
       return { ok: false, error: `Workflow V2 definition exceeds ${MAX_WORKFLOW_NODE_COUNT} nodes.` };
     }
@@ -1084,7 +1084,6 @@ export class AgentHub {
     this.emit();
     return { ok: true, workflowId: workflow.workflowId, revision: workflow.revision };
   }
-
   confirmWorkflow(input: ConfirmWorkflowRequest): WorkflowOperationResult {
     const workflow = this.workflowStore.workflows.get(input.workflowId);
     if (!workflow) return { ok: false, workflowId: input.workflowId, error: `Workflow ${input.workflowId} was not found.` };
@@ -1213,10 +1212,12 @@ export class AgentHub {
     const current = this.workflowStore.workflows.get(input.workflowId);
     if (!current) return { ok: false, error: `Workflow ${input.workflowId} was not found.` };
     if (current.status === "running") return { ok: false, error: "Cannot modify workflow graph while it is running." };
+    if (current.topologyLocked) return { ok: false, workflowId: current.workflowId, revision: current.revision, error: "Official workflow topology is locked." };
     if (input.expectedRevision !== undefined && input.expectedRevision !== current.revision) {
       return { ok: false, workflowId: current.workflowId, revision: current.revision, error: "Workflow changed since you read it. Call workflow_get and retry." };
     }
     const sourceDefinition = input.definition ? structuredClone(input.definition) : structuredClone(current.definition);
+    sourceDefinition.workflowId = current.workflowId;
     if (input.objective !== undefined) sourceDefinition.objective = input.objective;
     const definition = normalizeWorkflowV2TerminalNode(sourceDefinition).definition;
     if (definition.nodes.length > MAX_WORKFLOW_NODE_COUNT) {

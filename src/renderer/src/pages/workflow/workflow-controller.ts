@@ -99,6 +99,7 @@ export interface WorkflowController {
   onReplyChange: (value: string) => void;
   onSendReply: () => void;
   onUpdateNode: (nodeId: string, update: Partial<WorkflowV2Node>) => void;
+  onUpdateDefinition?: (definition: WorkflowV2Definition) => MaybePromise;
   onRunWorkflow: () => MaybePromise;
   onConfirmWorkflow?: () => MaybePromise;
   onResetSession: () => MaybePromise;

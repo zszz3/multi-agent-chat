@@ -1,6 +1,7 @@
 import { describe, expect, test } from "vitest";
 import {
   buildWorkflowAgentPrompt,
+  buildWorkflowRevisionPrompt,
   firstWorkflowQuestionForObjective,
   nextWorkflowQuestion,
   WORKFLOW_FOLLOW_UP_QUESTIONS,
@@ -61,5 +62,14 @@ describe("workflow V2 manager prompt", () => {
     for (let index = 0; index < WORKFLOW_FOLLOW_UP_QUESTIONS.length; index += 1) {
       expect(nextWorkflowQuestion(index + 1)).toContain("Recommended answer");
     }
+  });
+
+  test("grounds post-generation changes in the current workflow revision", () => {
+    const prompt = buildWorkflowRevisionPrompt({ workflowId: "wf-edit", revision: 7, definition: { workflowId: "wf-edit", graphVersion: 3, nodes: [{ id: "answer" }], edges: [] }, request: "Make the answer shorter" });
+    expect(prompt).toContain("wf-edit");
+    expect(prompt).toContain("revision 7");
+    expect(prompt).toContain("workflow_create");
+    expect(prompt).toContain('"graphVersion": 3');
+    expect(prompt).toContain("Make the answer shorter");
   });
 });

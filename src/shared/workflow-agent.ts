@@ -109,6 +109,18 @@ export function firstWorkflowQuestionForObjective(objective: string): string {
   return `For ${workflowTaskSnippet(objective)}, which information must be supplied by the user during execution? Recommended answer: declare structured script parameters as source=user; use interactive LLM nodes only for inputs that require clarification or reasoning.`;
 }
 
+export function buildWorkflowRevisionPrompt(input: { workflowId: string; revision: number; definition: unknown; request: string }): string {
+  return [
+    `Revise the existing mutable Workflow ${input.workflowId} at revision ${input.revision}.`,
+    "Apply the user's requested change to the current definition, then call workflow_create with the exact workflowId and the complete revised WorkflowV2Definition.",
+    "Do not create another Workflow, do not return the definition only as prose, and preserve unaffected behavior.",
+    "Current WorkflowV2Definition:",
+    JSON.stringify(input.definition, null, 2),
+    "User requested change:",
+    input.request.trim(),
+  ].join("\n\n");
+}
+
 export function nextWorkflowQuestion(answerCount: number): string {
   return WORKFLOW_FOLLOW_UP_QUESTIONS[Math.min(Math.max(0, answerCount - 1), WORKFLOW_FOLLOW_UP_QUESTIONS.length - 1)]!;
 }
