@@ -31,6 +31,8 @@ export interface WorkflowV2ScriptAuthorization {
   risk: WorkflowV2ScriptRiskLevel;
   capabilities: WorkflowV2ScriptCapability[];
   capabilityDigest: string;
+  operationDigest: string;
+  approvalRequestId?: string;
 }
 export interface WorkflowV2ScriptParameterDef {
   key: string;

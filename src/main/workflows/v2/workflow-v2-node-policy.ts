@@ -67,7 +67,9 @@ export function workflowV2InterventionResolutionReason(
   if (action === "skip") return `Skip ${nodeTitle} and continue eligible downstream work.`;
   if (action === "escalate") return `Escalate ${nodeTitle} to expert execution with mandatory independent review.`;
   if (action === "replan") return `Keep the run stopped and create a new graph revision for ${nodeTitle}.`;
-  return `Rerun ${nodeTitle} with mandatory independent review.`;
+  if (action === "increase_review_strength") return `Rerun ${nodeTitle} with mandatory independent review.`;
+  if (action === "approve_once") return `Approve one execution of dangerous script ${nodeTitle}.`;
+  return `Reject dangerous script ${nodeTitle}.`;
 }
 
 export function workflowV2LlmNodePrompt(input: {

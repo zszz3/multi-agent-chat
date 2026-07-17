@@ -10,6 +10,10 @@ export interface WorkflowV2RecoveryOverride {
   forceIndependentReview: boolean;
   instruction: string;
   userInput?: string;
+  scriptApproval?: {
+    requestId: string;
+    operationDigest: string;
+  };
 }
 
 export interface ExecuteWorkflowV2RunInput {

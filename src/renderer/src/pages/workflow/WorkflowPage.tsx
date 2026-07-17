@@ -83,6 +83,7 @@ export function WorkflowPage({ controller: source }: { controller: WorkflowContr
   const onStopRun = source.onStopRun;
   const onStartNode = source.onStartNode;
   const onSubmitScriptInput = source.onSubmitScriptInput;
+  const onResolveIntervention = source.onResolveIntervention;
   const onSendNodeMessage = source.onSendNodeMessage;
   const onCompleteNodeConversation = source.onCompleteNodeConversation;
   const onRejectNodeCompletion = source.onRejectNodeCompletion;
@@ -175,6 +176,11 @@ export function WorkflowPage({ controller: source }: { controller: WorkflowContr
   useEffect(() => {
     const nodeInput = runProgress.find((item) => item.inputRequest);
     if (nodeInput && !openNodeId && dismissedNodeSurfaceRunIdRef.current !== activeRunId) setOpenNodeId(nodeInput.nodeId);
+  }, [activeRunId, openNodeId, runProgress]);
+
+  useEffect(() => {
+    const approval = runProgress.find((item) => item.intervention?.source === "script_permission");
+    if (approval && !openNodeId && dismissedNodeSurfaceRunIdRef.current !== activeRunId) setOpenNodeId(approval.nodeId);
   }, [activeRunId, openNodeId, runProgress]);
 
   useEffect(() => {
@@ -541,6 +547,7 @@ export function WorkflowPage({ controller: source }: { controller: WorkflowContr
         {...(openNodeId ? { selectedNodeId: openNodeId } : {})}
         {...(openNodeProgress ? { progress: openNodeProgress } : {})}
         {...(onSubmitScriptInput && openNodeId ? { onSubmitScriptInput: (values: Record<string, unknown>) => onSubmitScriptInput(openNodeId, values) } : {})}
+        {...(onResolveIntervention && openNodeId ? { onResolveScriptApproval: (action: "approve_once" | "reject") => onResolveIntervention(openNodeId, action) } : {})}
         onSelectNode={setOpenNodeId}
         onClose={() => { dismissedNodeSurfaceRunIdRef.current = activeRunId; setOpenNodeId(undefined); }}
         {...(onSendNodeMessage && openNodeConversation ? { onSend: (message: string) => onSendNodeMessage(openNodeConversation.conversationId, message) } : {})}

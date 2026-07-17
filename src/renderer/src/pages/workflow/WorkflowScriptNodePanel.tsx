@@ -1,5 +1,5 @@
 import { useMemo, useState } from "react";
-import { Braces, CheckCircle2, Code2, FileCode2, Play, ShieldCheck, X } from "lucide-react";
+import { Braces, CheckCircle2, Code2, FileCode2, Play, ShieldAlert, ShieldCheck, X } from "lucide-react";
 import type { WorkflowRunProgressItem } from "../../../../shared/types";
 import type { WorkflowV2ScriptNode, WorkflowV2ScriptParameterDef } from "../../../../shared/workflow-v2/definition";
 import { useWorkflowNodeInputController } from "./workflow-node-input-controller";
@@ -37,13 +37,17 @@ function coerceScriptInput(parameter: WorkflowV2ScriptParameterDef, raw: string)
   return raw;
 }
 
-export function WorkflowScriptNodePanel({ node, progress, onSubmitInput, onClose }: {
+export function WorkflowScriptNodePanel({ node, progress, onSubmitInput, onResolveApproval, onClose }: {
   node: WorkflowV2ScriptNode;
   progress?: WorkflowRunProgressItem;
   onSubmitInput?: (values: Record<string, unknown>) => void | Promise<void>;
+  onResolveApproval?: (action: "approve_once" | "reject") => void | Promise<void>;
   onClose: () => void;
 }) {
   const requestedParameters = progress?.inputRequest?.kind === "script_parameters" ? progress.inputRequest.parameters : [];
+  const approval = progress?.intervention?.source === "script_permission" ? progress.intervention.scriptApproval : undefined;
+  const [approvalPending, setApprovalPending] = useState<"approve_once" | "reject" | undefined>(undefined);
+  const [approvalError, setApprovalError] = useState<string | undefined>(undefined);
   const [activeInputTab, setActiveInputTab] = useState("params");
   const inputTabs = useMemo(() => {
     const groups = new Map<WorkflowV2ScriptParameterDef["location"], WorkflowV2ScriptParameterDef[]>();
@@ -75,6 +79,18 @@ export function WorkflowScriptNodePanel({ node, progress, onSubmitInput, onClose
   const code = executable.kind === "inline" ? executable.code : [executable.command, ...(executable.args ?? [])].join(" ");
   const language = executable.kind === "inline" ? executable.language : "command";
   const renderedOutput = progress?.outputs ? JSON.stringify(progress.outputs, null, 2) : undefined;
+
+  const resolveApproval = async (action: "approve_once" | "reject") => {
+    if (!onResolveApproval) return;
+    setApprovalPending(action);
+    setApprovalError(undefined);
+    try {
+      await onResolveApproval(action);
+    } catch (error) {
+      setApprovalError(error instanceof Error ? error.message : String(error));
+      setApprovalPending(undefined);
+    }
+  };
 
   const renderInput = (parameter: WorkflowV2ScriptParameterDef) => {
     const value = input.values[parameter.key] ?? "";
@@ -109,6 +125,22 @@ export function WorkflowScriptNodePanel({ node, progress, onSubmitInput, onClose
         <button className="icon-btn" onClick={onClose} aria-label="Close script details"><X size={16} /></button>
       </header>
       <div className="workflow-script-node-scroll">
+        {approval ? <section className="workflow-script-node-section workflow-script-approval" aria-label="Dangerous script approval">
+          <div className="workflow-script-node-section-title"><ShieldAlert size={15} /><div><strong>Dangerous operation requires approval</strong><span>Review the exact operation and grant at most one execution.</span></div><em>{approval.risk}</em></div>
+          <dl>
+            <div><dt>Request</dt><dd><code>{approval.requestId}</code></dd></div>
+            <div><dt>Working directory</dt><dd><code>{approval.workDir}</code></dd></div>
+            <div><dt>Capabilities</dt><dd>{approval.capabilities.join(", ") || "ambient main-process authority"}</dd></div>
+            <div><dt>Operation digest</dt><dd><code>{approval.operationDigest}</code></dd></div>
+          </dl>
+          <pre className="workflow-script-code"><code>{approval.executableSummary}</code></pre>
+          <p>{progress?.intervention?.reason}</p>
+          {approvalError ? <div className="workflow-script-node-error" role="alert">{approvalError}</div> : null}
+          <div className="workflow-script-approval-actions">
+            <button type="button" className="control-btn is-danger" disabled={approvalPending !== undefined} onClick={() => void resolveApproval("reject")}>Reject</button>
+            <button type="button" className="send-btn" disabled={approvalPending !== undefined} onClick={() => void resolveApproval("approve_once")}>{approvalPending === "approve_once" ? "Approving..." : "Approve once"}</button>
+          </div>
+        </section> : null}
         <section className="workflow-script-node-section">
           <div className="workflow-script-node-section-title"><Code2 size={15} /><div><strong>Execution logic</strong><span>The exact code executed by this node.</span></div><em>{language}</em></div>
           <pre className="workflow-script-code"><code>{code}</code></pre>

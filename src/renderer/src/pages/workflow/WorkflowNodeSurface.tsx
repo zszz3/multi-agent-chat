@@ -14,12 +14,13 @@ export function WorkflowNodeSurface(props: {
   onSelectNode?: (nodeId: string) => void;
   onClose: () => void;
   onSubmitScriptInput?: (values: Record<string, unknown>) => void | Promise<void>;
+  onResolveScriptApproval?: (action: "approve_once" | "reject") => void | Promise<void>;
   onSend?: (message: string) => void | Promise<void>;
   onConfirm?: () => void | Promise<void>;
   onReject?: (instruction: string) => void | Promise<void>;
   onInterrupt?: () => void | Promise<void>;
 }) {
-  if (props.node.execModel === "script") return <WorkflowScriptNodePanel node={props.node} {...(props.progress ? { progress: props.progress } : {})} {...(props.onSubmitScriptInput ? { onSubmitInput: props.onSubmitScriptInput } : {})} onClose={props.onClose} />;
+  if (props.node.execModel === "script") return <WorkflowScriptNodePanel node={props.node} {...(props.progress ? { progress: props.progress } : {})} {...(props.onSubmitScriptInput ? { onSubmitInput: props.onSubmitScriptInput } : {})} {...(props.onResolveScriptApproval ? { onResolveApproval: props.onResolveScriptApproval } : {})} onClose={props.onClose} />;
   const inputPrompt = props.progress?.inputRequest?.kind === "agent_message" ? props.progress.inputRequest.prompt : undefined;
   return <WorkflowNodeAgentWindow nodeTitle={props.node.title} {...(inputPrompt ? { inputPrompt } : {})} {...(props.conversation ? { conversation: props.conversation } : {})} {...(props.task ? { task: props.task } : {})} {...(props.sessions ? { sessions: props.sessions } : {})} {...(props.selectedNodeId ? { selectedNodeId: props.selectedNodeId } : {})} {...(props.onSelectNode ? { onSelectNode: props.onSelectNode } : {})} onClose={props.onClose} {...(props.onSend ? { onSend: props.onSend } : {})} {...(props.onConfirm ? { onConfirm: props.onConfirm } : {})} {...(props.onReject ? { onReject: props.onReject } : {})} {...(props.onInterrupt ? { onInterrupt: props.onInterrupt } : {})} />;
 }

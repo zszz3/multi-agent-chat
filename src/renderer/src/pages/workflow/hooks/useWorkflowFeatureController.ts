@@ -112,6 +112,22 @@ export function useWorkflowFeatureController({
         }
         await onRefresh();
       },
+      onResolveIntervention: async (nodeId, action, reason) => {
+        if (!draft.workflowId || !activeRunId) return;
+        const result = await workflows.resolveIntervention({
+          workflowId: draft.workflowId,
+          runId: activeRunId,
+          nodeId,
+          action,
+          ...(reason?.trim() ? { reason: reason.trim() } : {}),
+        });
+        if (!result.ok) {
+          const error = result.error ?? "Workflow intervention could not be resolved.";
+          setSnapshot(await workflows.patchDraft({ workflowId: draft.workflowId, error }));
+          throw new Error(error);
+        }
+        await onRefresh();
+      },
       onRejectNodeCompletion: async (conversationId, instruction) => setSnapshot(await workflows.rejectNodeCompletion({ conversationId, instruction })),
       onInterruptNodeConversation: async (conversationId) => setSnapshot(await workflows.interruptNodeConversation({ conversationId })),
       onSelectConfiguredAgent: (configuredAgentId: string) => {

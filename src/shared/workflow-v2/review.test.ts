@@ -6,11 +6,33 @@ import {
 } from "./review";
 
 describe("workflow-v2 review contracts", () => {
-  test("validates the five unified intervention actions", () => {
-    expect(["continue", "skip", "escalate", "replan", "increase_review_strength"].every(
+  test("validates unified intervention and explicit script approval actions", () => {
+    expect(["continue", "skip", "escalate", "replan", "increase_review_strength", "approve_once", "reject"].every(
       isWorkflowV2InterventionAction,
     )).toBe(true);
     expect(isWorkflowV2InterventionAction("retry")).toBe(false);
+  });
+
+  test("requires a bound request and only approve-once or reject for script permission", () => {
+    const intervention = {
+      nodeId: "write",
+      source: "script_permission",
+      reason: "Dangerous operation requires approval.",
+      allowedActions: ["approve_once", "reject"],
+      requestedAt: 1_000,
+      scriptApproval: {
+        requestId: "request-1",
+        risk: "dangerous",
+        capabilities: ["workspace_write"],
+        capabilityDigest: "capability-digest",
+        operationDigest: "operation-digest",
+        executableSummary: "tool --write",
+        workDir: "C:/workspace",
+      },
+    };
+    expect(isWorkflowV2HumanIntervention(intervention)).toBe(true);
+    expect(isWorkflowV2HumanIntervention({ ...intervention, scriptApproval: undefined })).toBe(false);
+    expect(isWorkflowV2HumanIntervention({ ...intervention, allowedActions: ["continue"] })).toBe(false);
   });
 
   test("validates a durable supervision intervention with a resume conversation", () => {

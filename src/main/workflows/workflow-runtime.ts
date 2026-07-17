@@ -58,11 +58,13 @@ import {
   materializeWorkflowV2Recovery,
 } from "./v2/workflow-v2-recovery";
 import { transitionWorkflowV2NodeState } from "./v2/workflow-v2-scheduler";
+import { createWorkflowV2ScriptApprovalOverride, rejectWorkflowV2ScriptApproval, WorkflowV2ScriptApprovalCoordinator } from "./v2/workflow-v2-script-approval";
 
 
 export class WorkflowRuntime {
   private readonly runRegistry = new WorkflowRunRegistry();
   private readonly runExecutor: WorkflowV2RunExecutor;
+  private readonly scriptApprovalCoordinator = new WorkflowV2ScriptApprovalCoordinator();
 
   constructor(private readonly deps: WorkflowRuntimeDependencies) {
     this.runExecutor = new WorkflowV2RunExecutor(deps, this.runRegistry);
@@ -343,6 +345,16 @@ export class WorkflowRuntime {
     action: WorkflowV2InterventionAction;
     reason?: string;
   }): Promise<WorkflowOperationResult> {
+    return this.scriptApprovalCoordinator.run({ workflowId: input.workflow.workflowId, runId: input.run.runId, nodeId: input.nodeId, action: input.action }, () => this.resumeWorkflowV2NodeUnlocked(input));
+  }
+
+  private async resumeWorkflowV2NodeUnlocked(input: {
+    workflow: WorkflowDraftState;
+    run: WorkflowRunState;
+    nodeId: string;
+    action: WorkflowV2InterventionAction;
+    reason?: string;
+  }): Promise<WorkflowOperationResult> {
     if (input.run.status !== "waiting_for_user" && input.run.status !== "stopped" && input.run.status !== "failed") {
       return {
         ok: false,
@@ -416,6 +428,14 @@ export class WorkflowRuntime {
         error: `Workflow V2 intervention does not allow action ${input.action}.`,
       };
     }
+    if ((input.action === "approve_once" || input.action === "reject") && intervention?.source !== "script_permission") {
+      return {
+        ok: false,
+        workflowId: input.workflow.workflowId,
+        runId: input.run.runId,
+        error: `Workflow V2 action ${input.action} requires a pending script permission request.`,
+      };
+    }
     if ((input.action === "escalate" || input.action === "increase_review_strength") && targetNode.execModel !== "llm") {
       return {
         ok: false,
@@ -445,6 +465,10 @@ export class WorkflowRuntime {
       detail: resolutionReason,
     };
     const initialDurableEventCount = persisted.eventCount + 1;
+
+    if (input.action === "reject") {
+      return rejectWorkflowV2ScriptApproval({ deps: this.deps, store, persisted, run: input.run, nodeId: input.nodeId, nodeTitle: targetNode.title, resolvedAt, ...(input.reason ? { reason: input.reason } : {}), nodeControl: initialNodeControl, resolutionEvent, eventCount: initialDurableEventCount });
+    }
 
     if (input.action === "replan") {
       await store.appendEvents({
@@ -556,7 +580,11 @@ export class WorkflowRuntime {
       materialized.resumeConversations.delete(input.nodeId);
     }
     const recoveryOverrides = new Map<string, WorkflowV2RecoveryOverride>();
-    if (input.action === "continue") {
+    if (input.action === "approve_once") {
+      const approval = createWorkflowV2ScriptApprovalOverride({ node: targetNode, planNode: plan.nodes.find((item) => item.nodeId === input.nodeId), intervention, resolutionReason });
+      if (!approval.override) return { ok: false, workflowId: input.workflow.workflowId, runId: input.run.runId, error: approval.error ?? "Workflow V2 script approval is invalid." };
+      recoveryOverrides.set(input.nodeId, approval.override);
+    } else if (input.action === "continue") {
       recoveryOverrides.set(input.nodeId, {
         forceIndependentReview: false,
         instruction: resolutionReason,

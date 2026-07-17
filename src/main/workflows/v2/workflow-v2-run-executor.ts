@@ -65,7 +65,8 @@ import {
 import type { ExecuteWorkflowV2Checkpoint } from "./workflow-v2-executor";
 import { recordWorkflowV2ScriptInputRequest, resolveWorkflowV2ScriptInput, workflowV2ScriptInputSignal } from "./workflow-v2-script-input";
 import { projectWorkflowV2PausedNodeInteraction } from "./workflow-v2-node-interaction";
-import { authorizeWorkflowV2Script, executeAuthorizedWorkflowV2Script } from "./workflow-v2-script-execution";
+import { executeAuthorizedWorkflowV2Script } from "./workflow-v2-script-execution";
+import { authorizeWorkflowV2ScriptOperation } from "./workflow-v2-script-approval";
 import { buildWorkflowV2FinalReport } from "./workflow-v2-recovery";
 import {
   createWorkflowV2HookRegistry,
@@ -76,7 +77,6 @@ import {
 
 const WORKFLOW_V2_MAX_PARALLEL_NODES = 4;
 const MAX_NODE_TIMER_DELAY_MS = 2_147_483_647;
-
 function delay(ms: number): Promise<void> {
   return new Promise((resolve) => setTimeout(resolve, ms));
 }
@@ -86,7 +86,6 @@ class WorkflowV2OneShotInputRequestSignal extends Error {
     super("One-shot workflow node requested user input.");
   }
 }
-
 export class WorkflowV2RunExecutor {
   constructor(
     private readonly deps: WorkflowRuntimeDependencies,
@@ -754,13 +753,18 @@ export class WorkflowV2RunExecutor {
         MAX_NODE_TIMER_DELAY_MS,
       );
       const controller = new AbortController();
-      const { analysis, governance, permission } = authorizeWorkflowV2Script({ node: request.node, planNode: request.planNode, confirmed: input.recoveryOverrides?.has(request.node.id) === true });
-      if (permission.decision === "require_confirmation") {
-        throw new WorkflowV2SupervisionSignal({
-          resolution: { action: "pause", question: `Approve ${permission.risk} script node ${request.node.title}?`, reason: analysis.rationale },
-          report: { nodeId: request.node.id, attempt: 1, phase: "approval", completedItems: [], remainingItems: ["Human approval"], blockers: ["Script permission is not approved."], evidence: analysis.detectedCapabilities, safeToInterrupt: true, requestedAction: "need_input", reportedAt: Date.now() },
-        });
-      }
+      const graphVersion = workflow.workflowV2Plan?.graphVersion ?? workflow.definition.graphVersion;
+      const approvalGrant = input.recoveryOverrides?.get(request.node.id)?.scriptApproval;
+      const { governance, permission, operationDigest } = authorizeWorkflowV2ScriptOperation({
+        workflowId: workflow.workflowId,
+        graphVersion,
+        runId,
+        node: request.node,
+        planNode: request.planNode,
+        workDir: workflowWorkDir,
+        inputs: resolvedInput.values,
+        ...(approvalGrant ? { approvalGrant } : {}),
+      });
       this.runRegistry.get(runId)?.abortControllerByNodeId?.set(request.node.id, controller);
       let output: WorkflowV2WorkerOutput;
       try {
@@ -768,12 +772,14 @@ export class WorkflowV2RunExecutor {
           authorization: {
             decision: permission.decision,
             workflowId: workflow.workflowId,
-            graphVersion: workflow.workflowV2Plan?.graphVersion ?? workflow.definition.graphVersion,
+            graphVersion,
             runId,
             nodeId: request.node.id,
             risk: permission.risk,
             capabilities: [...governance.capabilities],
             capabilityDigest: governance.capabilityDigest,
+            operationDigest,
+            ...(approvalGrant ? { approvalRequestId: approvalGrant.requestId } : {}),
           },
         });
       } catch (error) {

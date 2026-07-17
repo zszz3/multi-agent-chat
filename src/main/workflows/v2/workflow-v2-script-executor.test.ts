@@ -1,32 +1,34 @@
 import { describe, expect, test } from "vitest";
 import { createWorkflowV2InlineScriptSpec } from "../../../shared/workflow-v2/definition";
 import { executeWorkflowV2Script } from "./workflow-v2-script-executor";
-import { workflowV2ScriptCapabilityDigest } from "./workflow-v2-script-analysis";
+import { workflowV2ScriptCapabilityDigest, workflowV2ScriptOperationDigest } from "./workflow-v2-script-analysis";
 
 describe("workflow-v2 script executor", () => {
   test("executes an auto-authorized inline typescript transform", async () => {
-    const output = await executeWorkflowV2Script({
-      node: {
-        id: "echo",
-        kind: "transform",
-        title: "Echo",
-        execModel: "script",
-        executionMode: "script",
-        outputFields: [{ key: "result", required: true }],
-        script: {
-          executable: { kind: "inline", language: "typescript", code: "return { result: 'ok' };" },
-          parameters: [],
-          capabilities: [],
-          managerRisk: { level: "safe", rationale: "Pure in-memory transform." },
-          outputSchema: { type: "object", required: ["result"] },
-        },
+    const node = {
+      id: "echo",
+      kind: "transform",
+      title: "Echo",
+      execModel: "script" as const,
+      executionMode: "script" as const,
+      outputFields: [{ key: "result", required: true }],
+      script: {
+        executable: { kind: "inline" as const, language: "typescript" as const, code: "return { result: 'ok' };" },
+        parameters: [],
+        capabilities: [],
+        managerRisk: { level: "safe" as const, rationale: "Pure in-memory transform." },
+        outputSchema: { type: "object" as const, required: ["result"] },
       },
-      workDir: process.cwd(),
+    };
+    const workDir = process.cwd();
+    const output = await executeWorkflowV2Script({
+      node,
+      workDir,
       upstreamOutputs: [],
       signal: new AbortController().signal,
       timeoutMs: 2_000,
       inputs: {},
-      authorization: { decision: "auto_allow", workflowId: "wf", graphVersion: 1, runId: "run", nodeId: "echo", risk: "safe", capabilities: [], capabilityDigest: workflowV2ScriptCapabilityDigest([]) },
+      authorization: { decision: "auto_allow", workflowId: "wf", graphVersion: 1, runId: "run", nodeId: "echo", risk: "safe", capabilities: [], capabilityDigest: workflowV2ScriptCapabilityDigest([]), operationDigest: workflowV2ScriptOperationDigest({ workflowId: "wf", graphVersion: 1, runId: "run", node, workDir, inputs: {} }) },
     });
 
     expect(output.outputs).toEqual({ result: "ok" });
@@ -36,7 +38,7 @@ describe("workflow-v2 script executor", () => {
     await expect(executeWorkflowV2Script({
       node: { id: "echo", kind: "transform", title: "Echo", execModel: "script", executionMode: "script", outputFields: [], script: createWorkflowV2InlineScriptSpec({ language: "typescript", code: "return {};" }) },
       workDir: process.cwd(), upstreamOutputs: [], signal: new AbortController().signal, timeoutMs: 2_000, inputs: {},
-      authorization: { decision: "auto_allow", workflowId: "wf", graphVersion: 1, runId: "run", nodeId: "echo", risk: "safe", capabilities: [], capabilityDigest: "stale" },
+      authorization: { decision: "auto_allow", workflowId: "wf", graphVersion: 1, runId: "run", nodeId: "echo", risk: "safe", capabilities: [], capabilityDigest: "stale", operationDigest: "stale" },
     })).rejects.toThrow("capability digest");
   });
 });
