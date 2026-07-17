@@ -150,6 +150,7 @@ export function resolveWorkflowNodeAgent(
 ): { configuredAgentId: string; modelId: string } {
   const configuredAgentId = node.configuredAgentId || workflowDefaults.configuredAgentId;
   const agent = configuredAgents.find((item) => item.id === configuredAgentId);
+  if (node.configuredAgentId && !agent) throw new Error(`Workflow V2 configured agent ${configuredAgentId} was not found.`);
   const modelId = node.modelId
     ? node.modelId
     : node.configuredAgentId

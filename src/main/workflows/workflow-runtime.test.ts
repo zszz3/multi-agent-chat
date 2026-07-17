@@ -318,7 +318,7 @@ async function workflowV2RuntimeFixture(input: {
   });
   const snapshot = (): AppSnapshot => ({
     workDir: "/tmp/app-workdir",
-    configuredAgents: [{ id: "agent-a", modelId: "model-a" }],
+    configuredAgents: [{ id: "agent-a", modelId: "model-a" }, { id: "agent-b", modelId: "model-b" }],
     tasks,
     workflowStore: { activeWorkflowId: workflow.workflowId, workflows: [workflow], runs },
   }) as unknown as AppSnapshot;
@@ -496,6 +496,10 @@ describe("WorkflowRuntime typed script input", () => {
     expect(completedProgress?.inputRequest).toBeUndefined();
     expect(completedProgress?.outputs).toEqual({ ok: true });
   });
+
+  test("rejects a node override whose configured agent no longer exists", () => {
+    expect(() => resolveWorkflowNodeAgent({ configuredAgentId: "missing" }, WORKFLOW_DEFAULTS, AGENTS)).toThrow("configured agent missing was not found");
+  });
 });
 
 describe("WorkflowRuntime script permissions", () => {
@@ -600,6 +604,19 @@ describe("WorkflowRuntime script permissions", () => {
 });
 
 describe("WorkflowRuntime Workflow V2 bridge", () => {
+  test("routes an LLM node through its selected configured agent", async () => {
+    const definition = workflowV2Definition();
+    const node = definition.nodes[0]!;
+    if (node.execModel !== "llm") throw new Error("expected llm node");
+    node.configuredAgentId = "agent-b";
+    const fixture = await workflowV2RuntimeFixture({ definition, executeScript: async ({ node: scriptNode }) => ({ nodeId: scriptNode.id, summary: "Verified", outputs: { verified: true }, proposals: [] }) });
+
+    fixture.runtime.runWorkflow({ workflowId: fixture.workflow.workflowId });
+    await fixture.finished;
+
+    expect(fixture.taskRequests[0]).toMatchObject({ configuredAgentId: "agent-b", modelId: "model-b" });
+  });
+
   test("keeps an interactive node on the same non-terminal run while awaiting user confirmation", async () => {
     const definition = workflowV2Definition();
     const interactiveNode = definition.nodes[0]!;

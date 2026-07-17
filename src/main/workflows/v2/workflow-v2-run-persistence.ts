@@ -10,7 +10,7 @@ import {
 import type { WorkflowV2StorePort } from "../workflow-runtime-ports";
 import type { ExecuteWorkflowV2Checkpoint } from "./workflow-v2-executor";
 import { createWorkflowV2NodeCacheFingerprint } from "./workflow-v2-recovery";
-import { workflowV2ExecutionEnvironment, workflowV2ReviewerPolicy } from "./workflow-v2-node-policy";
+import { resolveWorkflowNodeAgent, workflowV2ExecutionEnvironment, workflowV2ReviewerPolicy } from "./workflow-v2-node-policy";
 import type { WorkflowV2RecoveryOverride } from "./workflow-v2-execution-contract";
 
 export class WorkflowV2RunPersistence {
@@ -30,6 +30,7 @@ export class WorkflowV2RunPersistence {
     workDir: string;
     configuredAgentId: string;
     modelId: string;
+    configuredAgents: Array<{ id: string; modelId: string }>;
     recoveryOverrides?: ReadonlyMap<string, WorkflowV2RecoveryOverride>;
   }) {
     this.eventCount = input.initialEventCount;
@@ -108,6 +109,9 @@ export class WorkflowV2RunPersistence {
         .filter((edge) => edge.toNodeId === output.nodeId)
         .map((edge) => outputByNodeId.get(edge.fromNodeId))
         .filter((item): item is WorkflowV2WorkerOutput => Boolean(item));
+      const agentRoute = node.execModel === "llm"
+        ? resolveWorkflowNodeAgent(node, { configuredAgentId: this.input.configuredAgentId, modelId: this.input.modelId }, this.input.configuredAgents)
+        : { configuredAgentId: this.input.configuredAgentId, modelId: this.input.modelId };
       await this.input.store.persistCacheEntry({
         schemaVersion: WORKFLOW_V2_STORAGE_SCHEMA_VERSION,
         workflowId: this.input.workflow.workflowId,
@@ -121,8 +125,8 @@ export class WorkflowV2RunPersistence {
           executionEnvironment: workflowV2ExecutionEnvironment({
             node,
             workDir: this.input.workDir,
-            configuredAgentId: this.input.configuredAgentId,
-            modelId: this.input.modelId,
+            configuredAgentId: agentRoute.configuredAgentId,
+            modelId: agentRoute.modelId,
           }),
           reviewerPolicy: workflowV2ReviewerPolicy(node, recoveryOverride?.forceIndependentReview === true),
         }),

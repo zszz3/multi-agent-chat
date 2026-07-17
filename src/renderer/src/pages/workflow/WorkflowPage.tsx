@@ -258,10 +258,10 @@ export function WorkflowPage({ controller: source }: { controller: WorkflowContr
 
   function renderWorkflowNodeCard(node: WorkflowV2Node, compact: boolean): ReactElement {
     const nodeRunProgress = runProgressByNodeId.get(node.id);
-    const nodeAgentId = configuredAgentId;
+    const nodeAgentId = node.execModel === "llm" ? node.configuredAgentId ?? configuredAgentId : configuredAgentId;
     const nodeAgentConfig = configuredAgentById(nodeAgentId, configuredAgents);
     const nodeAgentName = nodeAgentConfig?.name || nodeAgentId || "default";
-    const nodeModelId = node.execModel === "llm" ? node.modelProfile ?? modelId : "script";
+    const nodeModelId = node.execModel === "llm" ? node.modelId ?? nodeAgentConfig?.modelId ?? modelId : "script";
     const nodeAgentRow =
       node.execModel === "llm" ? (
         <div className="workflow-node-agent-row" title={`Agent: ${nodeAgentName} · Model: ${nodeModelId}`}>
@@ -552,7 +552,7 @@ export function WorkflowPage({ controller: source }: { controller: WorkflowContr
       /> : null}
 
       {revisionEditorNodeId && onReviseRun ? <WorkflowRevisionDialog nodeId={revisionEditorNodeId} definition={definition} onRevise={onReviseRun} onClose={() => setRevisionEditorNodeId(undefined)} /> : null}
-      {draftEditorOpen && onUpdateDefinition ? <WorkflowDraftEditorDialog definition={definition} onSave={onUpdateDefinition} onClose={() => setDraftEditorOpen(false)} /> : null}
+      {draftEditorOpen && onUpdateDefinition ? <WorkflowDraftEditorDialog definition={definition} configuredAgents={configuredAgents} onSave={onUpdateDefinition} onClose={() => setDraftEditorOpen(false)} /> : null}
 
       {openNodeGraphNode ? <WorkflowNodeSurface
         node={openNodeGraphNode}

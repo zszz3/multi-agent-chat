@@ -176,6 +176,8 @@ export function buildWorkflowV2PlanSync(input: BuildWorkflowV2PlanRequest): Work
       executionModeRationale: executionMode.rationale,
       executionModeConfidence: executionMode.confidence,
       modelProfile: resolveWorkflowV2NodeModelProfile(node, roleDefaults),
+      ...(node.execModel === "llm" && node.configuredAgentId ? { configuredAgentId: node.configuredAgentId } : {}),
+      ...(node.execModel === "llm" && node.modelId ? { modelId: node.modelId } : {}),
       acceptanceCriteria: taskPacket.acceptanceCriteria.map((criterion) => ({ ...criterion })),
       budget: {
         context: { ...taskPacket.budget.context },

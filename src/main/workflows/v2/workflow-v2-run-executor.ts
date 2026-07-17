@@ -121,7 +121,6 @@ export class WorkflowV2RunExecutor {
     const workflowWorkDir = workflow.workDir || latestSnapshot.workDir;
     const configuredAgentId = workflow.configuredAgentId || latestSnapshot.configuredAgents[0]?.id || "default-agent";
     const modelId = configuredAgentModelId(workflow, latestSnapshot);
-
     const persistence = new WorkflowV2RunPersistence({
       store: durableStore,
       workflow,
@@ -132,7 +131,7 @@ export class WorkflowV2RunExecutor {
       nodeControl: durableNodeControl,
       workDir: workflowWorkDir,
       configuredAgentId,
-      modelId,
+      modelId, configuredAgents: latestSnapshot.configuredAgents,
       ...(input.recoveryOverrides ? { recoveryOverrides: input.recoveryOverrides } : {}),
     });
 
@@ -593,6 +592,7 @@ export class WorkflowV2RunExecutor {
       upstreamOutputs: readonly WorkflowV2ResultPacket[];
     }): Promise<WorkflowV2WorkerOutput> => {
       assertWallClockBudget(request.node.id);
+      const agentRoute = resolveWorkflowNodeAgent(request.node, { configuredAgentId, modelId }, latestSnapshot.configuredAgents);
       const recoveryOverride = input.recoveryOverrides?.get(request.node.id);
       const effectiveTaskPacket = recoveryOverride?.modelProfile
         ? { ...request.taskPacket, modelProfile: recoveryOverride.modelProfile }
@@ -629,8 +629,8 @@ export class WorkflowV2RunExecutor {
           workflowId: workflow.workflowId,
           runId,
           nodeId: request.node.id,
-          configuredAgentId,
-          modelId,
+          configuredAgentId: agentRoute.configuredAgentId,
+          modelId: agentRoute.modelId,
           workDir: workflowWorkDir,
           initialPrompt: effectivePrompt,
           developerInstructions: [
@@ -667,8 +667,8 @@ export class WorkflowV2RunExecutor {
         prompt: effectivePrompt,
         developerInstructions: effectiveDeveloperInstructions,
         contextDocument: effectiveContextDocument,
-        configuredAgentId,
-        modelId,
+        configuredAgentId: agentRoute.configuredAgentId,
+        modelId: agentRoute.modelId,
         workDir: workflowWorkDir,
         ...(recoveryConversation
           ? { continuationPolicy: "resume-required" as const, runtimeConversation: recoveryConversation }
@@ -685,8 +685,8 @@ export class WorkflowV2RunExecutor {
           node: request.node,
           initialTask: task,
           attempt,
-          configuredAgentId,
-          modelId,
+          configuredAgentId: agentRoute.configuredAgentId,
+          modelId: agentRoute.modelId,
           workDir: workflowWorkDir,
           taskIds,
           supervisorTaskIds,

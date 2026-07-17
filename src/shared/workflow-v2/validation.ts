@@ -156,6 +156,8 @@ function appendNodeValidationErrors(node: WorkflowV2Node, errors: string[]): voi
 
   if (node.execModel === "llm") {
     if (!node.prompt.trim()) errors.push(`Workflow V2 llm node ${node.id} must have a prompt.`);
+    if (node.configuredAgentId !== undefined && !node.configuredAgentId.trim()) errors.push(`Workflow V2 llm node ${node.id} configuredAgentId must not be empty.`);
+    if (node.modelId !== undefined && !node.modelId.trim()) errors.push(`Workflow V2 llm node ${node.id} modelId must not be empty.`);
     if (node.modelProfile !== undefined && !isWorkflowV2ModelProfile(node.modelProfile)) {
       errors.push(`Workflow V2 llm node ${node.id} has unsupported model profile ${String(node.modelProfile)}.`);
     }

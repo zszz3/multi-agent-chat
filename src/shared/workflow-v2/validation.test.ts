@@ -41,6 +41,18 @@ function validDefinition(): WorkflowV2Definition {
 }
 
 describe("workflow-v2 validation", () => {
+  test("rejects empty per-node agent routing fields", () => {
+    const definition = validDefinition();
+    const node = definition.nodes[0]!;
+    if (node.execModel !== "llm") throw new Error("expected llm node");
+    node.configuredAgentId = "";
+    node.modelId = "";
+    expect(validateWorkflowV2Definition(definition).errors).toEqual(expect.arrayContaining([
+      expect.stringContaining("configuredAgentId must not be empty"),
+      expect.stringContaining("modelId must not be empty"),
+    ]));
+  });
+
   test("accepts the canonical script contract without legacy permission fields", () => {
     const definition = validDefinition();
     definition.nodes[1] = {

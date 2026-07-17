@@ -528,12 +528,13 @@ export class WorkflowRuntime {
         .filter((edge) => edge.toNodeId === node.id)
         .map((edge) => knownOutputs.get(edge.fromNodeId))
         .filter((output): output is WorkflowV2WorkerOutput => Boolean(output));
+      const agentRoute = node.execModel === "llm" ? resolveWorkflowNodeAgent(node, { configuredAgentId, modelId }, snapshot.configuredAgents) : { configuredAgentId, modelId };
       const fingerprint = createWorkflowV2NodeCacheFingerprint({
         graphVersion: plan.graphVersion,
         node,
         planNode,
         upstreamOutputs,
-        executionEnvironment: workflowV2ExecutionEnvironment({ node, workDir, configuredAgentId, modelId }),
+        executionEnvironment: workflowV2ExecutionEnvironment({ node, workDir, configuredAgentId: agentRoute.configuredAgentId, modelId: agentRoute.modelId }),
         reviewerPolicy: workflowV2ReviewerPolicy(node),
       });
       targetFingerprints.set(node.id, fingerprint);

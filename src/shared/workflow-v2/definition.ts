@@ -102,6 +102,8 @@ export interface WorkflowV2BaseNode {
 
 export interface WorkflowV2LLMNode extends WorkflowV2BaseNode {
   execModel: "llm";
+  configuredAgentId?: string;
+  modelId?: string;
   modelProfile?: WorkflowV2ModelProfile;
   prompt: string;
   judgeDimensions?: WorkflowV2JudgeDimensionDef[];
@@ -175,6 +177,8 @@ export interface WorkflowV2TemplateNodeOverrides {
   resourceLocks?: string[];
   executionLease?: WorkflowV2ExecutionLeasePolicy;
   modelProfile?: WorkflowV2ModelProfile;
+  configuredAgentId?: string;
+  modelId?: string;
   prompt?: string;
   judgeDimensions?: WorkflowV2JudgeDimensionDef[];
   constraints?: WorkflowV2ConstraintDef[];
