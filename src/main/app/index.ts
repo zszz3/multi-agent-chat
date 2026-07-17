@@ -70,6 +70,7 @@ import type {
   WorkflowAgentRequest,
   WorkflowDraftState,
 } from "../../shared/types";
+import type { ResolveRuntimeApprovalRequest } from "../../shared/runtime-approval";
 
 const __dirname = path.dirname(fileURLToPath(import.meta.url));
 const PRODUCT_NAME = "Multi Agent Chat";
@@ -431,6 +432,10 @@ function registerIpcHandlers(): void {
   });
   ipcMain.handle("run:stop", (_event, chatId: string) => {
     void hub.stopChat(chatId);
+    return hub.snapshot();
+  });
+  ipcMain.handle("runtime-approval:resolve", (_event, request: ResolveRuntimeApprovalRequest) => {
+    hub.runtimeApprovals.resolveOrThrow(request);
     return hub.snapshot();
   });
   ipcMain.handle("workflow-agent:ask", async (event, request: WorkflowAgentRequest) =>

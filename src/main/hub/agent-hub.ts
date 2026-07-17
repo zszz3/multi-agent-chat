@@ -118,6 +118,7 @@ import { WorkflowRunStateService } from "./workflow/workflow-run-state-service";
 import { WorkflowContextService } from "./workflow/workflow-context-service";
 import { buildWorkflowV2PlanSync } from "../workflows/v2/workflow-v2-planner";
 import { executeWorkflowV2Script } from "../workflows/v2/workflow-v2-script-executor";
+import { RuntimeApprovalBroker } from "../approvals/runtime-approval-broker";
 import { freezeWorkflowV2ScriptGovernance } from "../workflows/v2/workflow-v2-script-governance";
 import { WorkflowStore } from "../workflow-store";
 import { ChatState, TaskState, AgentTeamState, TeamRunState } from "./state/agent-hub-state";
@@ -290,7 +291,6 @@ const MAX_WORKFLOW_ARTIFACTS_PER_APPEND = 20;
 const MAX_WORKFLOW_TEXT_ARTIFACT_CHARS = 8000;
 const MAX_WORKFLOW_TITLE_CHARS = 160;
 const MAX_WORKFLOW_OBJECTIVE_CHARS = 4000;
-
 export function createWorkflowAgentTimeout(input: { timeoutMs: number; onTimeout: () => void }): { refresh: () => void; clear: () => void } {
   let timer: ReturnType<typeof setTimeout> | undefined;
   const clear = (): void => {
@@ -369,6 +369,7 @@ export class AgentHub {
   private persistInFlight: Promise<void> | undefined = undefined;
   private persistenceWriteBlocked = false;
   private readonly executorFactory: AgentExecutorFactory;
+  readonly runtimeApprovals = new RuntimeApprovalBroker();
   private readonly runtimeDrivers: RuntimeDriverRegistry;
   private readonly runtimeRouter: RuntimeRouter;
   private readonly interactiveSessions: InteractiveSessionManager;
@@ -399,6 +400,7 @@ export class AgentHub {
         executables: this.executables,
         channelById: (channelId) => this.channelById(channelId),
         workflowMcpDiscoveryPath: () => this.workflowMcpDiscoveryPath,
+        requestApproval: this.runtimeApprovals.request,
       });
     this.runtimeRouter = new RuntimeRouter(this.runtimeDrivers);
     this.workflowStore = new WorkflowStore({
@@ -850,7 +852,7 @@ export class AgentHub {
 
   async deleteChat(chatId: string): Promise<AppSnapshot> {
     const chat = this.chats.get(chatId);
-    if (!chat) return this.snapshot();
+    if (!chat) return this.snapshot(); this.runtimeApprovals.cancelOwner(chatId);
 
     const stop = this.activeStops.get(chatId);
     this.activeStops.delete(chatId);
@@ -1870,7 +1872,7 @@ export class AgentHub {
 
   async stopChat(chatId: string): Promise<void> {
     const chat = this.chats.get(chatId);
-    if (!chat) return;
+    if (!chat) return; this.runtimeApprovals.cancelOwner(chatId);
     const stop = this.activeStops.get(chatId);
     this.activeStops.delete(chatId);
     if (stop) await stop();
@@ -1894,7 +1896,7 @@ export class AgentHub {
 
   async stopTask(taskId: string): Promise<void> {
     const task = this.tasks.get(taskId);
-    if (!task) return;
+    if (!task) return; this.runtimeApprovals.cancelOwner(taskId);
     const stop = this.activeStops.get(taskId);
     this.activeStops.delete(taskId);
     if (stop) await stop();
@@ -1919,7 +1921,7 @@ export class AgentHub {
 
   async deleteTask(taskId: string, options?: { preserveRuntimeConversation?: boolean }): Promise<AppSnapshot> {
     const task = this.tasks.get(taskId);
-    if (!task) return this.snapshot();
+    if (!task) return this.snapshot(); this.runtimeApprovals.cancelOwner(taskId);
 
     const stop = this.activeStops.get(taskId);
     this.activeStops.delete(taskId);

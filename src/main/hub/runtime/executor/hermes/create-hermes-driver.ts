@@ -32,6 +32,8 @@ export function createHermesDriver(options: RuntimeAgentExecutorFactoryOptions):
             modelId: interactiveContext.runtimeConfig.model,
             onEvent,
             onExit,
+            approvalOwnerId: interactiveContext.chatId,
+            ...(options.requestApproval ? { requestApproval: options.requestApproval } : {}),
           }),
       }),
     askWorkflow: (input) => runHermesWorkflow(input, options),

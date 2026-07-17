@@ -4,6 +4,7 @@ import { ClaudeAgentSdkInteractive } from "./claude-agent-sdk-interactive";
 import { ProcessLease } from "../shared/process-lease";
 import { claudeRuntimeStateCodec } from "./claude-runtime-state-codec";
 import { planSessionReconfigure } from "../runtime/session-reconfigure";
+import type { RuntimeApprovalRequester } from "../../approvals/runtime-approval-broker";
 
 type ClaudeInteractiveSdkBinding = Pick<
   ClaudeAgentSdkInteractive,
@@ -17,6 +18,7 @@ interface ClaudeInteractiveSessionOptions {
   resolveEnvironment?: (context: InteractiveSessionContext) => NodeJS.ProcessEnv;
   resolveMcpServers?: (context: InteractiveSessionContext) => Parameters<ClaudeAgentSdkInteractive["attach"]>[0]["mcpServers"];
   now?: () => number;
+  requestApproval?: RuntimeApprovalRequester;
 }
 
 function modelFromContext(context: InteractiveSessionContext): string {
@@ -102,6 +104,8 @@ export class ClaudeInteractiveSession implements InteractiveSession {
       ...(this.options.resolveEnvironment ? { env: this.options.resolveEnvironment(this.context) } : {}),
       ...(mcpServers ? { mcpServers } : {}),
       ...(resumeSessionId ? { resumeSessionId } : {}),
+      approvalOwnerId: this.context.chatId,
+      ...(this.options.requestApproval ? { requestApproval: this.options.requestApproval } : {}),
       onEvent: (event) => {
         if (!this.lease.matchesAttachment(generation)) return;
         if (event.type !== "runtime_conversation" && this.activeTurnId === undefined) return;

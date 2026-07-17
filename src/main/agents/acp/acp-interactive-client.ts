@@ -6,6 +6,7 @@ import type {
   AgentEvent,
 } from "../../../shared/types";
 import { spawnCli } from "../../platform/cli-launcher";
+import type { RuntimeApprovalRequester } from "../../approvals/runtime-approval-broker";
 
 const ACP_ATTACH_TIMEOUT_MS = 20_000;
 const ACP_CONFIG_TIMEOUT_MS = 10_000;
@@ -19,6 +20,8 @@ export interface AcpInteractiveClientOptions {
   modelId?: string;
   onEvent: (event: AgentEvent) => void;
   onExit?: (error?: Error) => void;
+  approvalOwnerId?: string;
+  requestApproval?: RuntimeApprovalRequester;
 }
 
 function stringifyValue(value: unknown): string {
@@ -240,40 +243,25 @@ export class AcpInteractiveClient {
   private handlePermissionRequest(
     params: acp.RequestPermissionRequest,
     requestId: acp.JsonRpcId,
-  ): acp.RequestPermissionResponse {
-    const eventRequestId = String(requestId ?? `permission:${randomUUID()}`);
-    this.options.onEvent({
-      type: "approval_request",
-      requestId: eventRequestId,
+  ): Promise<acp.RequestPermissionResponse> {
+    const allowOnce = params.options.find((option) => option.kind === "allow_once");
+    if (!allowOnce || !this.options.approvalOwnerId || this.options.approvalOwnerId.startsWith("workflow-") || !this.options.requestApproval) {
+      return Promise.resolve({ outcome: { outcome: "cancelled" } });
+    }
+    return this.options.requestApproval({
+      ownerId: this.options.approvalOwnerId,
+      provider: "acp",
       content: params.toolCall.title ?? "ACP runtime requests permission.",
       metadata: {
+        nativeRequestId: String(requestId ?? `permission:${randomUUID()}`),
         sessionId: params.sessionId,
         toolCallId: params.toolCall.toolCallId,
         options: params.options.map((option) => ({ id: option.optionId, name: option.name, kind: option.kind })),
       },
-    });
-
-    const selected = params.options.find((option) => option.kind === "allow_once")
-      ?? params.options.find((option) => option.kind === "allow_always")
-      ?? params.options[0];
-    if (!selected) {
-      this.options.onEvent({
-        type: "approval_response",
-        requestId: eventRequestId,
-        decision: "rejected",
-        content: "Rejected because the runtime provided no permission options.",
-      });
-      return { outcome: { outcome: "cancelled" } };
-    }
-
-    const approved = selected.kind === "allow_once" || selected.kind === "allow_always";
-    this.options.onEvent({
-      type: "approval_response",
-      requestId: eventRequestId,
-      decision: approved ? "approved" : "rejected",
-      content: `${selected.name} selected automatically by desktop host.`,
-    });
-    return { outcome: { outcome: "selected", optionId: selected.optionId } };
+      emit: this.options.onEvent,
+    }).then((decision) => decision === "approved"
+      ? { outcome: { outcome: "selected", optionId: allowOnce.optionId } }
+      : { outcome: { outcome: "cancelled" } });
   }
 
   private handleProcessExit(proc: ChildProcess, error: Error): void {

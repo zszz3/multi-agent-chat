@@ -66,6 +66,7 @@ import type {
   WorkflowDraftState,
   WorkflowOperationResult,
 } from "../shared/types";
+import type { ResolveRuntimeApprovalRequest } from "../shared/runtime-approval";
 import type { McpAgentDiagnostic, McpInstalledEntry, McpInstallRequest, McpInstallResult, McpSetupStatus } from "../shared/mcp-config";
 import type { AgentRevision } from "../shared/agent/types";
 import type { McpServerDefinition } from "../shared/mcp/types";
@@ -143,6 +144,8 @@ const api = {
   uninstallSkill: (request: UninstallSkillRequest): Promise<UninstalledSkillResult> => ipcRenderer.invoke("skills:uninstall", request),
   sendPrompt: (prompt: string, chatId?: string): Promise<AppSnapshot> => ipcRenderer.invoke("run:send", prompt, chatId),
   stopChat: (chatId: string): Promise<AppSnapshot> => ipcRenderer.invoke("run:stop", chatId),
+  resolveRuntimeApproval: (request: ResolveRuntimeApprovalRequest): Promise<AppSnapshot> =>
+    ipcRenderer.invoke("runtime-approval:resolve", request),
   askWorkflowAgent: (request: WorkflowAgentRequest): Promise<WorkflowAgentResponse> => ipcRenderer.invoke("workflow-agent:ask", request),
   createWorkflowDraft: (request?: CreateWorkflowDraftRequest): Promise<AppSnapshot> => ipcRenderer.invoke("workflow:draft:create", request),
   patchWorkflowDraft: (request: PatchWorkflowDraftRequest): Promise<AppSnapshot> => ipcRenderer.invoke("workflow:draft:patch", request),

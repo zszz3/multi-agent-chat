@@ -97,6 +97,7 @@ import type {
   AgentTeamMember,
   AgentTeamMode,
   AppSnapshot,
+  ApprovalDecision,
   ChatEvent,
   ChatSession,
   ConfiguredAgent,
@@ -750,6 +751,11 @@ export function AppShell() {
     setSnapshot(next);
   }
 
+  async function resolveRuntimeApproval(ownerId: string, requestId: string, decision: ApprovalDecision): Promise<void> {
+    const next = await chatApi.resolveRuntimeApproval({ ownerId, requestId, decision });
+    setSnapshot(next);
+  }
+
   async function runTask(): Promise<void> {
     const text = taskPrompt.trim();
     if (!text) return;
@@ -922,6 +928,7 @@ export function AppShell() {
             onStopTask={stopTask}
             onDeleteTask={deleteTask}
             onUpdateTaskProgress={updateTaskProgress}
+            onResolveApproval={resolveRuntimeApproval}
           />
         ) : activeFeature === "workflow" ? (
           <WorkflowFeature controller={workflowController} />
@@ -1034,6 +1041,7 @@ export function AppShell() {
             onSelectConfiguredAgent={setActiveChatConfiguredAgent}
             onSelectModel={setActiveChatModel}
             onChooseWorkDir={chooseWorkDir}
+            onResolveApproval={resolveRuntimeApproval}
           />
         )}
         </main>

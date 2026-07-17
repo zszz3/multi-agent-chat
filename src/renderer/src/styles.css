@@ -10165,3 +10165,17 @@ textarea:focus-visible {
 .mcp-binding-install { display: grid; grid-template-columns: minmax(180px, 1fr) minmax(180px, 1fr) auto; gap: 10px; align-items: end; }
 .workbench-muted { color: var(--muted); }
 @media (max-width: 760px) { .mcp-binding-install { grid-template-columns: 1fr; } }
+
+.runtime-approval-card {
+  display: grid;
+  gap: 8px;
+  padding: 10px;
+  border: 1px solid var(--line-strong, var(--line));
+  border-radius: 8px;
+}
+
+.runtime-approval-actions {
+  display: flex;
+  gap: 8px;
+  align-items: center;
+}
