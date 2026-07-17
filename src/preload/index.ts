@@ -35,6 +35,7 @@ import type {
   AnswerWorkflowGateRequest,
   SubmitWorkflowScriptInputRequest,
   PauseWorkflowNodeRequest,
+  ReviseWorkflowV2RunRequest,
   ResolveWorkflowV2InterventionRequest,
   ProviderBalanceResult,
   RunWorkflowRequest,
@@ -165,6 +166,7 @@ const api = {
   interruptWorkflowReview: (request: InterruptWorkflowReviewRequest): Promise<AppSnapshot> => ipcRenderer.invoke("workflow:review:interrupt", request),
   runWorkflow: (request: RunWorkflowRequest): Promise<WorkflowOperationResult> => ipcRenderer.invoke("workflow-run:start", request),
   pauseWorkflowNode: (request: PauseWorkflowNodeRequest): Promise<WorkflowOperationResult> => ipcRenderer.invoke("workflow-run:pause-node", request),
+  reviseWorkflowV2Run: (request: ReviseWorkflowV2RunRequest): Promise<WorkflowOperationResult> => ipcRenderer.invoke("workflow-v2:run:revise", request),
   stopWorkflowRun: (request: StopWorkflowRunRequest): Promise<WorkflowOperationResult> => ipcRenderer.invoke("workflow-run:stop", request),
   resolveWorkflowV2Intervention: (request: ResolveWorkflowV2InterventionRequest): Promise<WorkflowOperationResult> =>
     ipcRenderer.invoke("workflow-v2:intervention:resolve", request),

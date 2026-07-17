@@ -3,6 +3,7 @@ import type {
   CreateWorkflowDraftRequest,
   PatchWorkflowDraftRequest,
   PauseWorkflowNodeRequest,
+  ReviseWorkflowV2RunRequest,
   RunWorkflowRequest,
   ListWorkflowOutputsRequest,
   SendWorkflowDraftReplyRequest,
@@ -35,6 +36,7 @@ export interface WorkflowService {
   interruptWorkflowReview: (request: InterruptWorkflowReviewRequest) => Promise<AppSnapshot>;
   runWorkflow: (request: RunWorkflowRequest) => Promise<WorkflowOperationResult>;
   pauseNode: (request: PauseWorkflowNodeRequest) => Promise<WorkflowOperationResult>;
+  reviseRun: (request: ReviseWorkflowV2RunRequest) => Promise<WorkflowOperationResult>;
   stopRun: (request: StopWorkflowRunRequest) => Promise<WorkflowOperationResult>;
   startNode: (request: StartWorkflowNodeRequest) => Promise<WorkflowOperationResult>;
   submitScriptInput: (request: SubmitWorkflowScriptInputRequest) => Promise<WorkflowOperationResult>;
@@ -62,6 +64,7 @@ export function workflowService(): WorkflowService {
     interruptWorkflowReview: (request) => api.interruptWorkflowReview(request),
     runWorkflow: (request) => api.runWorkflow(request),
     pauseNode: (request) => api.pauseWorkflowNode(request),
+    reviseRun: (request) => api.reviseWorkflowV2Run(request),
     stopRun: (request) => api.stopWorkflowRun(request),
     startNode: (request) => api.startWorkflowNode(request),
     submitScriptInput: (request) => api.submitWorkflowScriptInput(request),

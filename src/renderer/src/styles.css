@@ -8911,6 +8911,67 @@ textarea:focus-visible {
   gap: 10px;
 }
 
+.workflow-revision-backdrop {
+  position: fixed;
+  z-index: 120;
+  inset: 0;
+  display: grid;
+  place-items: center;
+  padding: 24px;
+  background: rgb(0 0 0 / 52%);
+}
+
+.workflow-revision-dialog {
+  display: grid;
+  width: min(880px, 100%);
+  max-height: min(760px, calc(100vh - 48px));
+  gap: 14px;
+  padding: 18px;
+  border: 1px solid var(--line);
+  border-radius: 12px;
+  background: var(--panel);
+  box-shadow: 0 24px 80px rgb(0 0 0 / 35%);
+}
+
+.workflow-revision-dialog header,
+.workflow-revision-dialog footer {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 12px;
+}
+
+.workflow-revision-dialog header div,
+.workflow-revision-dialog label {
+  display: grid;
+  gap: 6px;
+}
+
+.workflow-revision-dialog header span {
+  color: var(--muted);
+  font-size: 12px;
+}
+
+.workflow-revision-dialog input,
+.workflow-revision-dialog textarea {
+  width: 100%;
+  border: 1px solid var(--line);
+  border-radius: 8px;
+  padding: 9px 10px;
+  color: var(--text);
+  background: var(--surface);
+}
+
+.workflow-revision-dialog textarea {
+  min-height: 430px;
+  resize: vertical;
+  font: 12px/1.45 var(--font-mono);
+}
+
+.workflow-revision-dialog footer {
+  justify-content: flex-end;
+}
+
 .workflow-history-group {
   display: grid;
   gap: 5px;

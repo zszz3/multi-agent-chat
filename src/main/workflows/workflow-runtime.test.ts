@@ -1106,15 +1106,15 @@ describe("WorkflowRuntime Workflow V2 bridge", () => {
       runId: "run-v2-runtime",
       nodeId: "draft",
     });
-    const finished = await fixture.finished;
-
+    for (let attempt = 0; attempt < 20 && fixture.updates.filter((update) => update.status === "waiting_for_user").length < 2; attempt += 1) await Promise.resolve();
     expect(result).toEqual({ ok: true, workflowId: fixture.workflow.workflowId, runId: "run-v2-runtime" });
-    expect(finished.status).toBe("stopped");
-    expect(finished.progress).toContainEqual(expect.objectContaining({ nodeId: "draft", status: "paused" }));
+    const waitingUpdates = fixture.updates.filter((update) => update.status === "waiting_for_user");
+    expect(waitingUpdates).toHaveLength(2);
+    expect(waitingUpdates.at(-1)?.progress).toContainEqual(expect.objectContaining({ nodeId: "draft", status: "paused" }));
     expect(fixture.stopTaskIds).toEqual(["task-1"]);
-    expect(finished.appendEvents).toContainEqual(
+    expect(fixture.updates).toContainEqual(expect.objectContaining({ appendEvents: expect.arrayContaining([
       expect.objectContaining({ type: "node_paused", nodeId: "draft" }),
-    );
+    ]) }));
   });
 
   test("fails V2 start intervention before resuming through the legacy executor", async () => {

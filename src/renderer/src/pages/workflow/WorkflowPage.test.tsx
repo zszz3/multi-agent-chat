@@ -87,4 +87,15 @@ describe("WorkflowPage input ownership", () => {
     expect(html).not.toContain("workflow-intervention-panel");
     expect(html).not.toContain("Interactive node is waiting for user confirmation.");
   });
+
+  test("offers full workflow revision for a manually paused user workflow", () => {
+    const value = controller(true);
+    value.running = false;
+    value.runProgress = [{ nodeId: "answer", title: "Answer", status: "paused" }];
+    value.onReviseRun = () => undefined;
+
+    const html = renderToStaticMarkup(<WorkflowPage controller={value} />);
+
+    expect(html).toContain("Edit workflow and resume: Answer");
+  });
 });

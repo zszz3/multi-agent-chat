@@ -82,6 +82,7 @@ export interface WorkflowController {
   onPauseNode?: (nodeId: string) => MaybePromise;
   onStopRun?: () => MaybePromise;
   onStartNode?: (nodeId: string) => MaybePromise;
+  onReviseRun?: (nodeId: string, definition: WorkflowV2Definition, reason: string) => MaybePromise;
   onSubmitScriptInput?: (nodeId: string, values: Record<string, unknown>) => MaybePromise;
   onResolveIntervention?: (nodeId: string, action: WorkflowV2InterventionAction, reason?: string) => MaybePromise;
   onSendNodeMessage?: (conversationId: string, message: string) => MaybePromise;

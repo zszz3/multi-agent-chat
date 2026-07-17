@@ -66,6 +66,7 @@ export type {
   BuildWorkflowV2GraphRevisionRequest,
   BuildWorkflowV2GraphRevisionResult,
   PauseWorkflowNodeRequest,
+  ReviseWorkflowV2RunRequest,
   StopWorkflowRunRequest,
   StartWorkflowNodeRequest,
   SubmitWorkflowScriptInputRequest,

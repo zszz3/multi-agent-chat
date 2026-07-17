@@ -102,6 +102,16 @@ export function useWorkflowFeatureController({
           throw new Error(error);
         }
       },
+      onReviseRun: async (nodeId, definition, reason) => {
+        if (!draft.workflowId || !activeRunId) return;
+        const result = await workflows.reviseRun({ workflowId: draft.workflowId, runId: activeRunId, nodeId, definition, reason, approvedBy: "desktop-user" });
+        if (!result.ok) {
+          const error = result.error ?? "Workflow revision could not be applied.";
+          setSnapshot(await workflows.patchDraft({ workflowId: draft.workflowId, error }));
+          throw new Error(error);
+        }
+        await onRefresh();
+      },
       onSubmitScriptInput: async (nodeId, values) => {
         if (!draft.workflowId || !activeRunId) return;
         const result = await workflows.submitScriptInput({ workflowId: draft.workflowId, runId: activeRunId, nodeId, values });

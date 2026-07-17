@@ -231,14 +231,16 @@ export class WorkflowRuntime {
       appendEvents: [{ type: "node_paused" as const, nodeId: input.nodeId, at: Date.now(), detail: reason, ...(taskId ? { taskId } : {}) }],
       ...(input.run.finalReport ? { finalReport: input.run.finalReport } : {}),
     };
-    if (stillRunning) {
-      this.deps.updateWorkflowRunState({ ...update, status: "running" });
-    } else {
-      this.deps.finishWorkflowRun({ ...update, status: "stopped" });
-    }
+    this.deps.updateWorkflowRunState({ ...update, status: stillRunning ? "running" : "waiting_for_user" });
     if (taskId) await this.deps.stopTask(taskId);
     activeRun.abortControllerByNodeId?.get(input.nodeId)?.abort(new Error(reason));
-    if (!stillRunning) this.runRegistry.release(input.run.runId);
+    const store = this.deps.createWorkflowV2Store?.();
+    if (store?.readRunState) {
+      for (let attempt = 0; attempt < 100; attempt += 1) {
+        if ((await store.readRunState(input.run.workflowId, input.run.runId))?.runState.nodes[input.nodeId]?.status === "paused") break;
+        await new Promise((resolve) => setTimeout(resolve, 10));
+      }
+    }
     return { ok: true, workflowId: input.run.workflowId, runId: input.run.runId };
   }
 

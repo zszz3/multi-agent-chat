@@ -1,5 +1,5 @@
 import { useEffect, useRef, useState, type MouseEvent, type ReactElement } from "react";
-import { Bot, CheckCircle2, CircleStop, FileInput, GitBranch, Maximize2, Play, RefreshCw, Send, ShieldAlert, Wand2, X } from "lucide-react";
+import { Bot, CheckCircle2, CircleStop, FileInput, GitBranch, Maximize2, Pencil, Play, RefreshCw, Send, ShieldAlert, Wand2, X } from "lucide-react";
 import { DEFAULT_MODEL_ID } from "../../../../shared/models";
 import { WORKFLOW_TOTAL_QUESTION_COUNT } from "../../../../shared/workflow-agent";
 import { validateWorkflowV2Definition } from "../../../../shared/workflow-v2/validation";
@@ -33,6 +33,7 @@ import { TaskStatusChip } from "../tasks/task-status";
 import { WorkflowCanvasBoard } from "./WorkflowCanvasBoard";
 import { WorkflowNodeSurface } from "./WorkflowNodeSurface";
 import { WorkflowOutputPreviewModal } from "./WorkflowOutputPreviewModal";
+import { WorkflowRevisionDialog } from "./WorkflowRevisionDialog";
 import { WorkflowOutputsPanel } from "./WorkflowOutputsPanel";
 import { WorkflowReviewDrawer } from "./WorkflowReviewDrawer";
 import { WORKFLOW_TEXT } from "./workflow-text";
@@ -97,6 +98,7 @@ export function WorkflowPage({ controller: source }: { controller: WorkflowContr
   const onReplyChange = source.onReplyChange;
   const onSendReply = source.onSendReply;
   const onUpdateNode = source.onUpdateNode;
+  const onReviseRun = source.onReviseRun;
   const onRunWorkflow = source.onRunWorkflow;
   const onConfirmWorkflow = source.onConfirmWorkflow;
   const onStopGrill = source.onStopGrill ?? (() => undefined);
@@ -147,6 +149,7 @@ export function WorkflowPage({ controller: source }: { controller: WorkflowContr
   const [graphExpanded, setGraphExpanded] = useState(defaultGraphExpanded);
   const [outputFiles, setOutputFiles] = useState<Array<{ name: string; path: string }>>([]);
   const [openNodeId, setOpenNodeId] = useState<string | undefined>(undefined);
+  const [revisionEditorNodeId, setRevisionEditorNodeId] = useState<string | undefined>(undefined);
   const dismissedNodeSurfaceRunIdRef = useRef<string | undefined>(undefined);
   const [filePreview, setFilePreview] = useState<LocalFilePreview | undefined>(undefined);
   const [filePreviewError, setFilePreviewError] = useState<string | undefined>(undefined);
@@ -481,6 +484,7 @@ export function WorkflowPage({ controller: source }: { controller: WorkflowContr
                       && (item.status === "paused" || item.status === "failed")
                       && !item.intervention
                       && typeof onStartNode === "function";
+                    const canRevise = controllable && item.status === "paused" && typeof onReviseRun === "function" && !topologyLocked;
                     return (
                       <div key={item.nodeId} className={`workflow-run-progress-item is-${item.status}`}>
                         <span>{workflowRunStatusLabel(item.status)}</span>
@@ -506,6 +510,11 @@ export function WorkflowPage({ controller: source }: { controller: WorkflowContr
                             aria-label={`${workflowText.startNode}: ${item.title}`}
                           >
                             <Play size={14} />
+                          </button>
+                        ) : null}
+                        {canRevise ? (
+                          <button type="button" className="workflow-node-control icon-btn" onClick={() => setRevisionEditorNodeId(item.nodeId)} title="Edit workflow and resume" aria-label={`Edit workflow and resume: ${item.title}`}>
+                            <Pencil size={14} />
                           </button>
                         ) : null}
                       </div>
@@ -538,6 +547,8 @@ export function WorkflowPage({ controller: source }: { controller: WorkflowContr
         truncatedLabel={workflowText.largeFile}
         onClose={() => setFilePreview(undefined)}
       /> : null}
+
+      {revisionEditorNodeId && onReviseRun ? <WorkflowRevisionDialog nodeId={revisionEditorNodeId} definition={definition} onRevise={onReviseRun} onClose={() => setRevisionEditorNodeId(undefined)} /> : null}
 
       {openNodeGraphNode ? <WorkflowNodeSurface
         node={openNodeGraphNode}

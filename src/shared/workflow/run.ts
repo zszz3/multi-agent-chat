@@ -32,7 +32,8 @@ export type WorkflowEventType =
   | "node_failed"
   | "node_completed"
   | "gate_opened"
-  | "gate_answered";
+  | "gate_answered"
+  | "graph_revised";
 
 export interface WorkflowArtifactReference {
   kind: "text" | "file" | "url";

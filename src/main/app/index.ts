@@ -51,6 +51,7 @@ import type {
   AnswerWorkflowGateRequest,
   SubmitWorkflowScriptInputRequest,
   PauseWorkflowNodeRequest,
+  ReviseWorkflowV2RunRequest,
   ResolveWorkflowV2InterventionRequest,
   RunAgentTeamRequest,
   RunWorkflowRequest,
@@ -457,6 +458,7 @@ ipcMain.handle("workflow:confirm", (_event, request: ConfirmWorkflowRequest) => 
   ipcMain.handle("workflow:review:interrupt", (_event, request: InterruptWorkflowReviewRequest) => hub.interruptWorkflowReview(request));
 ipcMain.handle("workflow-run:start", (_event, request: RunWorkflowRequest) => hub.runWorkflow(request));
   ipcMain.handle("workflow-run:pause-node", (_event, request: PauseWorkflowNodeRequest) => hub.pauseWorkflowNode(request));
+  ipcMain.handle("workflow-v2:run:revise", (_event, request: ReviseWorkflowV2RunRequest) => hub.reviseWorkflowV2Run(request));
   ipcMain.handle("workflow-run:stop", (_event, request: StopWorkflowRunRequest) => hub.stopWorkflowRun(request));
   ipcMain.handle("workflow-v2:intervention:resolve", (_event, request: ResolveWorkflowV2InterventionRequest) =>
     hub.resolveWorkflowV2Intervention(request),
