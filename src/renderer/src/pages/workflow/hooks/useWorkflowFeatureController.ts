@@ -178,7 +178,7 @@ export function useWorkflowFeatureController({
         void draft.sendWorkflowReply();
       },
       onUpdateNode: (nodeId: string, update) => {
-        void draft.updateWorkflowNode(nodeId, update);
+        return draft.updateWorkflowNode(nodeId, update);
       },
       onUpdateDefinition: (definition) => draft.updateWorkflowDefinition(definition),
       onRunWorkflow: async () => {

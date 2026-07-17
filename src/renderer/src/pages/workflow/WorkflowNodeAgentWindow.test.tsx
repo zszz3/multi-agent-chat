@@ -3,6 +3,19 @@ import { describe, expect, test } from "vitest";
 import { WorkflowNodeAgentWindow } from "./WorkflowNodeAgentWindow";
 
 describe("WorkflowNodeAgentWindow", () => {
+  test("exposes the persisted node prompt for manual editing when the definition is editable", () => {
+    const html = renderToStaticMarkup(<WorkflowNodeAgentWindow
+      nodeTitle="Research"
+      prompt="Research only official sources."
+      editable
+      onSavePrompt={() => undefined}
+      onClose={() => undefined}
+    />);
+    expect(html).toContain("Agent node prompt editor");
+    expect(html).toContain("Research only official sources.");
+    expect(html).toContain("Edit prompt");
+  });
+
   test("renders a queued agent node before runtime activity exists", () => {
     const html = renderToStaticMarkup(<WorkflowNodeAgentWindow nodeTitle="Collect requirements" onClose={() => undefined} />);
     expect(html).toContain("Node has not started yet");

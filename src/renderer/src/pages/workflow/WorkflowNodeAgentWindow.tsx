@@ -1,5 +1,5 @@
-import { useMemo, useState } from "react";
-import { CircleStop, Send, X } from "lucide-react";
+import { useEffect, useMemo, useState } from "react";
+import { CircleStop, Pencil, Save, Send, X } from "lucide-react";
 import type { ApprovalDecision, TaskRun } from "../../../../shared/types";
 import type { WorkflowNodeConversation } from "../../../../shared/workflow-v2/conversation";
 import { WorkflowMessageContent } from "./WorkflowMessageContent";
@@ -19,6 +19,7 @@ function sessionStatus(session: WorkflowNodeAgentSession): { label: string; atte
 
 export function WorkflowNodeAgentWindow(props: {
   conversation?: WorkflowNodeConversation; task?: TaskRun; sessions?: WorkflowNodeAgentSession[]; selectedNodeId?: string; nodeTitle: string; inputPrompt?: string;
+  prompt?: string; editable?: boolean; onSavePrompt?: (prompt: string) => void | Promise<void>;
   onClose: () => void; onSelectNode?: (nodeId: string) => void; onSend?: (message: string) => void | Promise<void>;
   onConfirm?: () => void | Promise<void>; onReject?: (instruction: string) => void | Promise<void>; onInterrupt?: () => void | Promise<void>;
   onResolveRuntimeApproval?: (ownerId: string, requestId: string, decision: ApprovalDecision) => void | Promise<void>;
@@ -26,6 +27,9 @@ export function WorkflowNodeAgentWindow(props: {
   const { conversation, task, sessions = [], selectedNodeId, nodeTitle } = props;
   const [rejecting, setRejecting] = useState(false);
   const [actionError, setActionError] = useState<string>();
+  const [editingPrompt, setEditingPrompt] = useState(false);
+  const [promptDraft, setPromptDraft] = useState(props.prompt ?? "");
+  const [promptSaving, setPromptSaving] = useState(false);
   const draftKey = selectedNodeId ?? conversation?.nodeId ?? task?.id ?? "current";
   const acceptsInput = Boolean(conversation && conversation.status !== "closed" && conversation.status !== "failed" && (conversation.status !== "completion_proposed" || rejecting));
   const canInterrupt = Boolean(conversation && conversation.status !== "closed" && conversation.status !== "failed");
@@ -60,11 +64,44 @@ export function WorkflowNodeAgentWindow(props: {
   const runtimeMessages = conversationMessages.filter((item) => item.role === "system" || item.role === "tool");
   const conversationApprovalOwnerId = conversation ? `workflow-node:${conversation.workflowId}:${conversation.runId}:${conversation.nodeId}` : undefined;
 
+  useEffect(() => {
+    setPromptDraft(props.prompt ?? "");
+    setEditingPrompt(false);
+    setActionError(undefined);
+  }, [props.nodeTitle, props.prompt]);
+
+  const savePrompt = async () => {
+    const prompt = promptDraft.trim();
+    if (!prompt) {
+      setActionError("Agent prompt cannot be empty.");
+      return;
+    }
+    if (!props.onSavePrompt) return;
+    setPromptSaving(true);
+    setActionError(undefined);
+    try {
+      await props.onSavePrompt(prompt);
+      setPromptDraft(prompt);
+      setEditingPrompt(false);
+    } catch (error) {
+      setActionError(error instanceof Error ? error.message : String(error));
+    } finally {
+      setPromptSaving(false);
+    }
+  };
+
   return <section className="workflow-node-agent-overlay" role="dialog" aria-modal="true" aria-label={`${nodeTitle} agent conversation`}>
     <article className="workflow-node-agent-window">
       {orderedSessions.length ? <aside className="workflow-node-agent-sidebar"><div className="workflow-node-agent-queue-summary"><strong>Node conversations</strong><span>{attentionCount} {attentionCount === 1 ? "node needs" : "nodes need"} attention</span></div><div className="workflow-node-agent-session-list">{orderedSessions.map((session) => { const state = sessionStatus(session); return <button key={session.nodeId} className={`workflow-node-agent-session${session.nodeId === selectedNodeId ? " is-selected" : ""}${state.attention ? " needs-attention" : ""}`} onClick={() => props.onSelectNode?.(session.nodeId)}><strong>{session.nodeTitle}</strong><span>{state.label}</span></button>; })}</div></aside> : null}
       <div className="workflow-node-agent-main">
         <header><div><strong>{nodeTitle}</strong><span>{identity}</span></div><button className="icon-btn" onClick={props.onClose} aria-label="Close node conversation"><X size={16} /></button></header>
+        {props.editable && props.onSavePrompt ? <section className="workflow-node-prompt-editor" aria-label="Agent node prompt editor">
+          <div><strong>Agent prompt</strong><span>This instruction is used the next time this workflow revision runs.</span></div>
+          {editingPrompt ? <>
+            <textarea aria-label={`Prompt for ${nodeTitle}`} value={promptDraft} onChange={(event) => setPromptDraft(event.currentTarget.value)} rows={8} spellCheck={false} />
+            <div className="workflow-node-editor-actions"><button className="control-btn compact" disabled={promptSaving} onClick={() => { setPromptDraft(props.prompt ?? ""); setEditingPrompt(false); }}>Cancel</button><button className="send-btn" disabled={promptSaving || !promptDraft.trim()} onClick={() => void savePrompt()}><Save size={14} /><span>{promptSaving ? "Saving..." : "Save prompt"}</span></button></div>
+          </> : <><pre><code>{props.prompt}</code></pre><button className="control-btn compact" onClick={() => setEditingPrompt(true)}><Pencil size={14} /><span>Edit prompt</span></button></>}
+        </section> : null}
         <div className="workflow-node-agent-messages">
           {conversation ? dialogueMessages.map((item) => { const kind = item.eventType === "tool_call" ? "tool-call" : item.eventType === "tool_result" ? "tool-result" : item.role; const label = item.eventType === "tool_call" ? `Tool call${item.name ? ` ? ${item.name}` : ""}` : item.eventType === "tool_result" ? `Tool result${item.name ? ` ? ${item.name}` : ""}` : item.role === "assistant" ? "Agent" : "You"; return <div key={item.id} className={`workflow-node-agent-message is-${kind}`}><span>{label} ? {new Date(item.at).toLocaleTimeString()}</span>{item.event && conversationApprovalOwnerId ? <ChatEventMessage event={item.event} ownerId={conversationApprovalOwnerId} onResolveApproval={props.onResolveRuntimeApproval} /> : <WorkflowMessageContent content={item.content} />}</div>; })
           : task ? task.messages.map((item) => <div key={item.id} className={`workflow-node-agent-message is-${item.role}`}><span>{item.role} ? {new Date(item.timestamp).toLocaleTimeString()}</span>{item.content ? <WorkflowMessageContent content={item.content} /> : null}{item.events?.map((event) => <ChatEventMessage key={event.id} event={event} ownerId={task.id} onResolveApproval={props.onResolveRuntimeApproval} />)}</div>)

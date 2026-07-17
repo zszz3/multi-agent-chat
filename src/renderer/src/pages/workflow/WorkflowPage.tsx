@@ -113,6 +113,7 @@ export function WorkflowPage({ controller: source }: { controller: WorkflowContr
   const validation = validateWorkflowV2Definition(definition);
   const workflowConfirmed = revision !== undefined && confirmedRevision === revision;
   const runOwnsInput = Boolean(activeRunId && (!source.activeRunStatus || source.activeRunStatus === "running" || source.activeRunStatus === "waiting_for_user"));
+  const canEditDefinition = !runOwnsInput && !topologyLocked && !running;
   const [reviewDrawerOpen, setReviewDrawerOpen] = useState(false);
   const [draftEditorOpen, setDraftEditorOpen] = useState(false);
 
@@ -264,7 +265,7 @@ export function WorkflowPage({ controller: source }: { controller: WorkflowContr
     const nodeAgentConfig = configuredAgentById(nodeAgentId, configuredAgents);
     const nodeAgentName = nodeAgentConfig?.name || nodeAgentId || "default";
     const nodeModelId = node.execModel === "llm" ? node.modelId ?? nodeAgentConfig?.modelId ?? modelId : "script";
-    const canConfigureNodeAgent = node.execModel === "llm" && !runOwnsInput && !topologyLocked && !running;
+    const canConfigureNodeAgent = node.execModel === "llm" && canEditDefinition;
     const nodeAgentRow =
       node.execModel === "llm" ? (
         <div className="workflow-node-agent-row" title={`Agent: ${nodeAgentName} · Model: ${nodeModelId}`}>
@@ -559,6 +560,8 @@ export function WorkflowPage({ controller: source }: { controller: WorkflowContr
 
       {openNodeGraphNode ? <WorkflowNodeSurface
         node={openNodeGraphNode}
+        editable={canEditDefinition}
+        onUpdateNode={(update) => source.onUpdateNode(openNodeGraphNode.id, update)}
         {...(openNodeConversation ? { conversation: openNodeConversation } : {})}
         {...(openNodeTask ? { task: openNodeTask } : {})}
         sessions={nodeAgentSessions}

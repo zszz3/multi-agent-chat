@@ -23,6 +23,13 @@ const node: WorkflowV2ScriptNode = {
 };
 
 describe("WorkflowScriptNodePanel", () => {
+  test("exposes script contents for manual editing when the definition is editable", () => {
+    const html = renderToStaticMarkup(<WorkflowScriptNodePanel node={node} editable onUpdateNode={() => undefined} onClose={() => undefined} />);
+    expect(html).toContain("Script node · editable");
+    expect(html).toContain("return { echoed: inputs.text };");
+    expect(html).toContain("Edit script");
+  });
+
   test("shows script code and variable bindings without agent conversation chrome", () => {
     const html = renderToStaticMarkup(<WorkflowScriptNodePanel node={node} onClose={() => undefined} />);
     expect(html).toContain('aria-label="Echo input script details"');
