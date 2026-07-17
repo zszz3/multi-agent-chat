@@ -1665,12 +1665,12 @@ export class AgentHub {
     return resolved;
   }
 
-  async runTask(input: RunTaskRequest): Promise<AppSnapshot> {
+  async runTask(input: RunTaskRequest, approvalPolicy?: { allowedFileWriteRoot: string }): Promise<AppSnapshot> {
     const task = this.createTaskState(input);
     dispatchTaskPromptExecutionValue({
       task,
       registerTask: (nextTask) => {
-        this.tasks.set(nextTask.id, nextTask);
+        if (approvalPolicy) this.runtimeApprovals.allowFileWritesWithin(nextTask.id, approvalPolicy.allowedFileWriteRoot); this.tasks.set(nextTask.id, nextTask);
         this.activeTaskId = nextTask.id;
       },
       resolveConfiguredAgent: (configuredAgentId, modelId) => this.resolveConfiguredAgent(configuredAgentId, modelId),
@@ -1693,7 +1693,7 @@ export class AgentHub {
     if (!resolved || !resolved.runtime?.available) throw new Error("The configured workflow node agent is unavailable.");
     const executionMode = this.selectExecutionMode(resolved.runtimeAgentId, "chat", "interactive");
     if (executionMode !== "interactive") throw new Error("The configured workflow node agent does not support interactive sessions.");
-    const sessionKey = `workflow-node:${input.workflowId}:${input.runId}:${input.nodeId}`;
+    const sessionKey = `workflow-node:${input.workflowId}:${input.runId}:${input.nodeId}`; this.runtimeApprovals.allowWorkflowOutputWrites(sessionKey, input.workDir, input.workflowId, input.runId);
     let latestRuntimeConversation: RuntimeConversation | undefined;
     const context: InteractiveSessionContext = {
       chatId: sessionKey,
@@ -1724,7 +1724,7 @@ export class AgentHub {
         await session.sendPrompt(prompt);
       }),
       interrupt: () => this.interactiveSessions.interrupt(sessionKey),
-      close: () => this.interactiveSessions.dispose(sessionKey, "app_shutdown"),
+      close: async () => { this.runtimeApprovals.cancelOwner(sessionKey); await this.interactiveSessions.dispose(sessionKey, "app_shutdown"); },
       runtimeConversation: () => latestRuntimeConversation,
     };
   }

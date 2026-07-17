@@ -34,4 +34,32 @@ describe("RuntimeApprovalBroker", () => {
     await expect(Promise.all([first, second])).resolves.toEqual(["rejected", "rejected"]);
     expect(emit).toHaveBeenCalledWith(expect.objectContaining({ type: "approval_response", decision: "rejected" }));
   });
+
+  test("auto-allows only direct file writes in the registered workflow output directory", async () => {
+    const events: AgentEvent[] = [];
+    const broker = new RuntimeApprovalBroker();
+    broker.allowFileWritesWithin("task-1", "C:/repo/outputs/wf-1/run-1");
+    await expect(broker.request({
+      ownerId: "task-1",
+      provider: "claude",
+      content: "Write report",
+      emit: (event) => events.push(event),
+      operation: { kind: "file_write", cwd: "C:/repo", paths: ["outputs/wf-1/run-1/report.md"] },
+    })).resolves.toBe("approved");
+    expect(events).toContainEqual(expect.objectContaining({
+      type: "approval_response",
+      decision: "approved",
+      metadata: { approvalMode: "workflow_output_whitelist" },
+    }));
+
+    const outside = broker.request({
+      ownerId: "task-1",
+      provider: "claude",
+      content: "Write outside",
+      emit: vi.fn(),
+      operation: { kind: "file_write", cwd: "C:/repo", paths: ["README.md"] },
+    });
+    broker.cancelOwner("task-1");
+    await expect(outside).resolves.toBe("rejected");
+  });
 });

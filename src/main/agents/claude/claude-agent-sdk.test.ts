@@ -118,4 +118,13 @@ describe("createClaudeSdkPermissionHandler", () => {
       .resolves.toMatchObject({ behavior: "deny" });
     expect(requestApproval).not.toHaveBeenCalled();
   });
+
+  test("describes Claude Write as a normalized file-write operation", async () => {
+    const requestApproval = vi.fn(async () => "approved" as const);
+    const handler = createClaudeSdkPermissionHandler(vi.fn(), "task-1", requestApproval, undefined, "C:/repo");
+    await handler("Write", { file_path: "outputs/wf/run/report.md", content: "report" }, { toolUseID: "tool-5" } as never);
+    expect(requestApproval).toHaveBeenCalledWith(expect.objectContaining({
+      operation: { kind: "file_write", cwd: "C:/repo", paths: ["outputs/wf/run/report.md"] },
+    }));
+  });
 });

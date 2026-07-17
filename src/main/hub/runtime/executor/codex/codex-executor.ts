@@ -41,6 +41,7 @@ export class CodexAgentExecutor implements AgentExecutor {
           ownerId: this.context.runId,
           emit: this.context.emit,
           request: this.options.requestApproval,
+          cwd: this.context.workDir,
         } : undefined);
       },
       onExit: (code) => {

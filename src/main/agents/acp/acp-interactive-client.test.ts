@@ -4,7 +4,7 @@ import path from "node:path";
 import { describe, expect, test, vi } from "vitest";
 import type { AgentEvent } from "../../../shared/types";
 import { writeNodeCliLauncher } from "../../platform/test-cli-fixtures";
-import { AcpInteractiveClient, agentEventsFromAcpUpdate } from "./acp-interactive-client";
+import { AcpInteractiveClient, agentEventsFromAcpUpdate, fileWriteOperationFromAcpUpdate } from "./acp-interactive-client";
 import { RuntimeApprovalBroker } from "../../approvals/runtime-approval-broker";
 
 async function createFakeAcpRuntime(dir: string): Promise<{ executable: string; callsPath: string }> {
@@ -121,5 +121,20 @@ describe("agentEventsFromAcpUpdate", () => {
       sessionUpdate: "agent_thought_chunk",
       content: { type: "text", text: "thinking" },
     })).toEqual([{ type: "meta", content: "thinking" }]);
+  });
+
+  test("normalizes ACP edit tool paths for output-write policy checks", () => {
+    expect(fileWriteOperationFromAcpUpdate({
+      sessionUpdate: "tool_call",
+      toolCallId: "write-1",
+      title: "Write report",
+      kind: "edit",
+      status: "pending",
+      rawInput: { path: "outputs/wf/run/report.md" },
+    }, "C:/repo")).toEqual({
+      kind: "file_write",
+      cwd: "C:/repo",
+      paths: ["outputs/wf/run/report.md"],
+    });
   });
 });

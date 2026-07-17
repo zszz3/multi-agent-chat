@@ -1,10 +1,33 @@
 import type { CodexRpcClient } from "../../../../agents/codex/codex-rpc";
 import type { AgentEvent } from "../../../../../shared/types";
-import type { RuntimeApprovalRequester } from "../../../../approvals/runtime-approval-broker";
+import type { RuntimeApprovalOperation, RuntimeApprovalRequester } from "../../../../approvals/runtime-approval-broker";
 
 function isWorkflowMcpRequest(params: Record<string, unknown>): boolean {
   const serialized = JSON.stringify(params).toLowerCase();
   return ["workflow_create", "workflow_validate", "workflow_context_append"].some((name) => serialized.includes(name));
+}
+
+export function fileWriteOperationFromCodexPermissions(
+  params: Record<string, unknown>,
+  cwd: string,
+): RuntimeApprovalOperation | undefined {
+  const paths: string[] = [];
+  const visit = (value: unknown, writeContext: boolean): void => {
+    if (typeof value === "string") {
+      if (writeContext && /[\\/]/.test(value)) paths.push(value);
+      return;
+    }
+    if (Array.isArray(value)) {
+      for (const item of value) visit(item, writeContext);
+      return;
+    }
+    if (!value || typeof value !== "object") return;
+    for (const [key, item] of Object.entries(value as Record<string, unknown>)) {
+      visit(item, writeContext || /write|writable/i.test(key));
+    }
+  };
+  visit(params.permissions, false);
+  return paths.length > 0 ? { kind: "file_write", cwd, paths: [...new Set(paths)] } : undefined;
 }
 
 export function respondToCodexRuntimeServerRequest(
@@ -16,6 +39,7 @@ export function respondToCodexRuntimeServerRequest(
     ownerId: string;
     emit: (event: AgentEvent) => void;
     request: RuntimeApprovalRequester;
+    cwd: string;
   },
 ): void {
   if (method === "item/tool/requestUserInput") {
@@ -64,6 +88,9 @@ export function respondToCodexRuntimeServerRequest(
         : "Codex requests permission to call an MCP tool.",
     metadata: { method, nativeRequestId: id, request: params },
     emit: approval.emit,
+    ...(permissionsApproval && fileWriteOperationFromCodexPermissions(params, approval.cwd)
+      ? { operation: fileWriteOperationFromCodexPermissions(params, approval.cwd)! }
+      : {}),
   }).then((decision) => {
     if (permissionsApproval) {
       client.respond(id, decision === "approved"

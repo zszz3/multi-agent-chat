@@ -74,6 +74,7 @@ import {
   WorkflowV2HookSignal,
   type WorkflowV2HookChainResult,
 } from "./workflow-v2-hooks";
+import { runWorkflowV2TaskWithOutputPolicy } from "./workflow-v2-output-approval";
 
 const WORKFLOW_V2_MAX_PARALLEL_NODES = 4;
 const MAX_NODE_TIMER_DELAY_MS = 2_147_483_647;
@@ -176,9 +177,9 @@ export class WorkflowV2RunExecutor {
       });
     };
 
-    const startWorkflowTask = async (request: RunTaskRequest): Promise<TaskRun> => {
+    const startWorkflowTask = async (request: RunTaskRequest, allowOutputWrite = false): Promise<TaskRun> => {
       const existingTaskIds = new Set(latestSnapshot.tasks.map((task) => task.id));
-      latestSnapshot = await this.deps.runTask(request);
+      latestSnapshot = await runWorkflowV2TaskWithOutputPolicy({ workflowId: workflow.workflowId, runId, workDir: workflowWorkDir, request, allowOutputWrite, runTask: this.deps.runTask });
       const task = latestSnapshot.tasks
         .filter((item) => !existingTaskIds.has(item.id))
         .sort((left, right) => right.createdAt - left.createdAt)
@@ -190,7 +191,6 @@ export class WorkflowV2RunExecutor {
       if (!fallbackTask) throw new Error("Workflow V2 task creation did not return a new task.");
       return fallbackTask;
     };
-
     const throwIfWorkflowV2ManuallyPaused = async (nodeId: string, task?: TaskRun): Promise<void> => {
       const activeRun = this.runRegistry.get(runId);
       const reason = activeRun?.manualPauseReasonByNodeId?.get(nodeId);
@@ -263,9 +263,9 @@ export class WorkflowV2RunExecutor {
     const runtimeAttemptByNodeId = new Map<string, number>();
     const consumedRecoveryNodeIds = new Set<string>();
 
-    const startModelTask = async (nodeId: string, request: RunTaskRequest): Promise<TaskRun> => {
+    const startModelTask = async (nodeId: string, request: RunTaskRequest, allowOutputWrite = false): Promise<TaskRun> => {
       consumeModelCallBudget(nodeId);
-      const task = await startWorkflowTask(request);
+      const task = await startWorkflowTask(request, allowOutputWrite);
       this.runRegistry.get(runId)?.taskIdByNodeId.set(nodeId, task.id);
       return task;
     };
@@ -581,7 +581,7 @@ export class WorkflowV2RunExecutor {
           workDir: input.workDir,
           continuationPolicy: "resume-required",
           runtimeConversation: completedProgressTask.runtimeConversation,
-        });
+        }, true);
         input.taskIds.push(currentTask.id);
       }
     };
@@ -673,7 +673,7 @@ export class WorkflowV2RunExecutor {
         ...(recoveryConversation
           ? { continuationPolicy: "resume-required" as const, runtimeConversation: recoveryConversation }
           : {}),
-      });
+      }, true);
       consumedRecoveryNodeIds.add(request.node.id);
       updateNode(request.node.id, { status: "running", detail: "Task running", taskId: task.id });
 

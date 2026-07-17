@@ -57,6 +57,7 @@ export function createCodexDriver(options: RuntimeAgentExecutorFactoryOptions): 
                 ownerId: sessionContext.chatId,
                 emit: onEvent,
                 request: options.requestApproval,
+                cwd: sessionContext.workDir,
               } : undefined);
             },
             onExit,

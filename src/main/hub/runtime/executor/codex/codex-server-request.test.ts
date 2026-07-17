@@ -1,6 +1,6 @@
 import { describe, expect, test, vi } from "vitest";
 import type { CodexRpcClient } from "../../../../agents/codex/codex-rpc";
-import { respondToCodexRuntimeServerRequest } from "./codex-server-request";
+import { fileWriteOperationFromCodexPermissions, respondToCodexRuntimeServerRequest } from "./codex-server-request";
 
 describe("respondToCodexRuntimeServerRequest", () => {
   test("fails closed when no approval broker is attached", () => {
@@ -17,10 +17,25 @@ describe("respondToCodexRuntimeServerRequest", () => {
       2,
       "item/commandExecution/requestApproval",
       { command: "npm test" },
-      { ownerId: "chat-1", emit: vi.fn(), request },
+      { ownerId: "chat-1", emit: vi.fn(), request, cwd: "C:/repo" },
     );
     await vi.waitFor(() => expect(respond).toHaveBeenCalledWith(2, { decision: "accept" }));
     expect(request).toHaveBeenCalledWith(expect.objectContaining({ ownerId: "chat-1", provider: "codex" }));
+  });
+
+  test("normalizes only write-scoped Codex permission paths", () => {
+    expect(fileWriteOperationFromCodexPermissions({
+      permissions: {
+        fileSystem: {
+          read: ["secrets/token.txt"],
+          writableRoots: ["outputs/wf/run/report.md"],
+        },
+      },
+    }, "C:/repo")).toEqual({
+      kind: "file_write",
+      cwd: "C:/repo",
+      paths: ["outputs/wf/run/report.md"],
+    });
   });
 
   test("keeps trusted workflow authoring MCP calls available", () => {

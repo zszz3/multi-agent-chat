@@ -1,5 +1,13 @@
 import { randomUUID } from "node:crypto";
+import path from "node:path";
 import type { AgentEvent, ApprovalDecision } from "../../shared/types";
+import { workflowStoragePlanFor } from "../../shared/workflow-v2/runtime-utils";
+
+export interface RuntimeApprovalOperation {
+  kind: "file_write";
+  cwd: string;
+  paths: string[];
+}
 
 export interface RuntimeApprovalRequest {
   ownerId: string;
@@ -8,6 +16,7 @@ export interface RuntimeApprovalRequest {
   metadata?: Record<string, unknown>;
   emit: (event: AgentEvent) => void;
   signal?: AbortSignal;
+  operation?: RuntimeApprovalOperation;
 }
 
 export type RuntimeApprovalRequester = (request: RuntimeApprovalRequest) => Promise<ApprovalDecision>;
@@ -22,6 +31,7 @@ interface PendingApproval {
 
 export class RuntimeApprovalBroker {
   private readonly pending = new Map<string, PendingApproval>();
+  private readonly allowedFileWriteRootsByOwner = new Map<string, Set<string>>();
 
   constructor(private readonly timeoutMs = 5 * 60_000) {}
 
@@ -34,9 +44,21 @@ export class RuntimeApprovalBroker {
       metadata: {
         provider: input.provider,
         approvalMode: "once",
+        ...(input.operation ? { operation: input.operation } : {}),
         ...sanitizeApprovalMetadata(input.metadata),
       },
     });
+
+    if (this.isAllowedFileWrite(input)) {
+      input.emit({
+        type: "approval_response",
+        requestId,
+        decision: "approved",
+        content: "Auto-approved workflow output file write.",
+        metadata: { approvalMode: "workflow_output_whitelist" },
+      });
+      return Promise.resolve("approved");
+    }
 
     return new Promise<ApprovalDecision>((resolve) => {
       const finish = (decision: ApprovalDecision, content: string): void => {
@@ -63,6 +85,16 @@ export class RuntimeApprovalBroker {
     });
   };
 
+  allowFileWritesWithin(ownerId: string, rootPath: string): void {
+    const roots = this.allowedFileWriteRootsByOwner.get(ownerId) ?? new Set<string>();
+    roots.add(path.resolve(rootPath));
+    this.allowedFileWriteRootsByOwner.set(ownerId, roots);
+  }
+
+  allowWorkflowOutputWrites(ownerId: string, workDir: string, workflowId: string, runId: string): void {
+    this.allowFileWritesWithin(ownerId, path.resolve(workDir, workflowStoragePlanFor(workflowId, runId).outputDir));
+  }
+
   resolve(input: { ownerId: string; requestId: string; decision: ApprovalDecision }): boolean {
     const pending = this.pending.get(input.requestId);
     if (!pending || pending.ownerId !== input.ownerId) return false;
@@ -86,10 +118,21 @@ export class RuntimeApprovalBroker {
   }
 
   cancelOwner(ownerId: string): void {
+    this.allowedFileWriteRootsByOwner.delete(ownerId);
     for (const [requestId, pending] of this.pending) {
       if (pending.ownerId !== ownerId) continue;
       this.resolve({ ownerId, requestId, decision: "rejected" });
     }
+  }
+
+  private isAllowedFileWrite(input: RuntimeApprovalRequest): boolean {
+    const operation = input.operation;
+    const allowedRoots = this.allowedFileWriteRootsByOwner.get(input.ownerId);
+    if (operation?.kind !== "file_write" || !allowedRoots || operation.paths.length === 0) return false;
+    return operation.paths.every((candidate) => {
+      const target = path.resolve(operation.cwd, candidate);
+      return [...allowedRoots].some((root) => path.dirname(target) === root);
+    });
   }
 }
 

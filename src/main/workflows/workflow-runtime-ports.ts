@@ -56,7 +56,7 @@ export interface WorkflowRuntimeDependencies {
   startWorkflowRun: (input: { workflowId: string; contextDocument?: string }) => WorkflowOperationResult;
   finishWorkflowRun: (input: FinishWorkflowRunRequest) => WorkflowOperationResult;
   updateWorkflowRunState: (input: WorkflowRunStateUpdate) => void;
-  runTask: (input: RunTaskRequest) => Promise<AppSnapshot>;
+  runTask: (input: RunTaskRequest, approvalPolicy?: { allowedFileWriteRoot: string }) => Promise<AppSnapshot>;
   stopTask: (taskId: string) => Promise<void>;
   deleteTask: (taskId: string, options?: { preserveRuntimeConversation?: boolean }) => Promise<AppSnapshot>;
   executeWorkflowV2Script: (input: ExecuteWorkflowV2ScriptRequest) => Promise<WorkflowV2WorkerOutput>;
