@@ -2,7 +2,7 @@ import { describe, expect, test } from "vitest";
 
 import type { WorkflowV2AuthoredDefinition, WorkflowV2Definition, WorkflowV2NodeTemplate, WorkflowV2ScriptLanguage } from "./definition";
 import { createWorkflowV2TemplateRegistry } from "./templates";
-import { compileAndValidateWorkflowV2Definition, validateWorkflowV2Definition } from "./validation";
+import { compileAndValidateWorkflowV2Definition, validateWorkflowV2ConfiguredAgentReferences, validateWorkflowV2Definition } from "./validation";
 
 function validDefinition(): WorkflowV2Definition {
   return {
@@ -41,6 +41,25 @@ function validDefinition(): WorkflowV2Definition {
 }
 
 describe("workflow-v2 validation", () => {
+  test("rejects node Agent references that are absent from the configured Agent catalog", () => {
+    const definition = validDefinition();
+    const node = definition.nodes[0]!;
+    if (node.execModel !== "llm") throw new Error("Expected llm fixture node");
+    node.configuredAgentId = "missing-agent";
+    expect(validateWorkflowV2ConfiguredAgentReferences(definition, ["default-agent"])).toEqual(["Workflow V2 configured agent missing-agent was not found."]);
+  });
+  test("rejects empty per-node agent routing fields", () => {
+    const definition = validDefinition();
+    const node = definition.nodes[0]!;
+    if (node.execModel !== "llm") throw new Error("expected llm node");
+    node.configuredAgentId = "";
+    node.modelId = "";
+    expect(validateWorkflowV2Definition(definition).errors).toEqual(expect.arrayContaining([
+      expect.stringContaining("configuredAgentId must not be empty"),
+      expect.stringContaining("modelId must not be empty"),
+    ]));
+  });
+
   test("accepts the canonical script contract without legacy permission fields", () => {
     const definition = validDefinition();
     definition.nodes[1] = {

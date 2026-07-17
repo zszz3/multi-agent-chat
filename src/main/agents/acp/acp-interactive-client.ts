@@ -6,6 +6,7 @@ import type {
   AgentEvent,
 } from "../../../shared/types";
 import { spawnCli } from "../../platform/cli-launcher";
+  import type { RuntimeApprovalOperation, RuntimeApprovalRequester } from "../../approvals/runtime-approval-broker";
 
 const ACP_ATTACH_TIMEOUT_MS = 20_000;
 const ACP_CONFIG_TIMEOUT_MS = 10_000;
@@ -19,6 +20,8 @@ export interface AcpInteractiveClientOptions {
   modelId?: string;
   onEvent: (event: AgentEvent) => void;
   onExit?: (error?: Error) => void;
+  approvalOwnerId?: string;
+  requestApproval?: RuntimeApprovalRequester;
 }
 
 function stringifyValue(value: unknown): string {
@@ -80,6 +83,19 @@ export function agentEventsFromAcpUpdate(update: acp.SessionUpdate): AgentEvent[
   return [];
 }
 
+export function fileWriteOperationFromAcpUpdate(
+  update: acp.SessionUpdate,
+  cwd: string,
+): RuntimeApprovalOperation | undefined {
+  if (update.sessionUpdate !== "tool_call") return undefined;
+  const writeLike = update.kind === "edit" || /\b(write|edit|create)\b/i.test(update.title);
+  if (!writeLike || !update.rawInput || typeof update.rawInput !== "object") return undefined;
+  const input = update.rawInput as Record<string, unknown>;
+  const candidate = [input.file_path, input.path, input.notebook_path]
+    .find((value): value is string => typeof value === "string" && value.trim().length > 0);
+  return candidate ? { kind: "file_write", cwd, paths: [candidate] } : undefined;
+}
+
 function withTimeout<T>(promise: Promise<T>, timeoutMs: number, label: string): Promise<T> {
   return new Promise<T>((resolve, reject) => {
     const timer = setTimeout(() => reject(new Error(`${label} timed out after ${timeoutMs}ms.`)), timeoutMs);
@@ -102,6 +118,7 @@ export class AcpInteractiveClient {
   private currentSessionId: string | undefined;
   private stderr = "";
   private detaching = false;
+  private readonly fileWriteOperationByToolCallId = new Map<string, RuntimeApprovalOperation>();
 
   constructor(private readonly options: AcpInteractiveClientOptions) {}
 
@@ -147,6 +164,10 @@ export class AcpInteractiveClient {
         this.handlePermissionRequest(params, requestId))
       .onNotification(acp.methods.client.session.update, ({ params }) => {
         if (params.sessionId !== this.currentSessionId) return;
+        const operation = fileWriteOperationFromAcpUpdate(params.update, this.options.cwd);
+        if (params.update.sessionUpdate === "tool_call" && operation) {
+          this.fileWriteOperationByToolCallId.set(params.update.toolCallId, operation);
+        }
         for (const event of agentEventsFromAcpUpdate(params.update)) this.options.onEvent(event);
       });
     const stream = acp.ndJsonStream(
@@ -240,40 +261,28 @@ export class AcpInteractiveClient {
   private handlePermissionRequest(
     params: acp.RequestPermissionRequest,
     requestId: acp.JsonRpcId,
-  ): acp.RequestPermissionResponse {
-    const eventRequestId = String(requestId ?? `permission:${randomUUID()}`);
-    this.options.onEvent({
-      type: "approval_request",
-      requestId: eventRequestId,
+  ): Promise<acp.RequestPermissionResponse> {
+    const allowOnce = params.options.find((option) => option.kind === "allow_once");
+    if (!allowOnce || !this.options.approvalOwnerId || this.options.approvalOwnerId.startsWith("workflow-") || !this.options.requestApproval) {
+      return Promise.resolve({ outcome: { outcome: "cancelled" } });
+    }
+    return this.options.requestApproval({
+      ownerId: this.options.approvalOwnerId,
+      provider: "acp",
       content: params.toolCall.title ?? "ACP runtime requests permission.",
       metadata: {
+        nativeRequestId: String(requestId ?? `permission:${randomUUID()}`),
         sessionId: params.sessionId,
         toolCallId: params.toolCall.toolCallId,
         options: params.options.map((option) => ({ id: option.optionId, name: option.name, kind: option.kind })),
       },
-    });
-
-    const selected = params.options.find((option) => option.kind === "allow_once")
-      ?? params.options.find((option) => option.kind === "allow_always")
-      ?? params.options[0];
-    if (!selected) {
-      this.options.onEvent({
-        type: "approval_response",
-        requestId: eventRequestId,
-        decision: "rejected",
-        content: "Rejected because the runtime provided no permission options.",
-      });
-      return { outcome: { outcome: "cancelled" } };
-    }
-
-    const approved = selected.kind === "allow_once" || selected.kind === "allow_always";
-    this.options.onEvent({
-      type: "approval_response",
-      requestId: eventRequestId,
-      decision: approved ? "approved" : "rejected",
-      content: `${selected.name} selected automatically by desktop host.`,
-    });
-    return { outcome: { outcome: "selected", optionId: selected.optionId } };
+      emit: this.options.onEvent,
+      ...(this.fileWriteOperationByToolCallId.get(params.toolCall.toolCallId)
+        ? { operation: this.fileWriteOperationByToolCallId.get(params.toolCall.toolCallId)! }
+        : {}),
+    }).then((decision) => decision === "approved"
+      ? { outcome: { outcome: "selected", optionId: allowOnce.optionId } }
+      : { outcome: { outcome: "cancelled" } });
   }
 
   private handleProcessExit(proc: ChildProcess, error: Error): void {
@@ -289,5 +298,6 @@ export class AcpInteractiveClient {
     this.proc = undefined;
     this.connection = undefined;
     this.currentSessionId = undefined;
+    this.fileWriteOperationByToolCallId.clear();
   }
 }

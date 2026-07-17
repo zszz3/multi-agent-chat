@@ -318,7 +318,7 @@ async function workflowV2RuntimeFixture(input: {
   });
   const snapshot = (): AppSnapshot => ({
     workDir: "/tmp/app-workdir",
-    configuredAgents: [{ id: "agent-a", modelId: "model-a" }],
+    configuredAgents: [{ id: "agent-a", modelId: "model-a" }, { id: "agent-b", modelId: "model-b" }],
     tasks,
     workflowStore: { activeWorkflowId: workflow.workflowId, workflows: [workflow], runs },
   }) as unknown as AppSnapshot;
@@ -496,6 +496,10 @@ describe("WorkflowRuntime typed script input", () => {
     expect(completedProgress?.inputRequest).toBeUndefined();
     expect(completedProgress?.outputs).toEqual({ ok: true });
   });
+
+  test("rejects a node override whose configured agent no longer exists", () => {
+    expect(() => resolveWorkflowNodeAgent({ configuredAgentId: "missing" }, WORKFLOW_DEFAULTS, AGENTS)).toThrow("configured agent missing was not found");
+  });
 });
 
 describe("WorkflowRuntime script permissions", () => {
@@ -526,9 +530,93 @@ describe("WorkflowRuntime script permissions", () => {
     expect(fixture.updates.flatMap((update) => update.progress ?? []).filter((item) => item.nodeId === "command").at(-1)).toMatchObject({ status: "paused" });
     expect(JSON.stringify(fixture.updates)).toContain("dangerous");
   });
+
+  test("executes the exact dangerous operation once after explicit approval", async () => {
+    const definition = workflowV2Definition();
+    definition.nodes = [{ id: "command", kind: "transform", title: "Run command", execModel: "script", executionMode: "script", script: { executable: { kind: "command", command: "tool", args: ["--write"] }, parameters: [], capabilities: ["workspace_write"], managerRisk: { level: "dangerous", rationale: "Writes workspace files." } }, outputFields: [{ key: "stdout", required: true }] }];
+    definition.edges = [];
+    let persistedState!: WorkflowV2PersistedRunState;
+    const durableEvents: import("../../shared/workflow-v2/storage").WorkflowV2DurableEvent[] = [];
+    const authorizations: ExecuteWorkflowV2ScriptRequest["authorization"][] = [];
+    const fixture = await workflowV2RuntimeFixture({
+      definition,
+      store: {
+        persistRunState: async (state) => { persistedState = structuredClone(state); },
+        appendEvents: async ({ events }) => { durableEvents.push(...structuredClone(events)); },
+        readRunState: async () => persistedState,
+        readCacheEntry: async () => undefined,
+      },
+      executeScript: async (request) => {
+        authorizations.push(structuredClone(request.authorization));
+        return { nodeId: request.node.id, summary: "Command completed", outputs: { stdout: "ok" }, proposals: [] };
+      },
+    });
+
+    fixture.runtime.runWorkflow({ workflowId: fixture.workflow.workflowId });
+    while (!fixture.updates.some((update) => update.status === "waiting_for_user")) await new Promise((resolve) => setTimeout(resolve, 5));
+    while (fixture.runtime.isRunning("run-v2-runtime")) await new Promise((resolve) => setTimeout(resolve, 0));
+    const progress = fixture.updates.flatMap((update) => update.progress ?? []).filter((item) => item.nodeId === "command").at(-1)!;
+    const requestId = progress.intervention?.scriptApproval?.requestId;
+    fixture.setRuns([{ runId: "run-v2-runtime", workflowId: definition.workflowId, status: "waiting_for_user", workflowV2Plan: fixture.workflow.workflowV2Plan!, progress: [progress], events: [], contextDocument: "", startedAt: 1, finishedAt: undefined, lastError: undefined }]);
+
+    const result = await fixture.runtime.resolveWorkflowV2Intervention({ workflowId: definition.workflowId, runId: "run-v2-runtime", nodeId: "command", action: "approve_once" });
+    const finished = await fixture.finished;
+
+    expect(result.ok).toBe(true);
+    expect(finished.status).toBe("completed");
+    expect(authorizations).toHaveLength(1);
+    expect(authorizations[0]).toMatchObject({ decision: "allow_once", approvalRequestId: requestId, nodeId: "command", runId: "run-v2-runtime" });
+    expect(authorizations[0]?.operationDigest).toBe(progress.intervention?.scriptApproval?.operationDigest);
+    expect(durableEvents.some((event) => event.type === "intervention_approve_once")).toBe(true);
+  });
+
+  test("rejects a dangerous operation without calling the script executor", async () => {
+    const definition = workflowV2Definition();
+    definition.nodes = [{ id: "command", kind: "transform", title: "Delete files", execModel: "script", executionMode: "script", script: { executable: { kind: "command", command: "tool", args: ["--delete"] }, parameters: [], capabilities: ["workspace_delete"], managerRisk: { level: "dangerous", rationale: "Deletes workspace files." } }, outputFields: [{ key: "stdout", required: true }] }];
+    definition.edges = [];
+    let persistedState!: WorkflowV2PersistedRunState;
+    let executeCount = 0;
+    const fixture = await workflowV2RuntimeFixture({
+      definition,
+      store: {
+        persistRunState: async (state) => { persistedState = structuredClone(state); },
+        appendEvents: async () => undefined,
+        readRunState: async () => persistedState,
+      },
+      executeScript: async () => { executeCount += 1; throw new Error("must not execute"); },
+    });
+
+    fixture.runtime.runWorkflow({ workflowId: fixture.workflow.workflowId });
+    while (!fixture.updates.some((update) => update.status === "waiting_for_user")) await new Promise((resolve) => setTimeout(resolve, 5));
+    while (fixture.runtime.isRunning("run-v2-runtime")) await new Promise((resolve) => setTimeout(resolve, 0));
+    const progress = fixture.updates.flatMap((update) => update.progress ?? []).filter((item) => item.nodeId === "command").at(-1)!;
+    fixture.setRuns([{ runId: "run-v2-runtime", workflowId: definition.workflowId, status: "waiting_for_user", workflowV2Plan: fixture.workflow.workflowV2Plan!, progress: [progress], events: [], contextDocument: "", startedAt: 1, finishedAt: undefined, lastError: undefined }]);
+
+    const result = await fixture.runtime.resolveWorkflowV2Intervention({ workflowId: definition.workflowId, runId: "run-v2-runtime", nodeId: "command", action: "reject", reason: "User rejected destructive behavior." });
+    const finished = await fixture.finished;
+
+    expect(result.ok).toBe(true);
+    expect(executeCount).toBe(0);
+    expect(finished).toMatchObject({ status: "failed", lastError: "User rejected destructive behavior." });
+    expect(persistedState.runState.nodes.command).toMatchObject({ status: "failed", lastError: "User rejected destructive behavior." });
+    expect(persistedState.nodeControl.command?.interventionResolution?.action).toBe("reject");
+  });
 });
 
 describe("WorkflowRuntime Workflow V2 bridge", () => {
+  test("routes an LLM node through its selected configured agent", async () => {
+    const definition = workflowV2Definition();
+    const node = definition.nodes[0]!;
+    if (node.execModel !== "llm") throw new Error("expected llm node");
+    node.configuredAgentId = "agent-b";
+    const fixture = await workflowV2RuntimeFixture({ definition, executeScript: async ({ node: scriptNode }) => ({ nodeId: scriptNode.id, summary: "Verified", outputs: { verified: true }, proposals: [] }) });
+
+    fixture.runtime.runWorkflow({ workflowId: fixture.workflow.workflowId });
+    await fixture.finished;
+
+    expect(fixture.taskRequests[0]).toMatchObject({ configuredAgentId: "agent-b", modelId: "model-b" });
+  });
+
   test("keeps an interactive node on the same non-terminal run while awaiting user confirmation", async () => {
     const definition = workflowV2Definition();
     const interactiveNode = definition.nodes[0]!;
@@ -1035,15 +1123,15 @@ describe("WorkflowRuntime Workflow V2 bridge", () => {
       runId: "run-v2-runtime",
       nodeId: "draft",
     });
-    const finished = await fixture.finished;
-
+    for (let attempt = 0; attempt < 20 && fixture.updates.filter((update) => update.status === "waiting_for_user").length < 2; attempt += 1) await Promise.resolve();
     expect(result).toEqual({ ok: true, workflowId: fixture.workflow.workflowId, runId: "run-v2-runtime" });
-    expect(finished.status).toBe("stopped");
-    expect(finished.progress).toContainEqual(expect.objectContaining({ nodeId: "draft", status: "paused" }));
+    const waitingUpdates = fixture.updates.filter((update) => update.status === "waiting_for_user");
+    expect(waitingUpdates).toHaveLength(2);
+    expect(waitingUpdates.at(-1)?.progress).toContainEqual(expect.objectContaining({ nodeId: "draft", status: "paused" }));
     expect(fixture.stopTaskIds).toEqual(["task-1"]);
-    expect(finished.appendEvents).toContainEqual(
+    expect(fixture.updates).toContainEqual(expect.objectContaining({ appendEvents: expect.arrayContaining([
       expect.objectContaining({ type: "node_paused", nodeId: "draft" }),
-    );
+    ]) }));
   });
 
   test("fails V2 start intervention before resuming through the legacy executor", async () => {

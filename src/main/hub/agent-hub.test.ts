@@ -3971,7 +3971,7 @@ fs.writeFileSync(${JSON.stringify(argsPath)}, process.argv.slice(2).join("\\n") 
       objective: "Review sample repo",
       revision: 3,
       contextDocument: expect.stringContaining("Added architecture note."),
-      runProgress: [{ nodeId: "inventory", status: "completed" }],
+      runProgress: [],
       workflowV2Plan: {
         workflowId: first.workflowId,
         graphVersion: 4,
@@ -3997,8 +3997,8 @@ fs.writeFileSync(${JSON.stringify(argsPath)}, process.argv.slice(2).join("\\n") 
       status: "draft",
       definition: { objective: "Review sample repo" },
       messages: [{ id: "m-1", role: "user" }, { id: "m-2", role: "assistant" }],
-      runProgress: [{ nodeId: "inventory", status: "completed", detail: "Output captured" }],
-      runContextDocument: "# Workflow Context\n\n## Inventory (inventory)\nMapped repo.",
+      runProgress: [],
+      runContextDocument: "",
       contextDocument: expect.stringContaining("Architecture note."),
       workflowV2Plan: {
         workflowId: first.workflowId,
@@ -4697,9 +4697,9 @@ fs.writeFileSync(${JSON.stringify(argsPath)}, process.argv.slice(2).join("\\n") 
       expect.objectContaining({ nodeId: "work", status: "paused" }),
       expect.objectContaining({ nodeId: "followup", status: "queued" }),
     ]);
-    // Pausing the only running node leaves nothing in progress, so the run stops.
-    expect(run.status).toBe("stopped");
-    expect(snapshot.workflowStore.workflows.find((w: any) => w.workflowId === created.workflowId).status).toBe("stopped");
+    // Pausing the only running node keeps the run resumable for human revision.
+    expect(run.status).toBe("waiting_for_user");
+    expect(snapshot.workflowStore.workflows.find((w: any) => w.workflowId === created.workflowId).status).toBe("waiting_for_user");
     expect(stopCount).toBe(1);
     expect(contexts).toHaveLength(1);
   });

@@ -23,6 +23,13 @@ const node: WorkflowV2ScriptNode = {
 };
 
 describe("WorkflowScriptNodePanel", () => {
+  test("exposes script contents for manual editing when the definition is editable", () => {
+    const html = renderToStaticMarkup(<WorkflowScriptNodePanel node={node} editable onUpdateNode={() => undefined} onClose={() => undefined} />);
+    expect(html).toContain("Script node · editable");
+    expect(html).toContain("return { echoed: inputs.text };");
+    expect(html).toContain("Edit script");
+  });
+
   test("shows script code and variable bindings without agent conversation chrome", () => {
     const html = renderToStaticMarkup(<WorkflowScriptNodePanel node={node} onClose={() => undefined} />);
     expect(html).toContain('aria-label="Echo input script details"');
@@ -76,5 +83,41 @@ describe("WorkflowScriptNodePanel", () => {
     expect(html).toContain("The values returned by this script node.");
     expect(html).toContain('&quot;echoed&quot;: &quot;hello&quot;');
     expect(html).toContain('&quot;count&quot;: 1');
+  });
+
+  test("renders an informed approve-once and reject surface for dangerous execution", () => {
+    const html = renderToStaticMarkup(<WorkflowScriptNodePanel
+      node={node}
+      progress={{
+        nodeId: "echo",
+        title: "Echo input",
+        status: "paused",
+        intervention: {
+          nodeId: "echo",
+          source: "script_permission",
+          reason: "External command execution is dynamic and fails closed.",
+          allowedActions: ["approve_once", "reject"],
+          requestedAt: 1,
+          scriptApproval: {
+            requestId: "approval-1",
+            risk: "dangerous",
+            capabilities: ["process_spawn", "shell_execute"],
+            capabilityDigest: "capability-digest",
+            operationDigest: "operation-digest",
+            executableSummary: "tool --delete temp",
+            workDir: "C:/workspace",
+          },
+        },
+      }}
+      onResolveApproval={() => undefined}
+      onClose={() => undefined}
+    />);
+
+    expect(html).toContain("Dangerous operation requires approval");
+    expect(html).toContain("approval-1");
+    expect(html).toContain("process_spawn, shell_execute");
+    expect(html).toContain("tool --delete temp");
+    expect(html).toContain("Approve once");
+    expect(html).toContain("Reject");
   });
 });

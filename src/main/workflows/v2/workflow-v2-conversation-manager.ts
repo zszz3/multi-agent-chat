@@ -1,4 +1,4 @@
-import type { AgentEvent, RuntimeConversation } from "../../../shared/types";
+import type { AgentEvent, ChatEvent, RuntimeConversation } from "../../../shared/types";
 import type {
   WorkflowNodeCompletionProposal,
   WorkflowNodeConversation,
@@ -186,7 +186,11 @@ export class WorkflowV2ConversationManager {
 
   restore(conversations: WorkflowNodeConversation[]): void {
     for (const conversation of conversations) {
-      this.conversations.set(conversation.conversationId, structuredClone(conversation));
+      const restored = structuredClone(conversation);
+      for (const message of restored.messages) {
+        if ((message.event?.type === "approval_request" || message.event?.type === "user_input_request") && message.event.requestState === "live") message.event.requestState = "expired";
+      }
+      this.conversations.set(conversation.conversationId, restored);
       this.restoredInputs.set(conversation.conversationId, {
         workflowId: conversation.workflowId, runId: conversation.runId, nodeId: conversation.nodeId,
         configuredAgentId: conversation.configuredAgentId, modelId: conversation.modelId, workDir: conversation.workDir,
@@ -204,7 +208,13 @@ export class WorkflowV2ConversationManager {
     if (!conversation || conversation.status === "closed") return;
     const content = "content" in event && typeof event.content === "string" ? event.content : "";
     if (content && event.type !== "delta" && event.type !== "completed") {
-      this.appendMessage(conversation, event.type === "tool_call" || event.type === "tool_result" ? "tool" : "assistant", content, this.deps.now(), event.type, "name" in event && typeof event.name === "string" ? event.name : undefined);
+      const at = this.deps.now();
+      if (event.type === "approval_response" || event.type === "user_input_response") {
+        const requestType = event.type === "approval_response" ? "approval_request" : "user_input_request";
+        const pending = [...conversation.messages].reverse().find((message) => message.event?.type === requestType && message.event.requestId === event.requestId && message.event.requestState === "live");
+        if (pending?.event) pending.event.requestState = "resolved";
+      }
+      this.appendMessage(conversation, event.type === "tool_call" || event.type === "tool_result" ? "tool" : "assistant", content, at, event.type, "name" in event && typeof event.name === "string" ? event.name : undefined, workflowNodeChatEvent(event, `${conversation.conversationId}:event:${conversation.messages.length + 1}`, at));
     }
     if (event.type === "delta") {
       const last = conversation.messages.at(-1);
@@ -233,8 +243,8 @@ export class WorkflowV2ConversationManager {
     if (runtimeConversation) conversation.runtimeConversation = structuredClone(runtimeConversation);
   }
 
-  private appendMessage(conversation: WorkflowNodeConversation, role: WorkflowNodeMessage["role"], content: string, at: number, eventType?: AgentEvent["type"], name?: string): void {
-    conversation.messages.push({ id: `${conversation.conversationId}:${conversation.messages.length + 1}`, role, content, at, ...(eventType ? { eventType } : {}), ...(name ? { name } : {}) });
+  private appendMessage(conversation: WorkflowNodeConversation, role: WorkflowNodeMessage["role"], content: string, at: number, eventType?: AgentEvent["type"], name?: string, event?: ChatEvent): void {
+    conversation.messages.push({ id: `${conversation.conversationId}:${conversation.messages.length + 1}`, role, content, at, ...(eventType ? { eventType } : {}), ...(name ? { name } : {}), ...(event ? { event } : {}) });
     conversation.updatedAt = at;
     conversation.lastActivityAt = at;
   }
@@ -272,4 +282,22 @@ export class WorkflowV2ConversationManager {
     if (!session) throw new Error(`Workflow node conversation session ${conversationId} was not found.`);
     return session;
   }
+}
+
+function workflowNodeChatEvent(event: AgentEvent, id: string, timestamp: number): ChatEvent | undefined {
+  if (event.type === "runtime_conversation" || event.type === "delta" || event.type === "completed") return undefined;
+  if (event.type === "error") return { id, type: "error", content: event.error, timestamp };
+  return {
+    id,
+    type: event.type,
+    content: event.content ?? "",
+    timestamp,
+    ...("name" in event && event.name ? { name: event.name } : {}),
+    ...("fromAgentId" in event && event.fromAgentId ? { fromAgentId: event.fromAgentId } : {}),
+    ...("toAgentId" in event && event.toAgentId ? { toAgentId: event.toAgentId } : {}),
+    ...("requestId" in event ? { requestId: event.requestId } : {}),
+    ...(event.type === "approval_request" || event.type === "user_input_request" ? { requestState: "live" as const } : {}),
+    ...(event.type === "approval_response" ? { decision: event.decision } : {}),
+    ...("metadata" in event && event.metadata ? { metadata: structuredClone(event.metadata) } : {}),
+  };
 }

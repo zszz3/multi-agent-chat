@@ -24,6 +24,8 @@ function definition(): WorkflowV2Definition {
         title: "Implement",
         execModel: "llm",
         executionMode: "one-shot",
+        configuredAgentId: "implementation-agent",
+        modelId: "implementation-model",
         prompt: "Implement the approved plan",
         outputFields: [{ key: "diff", required: true }],
         constraints: [{ key: "follow_spec_order", description: "Do not skip unfinished earlier phases." }],
@@ -82,6 +84,7 @@ describe("workflow-v2 planner", () => {
         required: true,
       },
     ]);
+    expect(plan.nodes[1]).toMatchObject({ configuredAgentId: "implementation-agent", modelId: "implementation-model", taskPacket: { configuredAgentId: "implementation-agent", modelId: "implementation-model" } });
   });
 
   test("normalizes parallel terminal branches into one final summary node", async () => {

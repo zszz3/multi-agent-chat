@@ -18,6 +18,7 @@ import type {
   CreateScheduledWorkflowScheduleRequest,
   CreateAgentTeamRequest,
   PatchWorkflowDraftRequest,
+  UpdateWorkflowRequest,
   FinishWorkflowRunRequest,
   CompleteWorkflowNodeConversationRequest,
   InterruptWorkflowNodeConversationRequest,
@@ -35,6 +36,7 @@ import type {
   AnswerWorkflowGateRequest,
   SubmitWorkflowScriptInputRequest,
   PauseWorkflowNodeRequest,
+  ReviseWorkflowV2RunRequest,
   ResolveWorkflowV2InterventionRequest,
   ProviderBalanceResult,
   RunWorkflowRequest,
@@ -66,6 +68,7 @@ import type {
   WorkflowDraftState,
   WorkflowOperationResult,
 } from "../shared/types";
+import type { ResolveRuntimeApprovalRequest } from "../shared/runtime-approval";
 import type { McpAgentDiagnostic, McpInstalledEntry, McpInstallRequest, McpInstallResult, McpSetupStatus } from "../shared/mcp-config";
 import type { AgentRevision } from "../shared/agent/types";
 import type { McpServerDefinition } from "../shared/mcp/types";
@@ -143,9 +146,12 @@ const api = {
   uninstallSkill: (request: UninstallSkillRequest): Promise<UninstalledSkillResult> => ipcRenderer.invoke("skills:uninstall", request),
   sendPrompt: (prompt: string, chatId?: string): Promise<AppSnapshot> => ipcRenderer.invoke("run:send", prompt, chatId),
   stopChat: (chatId: string): Promise<AppSnapshot> => ipcRenderer.invoke("run:stop", chatId),
+  resolveRuntimeApproval: (request: ResolveRuntimeApprovalRequest): Promise<AppSnapshot> =>
+    ipcRenderer.invoke("runtime-approval:resolve", request),
   askWorkflowAgent: (request: WorkflowAgentRequest): Promise<WorkflowAgentResponse> => ipcRenderer.invoke("workflow-agent:ask", request),
   createWorkflowDraft: (request?: CreateWorkflowDraftRequest): Promise<AppSnapshot> => ipcRenderer.invoke("workflow:draft:create", request),
   patchWorkflowDraft: (request: PatchWorkflowDraftRequest): Promise<AppSnapshot> => ipcRenderer.invoke("workflow:draft:patch", request),
+  updateWorkflow: (request: UpdateWorkflowRequest): Promise<WorkflowOperationResult> => ipcRenderer.invoke("workflow:update", request),
   buildWorkflowV2Plan: (request: BuildWorkflowV2PlanRequest): Promise<BuildWorkflowV2PlanResult> =>
     ipcRenderer.invoke("workflow-v2:plan", request),
   buildWorkflowV2GraphRevision: (request: BuildWorkflowV2GraphRevisionRequest): Promise<BuildWorkflowV2GraphRevisionResult> =>
@@ -162,6 +168,7 @@ const api = {
   interruptWorkflowReview: (request: InterruptWorkflowReviewRequest): Promise<AppSnapshot> => ipcRenderer.invoke("workflow:review:interrupt", request),
   runWorkflow: (request: RunWorkflowRequest): Promise<WorkflowOperationResult> => ipcRenderer.invoke("workflow-run:start", request),
   pauseWorkflowNode: (request: PauseWorkflowNodeRequest): Promise<WorkflowOperationResult> => ipcRenderer.invoke("workflow-run:pause-node", request),
+  reviseWorkflowV2Run: (request: ReviseWorkflowV2RunRequest): Promise<WorkflowOperationResult> => ipcRenderer.invoke("workflow-v2:run:revise", request),
   stopWorkflowRun: (request: StopWorkflowRunRequest): Promise<WorkflowOperationResult> => ipcRenderer.invoke("workflow-run:stop", request),
   resolveWorkflowV2Intervention: (request: ResolveWorkflowV2InterventionRequest): Promise<WorkflowOperationResult> =>
     ipcRenderer.invoke("workflow-v2:intervention:resolve", request),

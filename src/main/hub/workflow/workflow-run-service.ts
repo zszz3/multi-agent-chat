@@ -1,6 +1,7 @@
 import type {
   AnswerWorkflowGateRequest,
   PauseWorkflowNodeRequest,
+  ReviseWorkflowV2RunRequest,
   ResolveWorkflowV2InterventionRequest,
   RunWorkflowRequest,
   StartWorkflowNodeRequest,
@@ -11,6 +12,7 @@ import type {
 import type { WorkflowDraftState } from "../../../shared/workflow/draft";
 import type { WorkflowRuntime } from "../../workflows/workflow-runtime";
 import type { WorkflowStore } from "../../workflow-store";
+import { WorkflowRunRevisionService } from "./workflow-run-revision-service";
 
 export class WorkflowRunService {
   constructor(private readonly deps: {
@@ -37,6 +39,10 @@ export class WorkflowRunService {
 
   pauseNode(input: PauseWorkflowNodeRequest): Promise<WorkflowOperationResult> {
     return this.deps.runtime.pauseWorkflowNode(input);
+  }
+
+  revise(input: ReviseWorkflowV2RunRequest): Promise<WorkflowOperationResult> {
+    return new WorkflowRunRevisionService(this.deps).reviseAndResume(input);
   }
 
   resolveIntervention(input: ResolveWorkflowV2InterventionRequest): Promise<WorkflowOperationResult> {

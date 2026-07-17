@@ -45,6 +45,7 @@ import type {
   CodexDefaultConfig,
   PatchWorkflowDraftRequest,
   PauseWorkflowNodeRequest,
+  ReviseWorkflowV2RunRequest,
   ResolveWorkflowV2InterventionRequest,
   ProviderBalanceResult,
   RunWorkflowRequest,
@@ -118,6 +119,7 @@ import { WorkflowRunStateService } from "./workflow/workflow-run-state-service";
 import { WorkflowContextService } from "./workflow/workflow-context-service";
 import { buildWorkflowV2PlanSync } from "../workflows/v2/workflow-v2-planner";
 import { executeWorkflowV2Script } from "../workflows/v2/workflow-v2-script-executor";
+import { RuntimeApprovalBroker } from "../approvals/runtime-approval-broker";
 import { freezeWorkflowV2ScriptGovernance } from "../workflows/v2/workflow-v2-script-governance";
 import { WorkflowStore } from "../workflow-store";
 import { ChatState, TaskState, AgentTeamState, TeamRunState } from "./state/agent-hub-state";
@@ -260,6 +262,7 @@ import {
   resetWorkflowDraftSessionState as resetWorkflowDraftSessionStateValue,
   replaceWorkflowDraftMessage as replaceWorkflowDraftMessageValue,
   updateWorkflowDraftState as updateWorkflowDraftStateValue,
+  versionWorkflowDefinition as versionWorkflowDefinitionValue,
 } from "./workflow/agent-hub-workflow-draft";
 import { buildWorkflowAgentExecution as buildWorkflowAgentExecutionValue } from "./workflow/agent-hub-workflow-agent";
 import type { WorkflowDraftInteractiveRequest } from "./workflow/agent-hub-workflow-draft-reply-state";
@@ -269,7 +272,7 @@ import {
   type ActiveWorkflowDraftRequest,
 } from "./workflow/agent-hub-workflow-draft-replies";
 import { abandonWorkflowDraftReplyState as abandonWorkflowDraftReplyStateValue } from "./workflow/agent-hub-workflow-draft-reply-state";
-import { validateWorkflowV2Definition } from "../../shared/workflow-v2/validation";
+import { assertWorkflowV2ConfiguredAgentReplacement, validateWorkflowV2Definition } from "../../shared/workflow-v2/validation";
 import { normalizeWorkflowV2TerminalNode } from "../../shared/workflow-v2/topology";
 import { WorkflowGenerationReviewCoordinator } from "./workflow/workflow-generation-review-service";
 import { WORKFLOW_DEVELOPER_INSTRUCTIONS } from "./runtime/executor/workflow/agent-executor-workflow-shared";
@@ -290,7 +293,6 @@ const MAX_WORKFLOW_ARTIFACTS_PER_APPEND = 20;
 const MAX_WORKFLOW_TEXT_ARTIFACT_CHARS = 8000;
 const MAX_WORKFLOW_TITLE_CHARS = 160;
 const MAX_WORKFLOW_OBJECTIVE_CHARS = 4000;
-
 export function createWorkflowAgentTimeout(input: { timeoutMs: number; onTimeout: () => void }): { refresh: () => void; clear: () => void } {
   let timer: ReturnType<typeof setTimeout> | undefined;
   const clear = (): void => {
@@ -369,6 +371,7 @@ export class AgentHub {
   private persistInFlight: Promise<void> | undefined = undefined;
   private persistenceWriteBlocked = false;
   private readonly executorFactory: AgentExecutorFactory;
+  readonly runtimeApprovals = new RuntimeApprovalBroker();
   private readonly runtimeDrivers: RuntimeDriverRegistry;
   private readonly runtimeRouter: RuntimeRouter;
   private readonly interactiveSessions: InteractiveSessionManager;
@@ -399,6 +402,7 @@ export class AgentHub {
         executables: this.executables,
         channelById: (channelId) => this.channelById(channelId),
         workflowMcpDiscoveryPath: () => this.workflowMcpDiscoveryPath,
+        requestApproval: this.runtimeApprovals.request,
       });
     this.runtimeRouter = new RuntimeRouter(this.runtimeDrivers);
     this.workflowStore = new WorkflowStore({
@@ -662,18 +666,17 @@ export class AgentHub {
   }
 
   updateConfiguredAgents(agents: ConfiguredAgent[]): AppSnapshot {
+    assertWorkflowV2ConfiguredAgentReplacement([...this.workflowStore.workflows.values()].map((workflow) => workflow.definition), this.configuredAgents.values(), agents);
     this.installRestoredConfiguredAgents(agents);
     this.normalizeRunSelections();
     this.emit();
     return this.snapshot();
   }
-
   listConfiguredAgents(): ConfiguredAgent[] {
     return [...this.configuredAgents.values()]
       .sort((left, right) => left.name.localeCompare(right.name))
       .map((agent) => ({ ...agent, tags: [...agent.tags] }));
   }
-
   private defaultConfiguredAgentId(): string {
     return this.configuredAgents.get("default-agent")?.id
       ?? this.listConfiguredAgents().find((agent) => agent.managed)?.id
@@ -850,7 +853,7 @@ export class AgentHub {
 
   async deleteChat(chatId: string): Promise<AppSnapshot> {
     const chat = this.chats.get(chatId);
-    if (!chat) return this.snapshot();
+    if (!chat) return this.snapshot(); this.runtimeApprovals.cancelOwner(chatId);
 
     const stop = this.activeStops.get(chatId);
     this.activeStops.delete(chatId);
@@ -1036,20 +1039,20 @@ export class AgentHub {
     this.emit();
     return this.snapshot();
   }
-
   materializeWorkflowDraft(workflowId: string, input: MaterializeWorkflowDraftRequest): WorkflowOperationResult {
     const current = this.workflowStore.workflows.get(workflowId);
     if (!current) return { ok: false, workflowId, error: `Workflow ${workflowId} was not found.` };
+    if (current.status === "running" || current.topologyLocked) return { ok: false, workflowId, revision: current.revision, error: current.status === "running" ? "Cannot modify workflow graph while it is running." : "Official workflow topology is locked." };
     if (!input.definition) return { ok: false, error: "Workflow V2 definition is required." };
     const normalized = normalizeWorkflowV2TerminalNode({ ...structuredClone(input.definition), workflowId, objective: input.objective.trim() || input.definition.objective });
-    const definition = normalized.definition;
+    const definition = versionWorkflowDefinitionValue(current.definition, normalized.definition).definition;
     if (definition.nodes.length > MAX_WORKFLOW_NODE_COUNT) {
       return { ok: false, error: `Workflow V2 definition exceeds ${MAX_WORKFLOW_NODE_COUNT} nodes.` };
     }
     if (definition.edges.length > MAX_WORKFLOW_EDGE_COUNT) {
       return { ok: false, error: `Workflow V2 definition exceeds ${MAX_WORKFLOW_EDGE_COUNT} edges.` };
     }
-    const validation = validateWorkflowV2Definition(definition);
+    const validation = validateWorkflowV2Definition(definition, { configuredAgentIds: this.configuredAgents.keys() });
     if (!validation.valid) return { ok: false, error: validation.errors[0] ?? "Workflow V2 definition is invalid." };
     let workflowV2Plan = normalized.addedSummaryNodeId ? undefined : input.workflowV2Plan;
     if (!workflowV2Plan) {
@@ -1081,14 +1084,13 @@ export class AgentHub {
     this.emit();
     return { ok: true, workflowId: workflow.workflowId, revision: workflow.revision };
   }
-
   confirmWorkflow(input: ConfirmWorkflowRequest): WorkflowOperationResult {
     const workflow = this.workflowStore.workflows.get(input.workflowId);
     if (!workflow) return { ok: false, workflowId: input.workflowId, error: `Workflow ${input.workflowId} was not found.` };
     if (input.expectedRevision !== undefined && input.expectedRevision !== workflow.revision) {
       return { ok: false, workflowId: workflow.workflowId, revision: workflow.revision, error: "Workflow draft changed before confirmation." };
     }
-    const validation = validateWorkflowV2Definition(workflow.definition);
+    const validation = validateWorkflowV2Definition(workflow.definition, { configuredAgentIds: this.configuredAgents.keys() });
     if (!validation.valid) return { ok: false, workflowId: workflow.workflowId, revision: workflow.revision, error: validation.errors[0] ?? "Workflow V2 definition is invalid." };
     let frozenPlan;
     try {
@@ -1210,10 +1212,12 @@ export class AgentHub {
     const current = this.workflowStore.workflows.get(input.workflowId);
     if (!current) return { ok: false, error: `Workflow ${input.workflowId} was not found.` };
     if (current.status === "running") return { ok: false, error: "Cannot modify workflow graph while it is running." };
+    if (current.topologyLocked) return { ok: false, workflowId: current.workflowId, revision: current.revision, error: "Official workflow topology is locked." };
     if (input.expectedRevision !== undefined && input.expectedRevision !== current.revision) {
       return { ok: false, workflowId: current.workflowId, revision: current.revision, error: "Workflow changed since you read it. Call workflow_get and retry." };
     }
     const sourceDefinition = input.definition ? structuredClone(input.definition) : structuredClone(current.definition);
+    sourceDefinition.workflowId = current.workflowId;
     if (input.objective !== undefined) sourceDefinition.objective = input.objective;
     const definition = normalizeWorkflowV2TerminalNode(sourceDefinition).definition;
     if (definition.nodes.length > MAX_WORKFLOW_NODE_COUNT) {
@@ -1222,7 +1226,7 @@ export class AgentHub {
     if (definition.edges.length > MAX_WORKFLOW_EDGE_COUNT) {
       return { ok: false, workflowId: current.workflowId, revision: current.revision, error: `Workflow V2 definition exceeds ${MAX_WORKFLOW_EDGE_COUNT} edges.` };
     }
-    const validation = validateWorkflowV2Definition(definition);
+    const validation = validateWorkflowV2Definition(definition, { configuredAgentIds: this.configuredAgents.keys() });
     if (!validation.valid) return { ok: false, workflowId: current.workflowId, revision: current.revision, error: validation.errors[0] ?? "Workflow V2 definition is invalid." };
     const next = updateWorkflowDraftStateValue({
       current,
@@ -1274,12 +1278,10 @@ export class AgentHub {
   async buildWorkflowV2GraphRevision(input: BuildWorkflowV2GraphRevisionRequest): Promise<BuildWorkflowV2GraphRevisionResult> {
     return this.workflowPlanningService.buildGraphRevision(input);
   }
-
-
   pauseWorkflowNode(input: PauseWorkflowNodeRequest): Promise<WorkflowOperationResult> {
     return this.workflowRunService.pauseNode(input);
   }
-
+  reviseWorkflowV2Run(input: ReviseWorkflowV2RunRequest): Promise<WorkflowOperationResult> { return this.workflowRunService.revise(input); }
   resolveWorkflowV2Intervention(input: ResolveWorkflowV2InterventionRequest): Promise<WorkflowOperationResult> {
     return this.workflowRunService.resolveIntervention(input);
   }
@@ -1663,12 +1665,12 @@ export class AgentHub {
     return resolved;
   }
 
-  async runTask(input: RunTaskRequest): Promise<AppSnapshot> {
+  async runTask(input: RunTaskRequest, approvalPolicy?: { allowedFileWriteRoot: string }): Promise<AppSnapshot> {
     const task = this.createTaskState(input);
     dispatchTaskPromptExecutionValue({
       task,
       registerTask: (nextTask) => {
-        this.tasks.set(nextTask.id, nextTask);
+        if (approvalPolicy) this.runtimeApprovals.allowFileWritesWithin(nextTask.id, approvalPolicy.allowedFileWriteRoot); this.tasks.set(nextTask.id, nextTask);
         this.activeTaskId = nextTask.id;
       },
       resolveConfiguredAgent: (configuredAgentId, modelId) => this.resolveConfiguredAgent(configuredAgentId, modelId),
@@ -1691,7 +1693,7 @@ export class AgentHub {
     if (!resolved || !resolved.runtime?.available) throw new Error("The configured workflow node agent is unavailable.");
     const executionMode = this.selectExecutionMode(resolved.runtimeAgentId, "chat", "interactive");
     if (executionMode !== "interactive") throw new Error("The configured workflow node agent does not support interactive sessions.");
-    const sessionKey = `workflow-node:${input.workflowId}:${input.runId}:${input.nodeId}`;
+    const sessionKey = `workflow-node:${input.workflowId}:${input.runId}:${input.nodeId}`; this.runtimeApprovals.allowWorkflowOutputWrites(sessionKey, input.workDir, input.workflowId, input.runId);
     let latestRuntimeConversation: RuntimeConversation | undefined;
     const context: InteractiveSessionContext = {
       chatId: sessionKey,
@@ -1722,7 +1724,7 @@ export class AgentHub {
         await session.sendPrompt(prompt);
       }),
       interrupt: () => this.interactiveSessions.interrupt(sessionKey),
-      close: () => this.interactiveSessions.dispose(sessionKey, "app_shutdown"),
+      close: async () => { this.runtimeApprovals.cancelOwner(sessionKey); await this.interactiveSessions.dispose(sessionKey, "app_shutdown"); },
       runtimeConversation: () => latestRuntimeConversation,
     };
   }
@@ -1870,7 +1872,7 @@ export class AgentHub {
 
   async stopChat(chatId: string): Promise<void> {
     const chat = this.chats.get(chatId);
-    if (!chat) return;
+    if (!chat) return; this.runtimeApprovals.cancelOwner(chatId);
     const stop = this.activeStops.get(chatId);
     this.activeStops.delete(chatId);
     if (stop) await stop();
@@ -1894,7 +1896,7 @@ export class AgentHub {
 
   async stopTask(taskId: string): Promise<void> {
     const task = this.tasks.get(taskId);
-    if (!task) return;
+    if (!task) return; this.runtimeApprovals.cancelOwner(taskId);
     const stop = this.activeStops.get(taskId);
     this.activeStops.delete(taskId);
     if (stop) await stop();
@@ -1919,7 +1921,7 @@ export class AgentHub {
 
   async deleteTask(taskId: string, options?: { preserveRuntimeConversation?: boolean }): Promise<AppSnapshot> {
     const task = this.tasks.get(taskId);
-    if (!task) return this.snapshot();
+    if (!task) return this.snapshot(); this.runtimeApprovals.cancelOwner(taskId);
 
     const stop = this.activeStops.get(taskId);
     this.activeStops.delete(taskId);

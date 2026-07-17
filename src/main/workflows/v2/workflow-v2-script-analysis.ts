@@ -1,5 +1,5 @@
 import { createHash } from "node:crypto";
-import type { WorkflowV2ScriptCapability, WorkflowV2ScriptRiskLevel, WorkflowV2ScriptSpec } from "../../../shared/workflow-v2/definition";
+import type { WorkflowV2ScriptCapability, WorkflowV2ScriptNode, WorkflowV2ScriptRiskLevel, WorkflowV2ScriptSpec } from "../../../shared/workflow-v2/definition";
 
 export interface WorkflowV2ScriptStaticAnalysis {
   minimumRisk: WorkflowV2ScriptRiskLevel;
@@ -23,6 +23,38 @@ export function maximumWorkflowV2ScriptRisk(...levels: WorkflowV2ScriptRiskLevel
 
 export function workflowV2ScriptCapabilityDigest(capabilities: readonly WorkflowV2ScriptCapability[]): string {
   return createHash("sha256").update(JSON.stringify([...new Set(capabilities)].sort())).digest("hex");
+}
+
+function canonicalWorkflowV2Value(value: unknown): unknown {
+  if (Array.isArray(value)) return value.map(canonicalWorkflowV2Value);
+  if (value && typeof value === "object") {
+    return Object.fromEntries(Object.entries(value as Record<string, unknown>)
+      .filter(([, item]) => item !== undefined)
+      .sort(([left], [right]) => left.localeCompare(right))
+      .map(([key, item]) => [key, canonicalWorkflowV2Value(item)]));
+  }
+  return value;
+}
+
+export function workflowV2ScriptOperationDigest(input: {
+  workflowId: string;
+  graphVersion: number;
+  runId: string;
+  node: WorkflowV2ScriptNode;
+  workDir: string;
+  inputs: Readonly<Record<string, unknown>>;
+}): string {
+  return createHash("sha256").update(JSON.stringify(canonicalWorkflowV2Value({
+    workflowId: input.workflowId,
+    graphVersion: input.graphVersion,
+    runId: input.runId,
+    nodeId: input.node.id,
+    executable: input.node.script.executable,
+    parameters: input.node.script.parameters,
+    expectedExitCode: input.node.expectedExitCode,
+    workDir: input.workDir,
+    inputs: input.inputs,
+  }))).digest("hex");
 }
 
 export function analyzeWorkflowV2Script(script: WorkflowV2ScriptSpec): WorkflowV2ScriptStaticAnalysis {

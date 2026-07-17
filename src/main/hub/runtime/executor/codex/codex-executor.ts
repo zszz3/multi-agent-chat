@@ -37,7 +37,12 @@ export class CodexAgentExecutor implements AgentExecutor {
       env: codexEnvironmentForChannel(channel),
       onEvent: this.context.emit,
       onRequest: (id, method, params) => {
-        respondToCodexRuntimeServerRequest(client, id, method, params);
+        respondToCodexRuntimeServerRequest(client, id, method, params, this.options.requestApproval ? {
+          ownerId: this.context.runId,
+          emit: this.context.emit,
+          request: this.options.requestApproval,
+          cwd: this.context.workDir,
+        } : undefined);
       },
       onExit: (code) => {
         this.context.onExit(code);

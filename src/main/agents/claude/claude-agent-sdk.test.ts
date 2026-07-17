@@ -1,6 +1,6 @@
 import { describe, expect, test, vi } from "vitest";
 import type { AgentEvent } from "../../../shared/types";
-import { ClaudeAgentSdkAdapter, createClaudeSdkQueryOptions } from "./claude-agent-sdk";
+import { ClaudeAgentSdkAdapter, createClaudeSdkPermissionHandler, createClaudeSdkQueryOptions } from "./claude-agent-sdk";
 
 describe("ClaudeAgentSdkAdapter", () => {
   test("passes an isolated provider environment to Claude Code", () => {
@@ -91,5 +91,40 @@ describe("ClaudeAgentSdkAdapter", () => {
     });
 
     expect(runOneShot).toHaveBeenCalledTimes(1);
+  });
+});
+
+describe("createClaudeSdkPermissionHandler", () => {
+  test("fails closed without an approval broker", async () => {
+    const handler = createClaudeSdkPermissionHandler(vi.fn());
+    await expect(handler("Bash", {}, { signal: new AbortController().signal, toolUseID: "tool-1" } as never))
+      .resolves.toMatchObject({ behavior: "deny", toolUseID: "tool-1" });
+  });
+
+  test("allows only after the bound approval request is approved", async () => {
+    const requestApproval = vi.fn(async () => "approved" as const);
+    const handler = createClaudeSdkPermissionHandler(vi.fn(), "chat-1", requestApproval);
+    await expect(handler("Write", { file_path: "a.txt" }, { signal: new AbortController().signal, toolUseID: "tool-2" } as never))
+      .resolves.toEqual({ behavior: "allow", toolUseID: "tool-2" });
+    expect(requestApproval).toHaveBeenCalledWith(expect.objectContaining({ ownerId: "chat-1", provider: "claude" }));
+  });
+
+  test("allows only trusted workflow authoring tools on non-interactive workflow surfaces", async () => {
+    const requestApproval = vi.fn(async () => "approved" as const);
+    const handler = createClaudeSdkPermissionHandler(vi.fn(), "workflow-draft:wf-1", requestApproval);
+    await expect(handler("mcp__app__workflow_validate", {}, { toolUseID: "tool-3" } as never))
+      .resolves.toMatchObject({ behavior: "allow" });
+    await expect(handler("Bash", {}, { toolUseID: "tool-4" } as never))
+      .resolves.toMatchObject({ behavior: "deny" });
+    expect(requestApproval).not.toHaveBeenCalled();
+  });
+
+  test("describes Claude Write as a normalized file-write operation", async () => {
+    const requestApproval = vi.fn(async () => "approved" as const);
+    const handler = createClaudeSdkPermissionHandler(vi.fn(), "task-1", requestApproval, undefined, "C:/repo");
+    await handler("Write", { file_path: "outputs/wf/run/report.md", content: "report" }, { toolUseID: "tool-5" } as never);
+    expect(requestApproval).toHaveBeenCalledWith(expect.objectContaining({
+      operation: { kind: "file_write", cwd: "C:/repo", paths: ["outputs/wf/run/report.md"] },
+    }));
   });
 });

@@ -32,6 +32,8 @@ export function createOpenCodeDriver(options: RuntimeAgentExecutorFactoryOptions
             modelId: interactiveContext.runtimeConfig.model,
             onEvent,
             onExit,
+            approvalOwnerId: interactiveContext.chatId,
+            ...(options.requestApproval ? { requestApproval: options.requestApproval } : {}),
           }),
       }),
     askWorkflow: (input) => runOpenCodeWorkflow(input, options),

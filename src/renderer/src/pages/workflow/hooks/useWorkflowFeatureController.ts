@@ -1,5 +1,5 @@
 import { useMemo } from "react";
-import type { AppSnapshot } from "../../../../../shared/types";
+import type { AppSnapshot, ApprovalDecision, WorkflowRunState } from "../../../../../shared/types";
 import { defaultConfiguredAgentId } from "../../../app/agents";
 import type { WorkflowService } from "../../../app/services/workflow-service";
 import type { WorkflowController } from "../workflow-controller";
@@ -16,6 +16,13 @@ interface UseWorkflowFeatureControllerOptions {
   onChooseWorkDir: () => Promise<void>;
   onRefresh: () => Promise<void>;
   onReadOutputFile?: WorkflowController["onReadOutputFile"];
+  onResolveRuntimeApproval?: (ownerId: string, requestId: string, decision: ApprovalDecision) => void | Promise<void>;
+}
+
+export function selectWorkflowRunContext(runs: WorkflowRunState[], workflowId: string | undefined, latestRunId: string | undefined): WorkflowRunState | undefined {
+  const workflowRuns = runs.filter((run) => run.workflowId === workflowId);
+  return workflowRuns.find((run) => run.status === "running" || run.status === "waiting_for_user")
+    ?? (latestRunId ? workflowRuns.find((run) => run.runId === latestRunId && (run.status === "stopped" || run.status === "failed")) : undefined);
 }
 
 export function useWorkflowFeatureController({
@@ -28,15 +35,16 @@ export function useWorkflowFeatureController({
   onChooseWorkDir,
   onRefresh,
   onReadOutputFile,
+  onResolveRuntimeApproval,
 }: UseWorkflowFeatureControllerOptions): WorkflowController {
-  const activeRun = snapshot.workflowStore.runs.find((run) =>
-    run.workflowId === draft.workflowId && (run.status === "running" || run.status === "waiting_for_user"));
+  const activeWorkflow = snapshot.workflowStore.workflows.find((workflow) => workflow.workflowId === draft.workflowId);
+  const latestRunId = activeWorkflow?.runIds.at(-1);
+  const activeRun = selectWorkflowRunContext(snapshot.workflowStore.runs, draft.workflowId, latestRunId);
   const activeRunId = activeRun?.runId;
   const nodeConversations = activeRunId
     ? snapshot.workflowNodeConversations.filter((conversation) => conversation.workflowId === draft.workflowId && conversation.runId === activeRunId)
     : [];
   const artifacts = activeRunId ? (snapshot.artifacts ?? []).filter((artifact) => artifact.target === activeRunId) : [];
-  const activeWorkflow = snapshot.workflowStore.workflows.find((workflow) => workflow.workflowId === draft.workflowId);
 
   return useMemo(
     () => ({
@@ -65,6 +73,7 @@ export function useWorkflowFeatureController({
       running: draft.workflowRunning,
       runProgress: draft.workflowRunProgress,
       ...(activeRunId ? { activeRunId } : {}),
+      ...(activeRun ? { activeRunStatus: activeRun.status } : {}),
       artifacts,
       contextDocument: draft.workflowRunContextDocument,
       finalReport: draft.workflowFinalReport,
@@ -102,6 +111,16 @@ export function useWorkflowFeatureController({
           throw new Error(error);
         }
       },
+      onReviseRun: async (nodeId, definition, reason) => {
+        if (!draft.workflowId || !activeRunId) return;
+        const result = await workflows.reviseRun({ workflowId: draft.workflowId, runId: activeRunId, nodeId, definition, reason, approvedBy: "desktop-user" });
+        if (!result.ok) {
+          const error = result.error ?? "Workflow revision could not be applied.";
+          setSnapshot(await workflows.patchDraft({ workflowId: draft.workflowId, error }));
+          throw new Error(error);
+        }
+        await onRefresh();
+      },
       onSubmitScriptInput: async (nodeId, values) => {
         if (!draft.workflowId || !activeRunId) return;
         const result = await workflows.submitScriptInput({ workflowId: draft.workflowId, runId: activeRunId, nodeId, values });
@@ -112,8 +131,25 @@ export function useWorkflowFeatureController({
         }
         await onRefresh();
       },
+      onResolveIntervention: async (nodeId, action, reason) => {
+        if (!draft.workflowId || !activeRunId) return;
+        const result = await workflows.resolveIntervention({
+          workflowId: draft.workflowId,
+          runId: activeRunId,
+          nodeId,
+          action,
+          ...(reason?.trim() ? { reason: reason.trim() } : {}),
+        });
+        if (!result.ok) {
+          const error = result.error ?? "Workflow intervention could not be resolved.";
+          setSnapshot(await workflows.patchDraft({ workflowId: draft.workflowId, error }));
+          throw new Error(error);
+        }
+        await onRefresh();
+      },
       onRejectNodeCompletion: async (conversationId, instruction) => setSnapshot(await workflows.rejectNodeCompletion({ conversationId, instruction })),
       onInterruptNodeConversation: async (conversationId) => setSnapshot(await workflows.interruptNodeConversation({ conversationId })),
+      ...(onResolveRuntimeApproval ? { onResolveRuntimeApproval } : {}),
       onSelectConfiguredAgent: (configuredAgentId: string) => {
         void draft.selectConfiguredAgent(configuredAgentId);
       },
@@ -142,8 +178,9 @@ export function useWorkflowFeatureController({
         void draft.sendWorkflowReply();
       },
       onUpdateNode: (nodeId: string, update) => {
-        void draft.updateWorkflowNode(nodeId, update);
+        return draft.updateWorkflowNode(nodeId, update);
       },
+      onUpdateDefinition: (definition) => draft.updateWorkflowDefinition(definition),
       onRunWorkflow: async () => {
         const result = await runner.runWorkflowInternal();
         if (!result.ok && result.error && draft.workflowId) {
@@ -174,6 +211,7 @@ export function useWorkflowFeatureController({
     }),
     [
       activeRunId,
+      activeRun?.status,
       activeWorkflow?.sourceType,
       activeWorkflow?.topologyLocked,
       artifacts,
@@ -182,6 +220,7 @@ export function useWorkflowFeatureController({
       nodeConversations,
       onChooseWorkDir,
       onReadOutputFile,
+      onResolveRuntimeApproval,
       onRefresh,
       runner,
       setSnapshot,

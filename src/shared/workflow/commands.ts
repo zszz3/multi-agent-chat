@@ -203,6 +203,12 @@ export interface ResolveWorkflowV2InterventionRequest extends PauseWorkflowNodeR
   reason?: string;
 }
 
+export interface ReviseWorkflowV2RunRequest extends PauseWorkflowNodeRequest {
+  definition: WorkflowV2Definition;
+  reason: string;
+  approvedBy: string;
+}
+
 export interface AnswerWorkflowGateRequest {
   workflowId: string;
   runId: string;

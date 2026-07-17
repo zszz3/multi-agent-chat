@@ -156,6 +156,8 @@ function appendNodeValidationErrors(node: WorkflowV2Node, errors: string[]): voi
 
   if (node.execModel === "llm") {
     if (!node.prompt.trim()) errors.push(`Workflow V2 llm node ${node.id} must have a prompt.`);
+    if (node.configuredAgentId !== undefined && !node.configuredAgentId.trim()) errors.push(`Workflow V2 llm node ${node.id} configuredAgentId must not be empty.`);
+    if (node.modelId !== undefined && !node.modelId.trim()) errors.push(`Workflow V2 llm node ${node.id} modelId must not be empty.`);
     if (node.modelProfile !== undefined && !isWorkflowV2ModelProfile(node.modelProfile)) {
       errors.push(`Workflow V2 llm node ${node.id} has unsupported model profile ${String(node.modelProfile)}.`);
     }
@@ -305,7 +307,7 @@ function appendUpstreamScriptParameterValidationErrors(definition: WorkflowV2Def
   }
 }
 
-export function validateWorkflowV2Definition(definition: WorkflowV2Definition): WorkflowV2ValidationResult {
+export function validateWorkflowV2Definition(definition: WorkflowV2Definition, options?: { configuredAgentIds?: Iterable<string> }): WorkflowV2ValidationResult {
   const errors: string[] = [];
   const warnings: string[] = [];
 
@@ -330,6 +332,7 @@ export function validateWorkflowV2Definition(definition: WorkflowV2Definition): 
   if (terminalNodeIds.length !== 1) {
     errors.push(`Workflow V2 definition must have exactly one terminal node, found ${terminalNodeIds.length}.`);
   }
+  if (options?.configuredAgentIds) errors.push(...validateWorkflowV2ConfiguredAgentReferences(definition, options.configuredAgentIds));
 
   return {
     valid: errors.length === 0,
@@ -337,6 +340,21 @@ export function validateWorkflowV2Definition(definition: WorkflowV2Definition): 
     warnings,
     topologicalNodeIds,
   };
+}
+
+export function validateWorkflowV2ConfiguredAgentReferences(definition: WorkflowV2Definition, configuredAgentIds: Iterable<string>): string[] {
+  const known = new Set(configuredAgentIds);
+  return [...new Set(definition.nodes
+    .filter((node) => node.execModel === "llm" && node.configuredAgentId && !known.has(node.configuredAgentId))
+    .map((node) => node.execModel === "llm" ? node.configuredAgentId! : ""))]
+    .map((configuredAgentId) => `Workflow V2 configured agent ${configuredAgentId} was not found.`);
+}
+
+export function assertWorkflowV2ConfiguredAgentReplacement(definitions: Iterable<WorkflowV2Definition>, currentAgents: Iterable<{ id: string; managed?: boolean }>, nextAgents: Iterable<{ id: string }>): void {
+  const nextAgentIds = new Set([...nextAgents].map((agent) => agent.id));
+  for (const agent of currentAgents) if (agent.managed) nextAgentIds.add(agent.id);
+  const error = [...definitions].flatMap((definition) => validateWorkflowV2ConfiguredAgentReferences(definition, nextAgentIds))[0];
+  if (error) throw new Error(`${error} Reassign the workflow node before deleting this agent.`);
 }
 
 export function compileAndValidateWorkflowV2Definition(

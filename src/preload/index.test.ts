@@ -50,6 +50,7 @@ describe("preload skill API", () => {
     expect(electronState.exposedApi).toHaveProperty("setKeepAwake");
     expect(electronState.exposedApi).toHaveProperty("createWorkflowDraft");
     expect(electronState.exposedApi).toHaveProperty("patchWorkflowDraft");
+    expect(electronState.exposedApi).toHaveProperty("updateWorkflow");
     expect(electronState.exposedApi).toHaveProperty("buildWorkflowV2Plan");
     expect(electronState.exposedApi).toHaveProperty("buildWorkflowV2GraphRevision");
     expect(electronState.exposedApi).toHaveProperty("resetWorkflowDraftSession");

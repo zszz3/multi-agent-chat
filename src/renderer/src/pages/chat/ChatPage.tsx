@@ -1,12 +1,12 @@
 import { type RefObject } from "react";
 import { CircleStop, Plus, Send, Wand2 } from "lucide-react";
-import type { AgentChannel, AgentId, AgentRuntime, ChatMessage, ChatSession, ConfiguredAgent } from "../../../../shared/types";
+import type { AgentChannel, AgentId, AgentRuntime, ApprovalDecision, ChatMessage, ChatSession, ConfiguredAgent } from "../../../../shared/types";
 import { agentAccent, agentLabel } from "../../app/agents";
 import { shouldSendComposerKey } from "../../app/composer";
 import { formatDateTime } from "../../app/format";
 import { Markdown } from "../../Markdown";
 import { ChatControls } from "./ChatControls";
-import { MetaMessage, chatEventDisplayContent } from "./chat-event-display";
+import { ChatEventMessage, MetaMessage } from "./chat-event-display";
 import { SlashCommandSuggestions, type SlashCommandSuggestion } from "./chat-utils";
 
 interface ChatPageProps {
@@ -33,6 +33,7 @@ interface ChatPageProps {
   onSelectConfiguredAgent: (configuredAgentId: string) => void;
   onSelectModel: (modelId: string) => void;
   onChooseWorkDir: () => void | Promise<void>;
+  onResolveApproval?: (ownerId: string, requestId: string, decision: ApprovalDecision) => void | Promise<void>;
 }
 
 export function ChatPage({
@@ -59,6 +60,7 @@ export function ChatPage({
   onSelectConfiguredAgent,
   onSelectModel,
   onChooseWorkDir,
+  onResolveApproval,
 }: ChatPageProps) {
   if (!activeChat) {
     return (
@@ -103,6 +105,8 @@ export function ChatPage({
               message={message}
               agentId={activeChatRuntimeId}
               streaming={activeChat.running && message.id === activeChat.pendingAssistantMessageId}
+              ownerId={activeChat.id}
+              onResolveApproval={onResolveApproval}
             />
           ))
         )}
@@ -188,7 +192,13 @@ export function ChatPage({
   );
 }
 
-function CliMessage({ message, agentId, streaming = false }: { message: ChatMessage; agentId: AgentId; streaming?: boolean }) {
+function CliMessage({ message, agentId, ownerId, onResolveApproval, streaming = false }: {
+  message: ChatMessage;
+  agentId: AgentId;
+  ownerId: string;
+  onResolveApproval: ((ownerId: string, requestId: string, decision: ApprovalDecision) => void | Promise<void>) | undefined;
+  streaming?: boolean;
+}) {
   if (message.role === "user") {
     return (
       <div className="cli-message user">
@@ -213,7 +223,7 @@ function CliMessage({ message, agentId, streaming = false }: { message: ChatMess
         {message.events && message.events.length > 0 ? (
           <div className="cli-message-events">
             {message.events.map((event) => (
-              <MetaMessage key={event.id} content={chatEventDisplayContent(event)} />
+              <ChatEventMessage key={event.id} event={event} ownerId={ownerId} onResolveApproval={onResolveApproval} />
             ))}
           </div>
         ) : null}

@@ -12,11 +12,11 @@ import {
 import { shouldSendComposerKey } from "../../app/composer";
 import { formatTime } from "../../app/format";
 import { ChatControls } from "../chat/ChatControls";
-import { MetaMessage, chatEventDisplayContent } from "../chat/chat-event-display";
+import { ChatEventMessage } from "../chat/chat-event-display";
 import { MarkdownDocument } from "../../ui/MarkdownDocument";
 import { TASK_STATUS_FILTERS, TaskMeta, TaskStatusChip, taskProgressLabel } from "./task-status";
 import { DEFAULT_MODEL_ID } from "../../../../shared/models";
-import type { AgentChannel, AgentId, AgentRuntime, ChatMessage, ConfiguredAgent, TaskProgress, TaskRun } from "../../../../shared/types";
+import type { AgentChannel, AgentId, AgentRuntime, ApprovalDecision, ChatMessage, ConfiguredAgent, TaskProgress, TaskRun } from "../../../../shared/types";
 
 type MaybePromise = void | Promise<void>;
 
@@ -41,6 +41,7 @@ interface TaskPageProps {
   onStopTask: (taskId: string) => MaybePromise;
   onDeleteTask: (taskId: string) => MaybePromise;
   onUpdateTaskProgress: (taskId: string, progress: TaskProgress) => MaybePromise;
+  onResolveApproval?: (ownerId: string, requestId: string, decision: ApprovalDecision) => MaybePromise;
 }
 
 export function TaskPage({
@@ -64,6 +65,7 @@ export function TaskPage({
   onStopTask,
   onDeleteTask,
   onUpdateTaskProgress,
+  onResolveApproval,
 }: TaskPageProps) {
   const activeTask = tasks.find((task) => task.id === activeTaskId);
   const activeTaskConfiguredAgent = activeTask ? configuredAgentById(activeTask.configuredAgentId, configuredAgents) : undefined;
@@ -245,7 +247,13 @@ export function TaskPage({
                   </div>
                 ) : (
                   activeTask.messages.map((message) => (
-                    <TaskTimelineMessage key={message.id} message={message} agentId={activeRuntimeId} />
+                    <TaskTimelineMessage
+                      key={message.id}
+                      message={message}
+                      agentId={activeRuntimeId}
+                      ownerId={activeTask.id}
+                      onResolveApproval={onResolveApproval}
+                    />
                   ))
                 )}
                 {activeTask.running ? (
@@ -401,7 +409,12 @@ function TaskInlineCreateCard({
   );
 }
 
-function TaskTimelineMessage({ message, agentId }: { message: ChatMessage; agentId: AgentId }) {
+function TaskTimelineMessage({ message, agentId, ownerId, onResolveApproval }: {
+  message: ChatMessage;
+  agentId: AgentId;
+  ownerId: string;
+  onResolveApproval: ((ownerId: string, requestId: string, decision: ApprovalDecision) => MaybePromise) | undefined;
+}) {
   const label =
     message.role === "user"
       ? "Prompt"
@@ -422,7 +435,7 @@ function TaskTimelineMessage({ message, agentId }: { message: ChatMessage; agent
         {message.events && message.events.length > 0 ? (
           <div className="task-log-events">
             {message.events.map((event) => (
-              <MetaMessage key={event.id} content={chatEventDisplayContent(event)} />
+              <ChatEventMessage key={event.id} event={event} ownerId={ownerId} onResolveApproval={onResolveApproval} />
             ))}
           </div>
         ) : null}

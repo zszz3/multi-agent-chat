@@ -4,6 +4,7 @@ import {
   type SDKUserMessage,
 } from "@anthropic-ai/claude-agent-sdk";
 import type { AgentEvent } from "../../../shared/types";
+import type { RuntimeApprovalRequester } from "../../approvals/runtime-approval-broker";
 import { createClaudeSdkQueryOptions } from "./claude-agent-sdk";
 import { createClaudeStreamState, normalizeClaudeStreamEvent } from "./claude-stream";
 
@@ -15,6 +16,8 @@ interface ClaudeAgentSdkInteractiveAttachInput {
   mcpServers?: Parameters<typeof createClaudeSdkQueryOptions>[0]["mcpServers"];
   onEvent: (event: AgentEvent) => void;
   env?: NodeJS.ProcessEnv;
+  approvalOwnerId?: string;
+  requestApproval?: RuntimeApprovalRequester;
 }
 
 export class ClaudeAgentSdkInteractive {
@@ -49,6 +52,8 @@ export class ClaudeAgentSdkInteractive {
         ...(input.resumeSessionId ? { resumeSessionId: input.resumeSessionId } : {}),
         ...(input.mcpServers ? { mcpServers: input.mcpServers } : {}),
         ...(input.env ? { env: input.env } : {}),
+        ...(input.approvalOwnerId ? { approvalOwnerId: input.approvalOwnerId } : {}),
+        ...(input.requestApproval ? { requestApproval: input.requestApproval } : {}),
       }),
     });
 

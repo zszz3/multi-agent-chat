@@ -25,6 +25,7 @@ const WORKFLOW_EVENT_STATUS: Record<WorkflowEvent["type"], WorkflowRunNodeStatus
   node_completed: "completed",
   gate_opened: "awaiting_input",
   gate_answered: "running",
+  graph_revised: "paused",
 };
 
 export function projectNodeStates(

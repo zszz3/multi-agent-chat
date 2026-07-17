@@ -8,6 +8,7 @@ import {
   type Query,
 } from "@anthropic-ai/claude-agent-sdk";
 import type { AgentEvent } from "../../../shared/types";
+import type { RuntimeApprovalOperation, RuntimeApprovalRequester } from "../../approvals/runtime-approval-broker";
 import { createClaudeStreamState, normalizeClaudeStreamEvent } from "./claude-stream";
 
 export interface ClaudeAgentSdkRunInput {
@@ -20,6 +21,8 @@ export interface ClaudeAgentSdkRunInput {
   onEvent: (event: AgentEvent) => void;
   abortController?: AbortController;
   env?: NodeJS.ProcessEnv;
+  approvalOwnerId?: string;
+  requestApproval?: RuntimeApprovalRequester;
 }
 
 export class ClaudeAgentSdkAdapter {
@@ -53,6 +56,8 @@ export function createClaudeSdkQueryOptions(input: {
   onEvent: (event: AgentEvent) => void;
   abortController?: AbortController;
   env?: NodeJS.ProcessEnv;
+  approvalOwnerId?: string;
+  requestApproval?: RuntimeApprovalRequester;
 }): Options {
   const systemPrompt =
     input.developerInstructions?.trim()
@@ -73,7 +78,7 @@ export function createClaudeSdkQueryOptions(input: {
     ...(input.mcpServers ? { mcpServers: input.mcpServers } : {}),
     systemPrompt,
     permissionMode: "default",
-    canUseTool: createClaudeSdkPermissionHandler(input.onEvent),
+    canUseTool: createClaudeSdkPermissionHandler(input.onEvent, input.approvalOwnerId, input.requestApproval, input.abortController?.signal, input.cwd),
     onElicitation: createClaudeSdkElicitationHandler(input.onEvent),
     ...(input.abortController ? { abortController: input.abortController } : {}),
     ...(input.env ? { env: input.env } : {}),
@@ -82,26 +87,58 @@ export function createClaudeSdkQueryOptions(input: {
 
 export function createClaudeSdkPermissionHandler(
   onEvent: (event: AgentEvent) => void,
+  approvalOwnerId?: string,
+  requestApproval?: RuntimeApprovalRequester,
+  signal?: AbortSignal,
+  cwd?: string,
 ): CanUseTool {
-  return async (toolName, _input, options) => {
-    const requestId = options.requestId || options.toolUseID || `permission:${randomUUID()}`;
-    onEvent({
-      type: "approval_request",
-      requestId,
-      content: options.title ?? `Claude wants to use ${toolName}.`,
-      ...(toolName ? { metadata: { toolName } } : {}),
-    });
-    onEvent({
-      type: "approval_response",
-      requestId,
-      decision: "approved",
-      content: "Approved automatically by desktop host.",
-    });
+  return async (toolName, toolInput, options) => {
+    const trustedWorkflowAuthoringTool = approvalOwnerId?.startsWith("workflow-draft:")
+      && ["workflow_create", "workflow_validate", "workflow_context_append"].some((name) => toolName.toLowerCase().includes(name));
+    if (trustedWorkflowAuthoringTool) {
+      return { behavior: "allow", toolUseID: options.toolUseID };
+    }
+    if (approvalOwnerId?.startsWith("workflow-")) {
+      return { behavior: "deny", message: "Runtime tool permissions are unavailable on this workflow surface.", toolUseID: options.toolUseID };
+    }
+    const decision = approvalOwnerId && requestApproval
+      ? await requestApproval({
+          ownerId: approvalOwnerId,
+          provider: "claude",
+          content: options.title ?? `Claude wants to use ${toolName}.`,
+          metadata: {
+            toolName,
+            toolInput,
+            nativeRequestId: options.requestId || options.toolUseID,
+          },
+          emit: onEvent,
+          ...(signal ? { signal } : {}),
+          ...claudeFileWriteOperation(toolName, toolInput, cwd),
+        })
+      : "rejected";
+    if (decision === "approved") {
+      return { behavior: "allow", toolUseID: options.toolUseID };
+    }
     return {
-      behavior: "allow",
+      behavior: "deny",
+      message: "Permission rejected by user or unavailable approval host.",
       toolUseID: options.toolUseID,
     };
   };
+}
+
+function claudeFileWriteOperation(
+  toolName: string,
+  toolInput: Record<string, unknown>,
+  cwd: string | undefined,
+): { operation: RuntimeApprovalOperation } | Record<string, never> {
+  const normalizedTool = toolName.toLowerCase().split("__").at(-1) ?? "";
+  if (!cwd || !["write", "edit", "multiedit", "notebookedit"].includes(normalizedTool)) return {};
+  const candidate = [toolInput.file_path, toolInput.path, toolInput.notebook_path]
+    .find((value): value is string => typeof value === "string" && value.trim().length > 0);
+  return candidate
+    ? { operation: { kind: "file_write", cwd, paths: [candidate] } }
+    : {};
 }
 
 export function createClaudeSdkElicitationHandler(

@@ -1,5 +1,5 @@
 import { useEffect, useRef, useState, type MouseEvent, type ReactElement } from "react";
-import { Bot, CheckCircle2, CircleStop, FileInput, GitBranch, Maximize2, Play, RefreshCw, Send, ShieldAlert, Wand2, X } from "lucide-react";
+import { Bot, CheckCircle2, CircleStop, FileInput, GitBranch, Maximize2, Pencil, Play, RefreshCw, Send, ShieldAlert, Wand2, X } from "lucide-react";
 import { DEFAULT_MODEL_ID } from "../../../../shared/models";
 import { WORKFLOW_TOTAL_QUESTION_COUNT } from "../../../../shared/workflow-agent";
 import { validateWorkflowV2Definition } from "../../../../shared/workflow-v2/validation";
@@ -31,8 +31,11 @@ import { Markdown } from "../../Markdown";
 import { ChatControls } from "../chat/ChatControls";
 import { TaskStatusChip } from "../tasks/task-status";
 import { WorkflowCanvasBoard } from "./WorkflowCanvasBoard";
+import { WorkflowDraftEditorDialog } from "./WorkflowDraftEditorDialog";
+import { WorkflowNodeAgentSelect } from "./WorkflowNodeAgentSelect";
 import { WorkflowNodeSurface } from "./WorkflowNodeSurface";
 import { WorkflowOutputPreviewModal } from "./WorkflowOutputPreviewModal";
+import { WorkflowRevisionDialog } from "./WorkflowRevisionDialog";
 import { WorkflowOutputsPanel } from "./WorkflowOutputsPanel";
 import { WorkflowReviewDrawer } from "./WorkflowReviewDrawer";
 import { WORKFLOW_TEXT } from "./workflow-text";
@@ -83,6 +86,7 @@ export function WorkflowPage({ controller: source }: { controller: WorkflowContr
   const onStopRun = source.onStopRun;
   const onStartNode = source.onStartNode;
   const onSubmitScriptInput = source.onSubmitScriptInput;
+  const onResolveIntervention = source.onResolveIntervention;
   const onSendNodeMessage = source.onSendNodeMessage;
   const onCompleteNodeConversation = source.onCompleteNodeConversation;
   const onRejectNodeCompletion = source.onRejectNodeCompletion;
@@ -95,7 +99,8 @@ export function WorkflowPage({ controller: source }: { controller: WorkflowContr
   const onBuildDefinition = source.onBuildDefinition;
   const onReplyChange = source.onReplyChange;
   const onSendReply = source.onSendReply;
-  const onUpdateNode = source.onUpdateNode;
+  const onUpdateDefinition = source.onUpdateDefinition;
+  const onReviseRun = source.onReviseRun;
   const onRunWorkflow = source.onRunWorkflow;
   const onConfirmWorkflow = source.onConfirmWorkflow;
   const onStopGrill = source.onStopGrill ?? (() => undefined);
@@ -107,7 +112,10 @@ export function WorkflowPage({ controller: source }: { controller: WorkflowContr
   const workflowText = WORKFLOW_TEXT[language];
   const validation = validateWorkflowV2Definition(definition);
   const workflowConfirmed = revision !== undefined && confirmedRevision === revision;
+  const runOwnsInput = Boolean(activeRunId && (!source.activeRunStatus || source.activeRunStatus === "running" || source.activeRunStatus === "waiting_for_user"));
+  const canEditDefinition = !runOwnsInput && !topologyLocked && !running;
   const [reviewDrawerOpen, setReviewDrawerOpen] = useState(false);
+  const [draftEditorOpen, setDraftEditorOpen] = useState(false);
 
   useEffect(() => {
     if (generationReview?.status === "reviewing") setReviewDrawerOpen(true);
@@ -146,6 +154,7 @@ export function WorkflowPage({ controller: source }: { controller: WorkflowContr
   const [graphExpanded, setGraphExpanded] = useState(defaultGraphExpanded);
   const [outputFiles, setOutputFiles] = useState<Array<{ name: string; path: string }>>([]);
   const [openNodeId, setOpenNodeId] = useState<string | undefined>(undefined);
+  const [revisionEditorNodeId, setRevisionEditorNodeId] = useState<string | undefined>(undefined);
   const dismissedNodeSurfaceRunIdRef = useRef<string | undefined>(undefined);
   const [filePreview, setFilePreview] = useState<LocalFilePreview | undefined>(undefined);
   const [filePreviewError, setFilePreviewError] = useState<string | undefined>(undefined);
@@ -175,6 +184,11 @@ export function WorkflowPage({ controller: source }: { controller: WorkflowContr
   useEffect(() => {
     const nodeInput = runProgress.find((item) => item.inputRequest);
     if (nodeInput && !openNodeId && dismissedNodeSurfaceRunIdRef.current !== activeRunId) setOpenNodeId(nodeInput.nodeId);
+  }, [activeRunId, openNodeId, runProgress]);
+
+  useEffect(() => {
+    const approval = runProgress.find((item) => item.intervention?.source === "script_permission");
+    if (approval && !openNodeId && dismissedNodeSurfaceRunIdRef.current !== activeRunId) setOpenNodeId(approval.nodeId);
   }, [activeRunId, openNodeId, runProgress]);
 
   useEffect(() => {
@@ -247,15 +261,15 @@ export function WorkflowPage({ controller: source }: { controller: WorkflowContr
 
   function renderWorkflowNodeCard(node: WorkflowV2Node, compact: boolean): ReactElement {
     const nodeRunProgress = runProgressByNodeId.get(node.id);
-    const nodeAgentId = configuredAgentId;
+    const nodeAgentId = node.execModel === "llm" ? node.configuredAgentId ?? configuredAgentId : configuredAgentId;
     const nodeAgentConfig = configuredAgentById(nodeAgentId, configuredAgents);
     const nodeAgentName = nodeAgentConfig?.name || nodeAgentId || "default";
-    const nodeModelId = node.execModel === "llm" ? node.modelProfile ?? modelId : "script";
+    const nodeModelId = node.execModel === "llm" ? node.modelId ?? nodeAgentConfig?.modelId ?? modelId : "script";
+    const canConfigureNodeAgent = node.execModel === "llm" && canEditDefinition;
     const nodeAgentRow =
       node.execModel === "llm" ? (
         <div className="workflow-node-agent-row" title={`Agent: ${nodeAgentName} · Model: ${nodeModelId}`}>
-          <span className="workflow-node-agent-name">{nodeAgentName}</span>
-          <span className="workflow-node-agent-model">{nodeModelId}</span>
+          {canConfigureNodeAgent ? <WorkflowNodeAgentSelect nodeTitle={node.title} {...(node.configuredAgentId ? { configuredAgentId: node.configuredAgentId } : {})} workflowDefaultAgentId={configuredAgentId} configuredAgents={configuredAgents} onSelect={(selectedAgentId) => { void source.onUpdateNode(node.id, { configuredAgentId: selectedAgentId, modelId: undefined } as Partial<WorkflowV2Node>); }} /> : <><span className="workflow-node-agent-name">{nodeAgentName}</span><span className="workflow-node-agent-model">{nodeModelId}</span></>}
         </div>
       ) : null;
 
@@ -331,7 +345,7 @@ export function WorkflowPage({ controller: source }: { controller: WorkflowContr
           </div>
         </div>
         <div className="chat-header-actions workflow-page-actions">
-          {running && !graphVisible ? (
+          {running && !activeRunId ? (
             <button className="icon-btn danger" onClick={() => onStopGrill()} title="Stop agent">
               <CircleStop size={14} />
             </button>
@@ -434,6 +448,7 @@ export function WorkflowPage({ controller: source }: { controller: WorkflowContr
                 <span>{validation.valid ? workflowText.dagValid : workflowText.dagInvalid}</span>
               </div>
               <div className="workflow-validation-row-actions">
+                {!runOwnsInput && !topologyLocked && onUpdateDefinition ? <button className="icon-btn flat" onClick={() => setDraftEditorOpen(true)} title="Edit workflow definition" aria-label="Edit workflow definition" disabled={running}><Pencil size={14} /></button> : null}
                 <TaskStatusChip
                   label={!validation.valid ? workflowText.invalid : workflowConfirmed ? `${workflowText.confirmed} r${confirmedRevision}` : workflowText.awaitingConfirmation}
                   tone={!validation.valid ? "failed" : workflowConfirmed ? "done" : "running"}
@@ -475,6 +490,8 @@ export function WorkflowPage({ controller: source }: { controller: WorkflowContr
                       && (item.status === "paused" || item.status === "failed")
                       && !item.intervention
                       && typeof onStartNode === "function";
+                    const runCanRevise = source.activeRunStatus === "waiting_for_user" || source.activeRunStatus === "stopped" || source.activeRunStatus === "failed";
+                    const canRevise = controllable && runCanRevise && (item.status === "paused" || item.status === "failed") && typeof onReviseRun === "function" && !topologyLocked && !item.intervention;
                     return (
                       <div key={item.nodeId} className={`workflow-run-progress-item is-${item.status}`}>
                         <span>{workflowRunStatusLabel(item.status)}</span>
@@ -500,6 +517,11 @@ export function WorkflowPage({ controller: source }: { controller: WorkflowContr
                             aria-label={`${workflowText.startNode}: ${item.title}`}
                           >
                             <Play size={14} />
+                          </button>
+                        ) : null}
+                        {canRevise ? (
+                          <button type="button" className="workflow-node-control icon-btn" onClick={() => setRevisionEditorNodeId(item.nodeId)} title="Edit workflow and resume" aria-label={`Edit workflow and resume: ${item.title}`}>
+                            <Pencil size={14} />
                           </button>
                         ) : null}
                       </div>
@@ -533,23 +555,30 @@ export function WorkflowPage({ controller: source }: { controller: WorkflowContr
         onClose={() => setFilePreview(undefined)}
       /> : null}
 
+      {revisionEditorNodeId && onReviseRun ? <WorkflowRevisionDialog nodeId={revisionEditorNodeId} definition={definition} onRevise={onReviseRun} onClose={() => setRevisionEditorNodeId(undefined)} /> : null}
+      {draftEditorOpen && onUpdateDefinition ? <WorkflowDraftEditorDialog definition={definition} configuredAgents={configuredAgents} onSave={onUpdateDefinition} onClose={() => setDraftEditorOpen(false)} /> : null}
+
       {openNodeGraphNode ? <WorkflowNodeSurface
         node={openNodeGraphNode}
+        editable={canEditDefinition}
+        onUpdateNode={(update) => source.onUpdateNode(openNodeGraphNode.id, update)}
         {...(openNodeConversation ? { conversation: openNodeConversation } : {})}
         {...(openNodeTask ? { task: openNodeTask } : {})}
         sessions={nodeAgentSessions}
         {...(openNodeId ? { selectedNodeId: openNodeId } : {})}
         {...(openNodeProgress ? { progress: openNodeProgress } : {})}
         {...(onSubmitScriptInput && openNodeId ? { onSubmitScriptInput: (values: Record<string, unknown>) => onSubmitScriptInput(openNodeId, values) } : {})}
+        {...(onResolveIntervention && openNodeId ? { onResolveScriptApproval: (action: "approve_once" | "reject") => onResolveIntervention(openNodeId, action) } : {})}
         onSelectNode={setOpenNodeId}
         onClose={() => { dismissedNodeSurfaceRunIdRef.current = activeRunId; setOpenNodeId(undefined); }}
         {...(onSendNodeMessage && openNodeConversation ? { onSend: (message: string) => onSendNodeMessage(openNodeConversation.conversationId, message) } : {})}
         {...(onCompleteNodeConversation && openNodeConversation ? { onConfirm: () => onCompleteNodeConversation(openNodeConversation.conversationId) } : {})}
         {...(onRejectNodeCompletion && openNodeConversation ? { onReject: (instruction: string) => onRejectNodeCompletion(openNodeConversation.conversationId, instruction) } : {})}
         {...(onInterruptNodeConversation && openNodeConversation ? { onInterrupt: () => onInterruptNodeConversation(openNodeConversation.conversationId) } : {})}
+        {...(source.onResolveRuntimeApproval ? { onResolveRuntimeApproval: source.onResolveRuntimeApproval } : {})}
       /> : null}
 
-      {!graphVisible ? <section className="composer workflow-composer">
+      {!runOwnsInput && !topologyLocked ? <section className="composer workflow-composer">
         <div className="composer-box">
           <textarea
             aria-label={workflowStarted ? (graphVisible ? workflowText.replyToAgent : workflowText.replyToQuestion) : workflowText.task}

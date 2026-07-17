@@ -1,5 +1,6 @@
+import { useState } from "react";
 import { agentLabel } from "../../app/agents";
-import type { ChatEvent } from "../../../../shared/types";
+import type { ApprovalDecision, ChatEvent } from "../../../../shared/types";
 
 export function chatEventDisplayContent(event: ChatEvent): string {
   if (event.type === "tool_call") {
@@ -20,7 +21,10 @@ export function chatEventDisplayContent(event: ChatEvent): string {
   }
   if (event.type === "approval_request") {
     const label = event.requestState === "expired" ? "approval expired" : "approval pending";
-    return event.content ? `${label}\n${event.content}` : label;
+    const metadata = event.metadata && Object.keys(event.metadata).length > 0
+      ? JSON.stringify(event.metadata, null, 2)
+      : "";
+    return [label, event.content, metadata].filter(Boolean).join("\n");
   }
   if (event.type === "approval_response") {
     const label = event.decision === "rejected" ? "approval rejected" : "approval approved";
@@ -52,5 +56,45 @@ export function MetaMessage({ content }: { content: string }) {
       <summary>{summary}</summary>
       <pre>{body}</pre>
     </details>
+  );
+}
+
+export function ChatEventMessage({
+  event,
+  ownerId,
+  onResolveApproval,
+}: {
+  event: ChatEvent;
+  ownerId: string;
+  onResolveApproval: ((ownerId: string, requestId: string, decision: ApprovalDecision) => void | Promise<void>) | undefined;
+}) {
+  const [resolving, setResolving] = useState(false);
+  const liveApproval = event.type === "approval_request"
+    && event.requestState === "live"
+    && event.requestId
+    && onResolveApproval;
+  if (!liveApproval) return <MetaMessage content={chatEventDisplayContent(event)} />;
+  const resolve = async (decision: ApprovalDecision): Promise<void> => {
+    if (resolving) return;
+    setResolving(true);
+    try {
+      await onResolveApproval(ownerId, event.requestId!, decision);
+    } catch {
+      setResolving(false);
+    }
+  };
+
+  return (
+    <div className="runtime-approval-card">
+      <MetaMessage content={chatEventDisplayContent(event)} />
+      <div className="runtime-approval-actions">
+        <button type="button" className="send-btn" disabled={resolving} onClick={() => void resolve("approved")}>
+          Approve once
+        </button>
+        <button type="button" className="icon-btn" disabled={resolving} onClick={() => void resolve("rejected")}>
+          Reject
+        </button>
+      </div>
+    </div>
   );
 }

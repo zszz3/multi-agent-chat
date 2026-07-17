@@ -65,7 +65,8 @@ import {
 import type { ExecuteWorkflowV2Checkpoint } from "./workflow-v2-executor";
 import { recordWorkflowV2ScriptInputRequest, resolveWorkflowV2ScriptInput, workflowV2ScriptInputSignal } from "./workflow-v2-script-input";
 import { projectWorkflowV2PausedNodeInteraction } from "./workflow-v2-node-interaction";
-import { authorizeWorkflowV2Script, executeAuthorizedWorkflowV2Script } from "./workflow-v2-script-execution";
+import { executeAuthorizedWorkflowV2Script } from "./workflow-v2-script-execution";
+import { authorizeWorkflowV2ScriptOperation } from "./workflow-v2-script-approval";
 import { buildWorkflowV2FinalReport } from "./workflow-v2-recovery";
 import {
   createWorkflowV2HookRegistry,
@@ -73,10 +74,10 @@ import {
   WorkflowV2HookSignal,
   type WorkflowV2HookChainResult,
 } from "./workflow-v2-hooks";
+import { runWorkflowV2TaskWithOutputPolicy } from "./workflow-v2-output-approval";
 
 const WORKFLOW_V2_MAX_PARALLEL_NODES = 4;
 const MAX_NODE_TIMER_DELAY_MS = 2_147_483_647;
-
 function delay(ms: number): Promise<void> {
   return new Promise((resolve) => setTimeout(resolve, ms));
 }
@@ -86,7 +87,6 @@ class WorkflowV2OneShotInputRequestSignal extends Error {
     super("One-shot workflow node requested user input.");
   }
 }
-
 export class WorkflowV2RunExecutor {
   constructor(
     private readonly deps: WorkflowRuntimeDependencies,
@@ -121,7 +121,6 @@ export class WorkflowV2RunExecutor {
     const workflowWorkDir = workflow.workDir || latestSnapshot.workDir;
     const configuredAgentId = workflow.configuredAgentId || latestSnapshot.configuredAgents[0]?.id || "default-agent";
     const modelId = configuredAgentModelId(workflow, latestSnapshot);
-
     const persistence = new WorkflowV2RunPersistence({
       store: durableStore,
       workflow,
@@ -132,7 +131,7 @@ export class WorkflowV2RunExecutor {
       nodeControl: durableNodeControl,
       workDir: workflowWorkDir,
       configuredAgentId,
-      modelId,
+      modelId, configuredAgents: latestSnapshot.configuredAgents,
       ...(input.recoveryOverrides ? { recoveryOverrides: input.recoveryOverrides } : {}),
     });
 
@@ -177,9 +176,9 @@ export class WorkflowV2RunExecutor {
       });
     };
 
-    const startWorkflowTask = async (request: RunTaskRequest): Promise<TaskRun> => {
+    const startWorkflowTask = async (request: RunTaskRequest, allowOutputWrite = false): Promise<TaskRun> => {
       const existingTaskIds = new Set(latestSnapshot.tasks.map((task) => task.id));
-      latestSnapshot = await this.deps.runTask(request);
+      latestSnapshot = await runWorkflowV2TaskWithOutputPolicy({ workflowId: workflow.workflowId, runId, workDir: workflowWorkDir, request, allowOutputWrite, runTask: this.deps.runTask });
       const task = latestSnapshot.tasks
         .filter((item) => !existingTaskIds.has(item.id))
         .sort((left, right) => right.createdAt - left.createdAt)
@@ -191,7 +190,6 @@ export class WorkflowV2RunExecutor {
       if (!fallbackTask) throw new Error("Workflow V2 task creation did not return a new task.");
       return fallbackTask;
     };
-
     const throwIfWorkflowV2ManuallyPaused = async (nodeId: string, task?: TaskRun): Promise<void> => {
       const activeRun = this.runRegistry.get(runId);
       const reason = activeRun?.manualPauseReasonByNodeId?.get(nodeId);
@@ -264,9 +262,9 @@ export class WorkflowV2RunExecutor {
     const runtimeAttemptByNodeId = new Map<string, number>();
     const consumedRecoveryNodeIds = new Set<string>();
 
-    const startModelTask = async (nodeId: string, request: RunTaskRequest): Promise<TaskRun> => {
+    const startModelTask = async (nodeId: string, request: RunTaskRequest, allowOutputWrite = false): Promise<TaskRun> => {
       consumeModelCallBudget(nodeId);
-      const task = await startWorkflowTask(request);
+      const task = await startWorkflowTask(request, allowOutputWrite);
       this.runRegistry.get(runId)?.taskIdByNodeId.set(nodeId, task.id);
       return task;
     };
@@ -582,7 +580,7 @@ export class WorkflowV2RunExecutor {
           workDir: input.workDir,
           continuationPolicy: "resume-required",
           runtimeConversation: completedProgressTask.runtimeConversation,
-        });
+        }, true);
         input.taskIds.push(currentTask.id);
       }
     };
@@ -594,6 +592,7 @@ export class WorkflowV2RunExecutor {
       upstreamOutputs: readonly WorkflowV2ResultPacket[];
     }): Promise<WorkflowV2WorkerOutput> => {
       assertWallClockBudget(request.node.id);
+      const agentRoute = resolveWorkflowNodeAgent(request.node, { configuredAgentId, modelId }, latestSnapshot.configuredAgents);
       const recoveryOverride = input.recoveryOverrides?.get(request.node.id);
       const effectiveTaskPacket = recoveryOverride?.modelProfile
         ? { ...request.taskPacket, modelProfile: recoveryOverride.modelProfile }
@@ -630,8 +629,8 @@ export class WorkflowV2RunExecutor {
           workflowId: workflow.workflowId,
           runId,
           nodeId: request.node.id,
-          configuredAgentId,
-          modelId,
+          configuredAgentId: agentRoute.configuredAgentId,
+          modelId: agentRoute.modelId,
           workDir: workflowWorkDir,
           initialPrompt: effectivePrompt,
           developerInstructions: [
@@ -668,13 +667,13 @@ export class WorkflowV2RunExecutor {
         prompt: effectivePrompt,
         developerInstructions: effectiveDeveloperInstructions,
         contextDocument: effectiveContextDocument,
-        configuredAgentId,
-        modelId,
+        configuredAgentId: agentRoute.configuredAgentId,
+        modelId: agentRoute.modelId,
         workDir: workflowWorkDir,
         ...(recoveryConversation
           ? { continuationPolicy: "resume-required" as const, runtimeConversation: recoveryConversation }
           : {}),
-      });
+      }, true);
       consumedRecoveryNodeIds.add(request.node.id);
       updateNode(request.node.id, { status: "running", detail: "Task running", taskId: task.id });
 
@@ -686,8 +685,8 @@ export class WorkflowV2RunExecutor {
           node: request.node,
           initialTask: task,
           attempt,
-          configuredAgentId,
-          modelId,
+          configuredAgentId: agentRoute.configuredAgentId,
+          modelId: agentRoute.modelId,
           workDir: workflowWorkDir,
           taskIds,
           supervisorTaskIds,
@@ -754,13 +753,18 @@ export class WorkflowV2RunExecutor {
         MAX_NODE_TIMER_DELAY_MS,
       );
       const controller = new AbortController();
-      const { analysis, governance, permission } = authorizeWorkflowV2Script({ node: request.node, planNode: request.planNode, confirmed: input.recoveryOverrides?.has(request.node.id) === true });
-      if (permission.decision === "require_confirmation") {
-        throw new WorkflowV2SupervisionSignal({
-          resolution: { action: "pause", question: `Approve ${permission.risk} script node ${request.node.title}?`, reason: analysis.rationale },
-          report: { nodeId: request.node.id, attempt: 1, phase: "approval", completedItems: [], remainingItems: ["Human approval"], blockers: ["Script permission is not approved."], evidence: analysis.detectedCapabilities, safeToInterrupt: true, requestedAction: "need_input", reportedAt: Date.now() },
-        });
-      }
+      const graphVersion = workflow.workflowV2Plan?.graphVersion ?? workflow.definition.graphVersion;
+      const approvalGrant = input.recoveryOverrides?.get(request.node.id)?.scriptApproval;
+      const { governance, permission, operationDigest } = authorizeWorkflowV2ScriptOperation({
+        workflowId: workflow.workflowId,
+        graphVersion,
+        runId,
+        node: request.node,
+        planNode: request.planNode,
+        workDir: workflowWorkDir,
+        inputs: resolvedInput.values,
+        ...(approvalGrant ? { approvalGrant } : {}),
+      });
       this.runRegistry.get(runId)?.abortControllerByNodeId?.set(request.node.id, controller);
       let output: WorkflowV2WorkerOutput;
       try {
@@ -768,12 +772,14 @@ export class WorkflowV2RunExecutor {
           authorization: {
             decision: permission.decision,
             workflowId: workflow.workflowId,
-            graphVersion: workflow.workflowV2Plan?.graphVersion ?? workflow.definition.graphVersion,
+            graphVersion,
             runId,
             nodeId: request.node.id,
             risk: permission.risk,
             capabilities: [...governance.capabilities],
             capabilityDigest: governance.capabilityDigest,
+            operationDigest,
+            ...(approvalGrant ? { approvalRequestId: approvalGrant.requestId } : {}),
           },
         });
       } catch (error) {

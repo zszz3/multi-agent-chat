@@ -1,6 +1,7 @@
 import { ClaudeAgentSdkAdapter } from "../../../../agents/claude/claude-agent-sdk";
 import { claudeSessionIdFromConversation } from "../agent-executor-conversation";
 import type { AgentExecutionContext, AgentExecutor } from "../agent-executor-types";
+import type { RuntimeApprovalRequester } from "../../../../approvals/runtime-approval-broker";
 
 export class ClaudeAgentExecutor implements AgentExecutor {
   private abortController: AbortController | undefined;
@@ -9,6 +10,7 @@ export class ClaudeAgentExecutor implements AgentExecutor {
     private readonly context: AgentExecutionContext,
     private readonly adapter: Pick<ClaudeAgentSdkAdapter, "runOneShot">,
     private readonly resolvedModelId: string | undefined,
+    private readonly requestApproval?: RuntimeApprovalRequester,
   ) {}
 
   async start(): Promise<void> {
@@ -23,6 +25,8 @@ export class ClaudeAgentExecutor implements AgentExecutor {
         developerInstructions: this.context.developerInstructions,
         onEvent: this.context.emit,
         abortController,
+        approvalOwnerId: this.context.runId,
+        ...(this.requestApproval ? { requestApproval: this.requestApproval } : {}),
         ...(this.resolvedModelId ? { modelId: this.resolvedModelId } : {}),
         ...(resumeSessionId ? { resumeSessionId } : {}),
       });

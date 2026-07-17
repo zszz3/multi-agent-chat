@@ -48,9 +48,11 @@ import type {
   ImportOnlineSkillRequest,
   InstallSkillRequest,
   PatchWorkflowDraftRequest,
+  UpdateWorkflowRequest,
   AnswerWorkflowGateRequest,
   SubmitWorkflowScriptInputRequest,
   PauseWorkflowNodeRequest,
+  ReviseWorkflowV2RunRequest,
   ResolveWorkflowV2InterventionRequest,
   RunAgentTeamRequest,
   RunWorkflowRequest,
@@ -70,6 +72,7 @@ import type {
   WorkflowAgentRequest,
   WorkflowDraftState,
 } from "../../shared/types";
+import type { ResolveRuntimeApprovalRequest } from "../../shared/runtime-approval";
 
 const __dirname = path.dirname(fileURLToPath(import.meta.url));
 const PRODUCT_NAME = "Multi Agent Chat";
@@ -433,11 +436,16 @@ function registerIpcHandlers(): void {
     void hub.stopChat(chatId);
     return hub.snapshot();
   });
+  ipcMain.handle("runtime-approval:resolve", (_event, request: ResolveRuntimeApprovalRequest) => {
+    hub.runtimeApprovals.resolveOrThrow(request);
+    return hub.snapshot();
+  });
   ipcMain.handle("workflow-agent:ask", async (event, request: WorkflowAgentRequest) =>
     hub.askWorkflowAgent(request, (agentEvent) => event.sender.send("workflow-agent:event", agentEvent)),
   );
   ipcMain.handle("workflow:draft:create", (_event, request?: CreateWorkflowDraftRequest) => hub.createWorkflowDraft(request));
   ipcMain.handle("workflow:draft:patch", (_event, request: PatchWorkflowDraftRequest) => hub.patchWorkflowDraft(request));
+  ipcMain.handle("workflow:update", (_event, request: UpdateWorkflowRequest) => hub.updateWorkflow(request));
   ipcMain.handle("workflow-v2:plan", (_event, request: BuildWorkflowV2PlanRequest) => hub.buildWorkflowV2Plan(request));
   ipcMain.handle("workflow-v2:graph-revision", (_event, request: BuildWorkflowV2GraphRevisionRequest) => hub.buildWorkflowV2GraphRevision(request));
   ipcMain.handle("workflow:draft:reset-session", (_event, workflowId: string) => hub.resetWorkflowDraftSession(workflowId));
@@ -452,6 +460,7 @@ ipcMain.handle("workflow:confirm", (_event, request: ConfirmWorkflowRequest) => 
   ipcMain.handle("workflow:review:interrupt", (_event, request: InterruptWorkflowReviewRequest) => hub.interruptWorkflowReview(request));
 ipcMain.handle("workflow-run:start", (_event, request: RunWorkflowRequest) => hub.runWorkflow(request));
   ipcMain.handle("workflow-run:pause-node", (_event, request: PauseWorkflowNodeRequest) => hub.pauseWorkflowNode(request));
+  ipcMain.handle("workflow-v2:run:revise", (_event, request: ReviseWorkflowV2RunRequest) => hub.reviseWorkflowV2Run(request));
   ipcMain.handle("workflow-run:stop", (_event, request: StopWorkflowRunRequest) => hub.stopWorkflowRun(request));
   ipcMain.handle("workflow-v2:intervention:resolve", (_event, request: ResolveWorkflowV2InterventionRequest) =>
     hub.resolveWorkflowV2Intervention(request),

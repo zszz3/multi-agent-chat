@@ -11,12 +11,13 @@ const rendererFiles = [
 ];
 
 describe("workflow input ownership", () => {
-  test("does not expose the legacy gate or intervention input chain in the renderer", () => {
+  test("removes the legacy gate chain while retaining the typed intervention boundary", () => {
     const source = rendererFiles
       .map((file) => readFileSync(resolve(process.cwd(), file), "utf8"))
       .join("\n");
 
-    expect(source).not.toMatch(/onResolveIntervention|resolveIntervention|onAnswerGate|answerGate/);
+    expect(source).toMatch(/onResolveIntervention|resolveIntervention/);
+    expect(source).not.toMatch(/onAnswerGate|answerGate/);
     expect(source).not.toMatch(/gateAnswerPlaceholder|gateSubmit|workflow-gate-panel/);
   });
 });

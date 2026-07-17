@@ -4,7 +4,8 @@ import path from "node:path";
 import { describe, expect, test, vi } from "vitest";
 import type { AgentEvent } from "../../../shared/types";
 import { writeNodeCliLauncher } from "../../platform/test-cli-fixtures";
-import { AcpInteractiveClient, agentEventsFromAcpUpdate } from "./acp-interactive-client";
+import { AcpInteractiveClient, agentEventsFromAcpUpdate, fileWriteOperationFromAcpUpdate } from "./acp-interactive-client";
+import { RuntimeApprovalBroker } from "../../approvals/runtime-approval-broker";
 
 async function createFakeAcpRuntime(dir: string): Promise<{ executable: string; callsPath: string }> {
   const callsPath = path.join(dir, "calls.jsonl");
@@ -46,12 +47,24 @@ describe("AcpInteractiveClient", () => {
     const dir = await mkdtemp(path.join(os.tmpdir(), "multi-agent-chat-acp-client-"));
     const fake = await createFakeAcpRuntime(dir);
     const events: AgentEvent[] = [];
+    const broker = new RuntimeApprovalBroker();
     const client = new AcpInteractiveClient({
       executable: fake.executable,
       args: ["acp"],
       cwd: dir,
       modelId: "custom-model",
       onEvent: (event) => events.push(event),
+      approvalOwnerId: "chat-1",
+      requestApproval: async (request) => {
+        const pending = broker.request(request);
+        queueMicrotask(() => {
+          const approval = events.find((event) => event.type === "approval_request");
+          if (approval?.type === "approval_request") {
+            broker.resolve({ ownerId: "chat-1", requestId: approval.requestId, decision: "approved" });
+          }
+        });
+        return pending;
+      },
     });
 
     await expect(client.attach()).resolves.toBe("acp-session-1");
@@ -62,8 +75,8 @@ describe("AcpInteractiveClient", () => {
     expect(events).toEqual(expect.arrayContaining([
       { type: "delta", content: "Hello" },
       expect.objectContaining({ type: "tool_call", name: "Read file" }),
-      expect.objectContaining({ type: "approval_request", requestId: "900" }),
-      expect.objectContaining({ type: "approval_response", requestId: "900", decision: "approved" }),
+      expect.objectContaining({ type: "approval_request", requestId: expect.stringMatching(/^runtime-approval:/) }),
+      expect.objectContaining({ type: "approval_response", decision: "approved" }),
       expect.objectContaining({ type: "tool_result", name: "Read file", content: "contents" }),
       { type: "completed" },
     ]));
@@ -108,5 +121,20 @@ describe("agentEventsFromAcpUpdate", () => {
       sessionUpdate: "agent_thought_chunk",
       content: { type: "text", text: "thinking" },
     })).toEqual([{ type: "meta", content: "thinking" }]);
+  });
+
+  test("normalizes ACP edit tool paths for output-write policy checks", () => {
+    expect(fileWriteOperationFromAcpUpdate({
+      sessionUpdate: "tool_call",
+      toolCallId: "write-1",
+      title: "Write report",
+      kind: "edit",
+      status: "pending",
+      rawInput: { path: "outputs/wf/run/report.md" },
+    }, "C:/repo")).toEqual({
+      kind: "file_write",
+      cwd: "C:/repo",
+      paths: ["outputs/wf/run/report.md"],
+    });
   });
 });

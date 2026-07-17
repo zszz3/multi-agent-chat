@@ -44,6 +44,26 @@ describe("WorkflowV2ConversationManager", () => {
       expect.objectContaining({ role: "tool", eventType: "tool_result", name: "shell_command" }),
     ]);
   });
+  test("preserves live approval identity and resolves it after the runtime responds", async () => {
+    let emit!: (event: AgentEvent) => void;
+    const manager = new WorkflowV2ConversationManager({
+      now: () => 9,
+      createSession: (input) => {
+        emit = input.emit;
+        return { sendPrompt: async () => undefined, interrupt: async () => undefined, close: async () => undefined, runtimeConversation: () => undefined };
+      },
+    });
+    const started = await manager.start({ workflowId: "w", runId: "r", nodeId: "n", configuredAgentId: "a", modelId: "m", workDir: "C:/workspace", initialPrompt: "Run tools" });
+    emit({ type: "approval_request", requestId: "approval-1", content: "Allow command?", metadata: { command: "npm test" } });
+    expect(manager.get(started.conversationId)?.messages.at(-1)?.event).toMatchObject({ type: "approval_request", requestId: "approval-1", requestState: "live", metadata: { command: "npm test" } });
+    emit({ type: "approval_response", requestId: "approval-1", decision: "approved", content: "Approved" });
+    expect(manager.get(started.conversationId)?.messages.find((message) => message.event?.requestId === "approval-1")?.event?.requestState).toBe("resolved");
+  });
+  test("expires restored approval requests because the in-memory broker no longer owns them", () => {
+    const manager = new WorkflowV2ConversationManager({ now: () => 10, createSession: () => ({ sendPrompt: async () => undefined, interrupt: async () => undefined, close: async () => undefined, runtimeConversation: () => undefined }) });
+    manager.restore([{ conversationId: "w::r::n", workflowId: "w", runId: "r", nodeId: "n", configuredAgentId: "a", modelId: "m", workDir: "C:/workspace", status: "active", messages: [{ id: "m1", role: "assistant", content: "Approve?", at: 1, event: { id: "e1", type: "approval_request", content: "Approve?", timestamp: 1, requestId: "approval-1", requestState: "live" } }], createdAt: 1, updatedAt: 1, lastActivityAt: 1 }]);
+    expect(manager.get("w::r::n")?.messages[0]?.event?.requestState).toBe("expired");
+  });
   test("reuses one interactive session across multiple user turns and requires confirmation", async () => {
     let now = 10;
     let createCount = 0;

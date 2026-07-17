@@ -96,6 +96,8 @@ export function compileWorkflowV2Node(
       ...(resourceLocks ? { resourceLocks } : {}),
       ...(executionLease ? { executionLease: { ...executionLease } } : {}),
       ...(overrides.modelProfile ?? template.modelProfile ? { modelProfile: overrides.modelProfile ?? template.modelProfile } : {}),
+      ...(overrides.configuredAgentId ?? template.configuredAgentId ? { configuredAgentId: overrides.configuredAgentId ?? template.configuredAgentId } : {}),
+      ...(overrides.modelId ?? template.modelId ? { modelId: overrides.modelId ?? template.modelId } : {}),
       ...(overrides.judgeDimensions ?? template.judgeDimensions
         ? { judgeDimensions: overrides.judgeDimensions ?? template.judgeDimensions }
         : {}),

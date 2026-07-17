@@ -29,6 +29,8 @@ export function createOpenClawDriver(options: RuntimeAgentExecutorFactoryOptions
             cwd: interactiveContext.workDir,
             onEvent,
             onExit,
+            approvalOwnerId: interactiveContext.chatId,
+            ...(options.requestApproval ? { requestApproval: options.requestApproval } : {}),
           }),
       }),
     askWorkflow: (input) => runOpenClawWorkflow(input, options),

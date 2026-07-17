@@ -53,7 +53,12 @@ export function createCodexDriver(options: RuntimeAgentExecutorFactoryOptions): 
             env: codexEnvironmentForChannel(channel),
             onEvent,
             onRequest: (id, method, params) => {
-              respondToCodexRuntimeServerRequest(client, id, method, params);
+              respondToCodexRuntimeServerRequest(client, id, method, params, options.requestApproval ? {
+                ownerId: sessionContext.chatId,
+                emit: onEvent,
+                request: options.requestApproval,
+                cwd: sessionContext.workDir,
+              } : undefined);
             },
             onExit,
           });

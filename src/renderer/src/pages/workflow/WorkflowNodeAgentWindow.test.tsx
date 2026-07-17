@@ -3,6 +3,19 @@ import { describe, expect, test } from "vitest";
 import { WorkflowNodeAgentWindow } from "./WorkflowNodeAgentWindow";
 
 describe("WorkflowNodeAgentWindow", () => {
+  test("exposes the persisted node prompt for manual editing when the definition is editable", () => {
+    const html = renderToStaticMarkup(<WorkflowNodeAgentWindow
+      nodeTitle="Research"
+      prompt="Research only official sources."
+      editable
+      onSavePrompt={() => undefined}
+      onClose={() => undefined}
+    />);
+    expect(html).toContain("Agent node prompt editor");
+    expect(html).toContain("Research only official sources.");
+    expect(html).toContain("Edit prompt");
+  });
+
   test("renders a queued agent node before runtime activity exists", () => {
     const html = renderToStaticMarkup(<WorkflowNodeAgentWindow nodeTitle="Collect requirements" onClose={() => undefined} />);
     expect(html).toContain("Node has not started yet");
@@ -33,6 +46,20 @@ describe("WorkflowNodeAgentWindow", () => {
     expect(html).toContain("Which regions should be supported?");
     expect(html).toContain("workflow::run::collect");
     expect(html).not.toContain("textarea disabled");
+  });
+  test("renders approval actions for interactive and one-shot workflow agents", () => {
+    const conversationHtml = renderToStaticMarkup(<WorkflowNodeAgentWindow nodeTitle="Agent" onClose={() => undefined} onResolveRuntimeApproval={() => undefined} conversation={{
+      conversationId: "w::r::n", workflowId: "w", runId: "r", nodeId: "n", configuredAgentId: "a", modelId: "m", workDir: "C:/workspace", status: "active",
+      messages: [{ id: "m1", role: "assistant", content: "Allow command?", at: 1, eventType: "approval_request", event: { id: "e1", type: "approval_request", content: "Allow command?", timestamp: 1, requestId: "approval-1", requestState: "live" } }], createdAt: 1, updatedAt: 1, lastActivityAt: 1,
+    }} />);
+    expect(conversationHtml).toContain("Approve once");
+    expect(conversationHtml).toContain("Reject");
+
+    const taskHtml = renderToStaticMarkup(<WorkflowNodeAgentWindow nodeTitle="Agent" onClose={() => undefined} onResolveRuntimeApproval={() => undefined} task={{
+      id: "task-1", title: "Agent", status: "running", progress: "in_progress", running: true, prompt: "Work", configuredAgentId: "a", modelId: "m", workDir: "C:/workspace", pendingAssistantMessageId: undefined, lastError: undefined, createdAt: 1, updatedAt: 1,
+      messages: [{ id: "m1", role: "assistant", content: "", timestamp: 1, events: [{ id: "e1", type: "approval_request", content: "Allow command?", timestamp: 1, requestId: "approval-1", requestState: "live" }] }],
+    }} />);
+    expect(taskHtml).toContain("Approve once");
   });
 
   test("visually labels system instructions, tool calls, and tool results", () => {

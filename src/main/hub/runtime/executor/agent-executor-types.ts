@@ -11,6 +11,7 @@ import type {
   RuntimeSessionCleanupContext,
   RuntimeWorkflowRequestContext,
 } from "../../../agents/runtime/runtime-driver";
+import type { RuntimeApprovalRequester } from "../../../approvals/runtime-approval-broker";
 
 export interface AgentExecutionContext extends RuntimeRequest {
   runId: string;
@@ -37,6 +38,7 @@ export interface RuntimeAgentExecutorFactoryOptions {
   executables: Record<AgentId, string>;
   channelById: (channelId: string) => AgentChannel | undefined;
   workflowMcpDiscoveryPath?: () => string | undefined;
+  requestApproval?: RuntimeApprovalRequester;
   askWorkflowByRuntime?: Partial<Record<AgentId, (input: RuntimeWorkflowRequestContext) => Promise<WorkflowAgentResponse>>>;
   testChannelByRuntime?: Partial<Record<AgentId, (input: RuntimeChannelTestContext) => Promise<string>>>;
   deleteSessionArtifactsByRuntime?: Partial<Record<AgentId, (input: RuntimeSessionCleanupContext) => Promise<void>>>;

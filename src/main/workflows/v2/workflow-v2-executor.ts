@@ -219,6 +219,7 @@ export async function executeWorkflowV2Plan(input: ExecuteWorkflowV2PlanInput): 
                 decision: signal.resolution,
                 ...(signal.resumeConversation ? { resumeConversation: signal.resumeConversation } : {}),
               },
+              signal.intervention,
             );
             runState = transitionWorkflowV2NodeState(runState, {
               nodeId,
@@ -645,17 +646,19 @@ function createIntervention(
     decision: WorkflowV2HumanIntervention["supervisorDecision"];
     resumeConversation?: WorkflowV2HumanIntervention["resumeConversation"];
   },
+  override?: Pick<WorkflowV2HumanIntervention, "source" | "allowedActions" | "scriptApproval">,
 ): WorkflowV2HumanIntervention {
   return {
     nodeId,
-    source,
+    source: override?.source ?? source,
     reason,
-    allowedActions: ["continue", "skip", "escalate", "replan", "increase_review_strength"],
+    allowedActions: override?.allowedActions ?? ["continue", "skip", "escalate", "replan", "increase_review_strength"],
     requestedAt,
     ...(reviewVerdict ? { reviewVerdict: structuredClone(reviewVerdict) } : {}),
     ...(supervision?.report ? { progressReport: structuredClone(supervision.report) } : {}),
     ...(supervision?.decision ? { supervisorDecision: structuredClone(supervision.decision) } : {}),
     ...(supervision?.resumeConversation ? { resumeConversation: structuredClone(supervision.resumeConversation) } : {}),
+    ...(override?.scriptApproval ? { scriptApproval: structuredClone(override.scriptApproval) } : {}),
   };
 }
 

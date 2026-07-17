@@ -152,8 +152,54 @@ describe("AgentHub workflow materialization", () => {
     expect(hub.confirmWorkflow({ workflowId, ...(materialized.revision !== undefined ? { expectedRevision: materialized.revision } : {}) })).toMatchObject({ ok: true });
     const confirmed = hub.snapshot().workflowStore.workflows.find((item) => item.workflowId === workflowId)!;
     hub.patchWorkflowDraft({ workflowId, objective: "Changed answer" });
+    expect(hub.snapshot().workflowStore.workflows.find((item) => item.workflowId === workflowId)).toMatchObject({ status: "draft", definition: { graphVersion: 2 } });
     expect(hub.snapshot().workflowStore.workflows.find((item) => item.workflowId === workflowId)?.confirmedRevision).toBeUndefined();
+    expect(hub.snapshot().workflowStore.workflows.find((item) => item.workflowId === workflowId)?.workflowV2Plan).toBeUndefined();
     expect(confirmed.confirmedRevision).toBe(confirmed.revision);
+  });
+
+  test("derives a new editable revision from a completed frozen workflow", () => {
+    const hub = new AgentHub();
+    const workflowId = hub.createWorkflowDraft().workflowDraft!.workflowId;
+    const materialized = hub.materializeWorkflowDraft(workflowId, { title: "Answer", objective: "Answer", definition: { workflowId, graphVersion: 1, objective: "Answer", nodes: [{ id: "answer", kind: "answer", title: "Answer", execModel: "llm", executionMode: "one-shot", prompt: "Answer.", outputFields: [{ key: "answer", required: true }] }], edges: [] } });
+    hub.confirmWorkflow({ workflowId, expectedRevision: materialized.revision! });
+    hub.patchWorkflowDraft({ workflowId, status: "completed" });
+    const completed = hub.snapshot().workflowDraft!;
+    hub.updateWorkflowDraft({
+      ...completed,
+      runIds: ["run-old-version"],
+      finalReport: "Old result",
+      runProgress: [{ nodeId: "answer", title: "Answer", status: "completed", outputs: { answer: "old" } }],
+      runContextDocument: "Old run context",
+    });
+    const definition = structuredClone(completed.definition);
+    const node = definition.nodes[0]!;
+    if (node.execModel === "llm") node.prompt = "Answer briefly.";
+
+    const result = hub.updateWorkflow({ workflowId, expectedRevision: completed.revision, definition });
+
+    expect(result).toMatchObject({ ok: true, revision: completed.revision + 1 });
+    expect(hub.snapshot().workflowDraft).toMatchObject({ status: "draft", revision: completed.revision + 1, definition: { graphVersion: 2 } });
+    expect(hub.snapshot().workflowDraft?.runIds).toEqual(["run-old-version"]);
+    expect(hub.snapshot().workflowDraft?.finalReport).toBeUndefined();
+    expect(hub.snapshot().workflowDraft?.runProgress).toEqual([]);
+    expect(hub.snapshot().workflowDraft?.runContextDocument).toBe("");
+    expect(hub.snapshot().workflowDraft?.confirmedRevision).toBeUndefined();
+    expect(hub.snapshot().workflowDraft?.workflowV2Plan).toBeUndefined();
+  });
+
+  test("lets the planning agent revise a confirmed workflow in place", () => {
+    const hub = new AgentHub();
+    const workflowId = hub.createWorkflowDraft().workflowDraft!.workflowId;
+    const first = hub.materializeWorkflowDraft(workflowId, { title: "Answer", objective: "Answer", definition: { workflowId, graphVersion: 1, objective: "Answer", nodes: [{ id: "answer", kind: "answer", title: "Answer", execModel: "llm", executionMode: "one-shot", prompt: "Answer.", outputFields: [{ key: "answer", required: true }] }], edges: [] } });
+    hub.confirmWorkflow({ workflowId, expectedRevision: first.revision! });
+    const frozen = hub.snapshot().workflowDraft!;
+
+    const revised = hub.materializeWorkflowDraft(workflowId, { title: "Short answer", objective: "Answer", definition: { ...structuredClone(frozen.definition), nodes: [{ ...frozen.definition.nodes[0]!, title: "Short answer", execModel: "llm", executionMode: "one-shot", prompt: "Answer briefly." }] } });
+
+    expect(revised).toMatchObject({ ok: true, revision: frozen.revision + 1 });
+    expect(hub.snapshot().workflowDraft).toMatchObject({ workflowId, status: "draft", definition: { graphVersion: 2, nodes: [{ title: "Short answer" }] }, workflowV2Plan: { graphVersion: 2 } });
+    expect(hub.snapshot().workflowDraft?.confirmedRevision).toBeUndefined();
   });
 
   test("keeps optional review feedback until executable content changes", () => {
@@ -166,5 +212,16 @@ describe("AgentHub workflow materialization", () => {
     expect(hub.snapshot().workflowDraft).toMatchObject({ revision: materialized.revision, generationReview: { status: "approved", reviewedRevision: materialized.revision } });
     hub.patchWorkflowDraft({ workflowId, objective: "Changed" });
     expect(hub.snapshot().workflowDraft?.generationReview).toBeUndefined();
+  });
+
+  test("prevents deleting a configured Agent that is still selected by a workflow node", () => {
+    const hub = new AgentHub();
+    const existing = hub.snapshot().configuredAgents;
+    const specialist = { ...existing[0]!, id: "specialist", name: "Specialist", managed: false, createdAt: 2, updatedAt: 2 };
+    hub.updateConfiguredAgents([...existing, specialist]);
+    const workflowId = hub.createWorkflowDraft().workflowDraft!.workflowId;
+    const result = hub.materializeWorkflowDraft(workflowId, { title: "Answer", objective: "Answer", definition: { workflowId, graphVersion: 1, objective: "Answer", nodes: [{ id: "answer", kind: "answer", title: "Answer", execModel: "llm", executionMode: "one-shot", configuredAgentId: specialist.id, prompt: "Answer.", outputFields: [{ key: "answer", required: true }] }], edges: [] } });
+    expect(result.ok).toBe(true);
+    expect(() => hub.updateConfiguredAgents(existing)).toThrow(/Reassign the workflow node/);
   });
 });

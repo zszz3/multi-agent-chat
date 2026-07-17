@@ -42,6 +42,7 @@ export function createClaudeDriver(
         context,
         oneShotAdapter,
         claudeCliModelForChannel(options.channelById(context.channelId), modelFromRuntimeConfig(context.runtimeConfig)),
+        options.requestApproval,
       ),
     createInteractiveSession: (context) =>
       new ClaudeInteractiveSession(
@@ -56,6 +57,7 @@ export function createClaudeDriver(
           resolveMcpServers: (interactiveContext) =>
             claudeWorkflowMcpServers(options.workflowMcpDiscoveryPath?.(), interactiveContext.planningWorkflowId),
           sdkInteractive: new ClaudeAgentSdkInteractive(),
+          ...(options.requestApproval ? { requestApproval: options.requestApproval } : {}),
         },
       ),
     askWorkflow: askWorkflowByRuntime.claude ?? ((input) => runClaudeWorkflow(input, options, runClaudeOneShot)),

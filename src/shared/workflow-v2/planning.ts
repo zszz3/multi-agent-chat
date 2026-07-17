@@ -55,6 +55,8 @@ export interface WorkflowV2TaskPacket {
   executionModeRationale: string;
   executionModeConfidence: number;
   modelProfile: WorkflowV2ModelProfile;
+  configuredAgentId?: string;
+  modelId?: string;
   objective: string;
   acceptanceCriteria: WorkflowV2AcceptanceCriterion[];
   constraints: WorkflowV2ConstraintDef[];
@@ -82,6 +84,8 @@ export interface WorkflowV2PlanNode {
   executionModeRationale: string;
   executionModeConfidence: number;
   modelProfile: WorkflowV2ModelProfile;
+  configuredAgentId?: string;
+  modelId?: string;
   acceptanceCriteria: WorkflowV2AcceptanceCriterion[];
   budget: WorkflowV2BudgetEnvelope;
   taskPacket: WorkflowV2TaskPacket;
@@ -221,6 +225,8 @@ export function createWorkflowV2TaskPacket(input: {
     executionModeRationale: executionMode.rationale,
     executionModeConfidence: executionMode.confidence,
     modelProfile,
+    ...(input.node.execModel === "llm" && input.node.configuredAgentId ? { configuredAgentId: input.node.configuredAgentId } : {}),
+    ...(input.node.execModel === "llm" && input.node.modelId ? { modelId: input.node.modelId } : {}),
     objective: input.workflowObjective,
     acceptanceCriteria: nodeAcceptanceCriteria.length > 0 ? nodeAcceptanceCriteria : input.acceptanceCriteria.map(cloneAcceptanceCriterion),
     constraints: input.node.execModel === "llm" ? [...(input.node.constraints ?? [])] : [],
